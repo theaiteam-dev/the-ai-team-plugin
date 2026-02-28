@@ -5,7 +5,8 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { HeaderBar } from "@/components/header-bar";
 import { BoardColumn } from "@/components/board-column";
 import { LiveFeedPanel, type TabId } from "@/components/live-feed-panel";
-import type { LogEntry } from "@/types";
+import { TokenUsagePanel } from "@/components/token-usage-panel";
+import type { LogEntry, MissionTokenUsageData } from "@/types";
 import type { Project } from "@/types/api";
 import { AgentStatusBar } from "@/components/agent-status-bar";
 import { ItemDetailModal } from "@/components/item-detail-modal";
@@ -119,6 +120,18 @@ function HomeContent() {
   const [finalReview, setFinalReview] = useState<FinalReviewStatus | undefined>(undefined);
   const [postChecks, setPostChecks] = useState<PostChecksStatus | undefined>(undefined);
   const [documentation, setDocumentation] = useState<DocumentationStatus | undefined>(undefined);
+
+  // Token usage state (populated via SSE or initial fetch for completed missions)
+  const [tokenUsage, setTokenUsage] = useState<{
+    agents: MissionTokenUsageData[];
+    totals: {
+      inputTokens: number;
+      outputTokens: number;
+      cacheCreationTokens: number;
+      cacheReadTokens: number;
+      estimatedCostUsd: number;
+    };
+  } | null>(null);
 
   // Filter state management
   const {
@@ -347,6 +360,20 @@ function HomeContent() {
     });
   }, []);
 
+  const onMissionTokenUsage = useCallback((data: {
+    missionId: string;
+    agents: MissionTokenUsageData[];
+    totals: {
+      inputTokens: number;
+      outputTokens: number;
+      cacheCreationTokens: number;
+      cacheReadTokens: number;
+      estimatedCostUsd: number;
+    };
+  }) => {
+    setTokenUsage({ agents: data.agents, totals: data.totals });
+  }, []);
+
   // Handler for WIP limit changes from BoardColumn
   const handleWipLimitChange = useCallback(async (stageId: string, newLimit: number | null) => {
     try {
@@ -437,6 +464,7 @@ function HomeContent() {
     onPostChecksComplete,
     onDocumentationStarted,
     onDocumentationComplete,
+    onMissionTokenUsage,
   });
 
   // Fetch projects list on mount
@@ -554,6 +582,25 @@ function HomeContent() {
       } catch (err) {
         // Activity log fetch failed - not critical, just log it
         console.warn("Failed to fetch activity log:", err);
+      }
+
+      // If mission is completed/archived, fetch token usage (SSE event was already emitted)
+      const missionState = boardData.data?.currentMission?.state;
+      if (missionState === 'completed' || missionState === 'archived') {
+        try {
+          const missionId = boardData.data.currentMission.id;
+          const tokenRes = await fetch(`/api/missions/${missionId}/token-usage`, {
+            headers: { 'X-Project-ID': projectId },
+          });
+          if (tokenRes.ok) {
+            const tokenData = await tokenRes.json();
+            if (tokenData.success && tokenData.data) {
+              setTokenUsage({ agents: tokenData.data.agents, totals: tokenData.data.totals });
+            }
+          }
+        } catch (err) {
+          console.warn("Failed to fetch token usage:", err);
+        }
       }
 
       setLoading(false);
@@ -709,7 +756,7 @@ function HomeContent() {
         )}
 
         {/* Right panel */}
-        <div className="w-[400px] min-w-[350px] max-w-[500px] border-l border-border bg-card shrink-0 hidden lg:block">
+        <div className="w-[400px] min-w-[350px] max-w-[500px] border-l border-border bg-card shrink-0 hidden lg:block overflow-y-auto">
           <LiveFeedPanel
             entries={logEntries}
             activeTab={activeTab}
@@ -720,6 +767,14 @@ function HomeContent() {
             postChecks={postChecks}
             documentation={documentation}
           />
+          {tokenUsage && (
+            <div data-testid="token-usage-section" className="border-t border-border">
+              <div className="px-4 pt-3 pb-1">
+                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Token Usage</h3>
+              </div>
+              <TokenUsagePanel agents={tokenUsage.agents} totals={tokenUsage.totals} />
+            </div>
+          )}
         </div>
       </div>
 
