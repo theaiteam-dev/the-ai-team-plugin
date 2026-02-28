@@ -1,29 +1,9 @@
 import * as React from "react";
 import type { MissionTokenUsageData } from "@/types";
+import { formatTokenCount, formatCostUsd } from "@/lib/format-tokens";
 
-// ============================================================================
-// Utility functions
-// ============================================================================
-
-/**
- * Format a token count into a human-readable string.
- * Values below 1000 are returned as-is.
- * Values in the thousands are formatted as "X.XK".
- * Values in the millions are formatted as "X.XM".
- */
-export function formatTokenCount(count: number): string {
-  if (count === 0) return "0";
-  if (count < 1000) return String(count);
-  if (count < 1_000_000) return `${(count / 1000).toFixed(1)}K`;
-  return `${(count / 1_000_000).toFixed(1)}M`;
-}
-
-/**
- * Format a USD cost value as a dollar string with exactly 2 decimal places.
- */
-export function formatCostUsd(cost: number): string {
-  return `$${cost.toFixed(2)}`;
-}
+// Re-export so existing imports from this module continue to work.
+export { formatTokenCount, formatCostUsd } from "@/lib/format-tokens";
 
 // ============================================================================
 // Component types

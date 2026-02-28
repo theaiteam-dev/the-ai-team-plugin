@@ -6,8 +6,10 @@
  * CHANGELOG entries.
  *
  * Example output:
- *   "Tokens: 1.2M input, 45K output (Opus: 820K/32K, Sonnet: 350K/12K, Haiku: 30K/1K)"
+ *   "Tokens: 1.2M input, 45.0K output (Opus: 820.0K/32.0K, Sonnet: 350.0K/12.0K, Haiku: 30.0K/1.0K)"
  */
+
+import { formatTokenCount } from "@/lib/format-tokens";
 
 /** Minimal token usage record consumed by the formatter. */
 export interface AgentTokenUsage {
@@ -33,29 +35,6 @@ function classifyModel(model: string): ModelTier | null {
 }
 
 /**
- * Format a raw token count with K (thousands) or M (millions) suffix.
- *
- * Rules:
- * - < 1 000 → plain integer ("500")
- * - < 1 000 000 → "NNNk" rounded to nearest thousand ("820K")
- * - >= 1 000 000 → "N.NM" with one decimal, dropping trailing zero ("1.2M", "2M")
- */
-function formatTokenCount(count: number): string {
-  if (count >= 1_000_000) {
-    const millions = count / 1_000_000;
-    const formatted = millions.toFixed(1);
-    // Drop trailing ".0" (e.g. "2.0" → "2")
-    return (formatted.endsWith('.0') ? millions.toFixed(0) : formatted) + 'M';
-  }
-
-  if (count >= 1_000) {
-    return Math.round(count / 1_000) + 'K';
-  }
-
-  return String(count);
-}
-
-/**
  * Format an array of AgentTokenUsage records into a one-line token summary.
  *
  * Returns an empty string when the array is empty.
@@ -63,7 +42,7 @@ function formatTokenCount(count: number): string {
  *
  * @param agents - Array of per-agent token usage records
  * @returns Formatted summary string, e.g.
- *   "Tokens: 1.2M input, 45K output (Opus: 820K/32K, Sonnet: 350K/12K)"
+ *   "Tokens: 1.2M input, 45.0K output (Opus: 820.0K/32.0K, Sonnet: 350.0K/12.0K)"
  */
 export function formatTokenSummary(agents: AgentTokenUsage[]): string {
   if (agents.length === 0) return '';

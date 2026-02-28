@@ -6,10 +6,10 @@
  * model tier (Opus/Sonnet/Haiku).
  *
  * Expected format:
- *   "Tokens: 1.2M input, 45K output (Opus: 820K/32K, Sonnet: 350K/12K, Haiku: 30K/1K)"
+ *   "Tokens: 1.2M input, 45.0K output (Opus: 820.0K/32.0K, Sonnet: 350.0K/12.0K, Haiku: 30.0K/1.0K)"
  *
  * Rules:
- *   - Numbers formatted with K (thousands) or M (millions) suffixes
+ *   - Numbers formatted with K (thousands, one decimal) or M (millions, one decimal) suffixes
  *   - Per-model format: "Tier: inputK/outputK" (input/output)
  *   - Model tiers with zero tokens are omitted
  *   - Returns empty string when passed empty array
@@ -82,14 +82,14 @@ describe('formatTokenSummary()', () => {
       // Totals: input = 1_200_000, output = 45_000
       expect(result).toContain('Tokens:');
       expect(result).toContain('1.2M input');
-      expect(result).toContain('45K output');
+      expect(result).toContain('45.0K output');
 
       // Per-model tier breakdown: Opus input=820K, output=32K
-      expect(result).toContain('Opus: 820K/32K');
+      expect(result).toContain('Opus: 820.0K/32.0K');
       // Sonnet input=350K, output=12K
-      expect(result).toContain('Sonnet: 350K/12K');
+      expect(result).toContain('Sonnet: 350.0K/12.0K');
       // Haiku input=30K, output=1K
-      expect(result).toContain('Haiku: 30K/1K');
+      expect(result).toContain('Haiku: 30.0K/1.0K');
 
       // No dollar amounts
       expect(result).not.toMatch(/\$/);
