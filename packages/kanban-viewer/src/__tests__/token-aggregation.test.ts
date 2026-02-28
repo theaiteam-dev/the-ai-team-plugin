@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { POST, GET } from '@/app/api/missions/[missionId]/token-usage/route';
 import { prisma } from '@/lib/db';
 
@@ -410,5 +410,69 @@ describe('POST /api/missions/:missionId/token-usage - multiple agents and models
       'hannibal:claude-opus-4-6',
       'murdock:claude-sonnet-4-6',
     ]);
+  });
+});
+
+describe('POST /api/missions/:missionId/token-usage - excluded event warning', () => {
+  it('should warn via console.warn when hook events are excluded due to missing token/model data', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      const ts = new Date();
+      await prisma.hookEvent.createMany({
+        data: [
+          // Event WITH complete token data — should be included in aggregation
+          {
+            projectId: PROJECT_ID,
+            missionId: MISSION_ID,
+            eventType: 'subagent_stop',
+            agentName: 'murdock',
+            status: 'completed',
+            summary: 'murdock completed with token data',
+            timestamp: new Date(ts.getTime()),
+            inputTokens: 1000,
+            outputTokens: 200,
+            cacheCreationTokens: 0,
+            cacheReadTokens: 0,
+            model: 'claude-sonnet-4-6',
+          },
+          // Event WITHOUT token data (null inputTokens) — should be excluded and trigger warning
+          {
+            projectId: PROJECT_ID,
+            missionId: MISSION_ID,
+            eventType: 'subagent_stop',
+            agentName: 'ba',
+            status: 'completed',
+            summary: 'ba completed without token data',
+            timestamp: new Date(ts.getTime() + 1000),
+            inputTokens: null,
+            outputTokens: null,
+            cacheCreationTokens: null,
+            cacheReadTokens: null,
+            model: null,
+          },
+        ],
+      });
+
+      const request = makeRequest('POST');
+      const response = await POST(request, routeParams);
+      const data = await response.json();
+
+      // Response should succeed and only include the event with token data
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+
+      const agents: Array<{ agentName: string }> = data.data.agents;
+      expect(agents).toHaveLength(1);
+      expect(agents[0].agentName).toBe('murdock');
+
+      // console.warn should have been called mentioning "excluded"
+      expect(warnSpy).toHaveBeenCalled();
+      const warnMessage: string = warnSpy.mock.calls[0][0];
+      expect(warnMessage).toContain('excluded');
+      expect(warnMessage).toContain(MISSION_ID);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

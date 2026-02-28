@@ -90,6 +90,24 @@ export async function POST(request: Request, context: RouteContext) {
       },
     });
 
+    // Warn if hook events were excluded due to missing token data
+    const totalEventCount = await prisma.hookEvent.count({
+      where: {
+        missionId,
+        projectId,
+        OR: [
+          { eventType: 'subagent_stop', agentName: { not: 'hannibal' } },
+          { eventType: 'stop', agentName: 'hannibal' },
+        ],
+      },
+    });
+
+    if (totalEventCount > hookEvents.length) {
+      console.warn(
+        `[token-aggregation] Mission ${missionId}: ${totalEventCount - hookEvents.length} hook event(s) excluded (missing token/model data)`
+      );
+    }
+
     // Group by agentName+model
     const groups = new Map<string, { agentName: string; model: string; inputTokens: number; outputTokens: number; cacheCreationTokens: number; cacheReadTokens: number }>();
 
