@@ -9,6 +9,7 @@ All agent files use YAML frontmatter:
 ```yaml
 ---
 name: agent-name              # Identifier (required)
+model: sonnet                  # Model: opus | sonnet | haiku (required)
 description: Role summary     # (required)
 permissionMode: acceptEdits   # Working agents that write files
 skills:                        # Optional - skill files to load at dispatch time
@@ -20,7 +21,7 @@ hooks:                         # Runtime enforcement (see below)
 ---
 ```
 
-Hannibal also has `tools:` listing available tools. Model selection (`opus`/`sonnet`) is in the body, not frontmatter.
+Hannibal also has `tools:` listing available tools. Model selection (`opus`/`sonnet`/`haiku`) is declared in YAML frontmatter via the `model:` key — Claude Code reads this natively at dispatch time. Do NOT pass `model:` at dispatch time; the frontmatter is the single source of truth.
 
 The `skills:` key is optional and lists skill files (from `skills/`) to load when the agent is dispatched. For example, Murdock includes `test-writing` and `tdd-workflow` to pull in detailed testing guidance without bloating the base agent prompt.
 
