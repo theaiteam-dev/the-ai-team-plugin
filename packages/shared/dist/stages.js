@@ -11,7 +11,7 @@ export const ALL_STAGES = [
 export const TRANSITION_MATRIX = {
     briefings: ['ready', 'blocked'],
     ready: ['testing', 'implementing', 'probing', 'blocked', 'briefings'],
-    testing: ['review', 'blocked'],
+    testing: ['implementing', 'blocked'],
     implementing: ['review', 'blocked'],
     probing: ['ready', 'done', 'blocked'],
     review: ['testing', 'implementing', 'probing', 'blocked'],
@@ -28,7 +28,7 @@ export const PIPELINE_STAGES = {
     testing: {
         agent: 'murdock',
         agentDisplay: 'Murdock',
-        nextStage: 'review',
+        nextStage: 'implementing',
         description: 'writes tests defining acceptance criteria',
     },
     implementing: {

@@ -20,7 +20,7 @@ import type { AgentStopRequest, AgentStopResponse, ApiError } from '@/types/api'
 import type { AgentName } from '@/types/agent';
 import type { StageId } from '@/types/board';
 import type { WorkLogEntry, WorkLogAction } from '@/types/item';
-import { AGENT_DISPLAY_NAMES } from '@ai-team/shared';
+import { AGENT_DISPLAY_NAMES, PIPELINE_STAGES, type StageId as SharedStageId } from '@ai-team/shared';
 
 /**
  * Valid agent names for validation.
@@ -136,7 +136,13 @@ export async function POST(
 
     // Determine next stage and action based on outcome
     const outcome = body.outcome ?? 'completed';
-    const nextStage: StageId = outcome === 'blocked' ? 'blocked' : 'review';
+    let nextStage: StageId;
+    if (outcome === 'blocked') {
+      nextStage = 'blocked';
+    } else {
+      const pipelineInfo = PIPELINE_STAGES[item.stageId as SharedStageId];
+      nextStage = (pipelineInfo?.nextStage as StageId) ?? 'review';
+    }
     const action: WorkLogAction = outcome === 'blocked' ? 'note' : 'completed';
 
     // Delete the agent claim (by itemId, which is unique)

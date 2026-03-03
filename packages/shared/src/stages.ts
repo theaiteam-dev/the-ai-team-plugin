@@ -14,7 +14,7 @@ export type StageId = (typeof ALL_STAGES)[number];
 export const TRANSITION_MATRIX: Record<StageId, readonly StageId[]> = {
   briefings: ['ready', 'blocked'],
   ready: ['testing', 'implementing', 'probing', 'blocked', 'briefings'],
-  testing: ['review', 'blocked'],
+  testing: ['implementing', 'blocked'],
   implementing: ['review', 'blocked'],
   probing: ['ready', 'done', 'blocked'],
   review: ['testing', 'implementing', 'probing', 'blocked'],
@@ -53,7 +53,7 @@ export const PIPELINE_STAGES: Partial<Record<StageId, PipelineStageInfo>> = {
   testing: {
     agent: 'murdock',
     agentDisplay: 'Murdock',
-    nextStage: 'review',
+    nextStage: 'implementing',
     description: 'writes tests defining acceptance criteria',
   },
   implementing: {

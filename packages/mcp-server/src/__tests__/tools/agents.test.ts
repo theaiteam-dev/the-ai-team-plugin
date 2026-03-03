@@ -291,7 +291,7 @@ describe('Agent Tools', () => {
         expect(mockPost).toHaveBeenCalledWith('/api/agents/stop', {
           itemId: '007',
           agent: 'murdock',
-          status: 'success',
+          outcome: 'completed',
           summary: 'Created 5 test cases covering happy path and edge cases',
         });
         expect(result.content[0].text).toContain('success');
@@ -328,7 +328,7 @@ describe('Agent Tools', () => {
         });
 
         expect(mockPost).toHaveBeenCalledWith('/api/agents/stop', expect.objectContaining({
-          status: 'failed',
+          outcome: 'blocked',
         }));
         expect(result.content[0].text).toContain('008');
       });

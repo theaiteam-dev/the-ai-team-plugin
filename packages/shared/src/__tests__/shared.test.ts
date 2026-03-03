@@ -41,7 +41,7 @@ describe('Shared Package', () => {
       // Valid transitions
       expect(isValidTransition('briefings', 'ready')).toBe(true);
       expect(isValidTransition('ready', 'testing')).toBe(true);
-      expect(isValidTransition('testing', 'review')).toBe(true);
+      expect(isValidTransition('testing', 'implementing')).toBe(true);
       expect(isValidTransition('review', 'probing')).toBe(true);
       expect(isValidTransition('probing', 'done')).toBe(true);
 
@@ -56,6 +56,10 @@ describe('Shared Package', () => {
       const briefingsNext = getValidNextStages('briefings');
       expect(briefingsNext).toEqual(['ready', 'blocked']);
 
+      const testingNext = getValidNextStages('testing');
+      expect(testingNext).toContain('implementing');
+      expect(testingNext).not.toContain('review');
+
       const reviewNext = getValidNextStages('review');
       expect(reviewNext).not.toContain('done');
       expect(reviewNext).toContain('probing');
@@ -69,6 +73,10 @@ describe('Shared Package', () => {
     });
 
     it('should define pipeline stages with agent assignments', () => {
+      expect(PIPELINE_STAGES.testing?.agent).toBe('murdock');
+      expect(PIPELINE_STAGES.testing?.nextStage).toBe('implementing');
+      expect(PIPELINE_STAGES.implementing?.agent).toBe('ba');
+      expect(PIPELINE_STAGES.implementing?.nextStage).toBe('review');
       expect(PIPELINE_STAGES.review?.agent).toBe('lynch');
       expect(PIPELINE_STAGES.review?.nextStage).toBe('probing');
       expect(PIPELINE_STAGES.probing?.agent).toBe('amy');

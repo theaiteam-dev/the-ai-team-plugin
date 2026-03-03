@@ -53,7 +53,7 @@ briefings → ready → testing → implementing → review → probing → done
                                                         └─────────────────┘
 ```
 
-**Note on transition enforcement:** The actual transition matrix enforces stricter rules: `testing` can only advance to `review` (not directly to `implementing`); `implementing` can only advance to `review`; `review` can send an item back to `testing` or `implementing` for rework, or forward to `probing`; `probing` cannot be skipped — `review` cannot transition directly to `done`. See `packages/shared/src/stages.ts` for the full `TRANSITION_MATRIX`.
+**Note on transition enforcement:** The transition matrix enforces the linear pipeline: `testing` advances to `implementing` (not directly to `review`); `implementing` advances to `review`; `review` can send an item back to `testing` or `implementing` for rework, or forward to `probing`; `probing` advances to `done` or can send back to `ready`. See `packages/shared/src/stages.ts` for the full `TRANSITION_MATRIX`.
 
 Each feature flows through stages sequentially. Different features can be at different stages simultaneously (pipeline parallelism). WIP limits control how many features are in-flight.
 
