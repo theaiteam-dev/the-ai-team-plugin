@@ -214,14 +214,14 @@ export async function POST(
       }
     }
 
-    // Find current mission for this project
+    // Find current mission for this project.
+    // A mission is "current" until archived (archivedAt set), matching
+    // /api/missions/current behavior. No state filter — completed/failed
+    // missions that haven't been archived yet should still receive events.
     const currentMission = await prisma.mission.findFirst({
       where: {
-        archivedAt: null,
         projectId,
-        state: {
-          notIn: ['completed', 'failed', 'archived'],
-        },
+        archivedAt: null,
       },
       orderBy: { startedAt: 'desc' },
     });

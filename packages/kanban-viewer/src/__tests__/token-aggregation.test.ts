@@ -416,6 +416,219 @@ describe('POST /api/missions/:missionId/token-usage - double-counting prevention
   });
 });
 
+describe('POST /api/missions/:missionId/token-usage - native teammate stop events', () => {
+  it('should include native teammate stop events when no subagent_stop exists', async () => {
+    // Native teammates (e.g., amy in teams mode) only fire stop events,
+    // not subagent_stop. These must be included in aggregation.
+    const ts = new Date();
+    await prisma.hookEvent.createMany({
+      data: [
+        // amy fires multiple cumulative stop events (native teammate)
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'stop',
+          agentName: 'amy',
+          status: 'stopped',
+          summary: 'amy turn 1',
+          timestamp: new Date(ts.getTime()),
+          inputTokens: 2000,
+          outputTokens: 400,
+          cacheCreationTokens: 100,
+          cacheReadTokens: 1500,
+          model: 'claude-sonnet-4-6',
+        },
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'stop',
+          agentName: 'amy',
+          status: 'stopped',
+          summary: 'amy turn 2 (cumulative)',
+          timestamp: new Date(ts.getTime() + 1000),
+          inputTokens: 4000,
+          outputTokens: 800,
+          cacheCreationTokens: 200,
+          cacheReadTokens: 3000,
+          model: 'claude-sonnet-4-6',
+        },
+        // hannibal also fires stop events
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'stop',
+          agentName: 'hannibal',
+          status: 'stopped',
+          summary: 'hannibal stopped',
+          timestamp: new Date(ts.getTime() + 2000),
+          inputTokens: 5000,
+          outputTokens: 1000,
+          cacheCreationTokens: 2000,
+          cacheReadTokens: 8000,
+          model: 'claude-opus-4-6',
+        },
+      ],
+    });
+
+    const response = await POST(makeRequest('POST'), routeParams);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+
+    // Amy should appear with latest (cumulative) values only
+    const amy = data.data.agents.find((a: { agentName: string }) => a.agentName === 'amy');
+    expect(amy).toBeDefined();
+    expect(amy.inputTokens).toBe(4000);   // latest only, NOT 2000+4000
+    expect(amy.outputTokens).toBe(800);
+    expect(amy.model).toBe('claude-sonnet-4-6');
+
+    // Hannibal should still work as before
+    const hannibal = data.data.agents.find((a: { agentName: string }) => a.agentName === 'hannibal');
+    expect(hannibal).toBeDefined();
+    expect(hannibal.inputTokens).toBe(5000);
+  });
+
+  it('should prefer subagent_stop over stop to prevent double-counting', async () => {
+    // Legacy subagents fire BOTH subagent_stop AND stop with identical data.
+    // The aggregation must use subagent_stop and skip the stop event.
+    const ts = new Date();
+    await prisma.hookEvent.createMany({
+      data: [
+        // murdock subagent_stop (from Hannibal's session)
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'subagent_stop',
+          agentName: 'murdock',
+          status: 'success',
+          summary: 'Tests complete',
+          timestamp: new Date(ts.getTime()),
+          inputTokens: 3000,
+          outputTokens: 600,
+          cacheCreationTokens: 200,
+          cacheReadTokens: 2000,
+          model: 'claude-sonnet-4-6',
+        },
+        // murdock stop (from murdock's own session) — should be skipped
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'stop',
+          agentName: 'murdock',
+          status: 'stopped',
+          summary: 'murdock session end',
+          timestamp: new Date(ts.getTime() + 100),
+          inputTokens: 3000,
+          outputTokens: 600,
+          cacheCreationTokens: 200,
+          cacheReadTokens: 2000,
+          model: 'claude-sonnet-4-6',
+        },
+      ],
+    });
+
+    const response = await POST(makeRequest('POST'), routeParams);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    const murdock = data.data.agents.find((a: { agentName: string }) => a.agentName === 'murdock');
+    expect(murdock).toBeDefined();
+    // Should be 3000, not 6000 (no double-counting)
+    expect(murdock.inputTokens).toBe(3000);
+    expect(murdock.outputTokens).toBe(600);
+  });
+
+  it('should handle mixed mode — some agents with subagent_stop, others with stop only', async () => {
+    // Real-world scenario: legacy subagent (murdock) has subagent_stop,
+    // native teammate (amy) has only stop, hannibal has only stop.
+    const ts = new Date();
+    await prisma.hookEvent.createMany({
+      data: [
+        // murdock: legacy subagent (subagent_stop + stop)
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'subagent_stop',
+          agentName: 'murdock',
+          status: 'success',
+          summary: 'murdock subagent_stop',
+          timestamp: new Date(ts.getTime()),
+          inputTokens: 2000,
+          outputTokens: 400,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 1000,
+          model: 'claude-sonnet-4-6',
+        },
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'stop',
+          agentName: 'murdock',
+          status: 'stopped',
+          summary: 'murdock stop (duplicate)',
+          timestamp: new Date(ts.getTime() + 100),
+          inputTokens: 2000,
+          outputTokens: 400,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 1000,
+          model: 'claude-sonnet-4-6',
+        },
+        // amy: native teammate (stop only)
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'stop',
+          agentName: 'amy',
+          status: 'stopped',
+          summary: 'amy stop',
+          timestamp: new Date(ts.getTime() + 1000),
+          inputTokens: 5000,
+          outputTokens: 1000,
+          cacheCreationTokens: 300,
+          cacheReadTokens: 4000,
+          model: 'claude-sonnet-4-6',
+        },
+        // hannibal: orchestrator (stop only)
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'stop',
+          agentName: 'hannibal',
+          status: 'stopped',
+          summary: 'hannibal stop',
+          timestamp: new Date(ts.getTime() + 2000),
+          inputTokens: 8000,
+          outputTokens: 2000,
+          cacheCreationTokens: 3000,
+          cacheReadTokens: 12000,
+          model: 'claude-opus-4-6',
+        },
+      ],
+    });
+
+    const response = await POST(makeRequest('POST'), routeParams);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+
+    const agents: Array<{ agentName: string; inputTokens: number }> = data.data.agents;
+    expect(agents).toHaveLength(3);
+
+    // murdock: subagent_stop used, stop skipped
+    const murdock = agents.find((a) => a.agentName === 'murdock');
+    expect(murdock!.inputTokens).toBe(2000);
+
+    // amy: stop used (no subagent_stop exists)
+    const amy = agents.find((a) => a.agentName === 'amy');
+    expect(amy!.inputTokens).toBe(5000);
+
+    // hannibal: stop used (no subagent_stop exists)
+    const hannibal = agents.find((a) => a.agentName === 'hannibal');
+    expect(hannibal!.inputTokens).toBe(8000);
+  });
+});
+
 describe('POST /api/missions/:missionId/token-usage - multiple agents and models', () => {
   it('should group by agentName+model producing separate rows for different combinations', async () => {
     const ts = new Date();

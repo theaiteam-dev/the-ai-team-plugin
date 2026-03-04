@@ -52,7 +52,10 @@ function sumTotals(agents: AgentRow[]): Totals {
  *
  * Reads HookEvent rows for the mission using dedup logic:
  * - subagent_stop events: SUM all (each is an independent process with its own totals)
- * - stop events (hannibal): take LATEST only per agent+model (cumulative session totals)
+ * - stop events (all agents): take LATEST only per agent+model (cumulative session totals)
+ *   Used as FALLBACK — only populates a group if no subagent_stop data exists for that key.
+ *   This prevents double-counting for legacy subagents (which have both event types)
+ *   while correctly capturing native teammates (which only fire stop events).
  *
  * Groups by agentName+model, calculates cost, upserts MissionTokenUsage.
  */
@@ -87,16 +90,16 @@ export async function POST(request: Request, context: RouteContext) {
       },
     });
 
-    // --- Stop events (hannibal): take only the latest per agent+model ---
+    // --- Stop events (all agents): take only the latest per agent+model ---
     // stop events report cumulative session-to-date totals, so summing
     // multiple stop events would massively over-count. We take only the
     // most recent event (highest id) per agent+model combination.
+    // No agentName filter — include hannibal AND native teammates (murdock, ba, etc.)
     const stopEvents = await prisma.hookEvent.findMany({
       where: {
         missionId,
         projectId,
         eventType: 'stop',
-        agentName: 'hannibal',
         inputTokens: { not: null },
         model: { not: null },
       },
@@ -128,7 +131,7 @@ export async function POST(request: Request, context: RouteContext) {
         projectId,
         OR: [
           { eventType: 'subagent_stop', agentName: { not: 'hannibal' } },
-          { eventType: 'stop', agentName: 'hannibal' },
+          { eventType: 'stop' },
         ],
       },
     });
@@ -166,17 +169,22 @@ export async function POST(request: Request, context: RouteContext) {
       }
     }
 
-    // Add latest stop events (no summing — each is already a cumulative total)
+    // Add latest stop events as FALLBACK only (no summing — each is already cumulative).
+    // Only populate if no subagent_stop data exists for this agent+model.
+    // This prevents double-counting for legacy subagents (which have both event types)
+    // while correctly capturing native teammates and hannibal (which only fire stop).
     for (const event of latestStopByKey.values()) {
       const key = `${event.agentName}:${event.model}`;
-      groups.set(key, {
-        agentName: event.agentName,
-        model: event.model!,
-        inputTokens: event.inputTokens ?? 0,
-        outputTokens: event.outputTokens ?? 0,
-        cacheCreationTokens: event.cacheCreationTokens ?? 0,
-        cacheReadTokens: event.cacheReadTokens ?? 0,
-      });
+      if (!groups.has(key)) {
+        groups.set(key, {
+          agentName: event.agentName,
+          model: event.model!,
+          inputTokens: event.inputTokens ?? 0,
+          outputTokens: event.outputTokens ?? 0,
+          cacheCreationTokens: event.cacheCreationTokens ?? 0,
+          cacheReadTokens: event.cacheReadTokens ?? 0,
+        });
+      }
     }
 
     // Upsert each group into MissionTokenUsage atomically

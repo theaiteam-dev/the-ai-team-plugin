@@ -373,6 +373,67 @@ describe('POST /api/hooks/events', () => {
     expect(data.error.message).toContain('timestamp');
   });
 
+  it('should associate events with completed/failed missions not yet archived', async () => {
+    // A mission in "failed" or "completed" state that hasn't been archived
+    // (archivedAt is null) should still receive events. This is the fix for
+    // the bug where 71% of token-bearing events got missionId: null.
+    const missionId = 'M-test-failed-mission';
+    const projectId = 'test-project';
+
+    // Ensure project exists
+    await prisma.project.upsert({
+      where: { id: projectId },
+      update: {},
+      create: { id: projectId, name: 'Test Project' },
+    });
+
+    // Create a failed mission (not archived)
+    await prisma.mission.upsert({
+      where: { id: missionId },
+      update: { state: 'failed', archivedAt: null },
+      create: {
+        id: missionId,
+        name: 'Failed Mission',
+        state: 'failed',
+        prdPath: '/prd/test.md',
+        projectId,
+        startedAt: new Date(),
+        archivedAt: null,
+      },
+    });
+
+    const eventPayload = {
+      eventType: 'stop',
+      agentName: 'hannibal',
+      status: 'stopped',
+      summary: 'Late-arriving stop event',
+      timestamp: new Date().toISOString(),
+      inputTokens: 5000,
+      outputTokens: 1000,
+      model: 'claude-opus-4-6',
+    };
+
+    const request = new Request('http://localhost:3000/api/hooks/events', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Project-ID': projectId,
+      },
+      body: JSON.stringify(eventPayload),
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(data.success).toBe(true);
+    expect(data.data.missionId).toBe(missionId);
+
+    // Clean up
+    await prisma.hookEvent.deleteMany({ where: { missionId } });
+    await prisma.mission.delete({ where: { id: missionId } });
+  });
+
   it('should reject batches over 100 events limit', async () => {
     // Create a batch of 101 events
     const largeBatch = Array.from({ length: 101 }, (_, i) => ({
