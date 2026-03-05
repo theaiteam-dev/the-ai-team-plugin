@@ -20,7 +20,7 @@ Execute the mission with the pipeline flow.
 
 Before doing anything else, check your current model. Your system prompt contains your model ID (e.g., "You are powered by the model named Opus 4.6").
 
-```
+```text
 if model is NOT sonnet:
     Output to user:
     "Hannibal orchestration runs best on Sonnet — faster responses and lower

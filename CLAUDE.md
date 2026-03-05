@@ -267,7 +267,7 @@ Observer hooks (`scripts/hooks/lib/observer.js`) fire on every tool call and age
 **Hook events** are stored in the database per-project. They capture agent name, tool name, event type, timestamps, token counts, and model. Events are posted automatically by the observer hooks — no manual instrumentation needed.
 
 **Token usage per mission** is the primary way to check costs:
-```
+```bash
 # Aggregate token usage (POST triggers aggregation, GET returns cached results)
 POST /api/missions/{missionId}/token-usage  (Header: X-Project-ID)
 GET  /api/missions/{missionId}/token-usage  (Header: X-Project-ID)
