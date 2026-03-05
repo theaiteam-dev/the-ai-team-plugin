@@ -1,3 +1,6 @@
+---
+model: sonnet
+---
 # /ai-team:plan
 
 Initialize a mission from a PRD file with two-pass refinement.
@@ -89,8 +92,7 @@ The tool:
 
 ```
 Task(
-  subagent_type: "general-purpose",
-  model: "opus",
+  subagent_type: "ai-team:face",
   prompt: "You are Face from the A(i)-Team. [full face.md prompt]
 
   **THIS IS THE FIRST PASS.** Create work items in briefings stage only.
@@ -120,8 +122,7 @@ If validation fails, report errors and stop.
 
 ```
 Task(
-  subagent_type: "general-purpose",
-  model: "opus",
+  subagent_type: "ai-team:sosa",
   prompt: "You are Sosa from the A(i)-Team. [full sosa.md prompt]
 
   Review all work items in briefings stage.
@@ -150,8 +151,7 @@ Sosa will:
 
 ```
 Task(
-  subagent_type: "general-purpose",
-  model: "opus",
+  subagent_type: "ai-team:face",
   prompt: "You are Face from the A(i)-Team. [full face.md prompt]
 
   **THIS IS THE SECOND PASS.** Apply Sosa's refinements.

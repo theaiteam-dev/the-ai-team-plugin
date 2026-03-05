@@ -13,6 +13,7 @@
  */
 
 import { readHookInput, sendObserverEvent, registerAgent, lookupAgent } from './lib/observer.js';
+import { parseTranscriptUsage } from './lib/parse-transcript.js';
 
 try {
   const hookInput = readHookInput();
@@ -65,6 +66,22 @@ try {
     agent_type: agentType || undefined,
   });
 
+  // On SubagentStop, parse token usage from transcript if available
+  let tokenFields = {};
+  if (hookEventName === 'SubagentStop') {
+    const transcriptPath = hookInput.agent_transcript_path;
+    if (transcriptPath) {
+      const tokenUsage = parseTranscriptUsage(transcriptPath);
+      tokenFields = {
+        ...(tokenUsage.inputTokens !== null && { inputTokens: tokenUsage.inputTokens }),
+        ...(tokenUsage.outputTokens !== null && { outputTokens: tokenUsage.outputTokens }),
+        ...(tokenUsage.cacheCreationTokens !== null && { cacheCreationTokens: tokenUsage.cacheCreationTokens }),
+        ...(tokenUsage.cacheReadTokens !== null && { cacheReadTokens: tokenUsage.cacheReadTokens }),
+        ...(tokenUsage.model !== null && { model: tokenUsage.model }),
+      };
+    }
+  }
+
   await sendObserverEvent({
     eventType,
     agentName,
@@ -73,6 +90,7 @@ try {
     payload,
     correlationId: agentId || undefined,
     timestamp: new Date().toISOString(),
+    ...tokenFields,
   }).catch(() => {});
 } catch {
   // Fire-and-forget: never block the agent

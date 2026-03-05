@@ -84,6 +84,21 @@ interface DbActivityLog {
   timestamp: Date;
 }
 
+/** Database MissionTokenUsage row type from Prisma */
+interface DbMissionTokenUsage {
+  id: number;
+  missionId: string;
+  projectId: string;
+  agentName: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  estimatedCostUsd: number;
+  createdAt: Date;
+}
+
 /** Database hook event type from Prisma */
 interface DbHookEvent {
   id: number;
@@ -97,6 +112,11 @@ interface DbHookEvent {
   summary: string;
   correlationId: string | null;
   timestamp: Date;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheCreationTokens: number | null;
+  cacheReadTokens: number | null;
+  model: string | null;
 }
 
 /** Tracked item state for change detection */
@@ -239,6 +259,39 @@ function createMissionCompletedEvent(mission: DbMission): BoardEvent {
   };
 }
 
+/** Create mission-token-usage event from per-agent rows */
+function createMissionTokenUsageEvent(
+  missionId: string,
+  rows: DbMissionTokenUsage[]
+): BoardEvent {
+  const agents = rows.map((row) => ({
+    agentName: row.agentName,
+    model: row.model,
+    inputTokens: row.inputTokens,
+    outputTokens: row.outputTokens,
+    cacheCreationTokens: row.cacheCreationTokens,
+    cacheReadTokens: row.cacheReadTokens,
+    estimatedCostUsd: row.estimatedCostUsd,
+  }));
+
+  const totals = rows.reduce(
+    (acc, row) => ({
+      inputTokens: acc.inputTokens + row.inputTokens,
+      outputTokens: acc.outputTokens + row.outputTokens,
+      cacheCreationTokens: acc.cacheCreationTokens + row.cacheCreationTokens,
+      cacheReadTokens: acc.cacheReadTokens + row.cacheReadTokens,
+      estimatedCostUsd: acc.estimatedCostUsd + row.estimatedCostUsd,
+    }),
+    { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, estimatedCostUsd: 0 }
+  );
+
+  return {
+    type: 'mission-token-usage',
+    timestamp: new Date().toISOString(),
+    data: { missionId, agents, totals },
+  };
+}
+
 /** Create activity-entry-added event */
 function createActivityEntryAddedEvent(log: DbActivityLog): BoardEvent {
   return {
@@ -269,6 +322,11 @@ function dbHookEventToSummary(event: DbHookEvent): HookEventSummary {
   if (event.toolName !== null) summary.toolName = event.toolName;
   if (event.durationMs !== null) summary.durationMs = event.durationMs;
   if (event.correlationId !== null) summary.correlationId = event.correlationId;
+  if (event.inputTokens !== null) summary.inputTokens = event.inputTokens;
+  if (event.outputTokens !== null) summary.outputTokens = event.outputTokens;
+  if (event.cacheCreationTokens !== null) summary.cacheCreationTokens = event.cacheCreationTokens;
+  if (event.cacheReadTokens !== null) summary.cacheReadTokens = event.cacheReadTokens;
+  if (event.model !== null) summary.model = event.model;
 
   return summary;
 }
@@ -329,6 +387,8 @@ function createSSEStream(projectId: string | null): Response {
   let previousMissionState: string | null = null;
   let isFirstPoll = true; // Track first poll to establish baseline without emitting
   let consecutiveErrors = 0; // Track consecutive database errors for circuit breaker
+  // Deduplication: track which missions have already had their token-usage event emitted
+  const emittedTokenUsageMissions = new Set<string>();
 
   const encoder = new TextEncoder();
 
@@ -460,6 +520,29 @@ function createSSEStream(projectId: string | null): Response {
             }
 
             previousMissionState = currentMissionState;
+          }
+
+          // Poll for token usage data and emit once per completed mission
+          if (!isFirstPoll && mission && mission.state === 'completed' && !emittedTokenUsageMissions.has(mission.id)) {
+            try {
+              const tokenUsageWhere: { missionId: string; projectId?: string } = { missionId: mission.id };
+              if (projectId) {
+                tokenUsageWhere.projectId = projectId;
+              }
+
+              const tokenUsageRows = await prisma.missionTokenUsage.findMany({
+                where: tokenUsageWhere,
+                orderBy: { agentName: 'asc' },
+              });
+
+              if (tokenUsageRows.length > 0) {
+                pendingEvents.push(createMissionTokenUsageEvent(mission.id, tokenUsageRows as DbMissionTokenUsage[]));
+                emittedTokenUsageMissions.add(mission.id);
+              }
+            } catch (error) {
+              console.error('Token usage SSE emission failed:', error);
+              // Don't re-throw — best-effort
+            }
           }
 
           // Build activity log filter - optionally filter by projectId

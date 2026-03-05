@@ -377,7 +377,7 @@ describe('POST /api/agents/start', () => {
       expect(data.error.code).toBe('INVALID_STAGE');
     });
 
-    it('should return INVALID_STAGE if item is in in_progress', async () => {
+    it('should return INVALID_STAGE if non-pipeline agent tries to claim from work stage', async () => {
       mockPrisma.item.findFirst.mockResolvedValue({
         ...mockItemInInProgress,
         dependsOn: [],
@@ -429,6 +429,138 @@ describe('POST /api/agents/start', () => {
       const data: ApiError = await response.json();
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('INVALID_STAGE');
+    });
+  });
+
+  describe('work-stage claims (pipeline agents)', () => {
+    function setupWorkStageClaim(stageId: string, agent: string) {
+      mockPrisma.item.findFirst.mockResolvedValue({
+        ...mockItemInReady,
+        stageId,
+        dependsOn: [],
+      });
+      mockPrisma.$transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) => {
+        return callback(mockPrisma);
+      });
+      mockPrisma.agentClaim.create.mockResolvedValue({
+        agentName: agent,
+        itemId: 'WI-001',
+        claimedAt: new Date('2026-01-21T12:00:00Z'),
+      });
+      mockPrisma.item.update.mockResolvedValue({
+        ...mockItemInReady,
+        stageId,
+        assignedAgent: agent,
+        dependsOn: [],
+        workLogs: [],
+      });
+      mockPrisma.workLog.create.mockResolvedValue({
+        id: 1,
+        itemId: 'WI-001',
+        agent,
+        action: 'started',
+        summary: 'Started work on item',
+        timestamp: new Date('2026-01-21T12:00:00Z'),
+      });
+    }
+
+    it('should allow B.A. to claim item already in implementing stage', async () => {
+      setupWorkStageClaim('implementing', 'B.A.');
+
+      const { POST } = await import('@/app/api/agents/start/route');
+      const request = new NextRequest('http://localhost:3000/api/agents/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Project-ID': 'test-project' },
+        body: JSON.stringify({ itemId: 'WI-001', agent: 'B.A.' }),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+    });
+
+    it('should allow Lynch to claim item already in review stage', async () => {
+      setupWorkStageClaim('review', 'Lynch');
+
+      const { POST } = await import('@/app/api/agents/start/route');
+      const request = new NextRequest('http://localhost:3000/api/agents/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Project-ID': 'test-project' },
+        body: JSON.stringify({ itemId: 'WI-001', agent: 'Lynch' }),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+    });
+
+    it('should allow Amy to claim item already in probing stage', async () => {
+      setupWorkStageClaim('probing', 'Amy');
+
+      const { POST } = await import('@/app/api/agents/start/route');
+      const request = new NextRequest('http://localhost:3000/api/agents/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Project-ID': 'test-project' },
+        body: JSON.stringify({ itemId: 'WI-001', agent: 'Amy' }),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+    });
+
+    it('should reject Murdock from review (wrong work stage)', async () => {
+      mockPrisma.item.findFirst.mockResolvedValue({
+        ...mockItemInReady,
+        stageId: 'review',
+        dependsOn: [],
+      });
+
+      const { POST } = await import('@/app/api/agents/start/route');
+      const request = new NextRequest('http://localhost:3000/api/agents/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Project-ID': 'test-project' },
+        body: JSON.stringify({ itemId: 'WI-001', agent: 'Murdock' }),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(400);
+      const data: ApiError = await response.json();
+      expect(data.error.code).toBe('INVALID_STAGE');
+    });
+
+    it('should reject B.A. from testing (wrong work stage)', async () => {
+      mockPrisma.item.findFirst.mockResolvedValue({
+        ...mockItemInReady,
+        stageId: 'testing',
+        dependsOn: [],
+      });
+
+      const { POST } = await import('@/app/api/agents/start/route');
+      const request = new NextRequest('http://localhost:3000/api/agents/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Project-ID': 'test-project' },
+        body: JSON.stringify({ itemId: 'WI-001', agent: 'B.A.' }),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(400);
+      const data: ApiError = await response.json();
+      expect(data.error.code).toBe('INVALID_STAGE');
+    });
+
+    it('should skip deps/WIP checks for work-stage claims', async () => {
+      setupWorkStageClaim('implementing', 'B.A.');
+
+      const { POST } = await import('@/app/api/agents/start/route');
+      const request = new NextRequest('http://localhost:3000/api/agents/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Project-ID': 'test-project' },
+        body: JSON.stringify({ itemId: 'WI-001', agent: 'B.A.' }),
+      });
+
+      await POST(request);
+
+      // WIP check should NOT have been called (no stage.findUnique, no item.count)
+      expect(mockPrisma.stage.findUnique).not.toHaveBeenCalled();
+      expect(mockPrisma.item.count).not.toHaveBeenCalled();
     });
   });
 

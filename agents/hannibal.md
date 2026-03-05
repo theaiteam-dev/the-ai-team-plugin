@@ -359,8 +359,7 @@ Before moving a rejected item back to `ready` stage, you can optionally spawn Am
 
 ```
 Task(
-  subagent_type: "general-purpose",
-  model: "sonnet",
+  subagent_type: "ai-team:amy",
   description: "Amy: Diagnose {feature title}",
   prompt: "[Amy prompt from agents/amy.md]
 

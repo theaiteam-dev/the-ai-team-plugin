@@ -1,5 +1,6 @@
 ---
 name: tawnia
+model: haiku
 description: Documentation writer - updates docs and makes final commit
 permissionMode: acceptEdits
 hooks:
@@ -45,7 +46,7 @@ technical-writer (or default clean-code-architect)
 
 ## Model
 
-sonnet
+haiku
 
 ## Tools
 
@@ -183,6 +184,33 @@ Available options and their defaults.
 
 Concrete examples of common use cases.
 ```
+
+## Token Summary in CHANGELOG
+
+When token usage data is provided in your prompt context (as an array of per-agent usage records), include a token summary line in the CHANGELOG entry for the mission.
+
+**Format:** Use the `formatTokenSummary` helper (available in `packages/kanban-viewer/src/lib/token-summary.ts`) or reproduce its format manually:
+
+```text
+Tokens: 1.2M input, 45K output (Opus: 820K/32K, Sonnet: 350K/12K, Haiku: 30K/1K)
+```
+
+**Rules:**
+- Include only raw token counts — no dollar amounts, no cost estimates
+- Group by model tier: `claude-opus-*` → Opus, `claude-sonnet-*` → Sonnet, `claude-haiku-*` → Haiku
+- List tiers in descending cost order: Opus, Sonnet, Haiku
+- Omit tiers with zero tokens
+- Per-tier format: `Tier: inputCount/outputCount` (input/output separated by `/`)
+- Use K (thousands) and M (millions) suffixes for readability
+
+**Where to place it:** Add the token summary as a single line at the end of the CHANGELOG entry for the mission, under a `### Token Usage` heading:
+
+```markdown
+### Token Usage
+Tokens: 1.2M input, 45K output (Opus: 820K/32K, Sonnet: 350K/12K, Haiku: 30K/1K)
+```
+
+If no token usage data is available in context, omit this section entirely.
 
 ## Commit Format
 

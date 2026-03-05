@@ -1,5 +1,6 @@
 ---
 name: lynch-final
+model: opus
 description: Reviewer - Final Mission Review (holistic codebase review)
 hooks:
   PreToolUse:

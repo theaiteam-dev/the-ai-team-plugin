@@ -87,19 +87,21 @@ The plugin supports two dispatch modes, controlled by `CLAUDE_CODE_EXPERIMENTAL_
 
 **Progressive disclosure:** Hannibal reads exactly ONE playbook at mission start. The playbook contains the complete orchestration loop, agent dispatch patterns, completion detection, and concrete examples. Claude never sees the irrelevant mode's instructions.
 
+Model selection is defined in each agent's frontmatter (`agents/*.md`) — do NOT pass `model:` at dispatch time.
+
 **Planning Phase (both modes):**
-- Face: `subagent_type: "ai-team:face"`, `model: "opus"`
-- Sosa: `subagent_type: "ai-team:sosa"`, `model: "opus"`
+- Face: `subagent_type: "ai-team:face"`
+- Sosa: `subagent_type: "ai-team:sosa"`
 
 **Per-Feature Pipeline (ALL MANDATORY for each item):**
-- Murdock: `subagent_type: "ai-team:murdock"`, `model: "sonnet"` → testing stage
-- B.A.: `subagent_type: "ai-team:ba"`, `model: "sonnet"` → implementing stage
-- Lynch: `subagent_type: "ai-team:lynch"`, `model: "sonnet"` → review stage (per-feature)
-- Amy: `subagent_type: "ai-team:amy"`, `model: "sonnet"` → probing stage (EVERY feature, no exceptions)
+- Murdock: `subagent_type: "ai-team:murdock"` → testing stage
+- B.A.: `subagent_type: "ai-team:ba"` → implementing stage
+- Lynch: `subagent_type: "ai-team:lynch"` → review stage (per-feature)
+- Amy: `subagent_type: "ai-team:amy"` → probing stage (EVERY feature, no exceptions)
 
 **Mission Completion (MANDATORY):**
-- Lynch: `subagent_type: "ai-team:lynch-final"`, `model: "opus"` → Final Mission Review (PRD+diff scoped)
-- Tawnia: `subagent_type: "ai-team:tawnia"`, `model: "haiku"` → after post-checks pass
+- Lynch-Final: `subagent_type: "ai-team:lynch-final"` → Final Mission Review (PRD+diff scoped)
+- Tawnia: `subagent_type: "ai-team:tawnia"` → after post-checks pass
 
 ## Background Agent Permissions
 

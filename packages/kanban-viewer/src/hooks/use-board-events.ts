@@ -15,6 +15,7 @@ import type {
   DocumentationStartedEvent,
   DocumentationCompleteEvent,
   HookEventSummary,
+  MissionTokenUsageData,
 } from "@/types";
 
 /**
@@ -57,6 +58,18 @@ export interface UseBoardEventsOptions {
   onDocumentationStarted?: (data: DocumentationStartedEvent['data']) => void;
   /** Callback when documentation completes */
   onDocumentationComplete?: (data: DocumentationCompleteEvent['data']) => void;
+  /** Callback when mission token usage summary is available */
+  onMissionTokenUsage?: (data: {
+    missionId: string;
+    agents: MissionTokenUsageData[];
+    totals: {
+      inputTokens: number;
+      outputTokens: number;
+      cacheCreationTokens: number;
+      cacheReadTokens: number;
+      estimatedCostUsd: number;
+    };
+  }) => void;
   /** Whether to enable the SSE connection (defaults to true) */
   enabled?: boolean;
 }
@@ -120,6 +133,7 @@ export function useBoardEvents(
     onActivityEntry,
     onHookEvent,
     onMissionCompleted,
+    onMissionTokenUsage,
     onFinalReviewStarted,
     onFinalReviewComplete,
     onPostChecksStarted,
@@ -152,6 +166,7 @@ export function useBoardEvents(
     onActivityEntry,
     onHookEvent,
     onMissionCompleted,
+    onMissionTokenUsage,
     onFinalReviewStarted,
     onFinalReviewComplete,
     onPostChecksStarted,
@@ -172,6 +187,7 @@ export function useBoardEvents(
       onActivityEntry,
       onHookEvent,
       onMissionCompleted,
+      onMissionTokenUsage,
       onFinalReviewStarted,
       onFinalReviewComplete,
       onPostChecksStarted,
@@ -180,7 +196,7 @@ export function useBoardEvents(
       onDocumentationStarted,
       onDocumentationComplete,
     };
-  }, [onItemAdded, onItemMoved, onItemUpdated, onItemDeleted, onBoardUpdated, onActivityEntry, onHookEvent, onMissionCompleted, onFinalReviewStarted, onFinalReviewComplete, onPostChecksStarted, onPostCheckUpdate, onPostChecksComplete, onDocumentationStarted, onDocumentationComplete]);
+  }, [onItemAdded, onItemMoved, onItemUpdated, onItemDeleted, onBoardUpdated, onActivityEntry, onHookEvent, onMissionCompleted, onMissionTokenUsage, onFinalReviewStarted, onFinalReviewComplete, onPostChecksStarted, onPostCheckUpdate, onPostChecksComplete, onDocumentationStarted, onDocumentationComplete]);
 
   // Ref to track EventSource and reconnection state
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -248,6 +264,12 @@ export function useBoardEvents(
               duration_ms: boardEvent.data.duration_ms,
               stats: boardEvent.data.stats,
             });
+          }
+          break;
+
+        case "mission-token-usage":
+          if (callbacksRef.current.onMissionTokenUsage) {
+            callbacksRef.current.onMissionTokenUsage(boardEvent.data);
           }
           break;
 

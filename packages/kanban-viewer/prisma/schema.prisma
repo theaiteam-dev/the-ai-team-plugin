@@ -17,10 +17,11 @@ model Project {
   updatedAt  DateTime      @updatedAt
 
   // Relations
-  items      Item[]
-  missions   Mission[]
-  activities ActivityLog[]
-  hookEvents HookEvent[]
+  items        Item[]
+  missions     Mission[]
+  activities   ActivityLog[]
+  hookEvents   HookEvent[]
+  tokenUsage   MissionTokenUsage[]
 }
 
 model Stage {
@@ -114,6 +115,7 @@ model Mission {
   items       MissionItem[]
   activities  ActivityLog[]
   hookEvents  HookEvent[]
+  tokenUsage  MissionTokenUsage[]
 
   // Indexes for common queries
   @@index([archivedAt])
@@ -158,8 +160,13 @@ model HookEvent {
   durationMs    Int?                     // Duration in milliseconds (only for post_tool_use)
   summary       String                   // Short human-readable summary
   payload       String   @default("{}")  // JSON blob with event-specific detail
-  correlationId String?                  // Shared between PreToolUse and its matching PostToolUse
-  timestamp     DateTime @default(now())
+  correlationId        String?                  // Shared between PreToolUse and its matching PostToolUse
+  timestamp            DateTime @default(now())
+  inputTokens          Int?                     // Input token count for this event
+  outputTokens         Int?                     // Output token count for this event
+  cacheCreationTokens  Int?                     // Cache creation token count
+  cacheReadTokens      Int?                     // Cache read token count
+  model                String?                  // Model used for this event
 
   // Indexes for common queries
   @@index([projectId])
@@ -167,4 +174,24 @@ model HookEvent {
   @@index([timestamp])
   @@index([agentName])
   @@unique([correlationId, eventType])  // Deduplication - NULL values are considered distinct in SQLite
+}
+
+model MissionTokenUsage {
+  id                  Int      @id @default(autoincrement())
+  missionId           String
+  mission             Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  projectId           String
+  project             Project  @relation(fields: [projectId], references: [id])
+  agentName           String
+  model               String
+  inputTokens         Int
+  outputTokens        Int
+  cacheCreationTokens Int
+  cacheReadTokens     Int
+  estimatedCostUsd    Float
+  createdAt           DateTime @default(now())
+
+  @@unique([missionId, agentName, model])
+  @@index([missionId])
+  @@index([projectId])
 }

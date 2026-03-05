@@ -35,6 +35,11 @@ interface HookEventInput {
   payload?: string;
   correlationId?: string;
   timestamp: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  model?: string;
 }
 
 /** Response for single event creation. */
@@ -183,16 +188,40 @@ export async function POST(
           { status: 400 }
         );
       }
+
+      // Validate token fields are non-negative integers when present
+      const tokenFields = [
+        ['inputTokens', event.inputTokens],
+        ['outputTokens', event.outputTokens],
+        ['cacheCreationTokens', event.cacheCreationTokens],
+        ['cacheReadTokens', event.cacheReadTokens],
+      ] as const;
+
+      for (const [field, value] of tokenFields) {
+        if (value !== undefined && (typeof value !== 'number' || !Number.isInteger(value) || value < 0)) {
+          return NextResponse.json(
+            createValidationError(`${field} must be a non-negative integer`).toResponse(),
+            { status: 400 }
+          );
+        }
+      }
+
+      if (event.model !== undefined && (typeof event.model !== 'string' || event.model.trim() === '')) {
+        return NextResponse.json(
+          createValidationError('model must be a non-empty string').toResponse(),
+          { status: 400 }
+        );
+      }
     }
 
-    // Find current mission for this project
+    // Find current mission for this project.
+    // A mission is "current" until archived (archivedAt set), matching
+    // /api/missions/current behavior. No state filter — completed/failed
+    // missions that haven't been archived yet should still receive events.
     const currentMission = await prisma.mission.findFirst({
       where: {
-        archivedAt: null,
         projectId,
-        state: {
-          notIn: ['completed', 'failed', 'archived'],
-        },
+        archivedAt: null,
       },
       orderBy: { startedAt: 'desc' },
     });
@@ -220,6 +249,11 @@ export async function POST(
             payload: event.payload ?? '{}',
             correlationId: event.correlationId ?? null,
             timestamp: new Date(event.timestamp),
+            inputTokens: event.inputTokens ?? null,
+            outputTokens: event.outputTokens ?? null,
+            cacheCreationTokens: event.cacheCreationTokens ?? null,
+            cacheReadTokens: event.cacheReadTokens ?? null,
+            model: event.model ?? null,
           },
         });
 

@@ -1,5 +1,6 @@
 ---
 name: face
+model: opus
 description: Decomposer - breaks PRDs into work items
 hooks:
   PreToolUse:

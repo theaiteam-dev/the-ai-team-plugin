@@ -1,5 +1,6 @@
 ---
 name: lynch
+model: sonnet
 description: Reviewer - reviews tests and implementation together
 hooks:
   PreToolUse:

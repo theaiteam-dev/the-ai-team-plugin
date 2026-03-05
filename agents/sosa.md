@@ -1,5 +1,6 @@
 ---
 name: sosa
+model: opus
 description: Requirements Critic - reviews decomposition before execution
 hooks:
   PreToolUse:

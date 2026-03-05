@@ -1,5 +1,6 @@
 ---
 name: ba
+model: sonnet
 description: Implementer - writes code to pass tests
 permissionMode: acceptEdits
 hooks:

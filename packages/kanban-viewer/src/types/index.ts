@@ -234,6 +234,20 @@ export interface BoardMetadata {
   documentation?: DocumentationStatus;
 }
 
+/**
+ * Per-agent token usage breakdown for a completed mission.
+ * Emitted as part of the `mission-token-usage` SSE event.
+ */
+export interface MissionTokenUsageData {
+  agentName: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  estimatedCostUsd: number;
+}
+
 // Board event types
 export type BoardEventType =
   | 'item-added'
@@ -244,6 +258,7 @@ export type BoardEventType =
   | 'activity-entry-added'
   | 'hook-event'
   | 'mission-completed'
+  | 'mission-token-usage'
   | 'final-review-started'
   | 'final-review-complete'
   | 'post-checks-started'
@@ -420,6 +435,22 @@ export interface HookEventNotification {
   data: import('./hook-event').HookEventSummary | import('./hook-event').HookEventSummary[];
 }
 
+export interface MissionTokenUsageEvent {
+  type: 'mission-token-usage';
+  timestamp: string;
+  data: {
+    missionId: string;
+    agents: MissionTokenUsageData[];
+    totals: {
+      inputTokens: number;
+      outputTokens: number;
+      cacheCreationTokens: number;
+      cacheReadTokens: number;
+      estimatedCostUsd: number;
+    };
+  };
+}
+
 export type BoardEvent =
   | ItemAddedEvent
   | ItemMovedEvent
@@ -429,6 +460,7 @@ export type BoardEvent =
   | ActivityEntryAddedEvent
   | HookEventNotification
   | MissionCompletedEvent
+  | MissionTokenUsageEvent
   | FinalReviewStartedEvent
   | FinalReviewCompleteEvent
   | PostChecksStartedEvent

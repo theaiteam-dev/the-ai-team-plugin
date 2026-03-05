@@ -18,4 +18,9 @@ export interface HookEventSummary {
   summary: string;
   correlationId?: string;
   timestamp: Date;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  model?: string;
 }

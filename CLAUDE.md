@@ -53,7 +53,7 @@ briefings → ready → testing → implementing → review → probing → done
                                                         └─────────────────┘
 ```
 
-**Note on transition enforcement:** The actual transition matrix enforces stricter rules: `testing` can only advance to `review` (not directly to `implementing`); `implementing` can only advance to `review`; `review` can send an item back to `testing` or `implementing` for rework, or forward to `probing`; `probing` cannot be skipped — `review` cannot transition directly to `done`. See `packages/shared/src/stages.ts` for the full `TRANSITION_MATRIX`.
+**Note on transition enforcement:** The transition matrix enforces the linear pipeline: `testing` advances to `implementing` (not directly to `review`); `implementing` advances to `review`; `review` can send an item back to `testing` or `implementing` for rework, or forward to `probing`; `probing` advances to `done` or can send back to `ready`. See `packages/shared/src/stages.ts` for the full `TRANSITION_MATRIX`.
 
 Each feature flows through stages sequentially. Different features can be at different stages simultaneously (pipeline parallelism). WIP limits control how many features are in-flight.
 
@@ -203,19 +203,21 @@ Use MCP tools for mission items. Use native tasks for orchestration checkpoints.
 
 The plugin supports two dispatch modes, controlled by `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`. The `/ai-team:run` command detects the mode and loads the appropriate orchestration playbook. Hannibal reads exactly ONE playbook at mission start.
 
+Model selection is defined in each agent's frontmatter (`agents/*.md`) — do NOT pass `model:` at dispatch time.
+
 **Planning Phase (both modes):**
-- Face: `subagent_type: "ai-team:face"`, `model: "opus"`
-- Sosa: `subagent_type: "ai-team:sosa"`, `model: "opus"`
+- Face: `subagent_type: "ai-team:face"` (opus via frontmatter)
+- Sosa: `subagent_type: "ai-team:sosa"` (opus via frontmatter)
 
 **Per-Feature Pipeline (ALL MANDATORY for each item):**
-- Murdock: `subagent_type: "ai-team:murdock"`, `model: "sonnet"` → testing stage
-- B.A.: `subagent_type: "ai-team:ba"`, `model: "sonnet"` → implementing stage
-- Lynch: `subagent_type: "ai-team:lynch"`, `model: "sonnet"` → review stage (per-feature)
-- Amy: `subagent_type: "ai-team:amy"`, `model: "sonnet"` → probing stage (EVERY feature, no exceptions)
+- Murdock: `subagent_type: "ai-team:murdock"` → testing stage
+- B.A.: `subagent_type: "ai-team:ba"` → implementing stage
+- Lynch: `subagent_type: "ai-team:lynch"` → review stage (per-feature)
+- Amy: `subagent_type: "ai-team:amy"` → probing stage (EVERY feature, no exceptions)
 
 **Mission Completion (MANDATORY):**
-- Lynch-Final: `subagent_type: "ai-team:lynch-final"`, `model: "opus"` → Final Mission Review (PRD+diff scoped)
-- Tawnia: `subagent_type: "ai-team:tawnia"`, `model: "haiku"` → after post-checks pass
+- Lynch-Final: `subagent_type: "ai-team:lynch-final"` → Final Mission Review (PRD+diff scoped)
+- Tawnia: `subagent_type: "ai-team:tawnia"` → after post-checks pass
 
 ## MCP Tools
 
@@ -257,3 +259,37 @@ Parameters:
 - Appends work summary to `work_log` array
 
 All tools automatically include the `X-Project-ID` header from the `ATEAM_PROJECT_ID` environment variable.
+
+### Observability: Hook Events & Token Usage
+
+Observer hooks (`scripts/hooks/lib/observer.js`) fire on every tool call and agent lifecycle event, POSTing structured data to the API. This gives us real-time telemetry for every mission — do NOT parse Claude Code session transcripts (`.jsonl` files) when this data is available.
+
+**Hook events** are stored in the database per-project. They capture agent name, tool name, event type, timestamps, token counts, and model. Events are posted automatically by the observer hooks — no manual instrumentation needed.
+
+**Token usage per mission** is the primary way to check costs:
+```bash
+# Aggregate token usage (POST triggers aggregation, GET returns cached results)
+POST /api/missions/{missionId}/token-usage  (Header: X-Project-ID)
+GET  /api/missions/{missionId}/token-usage  (Header: X-Project-ID)
+```
+
+Returns per-agent breakdown with model, token counts, and estimated cost:
+```json
+{
+  "agents": [
+    { "agentName": "face", "model": "claude-opus-4-6", "estimatedCostUsd": 18.78, ... },
+    { "agentName": "hannibal", "model": "claude-sonnet-4-6", "estimatedCostUsd": 0.58, ... }
+  ],
+  "totals": { "estimatedCostUsd": 36.87, ... }
+}
+```
+
+**Useful API endpoints** (all require `X-Project-ID` header):
+- `GET /api/projects` — list all projects
+- `GET /api/missions` — list missions for a project
+- `GET /api/missions/current` — get active mission
+- `GET /api/items` — get work items (board state)
+- `POST /api/missions/{id}/token-usage` — aggregate and return token costs
+- `POST /api/hooks/events` — store hook events (called by observer hooks, not manually)
+
+Token pricing is loaded from `ateam.config.json` at runtime (see `packages/kanban-viewer/src/lib/token-cost.ts`).

@@ -1,5 +1,6 @@
 ---
 name: amy
+model: sonnet
 description: Investigator - probes for bugs beyond tests
 hooks:
   PreToolUse:

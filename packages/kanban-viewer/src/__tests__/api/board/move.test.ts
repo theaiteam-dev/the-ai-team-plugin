@@ -15,10 +15,10 @@ import { NextRequest } from 'next/server';
  * 8-Stage A-Team Pipeline transition matrix:
  * - briefings -> ready, blocked
  * - ready -> testing, implementing, probing, blocked, briefings
- * - testing -> review, blocked
+ * - testing -> implementing, blocked
  * - implementing -> review, blocked
  * - probing -> ready, done, blocked
- * - review -> done, testing, implementing, probing, blocked
+ * - review -> testing, implementing, probing, blocked
  * - done -> (terminal, no transitions)
  * - blocked -> ready
  */
@@ -880,7 +880,7 @@ describe('POST /api/board/move', () => {
       { from: 'ready', to: 'blocked' },
       { from: 'ready', to: 'briefings' },
       // testing transitions
-      { from: 'testing', to: 'review' },
+      { from: 'testing', to: 'implementing' },
       { from: 'testing', to: 'blocked' },
       // implementing transitions
       { from: 'implementing', to: 'review' },
@@ -944,7 +944,7 @@ describe('POST /api/board/move', () => {
       // testing invalid
       { from: 'testing', to: 'briefings' },
       { from: 'testing', to: 'ready' },
-      { from: 'testing', to: 'implementing' },
+      { from: 'testing', to: 'review' },
       { from: 'testing', to: 'probing' },
       { from: 'testing', to: 'done' },
       // implementing invalid

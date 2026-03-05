@@ -11,7 +11,7 @@ This playbook contains the complete orchestration loop, agent dispatch patterns,
 | Tool | Purpose | Key Parameters |
 |------|---------|----------------|
 | `TeamCreate` | Create a team for the mission | `team_name`, `description` |
-| `Task` | Spawn a teammate agent | `team_name`, `name`, `subagent_type`, `model`, `prompt` |
+| `Task` | Spawn a teammate agent | `team_name`, `name`, `subagent_type`, `prompt` |
 | `SendMessage` | Send messages to teammates | `type`, `recipient`, `content`, `summary` |
 | `SendMessage` (broadcast) | Message all teammates | `type: "broadcast"`, `content`, `summary` |
 | `SendMessage` (shutdown) | Request teammate shutdown | `type: "shutdown_request"`, `recipient` |
@@ -59,19 +59,19 @@ Spawn all pipeline agents immediately after team creation, before dispatching an
 
 ```
 Task(team_name: "mission-{id}", name: "murdock", subagent_type: "ai-team:murdock",
-     model: "sonnet", description: "Murdock: standby",
+     description: "Murdock: standby",
      prompt: "You are Murdock. Await work item assignments from Hannibal via SendMessage.")
 
 Task(team_name: "mission-{id}", name: "ba", subagent_type: "ai-team:ba",
-     model: "sonnet", description: "B.A.: standby",
+     description: "B.A.: standby",
      prompt: "You are B.A. Await work item assignments from Hannibal via SendMessage.")
 
 Task(team_name: "mission-{id}", name: "lynch", subagent_type: "ai-team:lynch",
-     model: "sonnet", description: "Lynch: standby",
+     description: "Lynch: standby",
      prompt: "You are Lynch. Await review assignments from Hannibal via SendMessage.")
 
 Task(team_name: "mission-{id}", name: "amy", subagent_type: "ai-team:amy",
-     model: "sonnet", description: "Amy: standby",
+     description: "Amy: standby",
      prompt: "You are Amy. Await probing assignments from Hannibal via SendMessage.")
 ```
 
@@ -91,14 +91,14 @@ Unlike legacy mode, you do NOT need task IDs for polling. Teammates send message
 
 ## Spawning Teammates
 
-| Agent | Name | Subagent Type | Model | Description |
-|-------|------|---------------|-------|-------------|
-| Murdock | `murdock` | `ai-team:murdock` | `sonnet` | QA Engineer - writes tests |
-| B.A. | `ba` | `ai-team:ba` | `sonnet` | Implementer - writes code |
-| Lynch | `lynch` | `ai-team:lynch` | `sonnet` | Reviewer - per-feature reviews |
-| Lynch (Final) | `lynch-final` | `ai-team:lynch-final` | `opus` | Final Mission Review (PRD+diff) |
-| Amy | `amy` | `ai-team:amy` | `sonnet` | Investigator - probes for bugs |
-| Tawnia | `tawnia` | `ai-team:tawnia` | `haiku` | Documentation writer |
+| Agent | Name | Subagent Type | Description |
+|-------|------|---------------|-------------|
+| Murdock | `murdock` | `ai-team:murdock` | QA Engineer - writes tests |
+| B.A. | `ba` | `ai-team:ba` | Implementer - writes code |
+| Lynch | `lynch` | `ai-team:lynch` | Reviewer - per-feature reviews |
+| Lynch (Final) | `lynch-final` | `ai-team:lynch-final` | Final Mission Review (PRD+diff) |
+| Amy | `amy` | `ai-team:amy` | Investigator - probes for bugs |
+| Tawnia | `tawnia` | `ai-team:tawnia` | Documentation writer |
 
 Spawn syntax:
 ```
@@ -106,7 +106,6 @@ Task(
   team_name: "mission-{missionId}",
   name: "murdock",
   subagent_type: "ai-team:murdock",
-  model: "sonnet",
   description: "Murdock: {feature title}",
   prompt: "... [agent prompt + work item context] ..."
 )
@@ -175,12 +174,14 @@ LOOP CONTINUOUSLY:
             board_move(itemId=item_id, to="ready")
 
     # ═══════════════════════════════════════════════════════════
-    # PHASE 3: FILL PIPELINE FROM READY (respects WIP limit)
+    # PHASE 3: FILL PIPELINE FROM READY (per-column WIP limits)
     # ═══════════════════════════════════════════════════════════
-    in_flight = count(testing) + count(implementing) + count(review) + count(probing)
-    while in_flight < WIP_LIMIT and ready stage not empty:
+    # No global WIP throttle — each column enforces its own limit.
+    # board_move rejects moves when the target column is full.
+    while ready stage not empty:
         pick ONE item from ready stage
-        board_move(itemId=item_id, to="testing", agent="Murdock")
+        result = board_move(itemId=item_id, to="testing", agent="Murdock")
+        if result is WIP error: break  # testing column is full
         spawn or message Murdock with new work
         active_teammates[item_id] = "murdock"
 
@@ -190,7 +191,7 @@ LOOP CONTINUOUSLY:
 **KEY BEHAVIORS:**
 - Phase 1: Messages arrive automatically - no polling required
 - Phase 2: Unlock next-wave items when deps complete (correct waiting)
-- Phase 3: Keep pipeline full up to WIP limit
+- Phase 3: Keep pipeline full — per-column WIP limits enforced by board_move
 
 ## Minimizing Per-Cycle Token Spend
 
@@ -254,7 +255,6 @@ Task(
   team_name: "mission-{missionId}",
   name: "murdock",
   subagent_type: "ai-team:murdock",
-  model: "sonnet",
   description: "Murdock: {feature title}",
   prompt: "... [Murdock prompt from agents/murdock.md]
 
@@ -294,7 +294,6 @@ Task(
   team_name: "mission-{missionId}",
   name: "ba",
   subagent_type: "ai-team:ba",
-  model: "sonnet",
   description: "B.A.: {feature title}",
   prompt: "... [B.A. prompt from agents/ba.md]
 
@@ -332,7 +331,6 @@ Task(
   team_name: "mission-{missionId}",
   name: "lynch",
   subagent_type: "ai-team:lynch",
-  model: "sonnet",
   description: "Lynch: {feature title}",
   prompt: "... [Lynch prompt from agents/lynch.md]
 
@@ -372,7 +370,6 @@ Task(
   team_name: "mission-{missionId}",
   name: "amy",
   subagent_type: "ai-team:amy",
-  model: "sonnet",
   description: "Amy: {feature title}",
   prompt: "... [Amy prompt from agents/amy.md]
 
@@ -412,7 +409,6 @@ Task(
   team_name: "mission-{missionId}",
   name: "tawnia",
   subagent_type: "ai-team:tawnia",
-  model: "haiku",
   description: "Tawnia: Documentation and final commit",
   prompt: "... [Tawnia prompt from agents/tawnia.md]
 
@@ -445,7 +441,6 @@ Task(
   team_name: "mission-{missionId}",
   name: "lynch-final",
   subagent_type: "ai-team:lynch-final",
-  model: "opus",
   description: "Lynch: Final Mission Review",
   prompt: "You are Colonel Lynch conducting a FINAL MISSION REVIEW.
 
@@ -577,25 +572,25 @@ Native teams are ephemeral - they don't survive session restarts. On resume:
    for item in testing stage:
        board_release(itemId)
        Task(team_name: "mission-{missionId}", name: "murdock",
-            subagent_type: "ai-team:murdock", model: "sonnet", ...)
+            subagent_type: "ai-team:murdock", ...)
        active_teammates[item_id] = "murdock"
 
    for item in implementing stage:
        board_release(itemId)
        Task(team_name: "mission-{missionId}", name: "ba",
-            subagent_type: "ai-team:ba", model: "sonnet", ...)
+            subagent_type: "ai-team:ba", ...)
        active_teammates[item_id] = "ba"
 
    for item in review stage:
        board_release(itemId)
        Task(team_name: "mission-{missionId}", name: "lynch",
-            subagent_type: "ai-team:lynch", model: "sonnet", ...)
+            subagent_type: "ai-team:lynch", ...)
        active_teammates[item_id] = "lynch"
 
    for item in probing stage:
        board_release(itemId)
        Task(team_name: "mission-{missionId}", name: "amy",
-            subagent_type: "ai-team:amy", model: "sonnet", ...)
+            subagent_type: "ai-team:amy", ...)
        active_teammates[item_id] = "amy"
    ```
 

@@ -167,7 +167,7 @@ export async function agentStop(input: AgentStopInput): Promise<ToolResponse> {
     const body: Record<string, unknown> = {
       itemId: input.itemId,
       agent: input.agent,
-      status: input.status,
+      outcome: input.status === 'failed' ? 'blocked' : 'completed',
       summary: input.summary,
     };
 

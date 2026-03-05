@@ -87,12 +87,14 @@ LOOP CONTINUOUSLY:
             # This item's deps are now satisfied
 
     # ═══════════════════════════════════════════════════════════
-    # PHASE 3: FILL PIPELINE FROM READY (respects WIP limit)
+    # PHASE 3: FILL PIPELINE FROM READY (per-column WIP limits)
     # ═══════════════════════════════════════════════════════════
-    in_flight = count(testing) + count(implementing) + count(review) + count(probing)
-    while in_flight < WIP_LIMIT and ready stage not empty:
+    # No global WIP throttle — each column enforces its own limit.
+    # board_move rejects moves when the target column is full.
+    while ready stage not empty:
         pick ONE item from ready stage
-        board_move(itemId=item_id, to="testing", agent="Murdock")
+        result = board_move(itemId=item_id, to="testing", agent="Murdock")
+        if result is WIP error: break  # testing column is full
         new_task = dispatch Murdock in background
         active_tasks[item_id] = new_task.id
 
@@ -104,7 +106,7 @@ LOOP CONTINUOUSLY:
 **KEY BEHAVIORS:**
 - Phase 1: Advance items IMMEDIATELY - no waiting for siblings
 - Phase 2: Unlock next-wave items when deps complete (correct waiting)
-- Phase 3: Keep pipeline full up to WIP limit
+- Phase 3: Keep pipeline full — per-column WIP limits enforced by board_move
 
 ## Minimizing Per-Cycle Token Spend
 
@@ -206,7 +208,6 @@ Then dispatch:
 ```
 Task(
   subagent_type: "ai-team:murdock",
-  model: "sonnet",
   run_in_background: true,
   description: "Murdock: {feature title}",
   prompt: "... [Murdock prompt from agents/murdock.md]
@@ -232,7 +233,6 @@ Then dispatch:
 ```
 Task(
   subagent_type: "ai-team:ba",
-  model: "sonnet",
   run_in_background: true,
   description: "B.A.: {feature title}",
   prompt: "... [B.A. prompt from agents/ba.md]
@@ -256,7 +256,6 @@ Then dispatch:
 ```
 Task(
   subagent_type: "ai-team:lynch",
-  model: "sonnet",
   run_in_background: true,
   description: "Lynch: {feature title}",
   prompt: "... [Lynch prompt from agents/lynch.md]
@@ -282,7 +281,6 @@ Then dispatch:
 ```
 Task(
   subagent_type: "ai-team:amy",
-  model: "sonnet",
   run_in_background: true,
   description: "Amy: {feature title}",
   prompt: "... [Amy prompt from agents/amy.md]
@@ -319,7 +317,6 @@ When ALL items reach `done` stage, fetch `prdPath` from the `mission_current` re
 ```
 Task(
   subagent_type: "ai-team:lynch-final",
-  model: "opus",
   run_in_background: true,
   description: "Lynch: Final Mission Review",
   prompt: "You are Colonel Lynch conducting a FINAL MISSION REVIEW.
@@ -352,7 +349,6 @@ After post-checks pass:
 ```
 Task(
   subagent_type: "ai-team:tawnia",
-  model: "haiku",
   run_in_background: true,
   description: "Tawnia: Documentation and final commit",
   prompt: "... [Tawnia prompt from agents/tawnia.md]
@@ -395,22 +391,22 @@ When resuming an interrupted mission with `/ai-team:resume`:
 ```
 for item in testing stage:
     board_release(itemId)
-    task = Task(subagent_type: "ai-team:murdock", model: "sonnet", run_in_background: true, ...)
+    task = Task(subagent_type: "ai-team:murdock", run_in_background: true, ...)
     active_tasks[item_id] = task.id
 
 for item in implementing stage:
     board_release(itemId)
-    task = Task(subagent_type: "ai-team:ba", model: "sonnet", run_in_background: true, ...)
+    task = Task(subagent_type: "ai-team:ba", run_in_background: true, ...)
     active_tasks[item_id] = task.id
 
 for item in review stage:
     board_release(itemId)
-    task = Task(subagent_type: "ai-team:lynch", model: "sonnet", run_in_background: true, ...)
+    task = Task(subagent_type: "ai-team:lynch", run_in_background: true, ...)
     active_tasks[item_id] = task.id
 
 for item in probing stage:
     board_release(itemId)
-    task = Task(subagent_type: "ai-team:amy", model: "sonnet", run_in_background: true, ...)
+    task = Task(subagent_type: "ai-team:amy", run_in_background: true, ...)
     active_tasks[item_id] = task.id
 ```
 

@@ -59,7 +59,7 @@ mission/
 └── archive/             # Archived missions
 ```
 
-**Stages:** briefings → ready → testing → implementing → review → done (or blocked)
+**Stages:** briefings → ready → testing → implementing → review → probing → done (or blocked)
 
 ### Key Layers
 

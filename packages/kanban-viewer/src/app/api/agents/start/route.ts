@@ -28,7 +28,7 @@ import { getAndValidateProjectId } from '@/lib/project-utils';
 import { transformItemWithRelationsToResponse } from '@/lib/item-transform';
 import type { AgentStartRequest, AgentStartResponse, ApiError } from '@/types/api';
 import type { AgentName } from '@/types/agent';
-import { AGENT_DISPLAY_NAMES } from '@ai-team/shared';
+import { AGENT_DISPLAY_NAMES, PIPELINE_STAGES, type StageId as SharedStageId } from '@ai-team/shared';
 
 /**
  * Valid agent names for validation.
@@ -110,74 +110,84 @@ export async function POST(
       );
     }
 
-    // Validate item is in ready stage
-    if (item.stageId !== 'ready') {
+    // Determine target stage based on agent using PIPELINE_STAGES
+    // Find which pipeline stage this agent works in
+    let targetStage: string = 'testing'; // default fallback for non-pipeline agents
+    let isPipelineAgent = false;
+    const normalizedAgent = body.agent.toLowerCase().replace(/\./g, '');
+    for (const [stageId, info] of Object.entries(PIPELINE_STAGES)) {
+      if (info && info.agent === normalizedAgent) {
+        targetStage = stageId;
+        isPipelineAgent = true;
+        break;
+      }
+    }
+
+    const currentStage = item.stageId;
+    // Only pipeline agents can claim items already in their work stage
+    const isWorkStageClaim = isPipelineAgent && currentStage === targetStage;
+
+    // Validate item stage: must be in 'ready' (first entry) or already in the agent's work stage
+    if (currentStage !== 'ready' && !isWorkStageClaim) {
       const errorResponse: ApiError = {
         success: false,
         error: {
           code: 'INVALID_STAGE',
-          message: `Item must be in ready stage to start, currently in: ${item.stageId}`,
+          message: `Item must be in ready or ${targetStage} stage to start, currently in: ${currentStage}`,
           details: {
             itemId: body.itemId,
-            currentStage: item.stageId,
-            requiredStage: 'ready',
+            currentStage: currentStage,
+            requiredStage: targetStage,
           },
         },
       };
       return NextResponse.json(errorResponse, { status: 400 });
     }
 
-    // Validate all dependencies are in done stage
-    const unmetDependencies = item.dependsOn
-      .filter((dep) => dep.dependsOn.stageId !== 'done')
-      .map((dep) => dep.dependsOnId);
+    // Only check dependencies and WIP for items coming from 'ready' stage
+    // Items already in their work stage have already passed these checks upstream
+    if (!isWorkStageClaim) {
+      // Validate all dependencies are in done stage
+      const unmetDependencies = item.dependsOn
+        .filter((dep) => dep.dependsOn.stageId !== 'done')
+        .map((dep) => dep.dependsOnId);
 
-    if (unmetDependencies.length > 0) {
-      const errorResponse: ApiError = {
-        success: false,
-        error: {
-          code: 'DEPENDENCIES_NOT_MET',
-          message: 'Not all dependencies are completed',
-          details: {
-            itemId: body.itemId,
-            unmetDependencies,
+      if (unmetDependencies.length > 0) {
+        const errorResponse: ApiError = {
+          success: false,
+          error: {
+            code: 'DEPENDENCIES_NOT_MET',
+            message: 'Not all dependencies are completed',
+            details: {
+              itemId: body.itemId,
+              unmetDependencies,
+            },
           },
-        },
-      };
-      return NextResponse.json(errorResponse, { status: 400 });
-    }
+        };
+        return NextResponse.json(errorResponse, { status: 400 });
+      }
 
-    // Determine target stage based on agent
-    // Murdock -> testing, B.A. -> implementing, Amy -> probing
-    let targetStage: string = 'implementing'; // default
-    if (body.agent === 'Murdock') {
-      targetStage = 'testing';
-    } else if (body.agent === 'B.A.') {
-      targetStage = 'implementing';
-    } else if (body.agent === 'Amy') {
-      targetStage = 'probing';
-    }
-
-    // Check WIP limit for target stage
-    const stage = await prisma.stage.findUnique({
-      where: { id: targetStage },
-    });
-
-    if (stage && stage.wipLimit !== null) {
-      const currentCount = await prisma.item.count({
-        where: {
-          stageId: targetStage,
-          projectId,
-          archivedAt: null,
-        },
+      // Check WIP limit for target stage
+      const stage = await prisma.stage.findUnique({
+        where: { id: targetStage },
       });
 
-      const wipCheck = checkWipLimit(targetStage as StageId, currentCount, stage.wipLimit);
-      if (!wipCheck.allowed) {
-        return NextResponse.json(
-          createWipLimitExceededError(targetStage, stage.wipLimit, currentCount).toResponse(),
-          { status: 400 }
-        );
+      if (stage && stage.wipLimit !== null) {
+        const currentCount = await prisma.item.count({
+          where: {
+            stageId: targetStage,
+            projectId,
+            archivedAt: null,
+          },
+        });
+
+        const wipCheck = checkWipLimit(targetStage as StageId, currentCount, stage.wipLimit);
+        if (!wipCheck.allowed) {
+          return NextResponse.json(
+            createWipLimitExceededError(targetStage, stage.wipLimit, currentCount).toResponse(),
+            { status: 400 }
+          );
+        }
       }
     }
 
