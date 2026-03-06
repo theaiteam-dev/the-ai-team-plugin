@@ -33,6 +33,41 @@ SendMessage(type: "shutdown_request", recipient: "murdock", content: "Work compl
 SendMessage(type: "plan_approval_response", request_id: "...", recipient: "ba", approve: true)
 ```
 
+## Precheck Flow
+
+Hannibal runs precheck by executing commands and forwarding results to the API — the API does not run commands itself.
+
+```
+1. Read ateam.config.json to get check commands
+2. Run each command via Bash (capturing stdout, stderr, exit code)
+3. Build the result payload:
+     passed   = all exit codes were 0
+     blockers = human-readable failure messages for each failed check
+     output   = { lint: {stdout,stderr,timedOut}, tests: {stdout,stderr,timedOut} }
+4. Call mission_precheck({ passed, blockers, output })
+```
+
+### precheck_failure: Recoverable State
+
+`precheck_failure` is a **non-terminal, recoverable** state. It means the checks ran but found problems. The mission is NOT failed — it can be retried.
+
+**When `mission_current` returns `precheck_failure`:**
+- The mission has existing `precheckBlockers` showing what failed last time
+- Display the blockers to the operator:
+  ```
+  [Hannibal] Previous precheck failed. Blockers:
+  - {blocker 1}
+  - {blocker 2}
+  Fix these issues and re-run /ai-team:run to retry.
+  ```
+- When `/ai-team:run` is called again: skip re-planning, re-run precheck directly
+- On retry pass: mission transitions to `running`, pipeline begins normally
+- On retry fail: mission stays in `precheck_failure`, operator is shown new blockers
+
+**Terminal vs. non-terminal mission states:**
+- Non-terminal (recoverable): `initializing`, `prechecking`, `precheck_failure`, `running`, `postchecking`
+- Terminal: `completed`, `failed`, `archived`
+
 ## Mission-Active Marker
 
 The MCP server automatically manages a marker file (`/tmp/.ateam-mission-active-{projectId}`) that tells enforcement hooks a mission is running:

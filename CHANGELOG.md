@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — PRD-009: Recoverable Precheck Failure State
+
+New `precheck_failure` mission state distinguishes transient precheck failures from terminal execution failures. When lint or test checks fail during precheck, the mission now enters `precheck_failure` (recoverable) instead of `failed` (terminal). Operator can fix lint/test issues and retry without re-running the expensive planning phase.
+
+#### API Architecture Fix
+Corrected fundamental architectural flaw where `POST /api/missions/precheck` was executing shell commands inside the kanban-viewer Docker container (target project never mounted). API now accepts agent-reported `{ passed, blockers, output }` from Hannibal, who runs checks locally via Bash against the target project.
+
+#### New Files
+- `packages/kanban-viewer/src/components/PrecheckFailureBanner.tsx` — amber inline banner showing precheck failure details with expandable raw output and retry CTA
+- `packages/kanban-viewer/src/components/MissionHistoryPanel.tsx` — mission archive/history drawer triggered from HeaderBar, master-detail layout showing past missions with metadata
+- `packages/kanban-viewer/src/app/api/missions/[missionId]/route.ts` — new single-mission lookup endpoint
+- `packages/kanban-viewer/src/__tests__/precheck-failure-banner.test.tsx` — 4 tests
+- `packages/kanban-viewer/src/__tests__/mission-history-panel.test.tsx` — 5 tests
+- `packages/kanban-viewer/src/__tests__/missions-409-precheck-failure.test.ts` — 5 tests
+- `packages/kanban-viewer/src/__tests__/api/missions/history.test.ts` — 3 tests
+- `packages/kanban-viewer/prisma/migrations/20260306000000_add_precheck_failure/` — add precheckBlockers, precheckOutput columns; add precheck_failure to MissionState enum
+
+#### Changed
+- `packages/kanban-viewer/src/types/mission.ts` — add `precheck_failure` to MissionState enum; add precheckBlockers, precheckOutput optional fields
+- `packages/kanban-viewer/prisma/schema.prisma` — add precheckBlockers (JSON TEXT), precheckOutput (JSON TEXT) to Mission model; add precheck_failure to MissionState enum
+- `packages/kanban-viewer/src/app/api/missions/precheck/route.ts` — remove command execution code; accept `{ passed, blockers, output }` from request body; transition to precheck_failure on failure instead of failed
+- `packages/kanban-viewer/src/app/api/missions/route.ts` — add 409 guard when POST without force and mission in precheck_failure state; add ?state= filter to GET endpoint
+- `packages/kanban-viewer/src/app/page.tsx` — add PrecheckFailureBanner above DashboardNav when mission in precheck_failure state; add MissionHistoryPanel drawer
+- `packages/kanban-viewer/src/components/header-bar.tsx` — add History button triggering mission history drawer
+- `packages/mcp-server/src/tools/missions.ts` — change `mission_precheck` input schema from `{checks[]}` to `{passed, blockers, output}`; add new `mission_list` MCP tool
+- `playbooks/orchestration-legacy.md` + `playbooks/orchestration-native.md` — add Precheck Flow section documenting Hannibal's responsibility to read ateam.config.json, run checks via Bash, report results
+- `commands/run.md` — document precheck_failure as recoverable; operator can fix and retry
+
+#### Test Coverage
+- 17 new tests across 7 test files
+- Precheck failure banner rendering and retry logic (4 tests)
+- Mission history panel and drawer functionality (5 tests)
+- API 409 guard for precheck_failure (5 tests)
+- Mission history endpoint (3 tests)
+
+#### Bug Fix
+- Fixed pre-existing bug where mission-active marker was never set: API response now includes `allPassed` at top level so MCP tool's existing marker check works correctly
+
 ### Added — PRD-008: Token Usage Tracking
 
 End-to-end token usage tracking from agent transcripts to dashboard display.

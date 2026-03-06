@@ -112,6 +112,9 @@ model Mission {
   completedAt DateTime?
   archivedAt  DateTime?
 
+  precheckBlockers String?                   // JSON array of blocker strings
+  precheckOutput   String?                   // JSON blob: MissionPrecheckOutput
+
   items       MissionItem[]
   activities  ActivityLog[]
   hookEvents  HookEvent[]

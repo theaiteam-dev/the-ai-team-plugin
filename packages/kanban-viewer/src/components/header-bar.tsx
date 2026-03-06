@@ -2,9 +2,10 @@
 
 import * as React from "react";
 import { useState, useEffect } from "react";
-import { Activity, Check, Clock, Target } from "lucide-react";
+import { Activity, Check, Clock, Target, History } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { ProjectSelector } from "./project-selector";
+import { MissionHistoryPanel } from "./MissionHistoryPanel";
 import { cn } from "@/lib/utils";
 import type { Mission } from "@/types";
 import type { Project } from "@/types/api";
@@ -128,6 +129,7 @@ export function HeaderBar({
   const [elapsedTime, setElapsedTime] = useState(() =>
     getInitialElapsedTime(mission)
   );
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   useEffect(() => {
     // If mission has completed_at, use duration_ms or calculate frozen time
@@ -255,6 +257,23 @@ export function HeaderBar({
           />
         )}
       </div>
+
+      {/* History button */}
+      <button
+        data-testid="history-button"
+        aria-label="View mission history"
+        onClick={() => setHistoryOpen(true)}
+        className="shrink-0 p-1 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <History className="w-4 h-4" />
+      </button>
+
+      {/* Mission history panel */}
+      <MissionHistoryPanel
+        isOpen={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        projectId={selectedProjectId}
+      />
     </header>
   );
 }

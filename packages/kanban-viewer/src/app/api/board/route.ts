@@ -69,7 +69,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<GetBoardRe
           archivedAt: null,
           projectId,
           state: {
-            in: ['initializing', 'prechecking', 'running', 'postchecking'],
+            in: ['initializing', 'prechecking', 'precheck_failure', 'running', 'postchecking'],
           },
         },
         orderBy: { startedAt: 'desc' },
@@ -108,6 +108,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<GetBoardRe
           startedAt: currentMission.startedAt,
           completedAt: currentMission.completedAt,
           archivedAt: currentMission.archivedAt,
+          precheckBlockers: currentMission.precheckBlockers
+            ? (JSON.parse(currentMission.precheckBlockers) as string[])
+            : null,
+          precheckOutput: currentMission.precheckOutput
+            ? JSON.parse(currentMission.precheckOutput)
+            : null,
         }
       : null;
 

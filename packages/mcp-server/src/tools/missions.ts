@@ -73,9 +73,22 @@ export const MissionCurrentInputSchema = z.object({});
 
 /**
  * Schema for mission_precheck tool input.
+ * Accepts a pre-computed result from the caller — no shell execution here.
  */
 export const MissionPrecheckInputSchema = z.object({
-  checks: z.array(z.string()).optional(),
+  passed: z.boolean(),
+  blockers: z.array(z.string()).default([]),
+  output: z.object({
+    lint: z.object({ stdout: z.string(), stderr: z.string(), timedOut: z.boolean() }).optional(),
+    tests: z.object({ stdout: z.string(), stderr: z.string(), timedOut: z.boolean() }).optional(),
+  }).default({}),
+});
+
+/**
+ * Schema for mission_list tool input.
+ */
+export const MissionListInputSchema = z.object({
+  state: z.enum(['initializing', 'prechecking', 'precheck_failure', 'running', 'postchecking', 'completed', 'failed', 'archived']).optional(),
 });
 
 /**
@@ -103,6 +116,7 @@ type MissionCurrentInput = z.infer<typeof MissionCurrentInputSchema>;
 type MissionPrecheckInput = z.infer<typeof MissionPrecheckInputSchema>;
 type MissionPostcheckInput = z.infer<typeof MissionPostcheckInputSchema>;
 type MissionArchiveInput = z.infer<typeof MissionArchiveInputSchema>;
+type MissionListInput = z.infer<typeof MissionListInputSchema>;
 
 interface PreviousMission {
   name: string;
@@ -245,18 +259,18 @@ export async function missionCurrent(
 }
 
 /**
- * Runs configured pre-flight checks.
+ * Accepts a pre-computed precheck result and forwards it to the API.
+ * The caller runs lint/tests and passes { passed, blockers, output }.
  */
 export async function missionPrecheck(
   input: MissionPrecheckInput
 ): Promise<ToolResponse<MissionPrecheckResult> | McpErrorResponse> {
   const handler = async (args: MissionPrecheckInput) => {
-    const body: Record<string, unknown> = {};
-    if (args.checks !== undefined) {
-      body.checks = args.checks;
-    }
-
-    const result = await client.post<MissionPrecheckResult>('/api/missions/precheck', body);
+    const result = await client.post<MissionPrecheckResult>('/api/missions/precheck', {
+      passed: args.passed,
+      blockers: args.blockers,
+      output: args.output,
+    });
 
     // Set mission-active marker when prechecks pass — signals enforcement
     // hooks that Hannibal's orchestration loop is about to start
@@ -264,6 +278,39 @@ export async function missionPrecheck(
       setMissionActive();
     }
 
+    return {
+      content: [{ type: 'text' as const, text: JSON.stringify(result.data) }],
+      data: result.data,
+    };
+  };
+
+  return withErrorBoundary(handler)(input);
+}
+
+interface MissionSummary {
+  id: string;
+  name: string;
+  state: string;
+  prdPath: string;
+  startedAt: string;
+  completedAt: string | null;
+  archivedAt: string | null;
+}
+
+interface MissionListResult {
+  success: boolean;
+  data: MissionSummary[];
+}
+
+/**
+ * Lists missions, optionally filtered by state.
+ */
+export async function missionList(
+  input: MissionListInput
+): Promise<ToolResponse<MissionListResult> | McpErrorResponse> {
+  const handler = async (args: MissionListInput) => {
+    const url = args.state ? `/api/missions?state=${args.state}` : '/api/missions';
+    const result = await client.get<MissionListResult>(url);
     return {
       content: [{ type: 'text' as const, text: JSON.stringify(result.data) }],
       data: result.data,
@@ -373,5 +420,12 @@ export const missionTools = [
     inputSchema: zodToJsonSchema(MissionArchiveInputSchema),
     zodSchema: MissionArchiveInputSchema,
     handler: missionArchive,
+  },
+  {
+    name: 'mission_list',
+    description: 'List missions for the current project, optionally filtered by state.',
+    inputSchema: zodToJsonSchema(MissionListInputSchema),
+    zodSchema: MissionListInputSchema,
+    handler: missionList,
   },
 ];

@@ -365,6 +365,7 @@ describe('POST /api/missions', () => {
         body: JSON.stringify({
           name: 'New Mission',
           prdPath: '/prd/new.md',
+          force: true,
         } satisfies CreateMissionRequest),
         headers: {
           'Content-Type': 'application/json',
@@ -628,6 +629,7 @@ describe('POST /api/missions', () => {
         body: JSON.stringify({
           name: 'New Mission',
           prdPath: '/prd/new.md',
+          force: true,
         } satisfies CreateMissionRequest),
         headers: {
           'Content-Type': 'application/json',
@@ -690,6 +692,7 @@ describe('POST /api/missions', () => {
         body: JSON.stringify({
           name: 'New Mission',
           prdPath: '/prd/new.md',
+          force: true,
         } satisfies CreateMissionRequest),
         headers: {
           'Content-Type': 'application/json',
@@ -873,6 +876,7 @@ describe('POST /api/missions', () => {
         body: JSON.stringify({
           name: 'New',
           prdPath: '/prd/new.md',
+          force: true,
         } satisfies CreateMissionRequest),
         headers: {
           'Content-Type': 'application/json',

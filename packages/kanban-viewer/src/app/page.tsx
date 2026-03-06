@@ -18,7 +18,9 @@ import { deriveAgentStatusesFromWorkItems } from "@/lib/agent-status-utils";
 import { FilterBar } from "@/components/filter-bar";
 import { DashboardNav, type DashboardView } from "@/components/dashboard-nav";
 import { RawAgentView } from "@/components/raw-agent-view";
+import { PrecheckFailureBanner } from "@/components/PrecheckFailureBanner";
 import type { HookEventSummary } from "@/types/hook-event";
+import type { Mission } from "@/types/mission";
 import { transformBoardStateToMetadata, transformApiItemsToWorkItems } from "@/lib/api-transform";
 import type {
   WorkItem,
@@ -115,6 +117,9 @@ function HomeContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null);
+
+  // Current mission from board API (includes precheck fields)
+  const [currentMission, setCurrentMission] = useState<Mission | null>(null);
 
   // Mission completion flow state
   const [finalReview, setFinalReview] = useState<FinalReviewStatus | undefined>(undefined);
@@ -553,6 +558,7 @@ function HomeContent() {
         const items = transformApiItemsToWorkItems(boardData.data.items);
         setBoardMetadata(metadata);
         setWorkItems(items);
+        setCurrentMission(boardData.data.currentMission ?? null);
       }
 
       // Fetch activity log - this is optional, don't fail the page if it errors
@@ -693,6 +699,9 @@ function HomeContent() {
         error={connectionError}
         className="px-4 py-1 text-sm text-muted-foreground"
       />
+
+      {/* Precheck failure banner (shown when mission is in precheck_failure state) */}
+      <PrecheckFailureBanner mission={currentMission} />
 
       {/* Dashboard view nav */}
       <DashboardNav currentView={dashboardView} onViewChange={setDashboardView} />

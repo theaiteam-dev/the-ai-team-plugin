@@ -38,6 +38,7 @@ export type {
 export type {
   MissionState,
   Mission as ApiMission,
+  MissionPrecheckOutput,
   PrecheckResult,
   PostcheckResult,
 } from './mission';

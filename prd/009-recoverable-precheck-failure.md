@@ -101,27 +101,46 @@ Precheck failures are inherently recoverable. They fail because the codebase has
 
 9. The `POST /api/missions/precheck` endpoint shall validate that the mission is in `initializing` or `precheck_failure` state before proceeding.
 
-10. The precheck response shall include a `retryable: true` field when the mission enters `precheck_failure`, indicating to the caller that retry is available.
+10. The `POST /api/missions/precheck` endpoint shall **accept agent-reported check results** in the request body, not execute check commands itself. The request body shall carry:
+    - `passed: boolean` — overall pass/fail
+    - `blockers: string[]` — human-readable blocker messages (empty if passed)
+    - `output: { lint?: { stdout, stderr, timedOut }, tests?: { stdout, stderr, timedOut } }` — raw command output per check
 
-11. The `GET /api/missions/current` endpoint shall return `precheck_failure` as a valid state. No changes to the response schema beyond the new state value.
+11. The precheck response shall include a `retryable: true` field when the mission enters `precheck_failure`, indicating to the caller that retry is available. It shall also include `allPassed: boolean` at the top level (aliasing `passed`) so the MCP server can read it without nested access.
+
+12. The `GET /api/missions/current` endpoint shall return `precheck_failure` as a valid state. No changes to the response schema beyond the new state value.
 
 #### MCP Tool Changes
 
-12. The `mission_precheck` MCP tool shall support being called multiple times for the same mission. Subsequent calls after a `precheck_failure` shall re-run all checks.
+13. The `mission_precheck` MCP tool input schema shall change from `{ checks: string[] }` to carry agent-reported results:
+    ```
+    passed: boolean
+    blockers: string[]
+    output: { lint?: { stdout, stderr, timedOut }, tests?: { stdout, stderr, timedOut } }
+    ```
+    The tool forwards this payload to `POST /api/missions/precheck`.
 
-13. The `mission_current` MCP tool shall return `precheck_failure` as a valid state in its response.
+14. The `mission_precheck` MCP tool shall support being called multiple times for the same mission. Subsequent calls after a `precheck_failure` trigger a retry.
+
+15. The `mission_current` MCP tool shall return `precheck_failure` as a valid state in its response.
 
 #### Orchestration
 
-14. Hannibal shall recognize `precheck_failure` as a non-terminal state and present the operator with a clear message: precheck failed, here's what failed, fix it and retry.
+16. Hannibal shall run precheck commands locally via the Bash tool in the target project directory before calling `mission_precheck`. It shall:
+    - Read `ateam.config.json` from the project root to determine which commands to run (e.g. `checks.lint`, `checks.unit`)
+    - Execute each command via Bash, capturing stdout, stderr, exit code, and timeout status
+    - Determine `passed` (all commands exited 0) and `blockers` (human-readable summary per failure)
+    - Call `mission_precheck` MCP tool with the results
 
-15. The `/ai-team:run` command shall handle missions in `precheck_failure` state by re-running the precheck, not by requiring re-planning.
+17. Hannibal shall recognize `precheck_failure` as a non-terminal state and present the operator with a clear message: precheck failed, here's what failed, fix it and retry.
+
+18. The `/ai-team:run` command shall handle missions in `precheck_failure` state by re-running the precheck (steps in req 16), not by requiring re-planning.
 
 #### Dashboard
 
-16. The kanban-viewer shall display `precheck_failure` missions with a distinct visual treatment (not the same as `failed`) indicating the mission is recoverable.
+19. The kanban-viewer shall display `precheck_failure` missions with a distinct visual treatment (not the same as `failed`) indicating the mission is recoverable.
 
-17. The mission status area shall show the precheck failure details (which checks failed, error output) when the mission is in `precheck_failure` state.
+20. The mission status area shall show the precheck failure details (which checks failed, error output) when the mission is in `precheck_failure` state.
 
 ### Non-Functional Requirements
 
@@ -129,7 +148,7 @@ Precheck failures are inherently recoverable. They fail because the codebase has
 
 2. The mission-active marker (`/tmp/.ateam-mission-active-{projectId}`) shall NOT be set when the mission is in `precheck_failure` state. It shall only be set when transitioning to `running`.
 
-3. No additional API calls or database queries shall be required for the retry path beyond what the initial precheck already performs.
+3. No additional API calls or database queries shall be required for the retry path beyond what the initial precheck already performs. (Note: Hannibal re-executes check commands via Bash on every retry — this is expected, not overhead.)
 
 ---
 
@@ -189,9 +208,9 @@ archived
 | Dependency | Owner | Status |
 |------------|-------|--------|
 | Mission state machine (`MissionState` type) | kanban-viewer | Shipped — needs new state |
-| `POST /api/missions/precheck` | kanban-viewer | Shipped — needs state validation update |
-| `mission_precheck` MCP tool | mcp-server | Shipped — needs retry support |
-| Orchestration playbooks | Plugin | Shipped — needs `precheck_failure` handling |
+| `POST /api/missions/precheck` | kanban-viewer | Shipped — needs architectural rewrite (accept results, not run commands) |
+| `mission_precheck` MCP tool | mcp-server | Shipped — needs schema change (carry results, not check names) |
+| Orchestration playbooks | Plugin | Shipped — needs `precheck_failure` handling + Hannibal runs checks via Bash |
 | Kanban UI mission status | kanban-viewer | Shipped — needs new state rendering |
 
 ### External
@@ -213,6 +232,10 @@ None. This is entirely internal to the A(i)-Team system.
 - [x] ~~Should there be a retry limit before auto-transitioning to `failed`?~~ **Decision:** No. The operator controls when to give up. Artificial retry limits add complexity without value — if the operator wants to retry 10 times, let them.
 - [x] ~~Should `postcheck_failure` be added at the same time?~~ **Decision:** No. Postcheck failure has different semantics (code has been written, tests may be partially passing). Separate PRD if needed.
 - [x] ~~Should the precheck failure details be stored on the mission record?~~ **Decision:** Yes. Store the `blockers` array and check output on the mission record so it's available across sessions and in the dashboard.
+- [x] ~~Should full stdout/stderr be stored or just the summary blocker messages?~~ **Decision:** Both. Two separate nullable fields on the Mission DB record: `precheckBlockers` (JSON-encoded `string[]` of human-readable summary messages) and `precheckOutput` (JSON-encoded object with raw `stdout`, `stderr`, `timedOut` per check). Dashboard shows summary by default with expandable raw output. SQLite stores both as `TEXT` columns (no native array type).
+- [x] ~~Should `mission_init` without `force` reject or archive a `precheck_failure` mission?~~ **Decision:** Reject with 409. The operator must either fix and retry or explicitly use `force: true` to archive. Creating a new mission should never silently destroy an in-progress `precheck_failure` mission. Error message: `"A mission is in precheck_failure state. Fix the issues and retry, or use force: true to archive and start over."`
+- [x] ~~Dashboard: dropdown, tab, or slide-out drawer for mission history (req 24)?~~ **Decision:** Slide-out drawer (Option A). Master-detail layout: mission list on left rail, metadata detail on right when a row is selected. Triggered by a `History` icon button in the HeaderBar (right of the timer). Does not navigate away from the board.
+- [x] ~~Dashboard: how to display `precheck_failure` state (req 16)?~~ **Decision:** Inline amber banner (Option A). Rendered between `ConnectionStatusIndicator` and `DashboardNav` in `page.tsx`. Amber left-border stripe, "PRECHECK FAILED / RECOVERABLE" label, blocker list, expandable raw output, "Retry Precheck" CTA button. Visually distinct from terminal `failed` (red) to signal recoverability.
 
 ---
 
@@ -242,6 +265,75 @@ When `mission_init(force: true)` archives a mission, the old mission metadata (n
 
 #### Dashboard
 
-24. The kanban-viewer shall include a mission history view or dropdown that shows past missions for the project.
+24. The kanban-viewer shall include a mission history slide-out drawer (triggered from HeaderBar) that shows past missions for the project, sorted by `startedAt` descending.
 
-25. Selecting an archived mission shall show its metadata (name, PRD, dates, final state) in a read-only view.
+25. Selecting a mission in the history drawer shall show its metadata (name, PRD path, state badge, started/completed/archived dates, duration) in a read-only detail pane within the same drawer.
+
+---
+
+## Implementation Notes (from pre-implementation review)
+
+These notes capture findings from codebase exploration that implementors should be aware of.
+
+### Architectural correction: Hannibal runs checks, API stores results
+
+**Current (broken) design:** `POST /api/missions/precheck` executes shell commands (`npm run lint`, `npm test`) inside the Docker container where the kanban-viewer runs. This is fundamentally wrong — the target project is never mounted into that container. The commands run in `/app` (the kanban-viewer source), not the user's project. The `ateam.config.json` `checks` configuration is silently ignored. The request body (including any `checks` parameter) is never read.
+
+**Correct design:** The API is a state machine and result store — it should not execute anything. The agent (Hannibal) is the right place to run checks, because it has:
+- Access to the Bash tool pointed at the target project
+- Access to `ateam.config.json` to know what commands to run
+- The correct working directory
+
+**Implementation change:** Delete the `executeCommand` function and all command execution code from `packages/kanban-viewer/src/app/api/missions/precheck/route.ts`. Replace with logic that reads `passed`, `blockers`, and `output` from the request body and writes them to the database.
+
+The `MissionPrecheckInputSchema` in `packages/mcp-server/src/tools/missions.ts` changes from `{ checks: z.array(z.string()).optional() }` to:
+```typescript
+{
+  passed: z.boolean(),
+  blockers: z.array(z.string()).default([]),
+  output: z.object({
+    lint: z.object({ stdout: z.string(), stderr: z.string(), timedOut: z.boolean() }).optional(),
+    tests: z.object({ stdout: z.string(), stderr: z.string(), timedOut: z.boolean() }).optional(),
+  }).default({}),
+}
+```
+
+Hannibal's precheck flow (in orchestration playbooks):
+1. Read `ateam.config.json` → get check commands (e.g. `checks.lint`, `checks.unit`)
+2. Run each command via Bash in target project directory; capture stdout, stderr, exit code
+3. Build `blockers` array (one message per failed check) and `output` object
+4. Call `mission_precheck` MCP tool with `{ passed, blockers, output }`
+
+**Note:** The postcheck route (`POST /api/missions/postcheck`) has the identical architectural flaw — it also runs shell commands inside the container. That will be addressed in a follow-up PRD.
+
+### Pre-existing bug: mission-active marker never set
+
+The MCP `mission_precheck` tool (`packages/mcp-server/src/tools/missions.ts` line 263) checks `result.data.allPassed` to decide whether to set the mission-active marker. The current API returns `{ success, data: { passed, ... } }` — a nested structure where `result.data.allPassed` is always `undefined`. The marker is therefore **never set** today.
+
+Fix as part of this PRD: the API response shall include `allPassed: boolean` at the top level (see req 11), so the existing MCP check works correctly after the schema migration.
+
+### Schema storage approach
+
+Prisma + SQLite does not support native array columns. `precheckBlockers` and `precheckOutput` are stored as nullable `TEXT` columns containing JSON-encoded values:
+- `precheckBlockers`: `JSON.stringify(string[])` — e.g. `'["Lint failed with 3 error(s)","Tests failed: 2 test(s) failed"]'`
+- `precheckOutput`: `JSON.stringify({ lint?: { stdout, stderr, timedOut }, tests?: { stdout, stderr, timedOut } })`
+
+Both are cleared (set to `null`) when transitioning from `precheck_failure` back to `prechecking` on retry.
+
+### What already exists vs. what needs building
+
+**Already implemented:**
+- `GET /api/missions` — exists, returns all missions unfiltered. Needs `?state=` filter added (req 19).
+- `mission-active` marker management — correctly handled in MCP server; no changes needed for the marker logic itself.
+- `force: true` archival — correctly finds and archives `precheck_failure` missions (via `archivedAt: null` query). No special handling needed.
+
+**Needs building:**
+- `precheck_failure` state in `MissionState` type and Prisma schema fields (`precheckBlockers`, `precheckOutput`)
+- Precheck route rewrite: remove `executeCommand` and all command execution; accept `{ passed, blockers, output }` from request body; transition state and store results
+- `MissionPrecheckInputSchema` change in MCP server: replace `checks: string[]` with `{ passed, blockers, output }`
+- `POST /api/missions` 409 guard for `precheck_failure` without force
+- `?state=` filter on `GET /api/missions`
+- `GET /api/missions/:missionId` (new route — only `[missionId]/token-usage` exists today)
+- `mission_list` MCP tool
+- `PrecheckFailureBanner` and `MissionHistoryPanel` + `MissionHistoryTrigger` UI components
+- Orchestration playbook and `commands/run.md` updates (Hannibal reads `ateam.config.json`, runs checks via Bash, reports results)

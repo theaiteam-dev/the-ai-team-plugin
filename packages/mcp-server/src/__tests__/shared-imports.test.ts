@@ -12,7 +12,7 @@ describe('Shared Package Integration', () => {
       // Verify TRANSITION_MATRIX from @ai-team/shared matches expected structure
       expect(TRANSITION_MATRIX.briefings).toEqual(['ready', 'blocked']);
       expect(TRANSITION_MATRIX.ready).toEqual(['testing', 'implementing', 'probing', 'blocked', 'briefings']);
-      expect(TRANSITION_MATRIX.testing).toEqual(['review', 'blocked']);
+      expect(TRANSITION_MATRIX.testing).toEqual(['implementing', 'blocked']);
       expect(TRANSITION_MATRIX.implementing).toEqual(['review', 'blocked']);
       expect(TRANSITION_MATRIX.probing).toEqual(['ready', 'done', 'blocked']);
       expect(TRANSITION_MATRIX.review).toEqual(['testing', 'implementing', 'probing', 'blocked']);

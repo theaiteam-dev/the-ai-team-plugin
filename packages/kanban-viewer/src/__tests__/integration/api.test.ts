@@ -1146,7 +1146,33 @@ describe('Mission Endpoints Integration', () => {
       expect(data.data.state).toBe('initializing');
     });
 
-    it('should archive current active mission before creating new one', async () => {
+    it('should return 409 when active running mission exists and force is not set', async () => {
+      const activeMission = createMockMission({ id: 'M-20260121-001', state: 'running' });
+
+      mockPrisma.mission.findFirst.mockResolvedValue(activeMission);
+
+      const { POST } = await import('@/app/api/missions/route');
+      const request = new NextRequest('http://localhost:3000/api/missions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Project-ID': 'kanban-viewer',
+        },
+        body: JSON.stringify({
+          name: 'New Mission',
+          prdPath: '/prd/new.md',
+        }),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(409);
+
+      const data = await response.json();
+      expect(data.success).toBe(false);
+      expect(data.error.message).toContain('force: true');
+    });
+
+    it('should archive current active mission and create new one when force is true', async () => {
       const activeMission = createMockMission({ id: 'M-20260121-001', state: 'running' });
       const newMission = createMockMission({ id: 'M-20260121-002', state: 'initializing' });
 
@@ -1166,6 +1192,7 @@ describe('Mission Endpoints Integration', () => {
         body: JSON.stringify({
           name: 'New Mission',
           prdPath: '/prd/new.md',
+          force: true,
         }),
       });
 
@@ -1217,12 +1244,11 @@ describe('Mission Endpoints Integration', () => {
   });
 
   describe('POST /api/missions/precheck - Run mission precheck', () => {
-    // Note: Precheck runs actual lint/test commands, which makes mocking complex.
-    // These tests verify the validation behavior before commands are executed.
     it('should return 404 when no active mission exists', async () => {
       mockPrisma.mission.findFirst.mockResolvedValue(null);
 
       const { POST } = await import('@/app/api/missions/precheck/route');
+      // No body: validation gates must run before body parsing
       const request = new NextRequest('http://localhost:3000/api/missions/precheck', {
         method: 'POST',
         headers: { 'X-Project-ID': 'kanban-viewer' },
@@ -1236,11 +1262,12 @@ describe('Mission Endpoints Integration', () => {
       expect(data.error.code).toBe('NO_ACTIVE_MISSION');
     });
 
-    it('should return 400 when mission is not in initializing state', async () => {
+    it('should return 400 when mission is not in a valid precheck state', async () => {
       const runningMission = createMockMission({ state: 'running' });
       mockPrisma.mission.findFirst.mockResolvedValue(runningMission);
 
       const { POST } = await import('@/app/api/missions/precheck/route');
+      // No body: validation gates must run before body parsing
       const request = new NextRequest('http://localhost:3000/api/missions/precheck', {
         method: 'POST',
         headers: { 'X-Project-ID': 'kanban-viewer' },
@@ -1252,6 +1279,77 @@ describe('Mission Endpoints Integration', () => {
       const data = await response.json();
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('INVALID_MISSION_STATE');
+    });
+
+    it('should accept precheck from precheck_failure state (retry path)', async () => {
+      const failedMission = createMockMission({ state: 'precheck_failure' });
+      mockPrisma.mission.findFirst.mockResolvedValue(failedMission);
+      mockPrisma.mission.update.mockResolvedValue({ ...failedMission, state: 'running' });
+      mockPrisma.activityLog.create.mockResolvedValue({});
+
+      const { POST } = await import('@/app/api/missions/precheck/route');
+      const request = new NextRequest('http://localhost:3000/api/missions/precheck', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Project-ID': 'kanban-viewer' },
+        body: JSON.stringify({ passed: true, blockers: [], output: {} }),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      const data = await response.json();
+      expect(data.success).toBe(true);
+      expect(data.data.allPassed).toBe(true);
+    });
+
+    it('should transition to running and return allPassed:true when checks pass', async () => {
+      const initMission = createMockMission({ state: 'initializing' });
+      mockPrisma.mission.findFirst.mockResolvedValue(initMission);
+      mockPrisma.mission.update.mockResolvedValue({ ...initMission, state: 'running' });
+      mockPrisma.activityLog.create.mockResolvedValue({});
+
+      const { POST } = await import('@/app/api/missions/precheck/route');
+      const request = new NextRequest('http://localhost:3000/api/missions/precheck', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Project-ID': 'kanban-viewer' },
+        body: JSON.stringify({ passed: true, blockers: [], output: {} }),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      const data = await response.json();
+      expect(data.success).toBe(true);
+      expect(data.data.allPassed).toBe(true);
+    });
+
+    it('should transition to precheck_failure and return retryable:true when checks fail', async () => {
+      const initMission = createMockMission({ state: 'initializing' });
+      mockPrisma.mission.findFirst.mockResolvedValue(initMission);
+      mockPrisma.mission.update.mockResolvedValue({ ...initMission, state: 'precheck_failure' });
+      mockPrisma.activityLog.create.mockResolvedValue({});
+
+      const { POST } = await import('@/app/api/missions/precheck/route');
+      const request = new NextRequest('http://localhost:3000/api/missions/precheck', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Project-ID': 'kanban-viewer' },
+        body: JSON.stringify({
+          passed: false,
+          blockers: ['Lint failed with 3 error(s)', 'Tests failed: 2 test(s) failed'],
+          output: {
+            lint: { stdout: '', stderr: 'error: no-unused-vars', timedOut: false },
+          },
+        }),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      const data = await response.json();
+      expect(data.success).toBe(true);
+      expect(data.data.allPassed).toBe(false);
+      expect(data.data.retryable).toBe(true);
+      expect(data.data.blockers).toEqual(['Lint failed with 3 error(s)', 'Tests failed: 2 test(s) failed']);
     });
   });
 

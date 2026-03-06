@@ -94,13 +94,60 @@ WIP limit controls how many features are in-flight (not in briefings, ready, or 
    if mission not found:
        error "No mission found. Run /ai-team:plan first."
        exit
+
+   if mission.state == "precheck_failure":
+       # Recoverable — re-run precheck (step 2) using the existing mission.
+       # Do NOT re-plan. Proceed directly to step 2.
+       [Hannibal] Previous precheck failed. Retrying checks...
+
+   if mission.state not in ["initializing", "precheck_failure"]:
+       if mission.state == "running":
+           # Mission already prechecked and running — skip step 2, go to step 3
+       else:
+           error "Mission is in unexpected state: {state}"
+           exit
    ```
 
 2. **Run pre-mission checks**
-   Use the `mission_precheck` MCP tool.
-   - Ensures codebase is in clean state (lint, unit tests passing)
-   - Establishes baseline before mission work begins
-   - If checks fail, abort mission and report to user
+
+   First, check the current mission state. If it is already `precheck_failure`, skip re-planning
+   and proceed directly to re-running the checks below.
+
+   Read `ateam.config.json` to get the check commands (`checks.lint`, `checks.unit`).
+   Run each configured check via Bash, capturing stdout, stderr, and exit code.
+   Then call `mission_precheck` with the computed result:
+
+   ```
+   config = Read("ateam.config.json")  # parse JSON
+
+   lint_result  = Bash(config.checks.lint,  capture: stdout+stderr+exitcode)
+   tests_result = Bash(config.checks.unit, capture: stdout+stderr+exitcode)
+
+   passed   = (lint_result.exitcode == 0) AND (tests_result.exitcode == 0)
+   blockers = []
+   if lint_result.exitcode != 0:
+       blockers.append("Lint failed: " + lint_result.stdout.slice(0,200))
+   if tests_result.exitcode != 0:
+       blockers.append("Unit tests failed: " + tests_result.stdout.slice(0,200))
+
+   output = {
+     lint:  { stdout: lint_result.stdout,  stderr: lint_result.stderr,  timedOut: false },
+     tests: { stdout: tests_result.stdout, stderr: tests_result.stderr, timedOut: false },
+   }
+
+   mission_precheck({ passed, blockers, output })
+   ```
+
+   - If `passed = true`: mission transitions to `running`, proceed to next step
+   - If `passed = false`: mission transitions to `precheck_failure`. Report to user:
+     ```
+     [Hannibal] Precheck FAILED. Blockers:
+     - {blocker 1}
+     - {blocker 2}
+
+     Fix the issues above, then re-run /ai-team:run to retry.
+     ```
+     STOP. Do not start the pipeline.
 
 3. **Detect dispatch mode and load orchestration playbook**
 
@@ -254,6 +301,7 @@ The dispatch mode (legacy Task/TaskOutput vs. native TeamCreate/SendMessage) is 
 ## Errors
 
 - **No mission found**: Run `/ai-team:plan` first
+- **Precheck failure**: Fix lint/test issues reported, then re-run `/ai-team:run` — the mission is recoverable, no re-planning needed
 - **All items blocked**: Human intervention needed via `/ai-team:unblock`
 - **Agent failure**: Item returned to previous stage for retry
 - **API unavailable**: Cannot connect to A(i)-Team server

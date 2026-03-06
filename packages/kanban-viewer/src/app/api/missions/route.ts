@@ -24,11 +24,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     const projectId = projectValidation.projectId;
 
-    const missions = await prisma.mission.findMany({
-      where: {
-        projectId,
-      },
-    });
+    const stateFilter = request.nextUrl.searchParams.get('state');
+
+    const where: Record<string, unknown> = { projectId };
+    if (stateFilter) {
+      where.state = stateFilter;
+    }
+
+    const missions = await prisma.mission.findMany({ where });
 
     return NextResponse.json({
       success: true,
@@ -126,6 +129,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }),
       },
     });
+
+    // Guard: if an active mission exists and force is not set, return 409
+    if (activeMission && !body.force) {
+      const conflictMessage = activeMission.state === 'precheck_failure'
+        ? 'Mission is in precheck_failure state. Fix the issues and re-run /ai-team:run to retry, or use force: true to archive and start fresh.'
+        : 'An active mission already exists. Use force: true to archive it and start fresh, or re-run /ai-team:run to continue.';
+
+      const conflictError: ApiError = {
+        success: false,
+        error: {
+          code: 'CONFLICT',
+          message: conflictMessage,
+        },
+      };
+      return NextResponse.json(conflictError, { status: 409 });
+    }
 
     // Archive active mission and its items in a transaction to ensure consistency
     if (activeMission) {
