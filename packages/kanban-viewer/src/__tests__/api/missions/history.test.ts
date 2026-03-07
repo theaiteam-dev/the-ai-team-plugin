@@ -11,7 +11,13 @@ import type { ApiError } from '@/types/api';
  * 2. GET /api/missions?state=<state> — filters missions by state
  */
 
-const mockMissions: Mission[] = [
+// Raw Prisma model type — precheckBlockers/precheckOutput are stored as TEXT (JSON strings)
+type RawMission = Omit<Mission, 'precheckBlockers' | 'precheckOutput'> & {
+  precheckBlockers: string | null;
+  precheckOutput: string | null;
+};
+
+const mockMissions: RawMission[] = [
   {
     id: 'M-20260121-001',
     name: 'Completed Mission',
@@ -31,8 +37,8 @@ const mockMissions: Mission[] = [
     startedAt: new Date('2026-01-22T10:00:00Z'),
     completedAt: null,
     archivedAt: null,
-    precheckBlockers: ['lint errors in src/foo.ts'],
-    precheckOutput: { lint: { stdout: 'error', stderr: '', timedOut: false } },
+    precheckBlockers: JSON.stringify(['lint errors in src/foo.ts']),
+    precheckOutput: JSON.stringify({ lint: { stdout: 'error', stderr: '', timedOut: false } }),
   },
   {
     id: 'M-20260123-001',

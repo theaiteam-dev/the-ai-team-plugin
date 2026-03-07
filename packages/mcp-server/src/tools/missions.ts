@@ -78,10 +78,11 @@ export const MissionCurrentInputSchema = z.object({});
 export const MissionPrecheckInputSchema = z.object({
   passed: z.boolean(),
   blockers: z.array(z.string()).default([]),
-  output: z.object({
-    lint: z.object({ stdout: z.string(), stderr: z.string(), timedOut: z.boolean() }).optional(),
-    tests: z.object({ stdout: z.string(), stderr: z.string(), timedOut: z.boolean() }).optional(),
-  }).default({}),
+  output: z.record(z.object({
+    stdout: z.string(),
+    stderr: z.string(),
+    timedOut: z.boolean(),
+  })).default({}),
 });
 
 /**

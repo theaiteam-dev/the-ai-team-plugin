@@ -113,27 +113,29 @@ WIP limit controls how many features are in-flight (not in briefings, ready, or 
    First, check the current mission state. If it is already `precheck_failure`, skip re-planning
    and proceed directly to re-running the checks below.
 
-   Read `ateam.config.json` to get the check commands (`checks.lint`, `checks.unit`).
-   Run each configured check via Bash, capturing stdout, stderr, and exit code.
+   Read `ateam.config.json` to get the list of check names (`config.precheck`) and their commands
+   (`config.checks`). Run each check via Bash, capturing stdout, stderr, and exit code.
    Then call `mission_precheck` with the computed result:
 
    ```
    config = Read("ateam.config.json")  # parse JSON
 
-   lint_result  = Bash(config.checks.lint,  capture: stdout+stderr+exitcode)
-   tests_result = Bash(config.checks.unit, capture: stdout+stderr+exitcode)
-
-   passed   = (lint_result.exitcode == 0) AND (tests_result.exitcode == 0)
+   passed   = true
    blockers = []
-   if lint_result.exitcode != 0:
-       blockers.append("Lint failed: " + lint_result.stdout.slice(0,200))
-   if tests_result.exitcode != 0:
-       blockers.append("Unit tests failed: " + tests_result.stdout.slice(0,200))
+   output   = {}
 
-   output = {
-     lint:  { stdout: lint_result.stdout,  stderr: lint_result.stderr,  timedOut: false },
-     tests: { stdout: tests_result.stdout, stderr: tests_result.stderr, timedOut: false },
-   }
+   for checkName in config.precheck:
+       if checkName not in config.checks:
+           blockers.append("Check '" + checkName + "' is listed in config.precheck but has no command in config.checks")
+           passed = false
+           continue
+
+       result = Bash(config.checks[checkName], capture: stdout+stderr+exitcode)
+       output[checkName] = { stdout: result.stdout, stderr: result.stderr, timedOut: false }
+
+       if result.exitcode != 0:
+           passed = false
+           blockers.append(checkName + " failed: " + result.stdout.slice(0,200))
 
    mission_precheck({ passed, blockers, output })
    ```

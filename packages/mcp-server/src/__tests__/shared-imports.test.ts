@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { TRANSITION_MATRIX, VALID_AGENTS, normalizeAgentName, ITEM_TYPES, ITEM_PRIORITIES } from '@ai-team/shared';
+import { TRANSITION_MATRIX, isValidTransition, VALID_AGENTS, normalizeAgentName, ITEM_TYPES, ITEM_PRIORITIES } from '@ai-team/shared';
 
 describe('Shared Package Integration', () => {
   describe('TRANSITION_MATRIX', () => {
@@ -18,6 +18,13 @@ describe('Shared Package Integration', () => {
       expect(TRANSITION_MATRIX.review).toEqual(['testing', 'implementing', 'probing', 'blocked']);
       expect(TRANSITION_MATRIX.done).toEqual([]);
       expect(TRANSITION_MATRIX.blocked).toEqual(['ready']);
+    });
+
+    it('should validate transitions correctly via isValidTransition', () => {
+      // testing → review is NOT a valid transition (must go through implementing first)
+      expect(isValidTransition('testing', 'review')).toBe(false);
+      // testing → implementing IS valid
+      expect(isValidTransition('testing', 'implementing')).toBe(true);
     });
   });
 

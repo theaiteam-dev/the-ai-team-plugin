@@ -24,7 +24,7 @@ A self-orchestrating Claude Code plugin that transforms a PRD into working, test
 │                             │                               │
 │                    ┌────────▼────────┐                      │
 │                    │   MCP Server    │                      │
-│                    │  (21 tools)     │                      │
+│                    │  (22 tools)     │                      │
 │                    └────────┬────────┘                      │
 └─────────────────────────────┼───────────────────────────────┘
                               │ HTTP + X-Project-ID header
@@ -482,7 +482,7 @@ ai-team/                     # Add as .claude/ai-team submodule
 │   │   │       ├── board.ts     # Board operations (4 tools)
 │   │   │       ├── items.ts     # Item operations (6 tools)
 │   │   │       ├── agents.ts    # Agent lifecycle (2 tools)
-│   │   │       ├── missions.ts  # Mission lifecycle (5 tools)
+│   │   │       ├── missions.ts  # Mission lifecycle (6 tools)
 │   │   │       ├── utils.ts     # Utilities (4 tools)
 │   │   │       └── index.ts     # Tool registration
 │   │   └── dist/            # Compiled JavaScript

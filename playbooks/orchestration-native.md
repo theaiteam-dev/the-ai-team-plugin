@@ -52,7 +52,10 @@ Hannibal runs precheck by executing commands and forwarding results to the API �
 `precheck_failure` is a **non-terminal, recoverable** state. It means the checks ran but found problems. The mission is NOT failed — it can be retried.
 
 **When `mission_current` returns `precheck_failure`:**
-- The mission has existing `precheckBlockers` showing what failed last time
+- The mission state is `precheck_failure` — blockers from the last run are stored in the API database.
+  Fetch them via `GET /api/missions/current` (REST endpoint) which returns the full mission record
+  including the `blockers` array. The `mission_current` MCP tool returns a simplified object
+  without the `blockers` field; use the REST endpoint or the `mission_precheck` response instead.
 - Display the blockers to the operator:
   ```
   [Hannibal] Previous precheck failed. Blockers:
@@ -149,6 +152,13 @@ Task(
 **Teammates persist across items.** Once spawned, a teammate stays active and can receive new work via `SendMessage`. You do NOT need to re-spawn for each item - send a message with the new work item details instead. However, if a teammate has shut down or was never spawned, use `Task` with `team_name` to spawn them.
 
 ## The Orchestration Loop
+
+**Check for precheck retry at start of run:**
+If mission state is `precheck_failure`:
+  - Display blockers to operator (fetch from `GET /api/missions/current` REST endpoint)
+  - Re-run the precheck flow (same steps as in the Precheck Flow section above)
+  - If passed: continue to main orchestration loop below
+  - If failed: call `mission_precheck({ passed: false, blockers, output })` to update blockers and exit — operator must fix issues before retrying
 
 **Two concerns, handled differently:**
 1. **Dependency gates** - items wait in `ready` stage for deps (between waves)

@@ -52,8 +52,8 @@ function createMockFetchWithMissions(missions: ApiMission[]) {
 }
 
 // Import components — will fail until B.A. creates them
-import { MissionHistoryPanel } from '../components/MissionHistoryPanel';
-import { HeaderBar } from '../components/header-bar';
+import { MissionHistoryPanel } from '@/components/MissionHistoryPanel';
+import { HeaderBar } from '@/components/header-bar';
 
 // ============ HeaderBar History Icon ============
 

@@ -113,7 +113,7 @@ Precheck failures are inherently recoverable. They fail because the codebase has
 #### MCP Tool Changes
 
 13. The `mission_precheck` MCP tool input schema shall change from `{ checks: string[] }` to carry agent-reported results:
-    ```
+    ```typescript
     passed: boolean
     blockers: string[]
     output: { lint?: { stdout, stderr, timedOut }, tests?: { stdout, stderr, timedOut } }

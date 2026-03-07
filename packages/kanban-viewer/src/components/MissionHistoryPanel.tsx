@@ -21,6 +21,22 @@ interface MissionHistoryPanelProps {
   projectId: string;
 }
 
+function formatPrecheckOutput(output: Record<string, unknown>): string {
+  const sections: string[] = [];
+  const lint = output.lint as { stdout?: string; stderr?: string; timedOut?: boolean } | undefined;
+  const tests = output.tests as { stdout?: string; stderr?: string; timedOut?: boolean } | undefined;
+  if (lint) {
+    const parts = [lint.stdout, lint.stderr].filter(Boolean);
+    sections.push(`[lint]\n${parts.join("\n")}`);
+  }
+  if (tests) {
+    const parts = [tests.stdout, tests.stderr].filter(Boolean);
+    sections.push(`[tests]\n${parts.join("\n")}`);
+  }
+  const result = sections.join("\n\n").trim();
+  return result || "(no output captured)";
+}
+
 function formatDate(dateStr: string | null | undefined): string {
   if (!dateStr) return "—";
   const d = new Date(dateStr);
@@ -127,6 +143,18 @@ function DetailPane({ mission }: DetailPaneProps) {
           </ul>
         </div>
       )}
+
+      {mission.state === "precheck_failure" && mission.precheckOutput && (
+        <div>
+          <span className="text-muted-foreground text-xs block mb-1">Precheck Output</span>
+          <pre
+            data-testid="detail-precheck-output"
+            className="text-xs text-amber-800 whitespace-pre-wrap break-all bg-amber-50 rounded p-2 overflow-x-auto"
+          >
+            {formatPrecheckOutput(mission.precheckOutput)}
+          </pre>
+        </div>
+      )}
     </div>
   );
 }
@@ -140,6 +168,7 @@ export function MissionHistoryPanel({ isOpen, onClose, projectId }: MissionHisto
     if (!isOpen) return;
 
     async function loadMissions() {
+      setMissions([]);
       setLoading(true);
       setSelected(null);
       try {
@@ -156,7 +185,7 @@ export function MissionHistoryPanel({ isOpen, onClose, projectId }: MissionHisto
           setMissions(sorted);
         }
       } catch {
-        // silently fail — list stays empty
+        setMissions([]);
       } finally {
         setLoading(false);
       }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { createValidationError } from '@/lib/errors';
 import { getAndValidateProjectId, ensureProject } from '@/lib/project-utils';
+import { safeJsonParse } from '@/lib/json-utils';
 import type { CreateMissionRequest, CreateMissionResponse, ApiError } from '@/types/api';
 import type { Mission, MissionState, MissionPrecheckOutput } from '@/types/mission';
 
@@ -33,12 +34,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const missions = await prisma.mission.findMany({ where });
 
-    const parseJsonField = <T>(field: unknown): T | null => {
-      if (field === null || field === undefined) return null;
-      if (typeof field === 'string') return JSON.parse(field) as T;
-      return field as T;
-    };
-
     const data = missions.map((m) => ({
       id: m.id,
       name: m.name,
@@ -47,8 +42,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       startedAt: m.startedAt,
       completedAt: m.completedAt,
       archivedAt: m.archivedAt,
-      precheckBlockers: parseJsonField<string[]>(m.precheckBlockers),
-      precheckOutput: parseJsonField<MissionPrecheckOutput>(m.precheckOutput),
+      precheckBlockers: safeJsonParse<string[]>(m.precheckBlockers),
+      precheckOutput: safeJsonParse<MissionPrecheckOutput>(m.precheckOutput),
     }));
 
     return NextResponse.json({

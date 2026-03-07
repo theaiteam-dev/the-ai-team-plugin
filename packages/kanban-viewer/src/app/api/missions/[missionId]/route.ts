@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getAndValidateProjectId } from '@/lib/project-utils';
+import { safeJsonParse } from '@/lib/json-utils';
 import type { ApiError } from '@/types/api';
 import type { MissionState, MissionPrecheckOutput } from '@/types/mission';
 
@@ -24,10 +25,11 @@ export async function GET(
       return NextResponse.json(errorResponse, { status: 400 });
     }
 
+    const projectId = projectValidation.projectId;
     const { missionId } = await params;
 
     const mission = await prisma.mission.findUnique({
-      where: { id: missionId },
+      where: { id: missionId, projectId },
     });
 
     if (!mission) {
@@ -41,12 +43,6 @@ export async function GET(
       return NextResponse.json(apiError, { status: 404 });
     }
 
-    const parseJsonField = <T>(field: unknown): T | null => {
-      if (field === null || field === undefined) return null;
-      if (typeof field === 'string') return JSON.parse(field) as T;
-      return field as T;
-    };
-
     const responseData = {
       id: mission.id,
       name: mission.name,
@@ -55,8 +51,8 @@ export async function GET(
       startedAt: mission.startedAt,
       completedAt: mission.completedAt,
       archivedAt: mission.archivedAt,
-      precheckBlockers: parseJsonField<string[]>(mission.precheckBlockers),
-      precheckOutput: parseJsonField<MissionPrecheckOutput>(mission.precheckOutput),
+      precheckBlockers: safeJsonParse<string[]>(mission.precheckBlockers),
+      precheckOutput: safeJsonParse<MissionPrecheckOutput>(mission.precheckOutput),
     };
 
     return NextResponse.json({ success: true, data: responseData });

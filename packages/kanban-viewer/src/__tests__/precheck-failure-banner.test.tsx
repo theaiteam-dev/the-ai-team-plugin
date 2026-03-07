@@ -65,6 +65,13 @@ describe('PrecheckFailureBanner conditional rendering', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('should NOT render when mission state is prechecking', () => {
+    const { container } = render(
+      <PrecheckFailureBanner mission={createMission({ state: 'prechecking' })} />
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it('should NOT render when mission is null', () => {
     const { container } = render(
       <PrecheckFailureBanner mission={null} />

@@ -27,12 +27,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
     const projectId = projectValidation.projectId;
 
-    // Find active mission (not archived) for this project
+    // Find active mission (not archived) for this project — newest first
     const mission = await prisma.mission.findFirst({
       where: {
         projectId,
         archivedAt: null,
       },
+      orderBy: { startedAt: 'desc' },
     });
 
     if (!mission) {
@@ -60,6 +61,40 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const body = await request.json();
     const { passed, blockers = [], output = {} } = body;
+
+    // Validate body fields
+    if (typeof passed !== 'boolean') {
+      const apiError: ApiError = {
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: '`passed` must be a boolean',
+        },
+      };
+      return NextResponse.json(apiError, { status: 400 });
+    }
+
+    if (!Array.isArray(blockers) || !blockers.every((b: unknown) => typeof b === 'string')) {
+      const apiError: ApiError = {
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: '`blockers` must be an array of strings',
+        },
+      };
+      return NextResponse.json(apiError, { status: 400 });
+    }
+
+    if (typeof output !== 'object' || output === null || Array.isArray(output)) {
+      const apiError: ApiError = {
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: '`output` must be an object',
+        },
+      };
+      return NextResponse.json(apiError, { status: 400 });
+    }
 
     const newState = passed ? 'running' : 'precheck_failure';
 

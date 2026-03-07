@@ -4,6 +4,7 @@ import { createDatabaseError } from '@/lib/errors';
 import { getAndValidateProjectId } from '@/lib/project-utils';
 import { transformItemWithRelationsToResponse } from '@/lib/item-transform';
 import { isStageId, isAgentName } from '@/lib/api-validation';
+import { safeJsonParse } from '@/lib/json-utils';
 import type { GetBoardResponse, ApiError } from '@/types/api';
 import type { BoardState, Stage, StageId } from '@/types/board';
 import type { AgentClaim, AgentName } from '@/types/agent';
@@ -97,15 +98,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<GetBoardRe
         itemId: claim.itemId,
         claimedAt: claim.claimedAt,
       }));
-
-    const safeJsonParse = <T>(value: string | null): T | null => {
-      if (!value) return null;
-      try {
-        return JSON.parse(value) as T;
-      } catch {
-        return null;
-      }
-    };
 
     // Transform mission to Mission format
     const transformedMission: Mission | null = currentMission
