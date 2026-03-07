@@ -7,7 +7,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
  * Triggered from a History icon button in HeaderBar.
  * Fetches from GET /api/missions, displays missions sorted by startedAt desc.
  * Master-detail: list on left, detail pane on right when row selected.
- * precheckBlockers/precheckOutput are raw JSON strings — parsed before display.
+ * precheckBlockers/precheckOutput are pre-parsed by the API — used directly.
  */
 
 // API mission shape returned by GET /api/missions
@@ -19,8 +19,8 @@ interface ApiMission {
   startedAt: string;
   completedAt: string | null;
   archivedAt: string | null;
-  precheckBlockers?: string | null;
-  precheckOutput?: string | null;
+  precheckBlockers?: string[] | null;
+  precheckOutput?: Record<string, unknown> | null;
 }
 
 function createApiMission(overrides: Partial<ApiMission> = {}): ApiMission {
@@ -370,17 +370,17 @@ describe('MissionHistoryPanel detail pane', () => {
   });
 });
 
-// ============ precheck_failure detail with JSON parsing ============
+// ============ precheck_failure detail ============
 
 describe('MissionHistoryPanel precheck_failure detail pane', () => {
   const precheckMission = createApiMission({
     id: 'M-20260122-001',
     name: 'Failed Precheck Mission',
     state: 'precheck_failure',
-    precheckBlockers: JSON.stringify(['lint: 3 errors', 'tests: 2 failing']),
-    precheckOutput: JSON.stringify({
+    precheckBlockers: ['lint: 3 errors', 'tests: 2 failing'],
+    precheckOutput: {
       lint: { stdout: 'error output', stderr: '', timedOut: false },
-    }),
+    },
   });
 
   beforeEach(() => {

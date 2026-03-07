@@ -12,7 +12,7 @@ import type { MissionState, MissionPrecheckOutput } from '@/types/mission';
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { missionId: string } }
+  { params }: { params: Promise<{ missionId: string }> }
 ): Promise<NextResponse> {
   try {
     const projectValidation = getAndValidateProjectId(request.headers);
@@ -24,7 +24,7 @@ export async function GET(
       return NextResponse.json(errorResponse, { status: 400 });
     }
 
-    const { missionId } = params;
+    const { missionId } = await params;
 
     const mission = await prisma.mission.findUnique({
       where: { id: missionId },

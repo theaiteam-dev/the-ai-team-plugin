@@ -101,10 +101,20 @@ model AgentClaim {
   @@index([agentName])                    // Index for querying claims by agent
 }
 
+// NOTE: MissionState enum migration skipped.
+// Converting Mission.state to a Prisma enum is safe at the SQLite level
+// (SQLite stores enum values as plain strings, so no data migration risk).
+// However, a Prisma `enum MissionState` would conflict in name with the
+// existing TypeScript `MissionState` union type exported from
+// src/types/mission.ts. Resolving the collision would require renaming one
+// of them and updating every import across the route handlers and component
+// files — a non-trivial refactor with no runtime benefit for SQLite.
+// Valid values: initializing | prechecking | precheck_failure | running |
+//               postchecking | completed | failed | archived
 model Mission {
   id          String        @id           // 'M-20260121-001'
   name        String
-  state       String                      // MissionState
+  state       String                      // MissionState (see comment above)
   prdPath     String
   projectId   String
   project     Project       @relation(fields: [projectId], references: [id])

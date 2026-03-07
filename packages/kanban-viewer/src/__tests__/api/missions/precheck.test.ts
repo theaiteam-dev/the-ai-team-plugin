@@ -46,6 +46,7 @@ const mockPrismaClient = vi.hoisted(() => ({
     findUnique: vi.fn(),
     create: vi.fn(),
   },
+  $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
 }));
 
 vi.mock('@/lib/db', () => ({

@@ -11,23 +11,14 @@ interface ApiMission {
   startedAt: string;
   completedAt: string | null;
   archivedAt: string | null;
-  precheckBlockers?: string | null;
-  precheckOutput?: string | null;
+  precheckBlockers?: string[] | null;
+  precheckOutput?: Record<string, unknown> | null;
 }
 
 interface MissionHistoryPanelProps {
   isOpen: boolean;
   onClose: () => void;
   projectId: string;
-}
-
-function parseJsonSafe<T>(value: string | null | undefined, fallback: T): T {
-  if (value == null) return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
 }
 
 function formatDate(dateStr: string | null | undefined): string {
@@ -77,7 +68,7 @@ interface DetailPaneProps {
 }
 
 function DetailPane({ mission }: DetailPaneProps) {
-  const blockers = parseJsonSafe<string[]>(mission.precheckBlockers, []);
+  const blockers = mission.precheckBlockers ?? [];
   const duration = formatDuration(mission.startedAt, mission.completedAt);
 
   return (

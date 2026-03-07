@@ -182,6 +182,28 @@ describe('PrecheckFailureBanner raw output', () => {
     // Banner still renders without crashing
     expect(screen.getByTestId('precheck-failure-banner')).toBeInTheDocument();
   });
+
+  it('should show fallback text when precheckOutput is an empty object {}', () => {
+    const mission = createMission({ precheckOutput: {} });
+    render(<PrecheckFailureBanner mission={mission} />);
+    const rawOutput = screen.getByTestId('precheck-raw-output');
+    expect(rawOutput.textContent).toContain('(no output captured)');
+  });
+
+  it('should separate stdout and stderr with a newline when both are non-empty', () => {
+    const mission = createMission({
+      precheckOutput: {
+        lint: { stdout: 'stdout content', stderr: 'stderr content', timedOut: false },
+      },
+    });
+    render(<PrecheckFailureBanner mission={mission} />);
+    const rawOutput = screen.getByTestId('precheck-raw-output');
+    // Both should be present, and stdout should NOT run directly into stderr
+    expect(rawOutput.textContent).toContain('stdout content');
+    expect(rawOutput.textContent).toContain('stderr content');
+    // The newline separator means they are not directly concatenated
+    expect(rawOutput.textContent).not.toContain('stdout contentstderr content');
+  });
 });
 
 // ============ Retry Instructions ============

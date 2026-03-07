@@ -75,22 +75,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       updateData.precheckOutput = JSON.stringify(output);
     }
 
-    await prisma.mission.update({
-      where: { id: mission.id },
-      data: updateData,
-    });
-
-    await prisma.activityLog.create({
-      data: {
-        projectId,
-        missionId: mission.id,
-        agent: null,
-        message: passed
-          ? 'Precheck passed: mission transitioning to running'
-          : `Precheck failed: ${blockers.join(', ')}`,
-        level: passed ? 'info' : 'error',
-      },
-    });
+    await prisma.$transaction([
+      prisma.mission.update({
+        where: { id: mission.id },
+        data: updateData,
+      }),
+      prisma.activityLog.create({
+        data: {
+          projectId,
+          missionId: mission.id,
+          agent: null,
+          message: passed
+            ? 'Precheck passed: mission transitioning to running'
+            : `Precheck failed: ${blockers.join(', ')}`,
+          level: passed ? 'info' : 'error',
+        },
+      }),
+    ]);
 
     const responseData: Record<string, unknown> = {
       allPassed: passed,

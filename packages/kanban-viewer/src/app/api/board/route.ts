@@ -98,6 +98,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<GetBoardRe
         claimedAt: claim.claimedAt,
       }));
 
+    const safeJsonParse = <T>(value: string | null): T | null => {
+      if (!value) return null;
+      try {
+        return JSON.parse(value) as T;
+      } catch {
+        return null;
+      }
+    };
+
     // Transform mission to Mission format
     const transformedMission: Mission | null = currentMission
       ? {
@@ -108,12 +117,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<GetBoardRe
           startedAt: currentMission.startedAt,
           completedAt: currentMission.completedAt,
           archivedAt: currentMission.archivedAt,
-          precheckBlockers: currentMission.precheckBlockers
-            ? (JSON.parse(currentMission.precheckBlockers) as string[])
-            : null,
-          precheckOutput: currentMission.precheckOutput
-            ? JSON.parse(currentMission.precheckOutput)
-            : null,
+          precheckBlockers: safeJsonParse<string[]>(currentMission.precheckBlockers),
+          precheckOutput: safeJsonParse(currentMission.precheckOutput),
         }
       : null;
 

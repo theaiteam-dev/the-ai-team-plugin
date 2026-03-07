@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db';
 import { createValidationError } from '@/lib/errors';
 import { getAndValidateProjectId, ensureProject } from '@/lib/project-utils';
 import type { CreateMissionRequest, CreateMissionResponse, ApiError } from '@/types/api';
-import type { Mission } from '@/types/mission';
+import type { Mission, MissionState, MissionPrecheckOutput } from '@/types/mission';
 
 /**
  * GET /api/missions
@@ -33,9 +33,27 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const missions = await prisma.mission.findMany({ where });
 
+    const parseJsonField = <T>(field: unknown): T | null => {
+      if (field === null || field === undefined) return null;
+      if (typeof field === 'string') return JSON.parse(field) as T;
+      return field as T;
+    };
+
+    const data = missions.map((m) => ({
+      id: m.id,
+      name: m.name,
+      state: m.state as MissionState,
+      prdPath: m.prdPath,
+      startedAt: m.startedAt,
+      completedAt: m.completedAt,
+      archivedAt: m.archivedAt,
+      precheckBlockers: parseJsonField<string[]>(m.precheckBlockers),
+      precheckOutput: parseJsonField<MissionPrecheckOutput>(m.precheckOutput),
+    }));
+
     return NextResponse.json({
       success: true,
-      data: missions,
+      data,
     });
   } catch (error) {
     const apiError: ApiError = {
