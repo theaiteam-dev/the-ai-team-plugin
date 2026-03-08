@@ -124,6 +124,9 @@ WIP limit controls how many features are in-flight (not in briefings, ready, or 
    blockers = []
    output   = {}
 
+   # config.precheck lists the check names to run (e.g. ["lint", "unit"] by default).
+   # config.checks maps each name to its shell command.
+   # Results are stored in output keyed by check name: output["lint"], output["unit"], etc.
    for checkName in config.precheck:
        if checkName not in config.checks:
            blockers.append("Check '" + checkName + "' is listed in config.precheck but has no command in config.checks")

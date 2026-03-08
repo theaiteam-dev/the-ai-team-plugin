@@ -19,11 +19,11 @@ export type MissionState =
   | 'archived';
 
 /**
- * Precheck output capturing stdout/stderr from lint and test runs.
+ * Precheck output capturing stdout/stderr from check runs.
+ * Uses an index signature to allow arbitrary check names (e.g. lint, unit, e2e).
  */
 export type MissionPrecheckOutput = {
-  lint?: { stdout: string; stderr: string; timedOut: boolean };
-  tests?: { stdout: string; stderr: string; timedOut: boolean };
+  [key: string]: { stdout: string; stderr: string; timedOut: boolean } | undefined;
 };
 
 /**

@@ -23,18 +23,14 @@ interface MissionHistoryPanelProps {
 
 function formatPrecheckOutput(output: Record<string, unknown>): string {
   const sections: string[] = [];
-  const lint = output.lint as { stdout?: string; stderr?: string; timedOut?: boolean } | undefined;
-  const tests = output.tests as { stdout?: string; stderr?: string; timedOut?: boolean } | undefined;
-  if (lint) {
-    const parts = [lint.stdout, lint.stderr].filter(Boolean);
-    sections.push(`[lint]\n${parts.join("\n")}`);
+  for (const [checkName, result] of Object.entries(output)) {
+    if (result && typeof result === "object") {
+      const r = result as { stdout?: string; stderr?: string };
+      const parts = [r.stdout, r.stderr].filter(Boolean);
+      sections.push(`[${checkName}]\n${parts.join("\n")}`);
+    }
   }
-  if (tests) {
-    const parts = [tests.stdout, tests.stderr].filter(Boolean);
-    sections.push(`[tests]\n${parts.join("\n")}`);
-  }
-  const result = sections.join("\n\n").trim();
-  return result || "(no output captured)";
+  return sections.join("\n\n").trim() || "(no output captured)";
 }
 
 function formatDate(dateStr: string | null | undefined): string {
@@ -167,13 +163,16 @@ export function MissionHistoryPanel({ isOpen, onClose, projectId }: MissionHisto
   useEffect(() => {
     if (!isOpen) return;
 
+    const controller = new AbortController();
+
     async function loadMissions() {
-      setMissions([]);
-      setLoading(true);
-      setSelected(null);
+      if (!controller.signal.aborted) setMissions([]);
+      if (!controller.signal.aborted) setLoading(true);
+      if (!controller.signal.aborted) setSelected(null);
       try {
         const r = await fetch("/api/missions", {
           headers: { "X-Project-ID": projectId },
+          signal: controller.signal,
         });
         const data = await r.json();
         if (data.success && Array.isArray(data.data)) {
@@ -182,16 +181,18 @@ export function MissionHistoryPanel({ isOpen, onClose, projectId }: MissionHisto
             (a: ApiMission, b: ApiMission) =>
               new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
           );
-          setMissions(sorted);
+          if (!controller.signal.aborted) setMissions(sorted);
         }
       } catch {
-        setMissions([]);
+        if (!controller.signal.aborted) setMissions([]);
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     }
 
     void loadMissions();
+
+    return () => controller.abort();
   }, [isOpen, projectId]);
 
   if (!isOpen) return null;

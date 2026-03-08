@@ -27,9 +27,27 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const stateFilter = request.nextUrl.searchParams.get('state');
 
-    const where: Record<string, unknown> = { projectId };
+    const VALID_MISSION_STATES: MissionState[] = [
+      'initializing',
+      'prechecking',
+      'precheck_failure',
+      'running',
+      'postchecking',
+      'completed',
+      'failed',
+      'archived',
+    ];
+
+    if (stateFilter && !(VALID_MISSION_STATES as string[]).includes(stateFilter)) {
+      return NextResponse.json(
+        { success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid state filter' } },
+        { status: 400 }
+      );
+    }
+
+    const where: { projectId: string; state?: MissionState } = { projectId };
     if (stateFilter) {
-      where.state = stateFilter;
+      where.state = stateFilter as MissionState;
     }
 
     const missions = await prisma.mission.findMany({ where });

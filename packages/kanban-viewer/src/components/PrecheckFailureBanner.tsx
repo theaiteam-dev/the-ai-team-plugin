@@ -9,16 +9,13 @@ interface PrecheckFailureBannerProps {
 
 function formatPrecheckOutput(output: MissionPrecheckOutput): string {
   const sections: string[] = [];
-  if (output.lint) {
-    const parts = [output.lint.stdout, output.lint.stderr].filter(Boolean);
-    sections.push(`[lint]\n${parts.join("\n")}`);
+  for (const [checkName, result] of Object.entries(output)) {
+    if (result) {
+      const parts = [result.stdout, result.stderr].filter(Boolean);
+      sections.push(`[${checkName}]\n${parts.join("\n")}`);
+    }
   }
-  if (output.tests) {
-    const parts = [output.tests.stdout, output.tests.stderr].filter(Boolean);
-    sections.push(`[tests]\n${parts.join("\n")}`);
-  }
-  const result = sections.join("\n\n").trim();
-  return result || "(no output captured)";
+  return sections.join("\n\n").trim() || "(no output captured)";
 }
 
 export function PrecheckFailureBanner({ mission }: PrecheckFailureBannerProps) {
