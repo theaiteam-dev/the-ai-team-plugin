@@ -196,18 +196,26 @@ export class PrismaBoardService {
       }
     }
 
-    // Map mission status
-    // 'precheck_failure' falls through to the cast below, which will pass it as-is.
-    // Explicitly handle known states so type-narrowing is clear:
-    //   running → 'active'
-    //   precheck_failure → 'paused' (recoverable failure awaiting operator action)
-    //   all others cast directly (completed, planning, paused, etc.)
-    const missionStatus: BoardMetadata['mission']['status'] =
-      mission?.state === 'running'
-        ? 'active'
-        : mission?.state === 'precheck_failure'
-          ? 'paused'
-          : (mission?.state as BoardMetadata['mission']['status']) ?? 'planning';
+    // Map all mission states consistently with api-transform.ts and board/events/route.ts
+    let missionStatus: BoardMetadata['mission']['status'] = 'planning';
+    switch (mission?.state) {
+      case 'initializing':
+        missionStatus = 'planning';
+        break;
+      case 'prechecking':
+      case 'running':
+      case 'postchecking':
+        missionStatus = 'active';
+        break;
+      case 'failed':
+      case 'precheck_failure':
+        missionStatus = 'paused';
+        break;
+      case 'completed':
+      case 'archived':
+        missionStatus = 'completed';
+        break;
+    }
 
     return {
       mission: {
