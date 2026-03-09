@@ -11,11 +11,20 @@
 export type MissionState =
   | 'initializing'
   | 'prechecking'
+  | 'precheck_failure'
   | 'running'
   | 'postchecking'
   | 'completed'
   | 'failed'
   | 'archived';
+
+/**
+ * Precheck output capturing stdout/stderr from check runs.
+ * Uses an index signature to allow arbitrary check names (e.g. lint, unit, e2e).
+ */
+export type MissionPrecheckOutput = {
+  [key: string]: { stdout: string; stderr: string; timedOut: boolean } | undefined;
+};
 
 /**
  * Mission entity representing a PRD-driven work session.
@@ -28,6 +37,8 @@ export interface Mission {
   startedAt: Date;
   completedAt: Date | null;
   archivedAt: Date | null;
+  precheckBlockers?: string[] | null;
+  precheckOutput?: MissionPrecheckOutput | null;
 }
 
 /**

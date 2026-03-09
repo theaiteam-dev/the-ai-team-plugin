@@ -297,40 +297,12 @@ describe('Mission Tools', () => {
   });
 
   describe('mission_precheck', () => {
-    describe('happy path', () => {
-      it('should run all configured precheck checks', async () => {
+    describe('new schema: { passed, blockers, output }', () => {
+      it('should send passed=true with empty blockers and output to the API', async () => {
         const mockResponse = {
           data: {
             success: true,
             allPassed: true,
-            checks: [
-              { name: 'lint', command: 'npm run lint', passed: true },
-              { name: 'unit', command: 'npm test', passed: true },
-            ],
-            configSource: 'ateam.config.json',
-          },
-          status: 200,
-          headers: {},
-        };
-        mockPost.mockResolvedValueOnce(mockResponse);
-
-        const { missionPrecheck } = await import('../../tools/missions.js');
-
-        const result = await missionPrecheck({});
-
-        expect(mockPost).toHaveBeenCalledWith('/api/missions/precheck', {});
-        expect(result.content[0].text).toContain('allPassed');
-        expect(result.content[0].text).toContain('lint');
-      });
-
-      it('should run specific checks when provided', async () => {
-        const mockResponse = {
-          data: {
-            success: true,
-            allPassed: true,
-            checks: [
-              { name: 'lint', command: 'npm run lint', passed: true },
-            ],
           },
           status: 200,
           headers: {},
@@ -340,24 +312,25 @@ describe('Mission Tools', () => {
         const { missionPrecheck } = await import('../../tools/missions.js');
 
         const result = await missionPrecheck({
-          checks: ['lint'],
+          passed: true,
+          blockers: [],
+          output: {},
         });
 
         expect(mockPost).toHaveBeenCalledWith('/api/missions/precheck', {
-          checks: ['lint'],
+          passed: true,
+          blockers: [],
+          output: {},
         });
-        expect(result.content[0].text).toContain('lint');
+        expect(result.content[0].text).toContain('allPassed');
       });
 
-      it('should report failed checks', async () => {
+      it('should send passed=false with blockers and output to the API', async () => {
         const mockResponse = {
           data: {
             success: true,
             allPassed: false,
-            checks: [
-              { name: 'lint', command: 'npm run lint', passed: false, error: 'Lint errors found' },
-              { name: 'unit', command: 'npm test', passed: true },
-            ],
+            retryable: true,
           },
           status: 200,
           headers: {},
@@ -366,30 +339,113 @@ describe('Mission Tools', () => {
 
         const { missionPrecheck } = await import('../../tools/missions.js');
 
-        const result = await missionPrecheck({});
+        const result = await missionPrecheck({
+          passed: false,
+          blockers: ['lint: 3 errors', 'test suite failing'],
+          output: { lint: { stdout: 'errors...', stderr: '', timedOut: false } },
+        });
+
+        expect(mockPost).toHaveBeenCalledWith('/api/missions/precheck', {
+          passed: false,
+          blockers: ['lint: 3 errors', 'test suite failing'],
+          output: { lint: { stdout: 'errors...', stderr: '', timedOut: false } },
+        });
+        expect(result.content[0].text).toContain('retryable');
+      });
+
+      it('should report failure result in response text', async () => {
+        const mockResponse = {
+          data: {
+            success: true,
+            allPassed: false,
+            retryable: true,
+            blockers: ['lint errors found'],
+          },
+          status: 200,
+          headers: {},
+        };
+        mockPost.mockResolvedValueOnce(mockResponse);
+
+        const { missionPrecheck } = await import('../../tools/missions.js');
+
+        const result = await missionPrecheck({
+          passed: false,
+          blockers: ['lint errors found'],
+          output: {},
+        });
 
         expect(result.content[0].text).toContain('"allPassed":false');
-        expect(result.content[0].text).toContain('Lint errors found');
+      });
+    });
+
+    describe('Zod schema validation', () => {
+      it('should reject call missing required passed field', async () => {
+        const { MissionPrecheckInputSchema } = await import('../../tools/missions.js');
+
+        const invalidInput = {
+          blockers: [],
+          output: {},
+        };
+
+        const parseResult = MissionPrecheckInputSchema.safeParse(invalidInput);
+        expect(parseResult.success).toBe(false);
+        if (!parseResult.success) {
+          const paths = parseResult.error.issues.flatMap((i) => i.path);
+          expect(paths).toContain('passed');
+        }
+      });
+
+      it('should accept valid input with passed, blockers, output', async () => {
+        const { MissionPrecheckInputSchema } = await import('../../tools/missions.js');
+
+        const validInput = {
+          passed: true,
+          blockers: [],
+          output: {},
+        };
+
+        const parseResult = MissionPrecheckInputSchema.safeParse(validInput);
+        expect(parseResult.success).toBe(true);
       });
     });
 
     describe('error handling', () => {
-      it('should handle missing config error', async () => {
+      it('should handle no active mission error', async () => {
         const error = {
           status: 404,
-          message: 'No ateam.config.json found',
-          code: 'CONFIG_NOT_FOUND',
+          message: 'No active mission found',
+          code: 'NO_ACTIVE_MISSION',
         };
         mockPost.mockRejectedValueOnce(error);
 
         const { missionPrecheck } = await import('../../tools/missions.js');
 
-        const result = await missionPrecheck({});
+        const result = await missionPrecheck({
+          passed: true,
+          blockers: [],
+          output: {},
+        });
 
         expect(result.isError).toBe(true);
-        if ('message' in result) {
-          expect(result.message).toContain('config');
-        }
+      });
+
+      it('should handle invalid state error (mission not in initializing/precheck_failure)', async () => {
+        const error = {
+          status: 400,
+          message: 'Mission is not in a valid state for precheck',
+          code: 'INVALID_STATE',
+        };
+        mockPost.mockRejectedValueOnce(error);
+
+        const { missionPrecheck } = await import('../../tools/missions.js');
+
+        const result = await missionPrecheck({
+          passed: true,
+          blockers: [],
+          output: {},
+        });
+
+        expect(result.isError).toBe(true);
       });
     });
   });
@@ -639,6 +695,126 @@ describe('Mission Tools', () => {
         if ('message' in result) {
           expect(result.message).toContain('not found');
         }
+      });
+    });
+  });
+
+  describe('mission_list', () => {
+    describe('happy path', () => {
+      it('should call GET /api/missions without params when no filter provided', async () => {
+        const mockResponse = {
+          data: {
+            success: true,
+            data: [
+              { id: 'M-20260121-001', name: 'Mission 1', state: 'completed' },
+              { id: 'M-20260122-001', name: 'Mission 2', state: 'precheck_failure' },
+            ],
+          },
+          status: 200,
+          headers: {},
+        };
+        mockGet.mockResolvedValueOnce(mockResponse);
+
+        const { missionList } = await import('../../tools/missions.js');
+
+        const result = await missionList({});
+
+        expect(mockGet).toHaveBeenCalledWith('/api/missions');
+        expect(result.content[0].text).toContain('Mission 1');
+      });
+
+      it('should call GET /api/missions?state=precheck_failure when state filter provided', async () => {
+        const mockResponse = {
+          data: {
+            success: true,
+            data: [
+              { id: 'M-20260122-001', name: 'Failed Precheck', state: 'precheck_failure' },
+            ],
+          },
+          status: 200,
+          headers: {},
+        };
+        mockGet.mockResolvedValueOnce(mockResponse);
+
+        const { missionList } = await import('../../tools/missions.js');
+
+        const result = await missionList({ state: 'precheck_failure' });
+
+        expect(mockGet).toHaveBeenCalledWith('/api/missions?state=precheck_failure');
+        expect(result.content[0].text).toContain('precheck_failure');
+      });
+
+      it('should call GET /api/missions?state=completed when state=completed filter provided', async () => {
+        const mockResponse = {
+          data: {
+            success: true,
+            data: [
+              { id: 'M-20260121-001', name: 'Done Mission', state: 'completed' },
+            ],
+          },
+          status: 200,
+          headers: {},
+        };
+        mockGet.mockResolvedValueOnce(mockResponse);
+
+        const { missionList } = await import('../../tools/missions.js');
+
+        await missionList({ state: 'completed' });
+
+        expect(mockGet).toHaveBeenCalledWith('/api/missions?state=completed');
+      });
+
+      it('should return empty list when no missions match filter', async () => {
+        const mockResponse = {
+          data: {
+            success: true,
+            data: [],
+          },
+          status: 200,
+          headers: {},
+        };
+        mockGet.mockResolvedValueOnce(mockResponse);
+
+        const { missionList } = await import('../../tools/missions.js');
+
+        const result = await missionList({ state: 'archived' });
+
+        expect(result.content[0].text).toBeDefined();
+      });
+    });
+
+    describe('Zod schema validation', () => {
+      it('should accept empty input (no filter)', async () => {
+        const { MissionListInputSchema } = await import('../../tools/missions.js');
+
+        const parseResult = MissionListInputSchema.safeParse({});
+        expect(parseResult.success).toBe(true);
+      });
+
+      it('should accept valid state filter values', async () => {
+        const { MissionListInputSchema } = await import('../../tools/missions.js');
+
+        for (const state of ['initializing', 'prechecking', 'precheck_failure', 'running', 'postchecking', 'completed', 'failed', 'archived']) {
+          const parseResult = MissionListInputSchema.safeParse({ state });
+          expect(parseResult.success).toBe(true);
+        }
+      });
+    });
+
+    describe('error handling', () => {
+      it('should handle database error gracefully', async () => {
+        const error = {
+          status: 500,
+          message: 'Database error',
+          code: 'DATABASE_ERROR',
+        };
+        mockGet.mockRejectedValueOnce(error);
+
+        const { missionList } = await import('../../tools/missions.js');
+
+        const result = await missionList({});
+
+        expect(result.isError).toBe(true);
       });
     });
   });

@@ -4,6 +4,7 @@ import { createDatabaseError } from '@/lib/errors';
 import { getAndValidateProjectId } from '@/lib/project-utils';
 import { transformItemWithRelationsToResponse } from '@/lib/item-transform';
 import { isStageId, isAgentName } from '@/lib/api-validation';
+import { safeJsonParse } from '@/lib/json-utils';
 import type { GetBoardResponse, ApiError } from '@/types/api';
 import type { BoardState, Stage, StageId } from '@/types/board';
 import type { AgentClaim, AgentName } from '@/types/agent';
@@ -69,7 +70,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<GetBoardRe
           archivedAt: null,
           projectId,
           state: {
-            in: ['initializing', 'prechecking', 'running', 'postchecking'],
+            in: ['initializing', 'prechecking', 'precheck_failure', 'running', 'postchecking'],
           },
         },
         orderBy: { startedAt: 'desc' },
@@ -108,6 +109,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<GetBoardRe
           startedAt: currentMission.startedAt,
           completedAt: currentMission.completedAt,
           archivedAt: currentMission.archivedAt,
+          precheckBlockers: safeJsonParse<string[]>(currentMission.precheckBlockers),
+          precheckOutput: safeJsonParse(currentMission.precheckOutput),
         }
       : null;
 

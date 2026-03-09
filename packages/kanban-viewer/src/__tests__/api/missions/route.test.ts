@@ -154,6 +154,20 @@ describe('GET /api/missions', () => {
       expect(data.success).toBe(false);
       expect(data.error).toBeDefined();
     });
+
+    it('should return 400 for invalid ?state= filter value', async () => {
+      const request = new NextRequest(
+        'http://localhost:3000/api/missions?state=bogus_state',
+        { headers: { 'X-Project-ID': 'test-project' } }
+      );
+      const response = await GET(request);
+
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.success).toBe(false);
+      expect(data.error.code).toBe('VALIDATION_ERROR');
+      expect(data.error.message).toBe('Invalid state filter');
+    });
   });
 });
 
@@ -365,6 +379,7 @@ describe('POST /api/missions', () => {
         body: JSON.stringify({
           name: 'New Mission',
           prdPath: '/prd/new.md',
+          force: true,
         } satisfies CreateMissionRequest),
         headers: {
           'Content-Type': 'application/json',
@@ -628,6 +643,7 @@ describe('POST /api/missions', () => {
         body: JSON.stringify({
           name: 'New Mission',
           prdPath: '/prd/new.md',
+          force: true,
         } satisfies CreateMissionRequest),
         headers: {
           'Content-Type': 'application/json',
@@ -690,6 +706,7 @@ describe('POST /api/missions', () => {
         body: JSON.stringify({
           name: 'New Mission',
           prdPath: '/prd/new.md',
+          force: true,
         } satisfies CreateMissionRequest),
         headers: {
           'Content-Type': 'application/json',
@@ -873,6 +890,7 @@ describe('POST /api/missions', () => {
         body: JSON.stringify({
           name: 'New',
           prdPath: '/prd/new.md',
+          force: true,
         } satisfies CreateMissionRequest),
         headers: {
           'Content-Type': 'application/json',

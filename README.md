@@ -24,7 +24,7 @@ A self-orchestrating Claude Code plugin that transforms a PRD into working, test
 │                             │                               │
 │                    ┌────────▼────────┐                      │
 │                    │   MCP Server    │                      │
-│                    │  (21 tools)     │                      │
+│                    │  (22 tools)     │                      │
 │                    └────────┬────────┘                      │
 └─────────────────────────────┼───────────────────────────────┘
                               │ HTTP + X-Project-ID header
@@ -139,6 +139,21 @@ The dashboard provides two views:
 - **Input/output/cache token counts** with K/M notation
 - **Mission totals** including cache savings
 - Appears in the right sidebar after mission completes; populated via SSE `mission-token-usage` event
+
+### Mission History & Archive (NEW)
+- **History drawer** triggered by `History` button in HeaderBar (right side)
+- **Master-detail layout** shows list of past missions with metadata on the left, details on the right
+- **Sortable by date** — missions listed in reverse chronological order (newest first)
+- **State badges** show mission state (completed, failed, archived, precheck_failure)
+- **Mission details** include name, PRD path, state, started/completed/archived timestamps, duration
+- **Accessible anytime** — drawer does not navigate away from the board, can be dismissed to continue work
+
+### Precheck Failure Banner (NEW)
+- **Amber inline banner** shown when mission is in `precheck_failure` state (not terminal `failed`)
+- **Blocker list** shows which checks failed (e.g., "Lint failed with 3 error(s)")
+- **Expandable raw output** shows full stdout/stderr from check commands
+- **Retry affordance** — operator can fix issues and click "Retry Precheck" to re-run checks without re-planning
+- **Distinct from terminal failures** — visually and state-wise different from red `failed` state
 
 Switch between views using the navigation tabs at the top of the dashboard.
 
@@ -285,6 +300,14 @@ If issues are found, specific items return to the pipeline for fixes.
 - Configured via `ateam.config.json` (typically lint + unit tests)
 - Ensures codebase is in clean state before mission begins
 - Establishes baseline - if tests are already failing, mission can't determine what it broke
+- If checks fail, mission enters `precheck_failure` state (recoverable)
+
+**Precheck Failure Recovery:**
+- When precheck fails (lint or test errors), mission does NOT reach terminal `failed` state
+- Operator fixes the lint/test issues in the target project
+- Operator retries precheck via `/ai-team:run` without re-planning
+- All planning work (Face decomposition, Sosa review, work items) remains intact
+- Dashboard shows recoverable `precheck_failure` with blocker details and retry affordance
 
 **Post-Mission Checks** (`mission_postcheck` MCP tool):
 - Run after Lynch's Final Mission Review approves
@@ -404,14 +427,14 @@ The plugin includes an MCP (Model Context Protocol) server that exposes board op
 
 ### Available Tools
 
-The MCP server provides 21 tools across 5 modules:
+The MCP server provides 22 tools across 5 modules:
 
 | Module | Tools | Description |
 |--------|-------|-------------|
 | **Board** | `board_read`, `board_move`, `board_claim`, `board_release` | Board state and item movement |
 | **Items** | `item_create`, `item_update`, `item_get`, `item_list`, `item_reject`, `item_render` | Work item CRUD operations |
 | **Agents** | `agent_start`, `agent_stop` | Agent lifecycle hooks |
-| **Missions** | `mission_init`, `mission_current`, `mission_precheck`, `mission_postcheck`, `mission_archive` | Mission lifecycle management |
+| **Missions** | `mission_init`, `mission_current`, `mission_precheck`, `mission_postcheck`, `mission_list`, `mission_archive` | Mission lifecycle management |
 | **Utils** | `plugin_root`, `deps_check`, `activity_log`, `log` | Plugin path resolution, dependency validation, and logging |
 
 ### Environment Variables
@@ -459,7 +482,7 @@ ai-team/                     # Add as .claude/ai-team submodule
 │   │   │       ├── board.ts     # Board operations (4 tools)
 │   │   │       ├── items.ts     # Item operations (6 tools)
 │   │   │       ├── agents.ts    # Agent lifecycle (2 tools)
-│   │   │       ├── missions.ts  # Mission lifecycle (5 tools)
+│   │   │       ├── missions.ts  # Mission lifecycle (6 tools)
 │   │   │       ├── utils.ts     # Utilities (4 tools)
 │   │   │       └── index.ts     # Tool registration
 │   │   └── dist/            # Compiled JavaScript

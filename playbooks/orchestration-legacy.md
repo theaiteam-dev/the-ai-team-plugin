@@ -18,6 +18,45 @@ active_tasks = {
 
 When dispatching agents with `run_in_background: true`, the Task tool returns a task_id. Store this to poll individual items later.
 
+## Precheck Flow
+
+Hannibal runs precheck by executing commands and forwarding results to the API — the API does not run commands itself.
+
+```
+1. Read ateam.config.json to get check commands
+2. Run each command via Bash (capturing stdout, stderr, exit code)
+3. Build the result payload:
+     passed   = all exit codes were 0
+     blockers = human-readable failure messages for each failed check
+     output   = { lint: {stdout,stderr,timedOut}, tests: {stdout,stderr,timedOut} }
+4. Call mission_precheck({ passed, blockers, output })
+```
+
+### precheck_failure: Recoverable State
+
+`precheck_failure` is a **non-terminal, recoverable** state. It means the checks ran but found problems. The mission is NOT failed — it can be retried.
+
+**When `mission_current` returns `precheck_failure`:**
+- The mission state is `precheck_failure` — blockers from the last run are stored in the API database.
+  Fetch them via `GET /api/missions/current` (REST endpoint) with header `X-Project-ID: <ATEAM_PROJECT_ID>`
+  — this returns the full mission record including the `precheckBlockers` array. The `mission_current`
+  MCP tool returns a simplified object without the `precheckBlockers` field; use the REST endpoint or
+  the `mission_precheck` response instead.
+- Display the blockers to the operator:
+  ```
+  [Hannibal] Previous precheck failed. Blockers:
+  - {blocker 1}
+  - {blocker 2}
+  Fix these issues and re-run /ai-team:run to retry.
+  ```
+- When `/ai-team:run` is called again: skip re-planning, re-run precheck directly
+- On retry pass: mission transitions to `running`, pipeline begins normally
+- On retry fail: mission stays in `precheck_failure`, operator is shown new blockers
+
+**Terminal vs. non-terminal mission states:**
+- Non-terminal (recoverable): `initializing`, `prechecking`, `precheck_failure`, `running`, `postchecking`
+- Terminal: `completed`, `failed`, `archived`
+
 ## Mission-Active Marker
 
 The MCP server automatically manages a marker file (`/tmp/.ateam-mission-active-{projectId}`) that tells enforcement hooks a mission is running:
@@ -29,6 +68,13 @@ The MCP server automatically manages a marker file (`/tmp/.ateam-mission-active-
 No manual `Bash` commands needed — the marker lifecycle is handled at the code level.
 
 ## The Orchestration Loop
+
+**Check for precheck retry at start of run:**
+If mission state is `precheck_failure`:
+  - Display blockers to operator (fetch from `GET /api/missions/current` REST endpoint with header `X-Project-ID: <ATEAM_PROJECT_ID>`)
+  - Re-run the precheck flow (same steps as in the Precheck Flow section above)
+  - If passed: continue to main orchestration loop below
+  - If failed: call `mission_precheck({ passed: false, blockers, output })` to update blockers and exit — operator must fix issues before retrying
 
 **Two concerns, handled differently:**
 1. **Dependency gates** - items wait in `ready` stage for deps (between waves)

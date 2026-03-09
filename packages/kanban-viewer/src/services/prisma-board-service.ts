@@ -196,8 +196,26 @@ export class PrismaBoardService {
       }
     }
 
-    // Map mission status
-    const missionStatus = mission?.state === 'running' ? 'active' : (mission?.state as BoardMetadata['mission']['status']) ?? 'planning';
+    // Map all mission states consistently with api-transform.ts and board/events/route.ts
+    let missionStatus: BoardMetadata['mission']['status'] = 'planning';
+    switch (mission?.state) {
+      case 'initializing':
+        missionStatus = 'planning';
+        break;
+      case 'prechecking':
+      case 'running':
+      case 'postchecking':
+        missionStatus = 'active';
+        break;
+      case 'failed':
+      case 'precheck_failure':
+        missionStatus = 'paused';
+        break;
+      case 'completed':
+      case 'archived':
+        missionStatus = 'completed';
+        break;
+    }
 
     return {
       mission: {
