@@ -102,6 +102,7 @@ function transformApiMissionToUiMission(mission: ApiMission | null): UiMission {
     postchecking: 'active',
     completed: 'completed',
     failed: 'paused',
+    precheck_failure: 'paused',
     archived: 'completed',
   };
 

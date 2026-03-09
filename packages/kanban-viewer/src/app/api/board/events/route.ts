@@ -223,7 +223,19 @@ function createBoardUpdatedEvent(mission: DbMission | null): BoardEvent {
         ? {
             mission: {
               name: mission.name,
-              status: mission.state as 'active' | 'completed',
+              status: ((): 'active' | 'completed' | 'paused' | 'planning' => {
+                const stateMap: Record<string, 'active' | 'completed' | 'paused' | 'planning'> = {
+                  initializing: 'planning',
+                  prechecking: 'active',
+                  running: 'active',
+                  postchecking: 'active',
+                  completed: 'completed',
+                  failed: 'paused',
+                  precheck_failure: 'paused',
+                  archived: 'completed',
+                };
+                return stateMap[mission.state] ?? 'active';
+              })(),
               started_at: mission.startedAt.toISOString(),
               completed_at: mission.completedAt?.toISOString(),
             },
