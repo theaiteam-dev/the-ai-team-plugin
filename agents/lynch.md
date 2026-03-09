@@ -84,10 +84,39 @@ Review them as a cohesive unit, not separately.
 - For follow-up checks, use **targeted test runs** (`pnpm test <specific-file>`)
 - Do not re-run the full suite after reading each file
 
-### Step 3: Run Tests
-- All must pass
+### Step 3: Run Tests and Evaluate Test Quality
+
+**First: do the tests pass?**
+- All must pass — reject immediately on failure with specific test names
 - Note any flaky behavior
-- Verify tests actually validate the requirements, not just the implementation
+
+**Then: are the tests actually good?**
+
+This is a full code review of the test file, not just a green-light check. Ask yourself: *if the implementation had a subtle bug, would these tests catch it?*
+
+**Assertions — are they meaningful?**
+- Flag vague assertions: `toBeTruthy()`, `toBeDefined()`, `not.toThrow()` on critical paths
+- Look for tests that only assert the mock was called but never check what was returned
+- Check that expected values are specific (e.g. `toBe('precheck_failure')` not just `toBeTruthy()`)
+
+**Mocking — is it realistic?**
+- Flag over-mocked tests where every dependency is stubbed and there's no real logic being exercised
+- If a test mocks the thing it's testing, it proves nothing
+- Check that mock return values match the real shape of the data (wrong shapes = false confidence)
+
+**Coverage — does it match the work item?**
+- Cross-reference each acceptance criterion against the tests — if a criterion has no test, flag it
+- Error paths should be tested with realistic failure conditions, not just `throw new Error('mock error')`
+- Edge cases mentioned in the spec must have corresponding tests
+
+**Behavioral vs. implementation testing:**
+- Tests should describe *what* the code does, not *how* it does it
+- Flag tests that are tightly coupled to implementation details (e.g. assert private method was called, assert exact SQL query shape)
+- A good test survives a refactor; a bad test breaks on every internal change
+
+**The "delete test" smell:**
+- If you could delete a test and the coverage would tell you nothing changed, it's a bad test
+- Tests that only verify happy-path mocks return the mock value are effectively no-ops
 
 ### Step 4: Check for Existing Solutions
 - Before flagging any new abstractions or utilities, search the existing codebase
@@ -119,6 +148,9 @@ Review them as a cohesive unit, not separately.
 - Complex logic without explanatory comments
 - Functions doing too many things (violating single responsibility)
 - Tests that are brittle or test implementation rather than behavior
+- Vague assertions (`toBeTruthy`, `toBeDefined`) on critical behavior
+- Mocks that return wrong data shapes (false confidence)
+- Tests tightly coupled to internals that would break on refactor
 
 **Priority 3 - Everything Else (CONSIDER FIXING - DO NOT REJECT FOR THESE):**
 - Minor style inconsistencies
@@ -143,7 +175,12 @@ Review them as a cohesive unit, not separately.
 - [ ] Tests cover key error cases
 - [ ] Tests are independent and readable
 - [ ] No skipped or disabled tests
-- [ ] Tests validate requirements, not just implementation
+- [ ] Every acceptance criterion in the work item has at least one test
+- [ ] Assertions are specific — not just `toBeTruthy()` or "mock was called"
+- [ ] Mocks return realistic data shapes, not placeholder values
+- [ ] Tests would catch a real bug — "delete test" smell check
+- [ ] Behavioral tests, not implementation tests (survives a refactor)
+- [ ] Error paths use realistic failure conditions, not generic `new Error('mock error')`
 
 ### Implementation
 - [ ] All tests pass
@@ -221,6 +258,12 @@ Required fixes:
 - Missing tests for edge cases you invented (not in spec)
 - Nitpicks
 - Minor readability concerns
+
+**Reject for test quality if:**
+- An acceptance criterion from the work item has zero test coverage
+- Assertions are so vague that a completely wrong return value would still pass
+- The test file is so over-mocked it exercises no real logic at all
+- Tests assert implementation details that would break on any refactor (testing the how, not the what)
 
 **Remember:** Move fast. If it works and meets the spec, approve it.
 
