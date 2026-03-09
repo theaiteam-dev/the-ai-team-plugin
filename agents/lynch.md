@@ -99,6 +99,43 @@ This is a full code review of the test file, not just a green-light check. Ask y
 - Look for tests that only assert the mock was called but never check what was returned
 - Check that expected values are specific (e.g. `toBe('precheck_failure')` not just `toBeTruthy()`)
 
+**Known Anti-Patterns (flag immediately):**
+
+*Tautological mock-call assertions* — mocking a function to return X, calling it, then asserting it was called, proves the mock works, not the function under test. The result assertion is the real test; the call assertion is noise.
+```ts
+// BAD: toHaveBeenCalledWith only proves the mock ran
+global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => data })
+expect(fetch).toHaveBeenCalledWith("/api/test")  // ← tautological
+expect(result).toEqual(data)                     // ← this is the real test
+
+// GOOD: only assert the observable result
+expect(result).toEqual(data)
+```
+
+*Conditional fallback test paths* — an `if/else` inside a test that silently reroutes through a passing fallback when the expected element is missing. The test can never fail.
+```ts
+// BAD: if input is missing, fallback always passes
+if (fileInput) { await user.upload(fileInput, file) }
+else { fireEvent.drop(dropzone, {...}) }  // ← silent green
+
+// GOOD: assert existence first so failure is obvious
+expect(fileInput).not.toBeNull()
+await user.upload(fileInput!, file)
+```
+
+*OR-pattern assertions* — chaining `??` or `||` to accept any of several messages or values hides regressions to generic error states.
+```ts
+// BAD: accepts any of four messages; generic "Error" toast still passes
+const el = screen.queryByText(/invalid csv/i) ?? screen.queryByText(/upload failed/i) ?? screen.queryByText(/error/i)
+expect(el).not.toBeNull()
+
+// GOOD: assert the specific expected message
+expect(screen.getByText(/invalid csv format/i)).toBeInTheDocument()
+```
+Same pattern applies to value matching: `find(r => r.action === "increase_bid" || r.action === "expand")` — both can't be correct. Pin the single expected value.
+
+*Incomplete documented contract assertions* — if a function is documented to throw with both `.status` and `.body`, verify both. Testing only `.status` leaves half the contract unchecked.
+
 **Mocking — is it realistic?**
 - Flag over-mocked tests where every dependency is stubbed and there's no real logic being exercised
 - If a test mocks the thing it's testing, it proves nothing
@@ -141,6 +178,8 @@ This is a full code review of the test file, not just a green-light check. Ask y
 - Security vulnerabilities
 - Failing tests
 - Reinventing existing utilities instead of reusing them
+- Tautological mock-call assertions — `expect(mock).toHaveBeenCalledWith(x)` when the mock was set up to return a value regardless; proves nothing about correctness
+- Conditional fallback test paths — `if/else` branches where the fallback silently passes, making the test unable to fail
 
 **Priority 2 - Readability & Testability (SHOULD FIX):**
 - Confusing or misleading variable/function names
@@ -151,6 +190,8 @@ This is a full code review of the test file, not just a green-light check. Ask y
 - Vague assertions (`toBeTruthy`, `toBeDefined`) on critical behavior
 - Mocks that return wrong data shapes (false confidence)
 - Tests tightly coupled to internals that would break on refactor
+- OR-pattern assertions (`??` chains, `||` value matching) that accept multiple possible outputs when only one is correct
+- Incomplete contract assertions (e.g. testing `.status` but not `.body` when both are documented)
 
 **Priority 3 - Everything Else (CONSIDER FIXING - DO NOT REJECT FOR THESE):**
 - Minor style inconsistencies
@@ -181,6 +222,9 @@ This is a full code review of the test file, not just a green-light check. Ask y
 - [ ] Tests would catch a real bug — "delete test" smell check
 - [ ] Behavioral tests, not implementation tests (survives a refactor)
 - [ ] Error paths use realistic failure conditions, not generic `new Error('mock error')`
+- [ ] No tautological mock-call assertions (`toHaveBeenCalledWith` when mock is pre-configured to return a value)
+- [ ] No conditional fallback paths (`if (el) { test } else { fallback }`)
+- [ ] No OR-pattern assertions (`??` chains or `||` value matching where only one answer is correct)
 
 ### Implementation
 - [ ] All tests pass
@@ -264,6 +308,9 @@ Required fixes:
 - Assertions are so vague that a completely wrong return value would still pass
 - The test file is so over-mocked it exercises no real logic at all
 - Tests assert implementation details that would break on any refactor (testing the how, not the what)
+- Tautological mock-call assertions are present — these give false confidence by testing mock setup, not behavior
+- Conditional fallback paths exist where a missing element silently reroutes through a passing branch
+- OR-pattern assertion chains (`??` or `||`) where any of N messages satisfies the check, hiding regressions to generic error states
 
 **Remember:** Move fast. If it works and meets the spec, approve it.
 
