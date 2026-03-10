@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { RawAgentView } from '../components/raw-agent-view';
 import type { HookEventSummary } from '@/types/hook-event';
@@ -801,7 +801,7 @@ describe('RawAgentView', () => {
   describe('null safety (Amy\'s findings)', () => {
     it('should handle undefined agentName without throwing', () => {
       const events: HookEventSummary[] = [
-        createHookEvent({ agentName: undefined as any }),
+        createHookEvent({ agentName: undefined as unknown as string }),
       ];
 
       // Should not throw
@@ -810,7 +810,7 @@ describe('RawAgentView', () => {
 
     it('should show fallback for null timestamp', () => {
       const events: HookEventSummary[] = [
-        createHookEvent({ timestamp: null as any }),
+        createHookEvent({ timestamp: null as unknown as Date }),
       ];
 
       render(<RawAgentView events={events} />);
@@ -838,7 +838,7 @@ describe('RawAgentView', () => {
 
     it('should show fallback text when both toolName and eventType are empty', () => {
       const events: HookEventSummary[] = [
-        createHookEvent({ toolName: undefined, eventType: '' as any }),
+        createHookEvent({ toolName: undefined, eventType: '' }),
       ];
 
       render(<RawAgentView events={events} />);
@@ -849,7 +849,7 @@ describe('RawAgentView', () => {
 
     it('should handle null toolName gracefully', () => {
       const events: HookEventSummary[] = [
-        createHookEvent({ toolName: null as any, eventType: 'stop' }),
+        createHookEvent({ toolName: null as unknown as string, eventType: 'stop' }),
       ];
 
       render(<RawAgentView events={events} />);
@@ -872,7 +872,7 @@ describe('RawAgentView', () => {
 
     it('should handle undefined status gracefully', () => {
       const events: HookEventSummary[] = [
-        createHookEvent({ status: undefined as any }),
+        createHookEvent({ status: undefined as unknown as string }),
       ];
 
       render(<RawAgentView events={events} />);

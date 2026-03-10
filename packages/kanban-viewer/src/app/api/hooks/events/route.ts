@@ -263,9 +263,10 @@ export async function POST(
         if (!isBatch) {
           singleEventResult = createdEvent;
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         // Handle unique constraint violation (duplicate correlationId + eventType)
-        if (error.code === 'P2002' || error.message?.includes('UNIQUE constraint')) {
+        const err = error as { code?: string; message?: string };
+        if (err.code === 'P2002' || err.message?.includes('UNIQUE constraint')) {
           skipped++;
           continue; // Skip duplicate
         }

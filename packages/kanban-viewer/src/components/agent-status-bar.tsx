@@ -1,5 +1,4 @@
 import type { AgentName, AgentStatus } from '@/types';
-import { AGENT_DISPLAY_NAMES } from '@ai-team/shared';
 
 export interface AgentStatusBarProps {
   agents: Partial<Record<AgentName, AgentStatus>>;
