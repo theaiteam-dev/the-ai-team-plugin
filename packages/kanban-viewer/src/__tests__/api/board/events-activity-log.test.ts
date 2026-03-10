@@ -58,8 +58,8 @@ const baseActivityLogs = [
   },
 ];
 
-// Create mock Prisma client
-const mockPrisma = {
+// Create mock Prisma client using vi.hoisted to ensure it's available when vi.mock is hoisted
+const mockPrisma = vi.hoisted(() => ({
   item: {
     findMany: vi.fn(),
   },
@@ -69,7 +69,13 @@ const mockPrisma = {
   activityLog: {
     findMany: vi.fn(),
   },
-};
+  hookEvent: {
+    findMany: vi.fn(),
+  },
+  missionTokenUsage: {
+    findMany: vi.fn(),
+  },
+}));
 
 // Mock the db module
 vi.mock('@/lib/db', () => ({
@@ -88,6 +94,8 @@ describe('GET /api/board/events - Activity Log Tracking', () => {
     mockPrisma.item.findMany.mockResolvedValue([...mockItems]);
     mockPrisma.mission.findFirst.mockResolvedValue(mockMission);
     mockPrisma.activityLog.findMany.mockResolvedValue([...baseActivityLogs]);
+    mockPrisma.hookEvent.findMany.mockResolvedValue([]);
+    mockPrisma.missionTokenUsage.findMany.mockResolvedValue([]);
   });
 
   afterEach(() => {

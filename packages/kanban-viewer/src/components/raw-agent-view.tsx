@@ -77,7 +77,7 @@ const EventCard = React.memo(({ event }: EventCardProps) => {
       <div className="flex items-start gap-3">
         {/* Status indicator */}
         <div
-          data-testid={`status-${event.status}-${event.id}`}
+          data-testid={`status-${event.status ?? 'unknown'}-${event.id}`}
           className={cn(
             "mt-1 h-2 w-2 rounded-full flex-shrink-0",
             getStatusColor(event.status)
@@ -97,7 +97,7 @@ const EventCard = React.memo(({ event }: EventCardProps) => {
             {isDenied && (
               <span
                 data-testid={`denial-badge-${event.id}`}
-                className="rounded bg-orange-500 px-2 py-0.5 text-xs font-semibold text-white dark:text-orange-300 flex-shrink-0"
+                className="rounded bg-orange-500 px-2 py-0.5 text-xs font-semibold text-orange-700 dark:text-orange-300 flex-shrink-0"
               >
                 DENIED
               </span>
