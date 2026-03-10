@@ -529,6 +529,132 @@ Render the component and test the behavior. If you need to verify animation clas
 
 ---
 
+---
+
+## Anti-Pattern 13: Tautological Mock-Call Assertions
+
+**Severity:** BANNED — never write these
+
+Tests that configure a mock to return a value, call the function under test, and then assert the mock was called — rather than asserting on the actual result.
+
+### What it looks like
+
+```ts
+// BAD — toHaveBeenCalledWith proves the mock ran, not that the function works
+global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => mockData })
+const result = await fetcher("/api/test")
+expect(fetch).toHaveBeenCalledWith("/api/test")  // ← tautological
+expect(result).toEqual(mockData)                 // ← this is the only real assertion
+```
+
+If `fetcher` passed the wrong URL, the mock still returns `mockData` and both assertions still pass.
+
+### Why it's worthless
+
+- The mock is set up to return a value regardless of input. Asserting it "was called" is asserting your mock setup works — not that the code under test is correct.
+- The result assertion is the real test. The call assertion is noise that can hide bugs.
+- Call-count assertions (`toHaveBeenCalledTimes`) have legitimate uses for verifying side-effect frequency. Call-argument assertions (`toHaveBeenCalledWith`) almost never add value when the mock is pre-configured.
+
+### What to write instead
+
+```ts
+// GOOD — only assert the observable result
+const result = await fetcher("/api/test")
+expect(result).toEqual(mockData)
+```
+
+If you need to verify the function was NOT called (e.g., caching), `toHaveBeenCalledTimes(0)` is fine. If you need to verify the correct HTTP method was used, assert on the request shape passed to the mock — but only if the implementation can actually vary.
+
+---
+
+## Anti-Pattern 14: Conditional Fallback Test Paths
+
+**Severity:** BANNED — never write these
+
+Tests that use an `if/else` branch where the `else` path is a fallback that always passes, making the test unable to fail when the expected element is absent.
+
+### What it looks like
+
+```ts
+// BAD — if fileInput is missing, the else branch "passes"
+const fileInput = document.querySelector('input[type="file"]')
+if (fileInput) {
+  await user.upload(fileInput as HTMLElement, csvFile)
+} else {
+  // Fallback: expected to fail, but this just runs a different interaction
+  const dropzone = screen.getByText('Drop file here')
+  if (dropzone) fireEvent.drop(dropzone, { dataTransfer: { files: [csvFile] } })
+}
+```
+
+If the `input[type="file"]` doesn't exist, the else branch runs and the test is green regardless.
+
+### Why it's worthless
+
+- A test with a fallback path that is "expected to fail" **cannot fail**. It silently takes the wrong path.
+- The test reports green even when the component is completely broken — the exact opposite of what a test should do.
+- These are invisible bugs in the test suite: everything looks covered, but nothing is guarded.
+
+### What to write instead
+
+```ts
+// GOOD — assert existence unconditionally first
+const fileInput = document.querySelector('input[type="file"][accept=".csv"]')
+expect(fileInput).not.toBeNull()
+await user.upload(fileInput!, csvFile)
+```
+
+Assert the element exists before using it. If the element is absent, the test fails with a clear message.
+
+---
+
+## Anti-Pattern 15: OR-Pattern Assertions
+
+**Severity:** BANNED — never write these
+
+Tests that use `??` chaining or `||` matching to accept any of several possible values, when only one specific value is correct.
+
+### What it looks like
+
+```ts
+// BAD — accepts any of four error messages; regression to generic toast still passes
+const errorEl =
+  screen.queryByText(/invalid csv/i) ??
+  screen.queryByText(/upload failed/i) ??
+  screen.queryByText(/something went wrong/i) ??
+  screen.queryByText(/error/i)
+expect(errorEl).not.toBeNull()
+
+// BAD — both actions can't be correct; wrong implementation can satisfy either
+const rec = recommendations.find(
+  (r) => r.action === "increase_bid" || r.action === "expand"
+)
+expect(rec).toBeDefined()
+```
+
+### Why it's worthless
+
+- If the code regresses to showing a generic "Error" toast, `queryByText(/error/i)` matches and the test stays green.
+- OR-pattern value matching means a wrong implementation that returns `"expand"` passes a test expecting `"increase_bid"`.
+- These tests define a fuzzy contract that is too broad to catch real regressions.
+
+### What to write instead
+
+```ts
+// GOOD — match the specific message the real code produces
+expect(screen.getByText(/invalid csv format/i)).toBeInTheDocument()
+
+// GOOD — pin the single expected value
+const rec = recommendations.find((r) => r.action === "increase_bid")
+expect(rec).toBeDefined()
+// or
+expect(rec?.action).toBe("increase_bid")
+```
+
+If you genuinely don't know which of N values is correct, that's a requirements question — answer it before writing the test.
+
+---
+
 ## Summary: The One Rule
 
 **Every test must exercise real application code and assert on an observable outcome (rendered content, function return value, side effect, or thrown error).**
@@ -542,3 +668,6 @@ If a test can be described as any of these, delete it:
 - "Checks that a type exists at runtime"
 - "Always passes regardless of application state"
 - "Tests a component defined inside the test file, not the real one"
+- "Asserts the mock was called, not what the real code did with the result"
+- "Has an if/else fallback where the else path is 'expected to fail' but actually passes"
+- "Uses ?? or || to accept any of several possible values instead of the one correct value"

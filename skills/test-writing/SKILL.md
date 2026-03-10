@@ -31,10 +31,11 @@ Universal test quality rules for AI testing agents. Every test must exercise rea
 - Define mock object, then assert its own properties match the values just hardcoded
 - Define a fake component inside the test file, then test that fake component
 - Configure a mock to return X, then assert the mock returns X
+- Configure a mock to return a value, call a function, assert the mock was called (`toHaveBeenCalledWith`) — this only proves the mock works, not the function under test
 
-**Why it's worthless:** No application code is executed. These tests always pass and can never fail unless someone edits the mock in the same file.
+**Why it's worthless:** No application code is executed. These tests always pass and can never fail unless someone edits the mock in the same file. Call-argument assertions on pre-configured mocks are tautological — the mock returns the value regardless, so asserting it was called adds nothing.
 
-**Write instead:** Pass mock data to the real component/function and assert on rendered output or return values.
+**Write instead:** Pass mock data to the real component/function and assert on rendered output or return values. The result assertion is the real test; drop the call assertion.
 
 ### 4. Don't Write Placeholder Tests
 
@@ -67,6 +68,9 @@ For every test you wrote, answer these questions:
 3. **Does this test assert on an observable outcome?** (Rendered content, return value, side effect, thrown error.) If no, delete it.
 4. **Is there already another test covering the same behavior?** If yes, delete the duplicate.
 5. **Would a lint rule or the compiler catch this instead?** If yes, delete it.
+6. **Does my assertion use `??` or `||` to accept multiple possible values?** If so, pin the single correct value.
+7. **Does my test have an `if/else` branch where the `else` path passes silently?** If so, assert existence unconditionally first.
+8. **Am I asserting `toHaveBeenCalledWith` on a mock I pre-configured to return a value?** If so, drop the call assertion and keep only the result assertion.
 
 If you can describe your test as any of these, delete it:
 - "Checks that a CSS class name string exists in HTML"
@@ -77,5 +81,10 @@ If you can describe your test as any of these, delete it:
 - "Checks that a type exists at runtime"
 - "Always passes regardless of application state"
 - "Tests a component defined inside the test file, not the real one"
+- "Asserts the mock was called, not what the code did with the result"
+- "Has a fallback else-branch where failure silently becomes a passing alternative"
+- "Uses OR-pattern matching where only one specific value is correct"
 
 See `references/testing-anti-patterns.md` for detailed examples of each banned pattern with code samples.
+
+See `references/testing-good-patterns.md` for positive examples — behavior-focused assertions, fixture helpers, boundary testing, full contract verification, and more.
