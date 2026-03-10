@@ -95,7 +95,7 @@ describe('GET /api/missions/:missionId', () => {
       const request = new NextRequest('http://localhost:3000/api/missions/M-20260121-001', {
         headers: { 'X-Project-ID': 'test-project' },
       });
-      const response = await getById(request, { params: { missionId: 'M-20260121-001' } });
+      const response = await getById(request, { params: Promise.resolve({ missionId: 'M-20260121-001' }) });
       const data = await response.json();
 
       expect(response.status).toBe(200);
@@ -111,7 +111,7 @@ describe('GET /api/missions/:missionId', () => {
       const request = new NextRequest('http://localhost:3000/api/missions/M-20260123-001', {
         headers: { 'X-Project-ID': 'test-project' },
       });
-      const response = await getById(request, { params: { missionId: 'M-20260123-001' } });
+      const response = await getById(request, { params: Promise.resolve({ missionId: 'M-20260123-001' }) });
       const data = await response.json();
 
       expect(response.status).toBe(200);
@@ -125,7 +125,7 @@ describe('GET /api/missions/:missionId', () => {
       const request = new NextRequest('http://localhost:3000/api/missions/M-20260122-001', {
         headers: { 'X-Project-ID': 'test-project' },
       });
-      const response = await getById(request, { params: { missionId: 'M-20260122-001' } });
+      const response = await getById(request, { params: Promise.resolve({ missionId: 'M-20260122-001' }) });
       const data = await response.json();
 
       expect(response.status).toBe(200);
@@ -142,7 +142,7 @@ describe('GET /api/missions/:missionId', () => {
       const request = new NextRequest('http://localhost:3000/api/missions/M-NONEXISTENT', {
         headers: { 'X-Project-ID': 'test-project' },
       });
-      const response = await getById(request, { params: { missionId: 'M-NONEXISTENT' } });
+      const response = await getById(request, { params: Promise.resolve({ missionId: 'M-NONEXISTENT' }) });
 
       expect(response.status).toBe(404);
       const data: ApiError = await response.json();
@@ -151,7 +151,7 @@ describe('GET /api/missions/:missionId', () => {
 
     it('should return 400 when X-Project-ID header is missing', async () => {
       const request = new NextRequest('http://localhost:3000/api/missions/M-20260121-001');
-      const response = await getById(request, { params: { missionId: 'M-20260121-001' } });
+      const response = await getById(request, { params: Promise.resolve({ missionId: 'M-20260121-001' }) });
 
       expect(response.status).toBe(400);
       const data: ApiError = await response.json();
@@ -164,7 +164,7 @@ describe('GET /api/missions/:missionId', () => {
       const request = new NextRequest('http://localhost:3000/api/missions/M-20260121-001', {
         headers: { 'X-Project-ID': 'test-project' },
       });
-      const response = await getById(request, { params: { missionId: 'M-20260121-001' } });
+      const response = await getById(request, { params: Promise.resolve({ missionId: 'M-20260121-001' }) });
 
       expect(response.status).toBe(500);
     });

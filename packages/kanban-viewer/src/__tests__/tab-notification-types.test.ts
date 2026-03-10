@@ -38,17 +38,17 @@ describe('Tab Notification Types', () => {
     });
 
     it('should be compile-time type safe for hasNotification', () => {
-      // @ts-expect-error - hasNotification must be boolean, not string
       const invalid: TabNotificationProps = {
+        // @ts-expect-error - hasNotification must be boolean, not string
         hasNotification: 'yes',
       };
       expect(invalid).toBeDefined();
     });
 
     it('should be compile-time type safe for count', () => {
-      // @ts-expect-error - count must be number, not string
       const invalid: TabNotificationProps = {
         hasNotification: true,
+        // @ts-expect-error - count must be number, not string
         count: 'five',
       };
       expect(invalid).toBeDefined();
@@ -114,17 +114,17 @@ describe('Tab Notification Types', () => {
     });
 
     it('should be compile-time type safe for visible', () => {
-      // @ts-expect-error - visible must be boolean, not number
       const invalid: NotificationDotProps = {
+        // @ts-expect-error - visible must be boolean, not number
         visible: 1,
       };
       expect(invalid).toBeDefined();
     });
 
     it('should be compile-time type safe for className', () => {
-      // @ts-expect-error - className must be string, not array
       const invalid: NotificationDotProps = {
         visible: true,
+        // @ts-expect-error - className must be string, not array
         className: ['class1', 'class2'],
       };
       expect(invalid).toBeDefined();

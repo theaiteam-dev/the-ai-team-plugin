@@ -185,17 +185,17 @@ describe("useBoardEvents - onActivityEntry callback", () => {
           type: "item-added",
           timestamp: "2026-01-15T10:00:00Z",
           data: { itemId: "001" },
-        },
+        } as unknown as BoardEvent,
         {
           type: "item-moved",
           timestamp: "2026-01-15T10:01:00Z",
           data: { itemId: "001", fromStage: "ready", toStage: "testing" },
-        },
+        } as unknown as BoardEvent,
         {
           type: "item-updated",
           timestamp: "2026-01-15T10:02:00Z",
           data: { itemId: "001" },
-        },
+        } as unknown as BoardEvent,
         {
           type: "item-deleted",
           timestamp: "2026-01-15T10:03:00Z",
@@ -226,11 +226,11 @@ describe("useBoardEvents - onActivityEntry callback", () => {
       });
 
       // Event with no logEntry in data
-      const event: BoardEvent = {
+      const event = {
         type: "activity-entry-added",
         timestamp: "2026-01-15T10:42:15Z",
         data: {},
-      };
+      } as unknown as BoardEvent;
 
       act(() => {
         MockEventSource.instances[0].simulateMessage(event);

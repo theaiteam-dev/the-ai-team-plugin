@@ -156,8 +156,8 @@ describe("Filter State Types", () => {
     });
 
     it("should enforce proper types for each field", () => {
-      // @ts-expect-error - typeFilter should be TypeFilter, not string
       const invalidType: FilterState = {
+        // @ts-expect-error - typeFilter should be TypeFilter, not string
         typeFilter: "random",
         agentFilter: "All Agents",
         statusFilter: "All Status",

@@ -22,13 +22,22 @@ export function formatSSEEvent(event: BoardEvent): string {
 }
 
 /**
+ * Parsed SSE event with a flexible data type for easy property access
+ */
+export interface ParsedSSEEvent {
+  type: string;
+  timestamp: string;
+  data: Record<string, unknown>;
+}
+
+/**
  * Parses an SSE message string back into a BoardEvent object
  *
  * @param message - The SSE formatted message string
- * @returns Parsed BoardEvent object
+ * @returns Parsed board event object
  * @throws Error if the message is not valid SSE format or contains invalid JSON
  */
-export function parseSSEEvent(message: string): BoardEvent {
+export function parseSSEEvent(message: string): ParsedSSEEvent {
   // Remove the 'data: ' prefix
   const dataPrefix = 'data: ';
   if (!message.startsWith(dataPrefix)) {
@@ -39,7 +48,7 @@ export function parseSSEEvent(message: string): BoardEvent {
   const jsonString = message.slice(dataPrefix.length).trim();
 
   try {
-    const event = JSON.parse(jsonString) as BoardEvent;
+    const event = JSON.parse(jsonString) as ParsedSSEEvent;
     return event;
   } catch (error) {
     throw new Error(`Invalid SSE format: failed to parse JSON - ${error instanceof Error ? error.message : 'unknown error'}`);

@@ -1,3 +1,4 @@
+import { NextRequest } from 'next/server';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { POST } from '@/app/api/hooks/events/route';
 import { prisma } from '@/lib/db';
@@ -35,7 +36,7 @@ describe('HookEvent token usage fields', () => {
       model: 'claude-sonnet-4-6',
     };
 
-    const request = new Request('http://localhost:3000/api/hooks/events', {
+    const request = new NextRequest('http://localhost:3000/api/hooks/events', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -70,7 +71,7 @@ describe('HookEvent token usage fields', () => {
       // No token fields
     };
 
-    const request = new Request('http://localhost:3000/api/hooks/events', {
+    const request = new NextRequest('http://localhost:3000/api/hooks/events', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

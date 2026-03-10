@@ -196,7 +196,7 @@ describe('useBoardEvents Hook Integration', () => {
     // Type-level test: verify onHookEvent is part of the options interface
     const mockOptions: UseBoardEventsOptions = {
       projectId: 'test-project',
-      onHookEvent: (event: HookEventSummary) => {
+      onHookEvent: (event: HookEventSummary | HookEventSummary[]) => {
         // Mock callback
         console.log('Hook event received:', event);
       },

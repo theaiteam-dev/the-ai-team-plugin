@@ -14,6 +14,8 @@ import type {
   CheckResultStatus,
 } from "@/types";
 
+export type { LogEntry };
+
 // Types
 export type TabId = "live-feed" | "human-input" | "git" | "new-mission" | "completion";
 

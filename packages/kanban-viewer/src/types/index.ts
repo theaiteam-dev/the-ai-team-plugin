@@ -208,7 +208,7 @@ export interface BoardMetadata {
   mission: Mission;
   wip_limits: Record<string, number | null>;
   phases: Record<string, string[]>;
-  assignments: Record<string, string>; // task_id -> agent_name (e.g., "005": "murdock")
+  assignments: Record<string, unknown>; // task_id -> agent_name or assignment info
   agents: Record<string, { status: string; current_item?: string }>;
   stats: {
     total_items: number;

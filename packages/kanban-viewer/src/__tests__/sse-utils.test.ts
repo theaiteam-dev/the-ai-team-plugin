@@ -258,11 +258,12 @@ describe('SSE Utils', () => {
       const formatted = formatSSEEvent(event);
       const parsed = parseSSEEvent(formatted);
 
-      expect(parsed.data.item?.id).toBe('007');
-      expect(parsed.data.item?.title).toBe('Parse Test');
-      expect(parsed.data.item?.assigned_agent).toBe('Murdock');
-      expect(parsed.data.item?.rejection_count).toBe(2);
-      expect(parsed.data.item?.dependencies).toEqual(['005', '006']);
+      const parsedItem = parsed.data.item as WorkItem | undefined;
+      expect(parsedItem?.id).toBe('007');
+      expect(parsedItem?.title).toBe('Parse Test');
+      expect(parsedItem?.assigned_agent).toBe('Murdock');
+      expect(parsedItem?.rejection_count).toBe(2);
+      expect(parsedItem?.dependencies).toEqual(['005', '006']);
     });
 
     it('should handle empty data objects', () => {
@@ -371,13 +372,13 @@ describe('SSE Utils', () => {
       ];
 
       eventTypes.forEach((type) => {
-        const event: BoardEvent = {
+        const event = {
           type,
           timestamp: '2026-01-15T21:00:00Z',
           data: {
             itemId: '999',
           },
-        };
+        } as unknown as BoardEvent;
 
         const formatted = formatSSEEvent(event);
         const parsed = parseSSEEvent(formatted);

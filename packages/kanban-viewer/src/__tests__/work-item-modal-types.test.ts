@@ -34,10 +34,10 @@ describe('Work Item Modal Types', () => {
     });
 
     it('should enforce agent type at compile time', () => {
-      // @ts-expect-error - invalid agent name
       const invalidEntry: RejectionHistoryEntry = {
         number: 1,
         reason: 'Some reason',
+        // @ts-expect-error - invalid agent name
         agent: 'InvalidAgent',
       };
       expect(invalidEntry).toBeDefined();
@@ -137,10 +137,10 @@ describe('Work Item Modal Types', () => {
     });
 
     it('should enforce onClose as a function with no parameters and void return', () => {
-      // @ts-expect-error - onClose should not accept parameters
       const invalidOnClose: WorkItemModalProps = {
         item: createMockWorkItem(),
         isOpen: true,
+        // @ts-expect-error - onClose should not accept parameters
         onClose: (param: string) => param,
       };
       expect(invalidOnClose).toBeDefined();

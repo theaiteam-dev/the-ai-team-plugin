@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import type { UseBoardEventsReturn } from '@/hooks/use-board-events';
+import type { BoardMetadata } from '@/types';
 
 // Mock state
 let mockConnectionState: 'connecting' | 'connected' | 'disconnected' | 'error' = 'connecting';

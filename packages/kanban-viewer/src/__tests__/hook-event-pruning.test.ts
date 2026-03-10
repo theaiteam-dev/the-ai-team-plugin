@@ -1,3 +1,4 @@
+import { NextRequest } from 'next/server';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { POST } from '@/app/api/hooks/events/prune/route';
 import { prisma } from '@/lib/db';
@@ -76,7 +77,7 @@ describe('POST /api/hooks/events/prune', () => {
     });
 
     // Prune events older than cutoff
-    const request = new Request('http://localhost:3000/api/hooks/events/prune', {
+    const request = new NextRequest('http://localhost:3000/api/hooks/events/prune', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -146,7 +147,7 @@ describe('POST /api/hooks/events/prune', () => {
     });
 
     // Prune events older than cutoff
-    const request = new Request('http://localhost:3000/api/hooks/events/prune', {
+    const request = new NextRequest('http://localhost:3000/api/hooks/events/prune', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -193,7 +194,7 @@ describe('POST /api/hooks/events/prune', () => {
     });
 
     // Prune all old events
-    const request = new Request('http://localhost:3000/api/hooks/events/prune', {
+    const request = new NextRequest('http://localhost:3000/api/hooks/events/prune', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -252,7 +253,7 @@ describe('POST /api/hooks/events/prune', () => {
     });
 
     // Prune old events
-    const request = new Request('http://localhost:3000/api/hooks/events/prune', {
+    const request = new NextRequest('http://localhost:3000/api/hooks/events/prune', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -299,7 +300,7 @@ describe('POST /api/hooks/events/prune', () => {
     });
 
     // First prune call
-    const request = new Request('http://localhost:3000/api/hooks/events/prune', {
+    const request = new NextRequest('http://localhost:3000/api/hooks/events/prune', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -310,7 +311,7 @@ describe('POST /api/hooks/events/prune', () => {
       }),
     });
 
-    const response1 = await POST(request.clone());
+    const response1 = await POST(request.clone() as unknown as NextRequest);
     const data1 = await response1.json();
 
     expect(response1.status).toBe(200);
@@ -326,7 +327,7 @@ describe('POST /api/hooks/events/prune', () => {
     expect(remainingAfterFirst).toBeGreaterThanOrEqual(500);
 
     // Second prune call should get the rest (up to 1000 more)
-    const response2 = await POST(request.clone());
+    const response2 = await POST(request.clone() as unknown as NextRequest);
     const data2 = await response2.json();
 
     expect(response2.status).toBe(200);

@@ -19,7 +19,7 @@ function createCompletedMissionProps(overrides: Partial<{ mission: Partial<Missi
   // Apply overrides, including explicit undefined values
   for (const key of Object.keys(missionOverride) as Array<keyof Mission>) {
     if (key in missionOverride) {
-      (mergedMission as Record<string, unknown>)[key] = missionOverride[key];
+      (mergedMission as unknown as Record<string, unknown>)[key] = missionOverride[key];
     }
   }
 
@@ -34,7 +34,7 @@ function createCompletedMissionProps(overrides: Partial<{ mission: Partial<Missi
     wipCurrent: 0,
     wipLimit: 5,
     projects: [
-      { id: 'kanban-viewer', name: 'Kanban Viewer', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+      { id: 'kanban-viewer', name: 'Kanban Viewer', createdAt: new Date(), updatedAt: new Date() }
     ],
     selectedProjectId: 'kanban-viewer',
     onProjectChange: vi.fn(),

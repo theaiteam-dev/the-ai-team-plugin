@@ -231,7 +231,7 @@ describe('Prisma Database Singleton (db.ts)', () => {
         data: {
           agent: 'Hannibal',
           message: 'Started mission',
-        },
+        } as unknown as Parameters<typeof prisma.activityLog.create>[0]['data'],
       });
 
       expect(entry).toEqual(mockEntry);

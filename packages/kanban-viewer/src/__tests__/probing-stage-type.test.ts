@@ -18,7 +18,6 @@ import { isValidStage, getStageFromPath } from '../lib/stage-utils';
 describe('Probing Stage Type', () => {
   describe('Stage type definition', () => {
     it('should accept probing as a valid Stage value', () => {
-      // @ts-expect-error - 'probing' not yet in Stage type
       const stage: Stage = 'probing';
       expect(stage).toBe('probing');
     });
@@ -36,7 +35,6 @@ describe('Probing Stage Type', () => {
       ];
       expect(existingStages).toHaveLength(7);
 
-      // @ts-expect-error - 'probing' not yet in Stage type
       const allStages: Stage[] = [...existingStages, 'probing'];
       expect(allStages).toHaveLength(8);
     });
@@ -117,7 +115,6 @@ describe('Probing Stage Type', () => {
         outputs: {},
         created_at: '2026-01-17T00:00:00Z',
         updated_at: '2026-01-17T00:00:00Z',
-        // @ts-expect-error - 'probing' not yet in Stage type
         stage: 'probing',
         content: 'Testing probing stage',
       };
@@ -132,7 +129,6 @@ describe('Probing Stage Type', () => {
         itemId: '001',
         state: 'exiting',
         direction: 'right',
-        // @ts-expect-error - 'probing' not yet in Stage type
         fromStage: 'probing',
       };
 
@@ -144,7 +140,6 @@ describe('Probing Stage Type', () => {
         itemId: '001',
         state: 'entering',
         direction: 'left',
-        // @ts-expect-error - 'probing' not yet in Stage type
         toStage: 'probing',
       };
 
@@ -157,7 +152,6 @@ describe('Probing Stage Type', () => {
         state: 'exiting',
         direction: 'right',
         fromStage: 'review',
-        // @ts-expect-error - 'probing' not yet in Stage type
         toStage: 'probing',
       };
 

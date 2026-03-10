@@ -23,7 +23,7 @@ import type {
  */
 export interface UseBoardEventsOptions {
   /** Project ID to subscribe to events for */
-  projectId: string;
+  projectId?: string;
   /** Callback when an item is added to the board */
   onItemAdded?: (item: WorkItem) => void;
   /** Callback when an item moves between stages */
@@ -346,7 +346,7 @@ export function useBoardEvents(
     setRawConnectionState('connecting');
 
     try {
-      const url = `${SSE_ENDPOINT}?projectId=${encodeURIComponent(projectId)}`;
+      const url = `${SSE_ENDPOINT}?projectId=${encodeURIComponent(projectId ?? '')}`;
       const eventSource = new EventSource(url);
       eventSourceRef.current = eventSource;
 

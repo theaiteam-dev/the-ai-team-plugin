@@ -309,14 +309,14 @@ describe("useBoardEvents", () => {
       });
 
       // Missing toStage
-      const event: BoardEvent = {
+      const event = {
         type: "item-moved",
         timestamp: "2026-01-15T10:00:00Z",
         data: {
           itemId: "001",
           fromStage: "ready",
         },
-      };
+      } as unknown as BoardEvent;
 
       act(() => {
         MockEventSource.instances[0].simulateMessage(event);

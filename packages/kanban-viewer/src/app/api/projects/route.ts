@@ -25,7 +25,7 @@ interface ProjectResponse {
  *
  * Returns all projects ordered by createdAt descending.
  */
-export async function GET(): Promise<NextResponse<{ success: true; data: ProjectResponse[] } | ApiError>> {
+export async function GET(_request?: NextRequest): Promise<NextResponse<{ success: true; data: ProjectResponse[] } | ApiError>> {
   try {
     const projects = await prisma.project.findMany({
       orderBy: { createdAt: 'desc' },

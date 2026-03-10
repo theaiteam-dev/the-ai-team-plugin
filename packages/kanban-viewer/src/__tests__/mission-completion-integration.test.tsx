@@ -67,7 +67,7 @@ function createHeaderProps(overrides = {}): React.ComponentProps<typeof HeaderBa
     },
     wipCurrent: 4,
     wipLimit: 5,
-    projects: [{ id: 'kanban-viewer', name: 'Kanban Viewer', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+    projects: [{ id: 'kanban-viewer', name: 'Kanban Viewer', createdAt: new Date(), updatedAt: new Date() }],
     selectedProjectId: 'kanban-viewer',
     onProjectChange: vi.fn(),
     projectsLoading: false,

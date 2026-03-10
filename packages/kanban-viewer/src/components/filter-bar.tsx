@@ -14,7 +14,7 @@ export interface FilterBarProps {
   onAgentFilterChange: (value: AgentFilter) => void;
   onStatusFilterChange: (value: StatusFilter) => void;
   onSearchQueryChange: (value: string) => void;
-  onClearFilters: () => void;
+  onClearFilters?: () => void;
 }
 
 const TYPE_OPTIONS: TypeFilter[] = [
