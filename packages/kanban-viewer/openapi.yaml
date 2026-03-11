@@ -1,0 +1,1998 @@
+openapi: 3.1.0
+
+info:
+  title: A(i)-Team Kanban Viewer API
+  version: 1.0.0
+  description: |
+    REST API for the A(i)-Team Kanban Viewer. Manages work items, missions,
+    agent lifecycle, and real-time board events for the TDD pipeline.
+
+    ## Project Isolation
+    All requests (except `/api/projects`) require the `X-Project-ID` header.
+    Projects are created automatically on first use via `POST /api/projects`.
+
+    ## Error Format
+    All errors return a consistent envelope:
+    ```json
+    { "success": false, "error": { "code": "ERROR_CODE", "message": "...", "details": {} } }
+    ```
+
+servers:
+  - url: http://localhost:3000
+    description: Local development
+
+# ─── Reusable components ─────────────────────────────────────────────────────
+components:
+
+  parameters:
+    ProjectId:
+      name: X-Project-ID
+      in: header
+      required: true
+      description: Project identifier for multi-tenant isolation
+      schema:
+        type: string
+        example: my-project
+
+  schemas:
+
+    # ── Enums ──────────────────────────────────────────────────────────────────
+    StageId:
+      type: string
+      enum: [briefings, ready, testing, implementing, review, probing, done, blocked]
+
+    ItemType:
+      type: string
+      enum: [feature, bug, enhancement, task]
+
+    ItemPriority:
+      type: string
+      enum: [critical, high, medium, low]
+
+    AgentName:
+      type: string
+      enum: [Hannibal, Face, Murdock, B.A., Amy, Lynch, Lynch-Final, Sosa, Tawnia]
+
+    MissionState:
+      type: string
+      enum: [initializing, prechecking, precheck_failure, running, postchecking, completed, failed, archived]
+
+    ActivityLevel:
+      type: string
+      enum: [info, warn, error]
+
+    HookEventType:
+      type: string
+      enum: [pre_tool_use, post_tool_use, post_tool_use_failure, subagent_start, subagent_stop, stop, teammate_idle, task_completed]
+
+    WorkLogAction:
+      type: string
+      enum: [started, completed, rejected, note]
+
+    # ── Shared objects ─────────────────────────────────────────────────────────
+    ItemOutputs:
+      type: object
+      properties:
+        test:
+          type: string
+          description: Relative path to the test file
+          example: src/__tests__/feature.test.ts
+        impl:
+          type: string
+          description: Relative path to the implementation file
+          example: src/services/feature.ts
+        types:
+          type: string
+          description: Relative path to the types file
+          example: src/types/feature.ts
+
+    WorkLogEntry:
+      type: object
+      required: [id, agent, action, summary, timestamp]
+      properties:
+        id:
+          type: integer
+        agent:
+          type: string
+        action:
+          $ref: '#/components/schemas/WorkLogAction'
+        summary:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    Item:
+      type: object
+      required: [id, title, description, type, priority, stageId, rejectionCount, createdAt, updatedAt, outputs, dependencies]
+      properties:
+        id:
+          type: string
+          pattern: '^WI-\d{3}[a-z]?$'
+          example: WI-001
+        title:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+        type:
+          $ref: '#/components/schemas/ItemType'
+        priority:
+          $ref: '#/components/schemas/ItemPriority'
+        stageId:
+          $ref: '#/components/schemas/StageId'
+        assignedAgent:
+          $ref: '#/components/schemas/AgentName'
+          nullable: true
+        rejectionCount:
+          type: integer
+          minimum: 0
+        outputs:
+          $ref: '#/components/schemas/ItemOutputs'
+        dependencies:
+          type: array
+          items:
+            type: string
+            pattern: '^WI-\d{3}[a-z]?$'
+        workLogs:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkLogEntry'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    Stage:
+      type: object
+      required: [id, name, order]
+      properties:
+        id:
+          $ref: '#/components/schemas/StageId'
+        name:
+          type: string
+        order:
+          type: integer
+        wipLimit:
+          type: integer
+          nullable: true
+          description: Maximum items allowed in this stage. null means unlimited.
+
+    AgentClaim:
+      type: object
+      required: [agentName, itemId, claimedAt]
+      properties:
+        agentName:
+          $ref: '#/components/schemas/AgentName'
+        itemId:
+          type: string
+        claimedAt:
+          type: string
+          format: date-time
+
+    Mission:
+      type: object
+      required: [id, name, state, prdPath, startedAt]
+      properties:
+        id:
+          type: string
+          pattern: '^M-\d{8}-\d{3}$'
+          example: M-20260310-001
+        name:
+          type: string
+        state:
+          $ref: '#/components/schemas/MissionState'
+        prdPath:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        archivedAt:
+          type: string
+          format: date-time
+          nullable: true
+        precheckBlockers:
+          type: array
+          items:
+            type: string
+          nullable: true
+        precheckOutput:
+          type: object
+          nullable: true
+
+    ActivityEntry:
+      type: object
+      required: [id, message, level, timestamp]
+      properties:
+        id:
+          type: integer
+        missionId:
+          type: string
+          nullable: true
+        agent:
+          type: string
+          nullable: true
+        message:
+          type: string
+        level:
+          $ref: '#/components/schemas/ActivityLevel'
+        timestamp:
+          type: string
+          format: date-time
+
+    Project:
+      type: object
+      required: [id, name, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    TokenAgentBreakdown:
+      type: object
+      required: [agentName, model, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, estimatedCostUsd]
+      properties:
+        agentName:
+          type: string
+        model:
+          type: string
+        inputTokens:
+          type: integer
+        outputTokens:
+          type: integer
+        cacheCreationTokens:
+          type: integer
+        cacheReadTokens:
+          type: integer
+        estimatedCostUsd:
+          type: number
+          format: double
+
+    TokenTotals:
+      type: object
+      required: [inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, estimatedCostUsd]
+      properties:
+        inputTokens:
+          type: integer
+        outputTokens:
+          type: integer
+        cacheCreationTokens:
+          type: integer
+        cacheReadTokens:
+          type: integer
+        estimatedCostUsd:
+          type: number
+          format: double
+
+    WipStatus:
+      type: object
+      required: [stageId, current]
+      properties:
+        stageId:
+          $ref: '#/components/schemas/StageId'
+        limit:
+          type: integer
+          nullable: true
+        current:
+          type: integer
+        available:
+          type: integer
+          nullable: true
+
+    # ── Error response ─────────────────────────────────────────────────────────
+    ErrorResponse:
+      type: object
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          enum: [false]
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - VALIDATION_ERROR
+                - INVALID_TRANSITION
+                - WIP_LIMIT_EXCEEDED
+                - INVALID_STAGE
+                - DEPENDENCY_CYCLE
+                - DEPENDENCIES_NOT_MET
+                - OUTPUT_COLLISION
+                - CLAIM_CONFLICT
+                - ITEM_CLAIMED
+                - NOT_CLAIMED
+                - CLAIM_MISMATCH
+                - ITEM_NOT_FOUND
+                - MISSION_NOT_FOUND
+                - NO_ACTIVE_MISSION
+                - INVALID_MISSION_STATE
+                - PROJECT_NOT_FOUND
+                - STAGE_NOT_FOUND
+                - CONFLICT
+                - UNAUTHORIZED
+                - SERVER_ERROR
+                - DATABASE_ERROR
+            message:
+              type: string
+            details:
+              description: Optional structured context for the error
+
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Resource conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+# ─── Paths ────────────────────────────────────────────────────────────────────
+paths:
+
+  # ── Board ────────────────────────────────────────────────────────────────────
+  /api/board:
+    get:
+      operationId: getBoard
+      summary: Get full board state
+      description: Returns all stages, items, active claims, and current mission.
+      tags: [board]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: includeCompleted
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Include items in the done stage
+      responses:
+        '200':
+          description: Board state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [stages, items, claims, currentMission]
+                    properties:
+                      stages:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Stage'
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Item'
+                      claims:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/AgentClaim'
+                      currentMission:
+                        $ref: '#/components/schemas/Mission'
+                        nullable: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/board/move:
+    post:
+      operationId: moveItem
+      summary: Move item to a new stage
+      description: Validates the transition matrix and WIP limits before moving.
+      tags: [board]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [itemId, toStage]
+              properties:
+                itemId:
+                  type: string
+                  example: WI-001
+                toStage:
+                  $ref: '#/components/schemas/StageId'
+                force:
+                  type: boolean
+                  default: false
+                  description: Skip WIP limit enforcement
+      responses:
+        '200':
+          description: Item moved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [item, previousStage, wipStatus]
+                    properties:
+                      item:
+                        $ref: '#/components/schemas/Item'
+                      previousStage:
+                        $ref: '#/components/schemas/StageId'
+                      wipStatus:
+                        $ref: '#/components/schemas/WipStatus'
+        '400':
+          description: VALIDATION_ERROR · INVALID_TRANSITION · WIP_LIMIT_EXCEEDED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: ITEM_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/board/claim:
+    post:
+      operationId: claimItem
+      summary: Agent claims a work item
+      tags: [board]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [itemId, agent]
+              properties:
+                itemId:
+                  type: string
+                agent:
+                  $ref: '#/components/schemas/AgentName'
+      responses:
+        '200':
+          description: Claim created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: '#/components/schemas/AgentClaim'
+        '400':
+          description: VALIDATION_ERROR · INVALID_STAGE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: ITEM_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: ITEM_CLAIMED · CLAIM_CONFLICT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/board/release:
+    post:
+      operationId: releaseItem
+      summary: Release an agent claim (idempotent)
+      tags: [board]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [itemId]
+              properties:
+                itemId:
+                  type: string
+      responses:
+        '200':
+          description: Claim released (or was already absent)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [released]
+                    properties:
+                      released:
+                        type: boolean
+                      agent:
+                        $ref: '#/components/schemas/AgentName'
+                        nullable: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/board/events:
+    get:
+      operationId: boardEvents
+      summary: Server-Sent Events stream of board changes
+      description: |
+        Long-lived SSE connection. The client receives newline-delimited
+        `data: <json>` frames. Each frame has `type`, `timestamp`, and `data`.
+
+        Event types: `item-added` · `item-moved` · `item-updated` · `item-deleted`
+        · `board-updated` · `mission-completed` · `activity-entry-added`
+        · `hook-event` · `mission-token-usage`
+
+        Pass `X-Project-ID` as a header or as the `projectId` query parameter
+        (required for browser EventSource which cannot set headers).
+      tags: [board]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: projectId
+          in: query
+          schema:
+            type: string
+          description: Fallback when X-Project-ID header cannot be set (EventSource)
+      responses:
+        '200':
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # ── Items ────────────────────────────────────────────────────────────────────
+  /api/items:
+    get:
+      operationId: listItems
+      summary: List work items
+      tags: [items]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: stage
+          in: query
+          schema:
+            $ref: '#/components/schemas/StageId'
+        - name: type
+          in: query
+          schema:
+            $ref: '#/components/schemas/ItemType'
+        - name: priority
+          in: query
+          schema:
+            $ref: '#/components/schemas/ItemPriority'
+        - name: agent
+          in: query
+          schema:
+            type: string
+          description: Filter by assigned agent name, or "null" for unassigned
+        - name: includeArchived
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Item list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Item'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+    post:
+      operationId: createItem
+      summary: Create a work item
+      description: Item is placed in the briefings stage. ID is auto-generated in WI-NNN format.
+      tags: [items]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, type, priority, description]
+              properties:
+                title:
+                  type: string
+                  maxLength: 200
+                type:
+                  $ref: '#/components/schemas/ItemType'
+                priority:
+                  $ref: '#/components/schemas/ItemPriority'
+                description:
+                  type: string
+                dependencies:
+                  type: array
+                  items:
+                    type: string
+                    pattern: '^WI-\d{3}[a-z]?$'
+                outputs:
+                  $ref: '#/components/schemas/ItemOutputs'
+      responses:
+        '201':
+          description: Item created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: '#/components/schemas/Item'
+        '400':
+          description: VALIDATION_ERROR · DEPENDENCY_CYCLE · OUTPUT_COLLISION
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/items/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^WI-\d{3}[a-z]?$'
+        example: WI-001
+
+    get:
+      operationId: getItem
+      summary: Get a work item
+      tags: [items]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Item
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: '#/components/schemas/Item'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: ITEM_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+    patch:
+      operationId: updateItem
+      summary: Update a work item
+      tags: [items]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                title:
+                  type: string
+                  maxLength: 200
+                description:
+                  type: string
+                type:
+                  $ref: '#/components/schemas/ItemType'
+                priority:
+                  $ref: '#/components/schemas/ItemPriority'
+                dependencies:
+                  type: array
+                  items:
+                    type: string
+                    pattern: '^WI-\d{3}[a-z]?$'
+                outputs:
+                  type: object
+                  properties:
+                    test:
+                      type: string
+                      nullable: true
+                    impl:
+                      type: string
+                      nullable: true
+                    types:
+                      type: string
+                      nullable: true
+      responses:
+        '200':
+          description: Updated item
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: '#/components/schemas/Item'
+        '400':
+          description: VALIDATION_ERROR · DEPENDENCY_CYCLE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: ITEM_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+    delete:
+      operationId: deleteItem
+      summary: Soft-delete a work item
+      description: Sets archivedAt and removes item from all dependency lists.
+      tags: [items]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Item deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [deleted, id, dependenciesRemoved]
+                    properties:
+                      deleted:
+                        type: boolean
+                      id:
+                        type: string
+                      dependenciesRemoved:
+                        type: integer
+        '404':
+          description: ITEM_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/items/{id}/reject:
+    post:
+      operationId: rejectItem
+      summary: Record a rejection on an item
+      description: |
+        Increments the rejection counter. After 2 rejections the item is
+        automatically escalated to the blocked stage.
+      tags: [items]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason, agent]
+              properties:
+                reason:
+                  type: string
+                agent:
+                  $ref: '#/components/schemas/AgentName'
+      responses:
+        '200':
+          description: Rejection recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [item, escalated, rejectionCount]
+                    properties:
+                      item:
+                        $ref: '#/components/schemas/Item'
+                      escalated:
+                        type: boolean
+                        description: true if item was moved to blocked
+                      rejectionCount:
+                        type: integer
+        '400':
+          description: VALIDATION_ERROR · INVALID_STAGE (item must be in review)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: ITEM_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/items/{id}/render:
+    get:
+      operationId: renderItem
+      summary: Render item as markdown
+      tags: [items]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: includeWorkLog
+          in: query
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: Markdown representation
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [markdown]
+                    properties:
+                      markdown:
+                        type: string
+        '404':
+          description: ITEM_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ── Agents ───────────────────────────────────────────────────────────────────
+  /api/agents/start:
+    post:
+      operationId: agentStart
+      summary: Agent begins work on an item
+      description: |
+        Composite operation: claims the item, validates dependencies, moves
+        it to the agent's work stage, and creates a WorkLog entry.
+      tags: [agents]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [itemId, agent]
+              properties:
+                itemId:
+                  type: string
+                agent:
+                  $ref: '#/components/schemas/AgentName'
+      responses:
+        '200':
+          description: Work started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [itemId, agent, item, claimedAt]
+                    properties:
+                      itemId:
+                        type: string
+                      agent:
+                        $ref: '#/components/schemas/AgentName'
+                      item:
+                        $ref: '#/components/schemas/Item'
+                      claimedAt:
+                        type: string
+                        format: date-time
+        '400':
+          description: VALIDATION_ERROR · INVALID_STAGE · DEPENDENCIES_NOT_MET · WIP_LIMIT_EXCEEDED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: ITEM_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/agents/stop:
+    post:
+      operationId: agentStop
+      summary: Agent completes work on an item
+      description: |
+        Releases the claim, appends a WorkLog entry, and advances the item
+        to the next pipeline stage (or blocked if outcome=blocked).
+      tags: [agents]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [itemId, agent, summary]
+              properties:
+                itemId:
+                  type: string
+                agent:
+                  $ref: '#/components/schemas/AgentName'
+                summary:
+                  type: string
+                outcome:
+                  type: string
+                  enum: [completed, blocked]
+                  default: completed
+      responses:
+        '200':
+          description: Work completed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [itemId, agent, workLogEntry, nextStage]
+                    properties:
+                      itemId:
+                        type: string
+                      agent:
+                        $ref: '#/components/schemas/AgentName'
+                      workLogEntry:
+                        $ref: '#/components/schemas/WorkLogEntry'
+                      nextStage:
+                        $ref: '#/components/schemas/StageId'
+        '400':
+          description: VALIDATION_ERROR · NOT_CLAIMED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: CLAIM_MISMATCH — item is claimed by a different agent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: ITEM_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ── Missions ─────────────────────────────────────────────────────────────────
+  /api/missions:
+    get:
+      operationId: listMissions
+      summary: List missions
+      tags: [missions]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: state
+          in: query
+          schema:
+            $ref: '#/components/schemas/MissionState'
+      responses:
+        '200':
+          description: Mission list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Mission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+    post:
+      operationId: createMission
+      summary: Create a mission
+      description: |
+        Creates a new mission in the initializing state.
+        If an active mission already exists, use `force: true` to archive it first.
+      tags: [missions]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, prdPath]
+              properties:
+                name:
+                  type: string
+                prdPath:
+                  type: string
+                  description: Path to the PRD file (relative to project root)
+                force:
+                  type: boolean
+                  default: false
+                  description: Archive any existing active mission before creating
+      responses:
+        '201':
+          description: Mission created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: '#/components/schemas/Mission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: CONFLICT — active mission exists (use force:true)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/missions/current:
+    get:
+      operationId: getCurrentMission
+      summary: Get the active mission
+      tags: [missions]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Active mission or null
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: '#/components/schemas/Mission'
+                    nullable: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/missions/precheck:
+    post:
+      operationId: missionPrecheck
+      summary: Record precheck result
+      description: |
+        Updates mission state after pre-flight checks.
+        `initializing` → `running` (passed) or `precheck_failure` (failed).
+        `precheck_failure` → `running` (retry passed).
+      tags: [missions]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [passed]
+              properties:
+                passed:
+                  type: boolean
+                blockers:
+                  type: array
+                  items:
+                    type: string
+                output:
+                  type: object
+      responses:
+        '200':
+          description: Precheck recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [allPassed]
+                    properties:
+                      allPassed:
+                        type: boolean
+                      retryable:
+                        type: boolean
+                        description: Present when allPassed is false
+                      blockers:
+                        type: array
+                        items:
+                          type: string
+        '400':
+          description: VALIDATION_ERROR · INVALID_MISSION_STATE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: NO_ACTIVE_MISSION
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/missions/postcheck:
+    post:
+      operationId: missionPostcheck
+      summary: Run post-mission checks
+      description: |
+        Runs lint, unit tests, and e2e tests against the project.
+        Transitions mission: `running` → `postchecking` → `completed` or `failed`.
+      tags: [missions]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Postcheck results
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [passed, lintErrors, unitTestsPassed, unitTestsFailed, e2eTestsPassed, e2eTestsFailed, blockers]
+                    properties:
+                      passed:
+                        type: boolean
+                      lintErrors:
+                        type: integer
+                      unitTestsPassed:
+                        type: integer
+                      unitTestsFailed:
+                        type: integer
+                      e2eTestsPassed:
+                        type: integer
+                      e2eTestsFailed:
+                        type: integer
+                      blockers:
+                        type: array
+                        items:
+                          type: string
+        '400':
+          description: INVALID_MISSION_STATE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: NO_ACTIVE_MISSION
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/missions/archive:
+    post:
+      operationId: archiveMission
+      summary: Archive the active mission
+      tags: [missions]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Mission archived
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [mission, archivedItems]
+                    properties:
+                      mission:
+                        $ref: '#/components/schemas/Mission'
+                      archivedItems:
+                        type: integer
+        '404':
+          description: NO_ACTIVE_MISSION
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/missions/{missionId}:
+    get:
+      operationId: getMission
+      summary: Get a mission by ID
+      tags: [missions]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: missionId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^M-\d{8}-\d{3}$'
+      responses:
+        '200':
+          description: Mission
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: '#/components/schemas/Mission'
+        '404':
+          description: MISSION_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/missions/{missionId}/token-usage:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - name: missionId
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      operationId: aggregateTokenUsage
+      summary: Aggregate token usage from hook events
+      description: |
+        Reads hook events for the mission, deduplicates by agent+model,
+        sums costs, and persists the result. Idempotent — safe to call multiple times.
+      tags: [missions]
+      responses:
+        '200':
+          description: Token usage aggregated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [missionId, agents, totals]
+                    properties:
+                      missionId:
+                        type: string
+                      agents:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/TokenAgentBreakdown'
+                      totals:
+                        $ref: '#/components/schemas/TokenTotals'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+    get:
+      operationId: getTokenUsage
+      summary: Get previously aggregated token usage
+      tags: [missions]
+      responses:
+        '200':
+          description: Token usage
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [missionId, agents, totals]
+                    properties:
+                      missionId:
+                        type: string
+                      agents:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/TokenAgentBreakdown'
+                      totals:
+                        $ref: '#/components/schemas/TokenTotals'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ── Activity ─────────────────────────────────────────────────────────────────
+  /api/activity:
+    get:
+      operationId: listActivity
+      summary: Get activity log entries
+      tags: [activity]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+        - name: missionId
+          in: query
+          schema:
+            type: string
+          description: Filter to a specific mission (defaults to current mission)
+      responses:
+        '200':
+          description: Activity entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [entries]
+                    properties:
+                      entries:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ActivityEntry'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+    post:
+      operationId: createActivityEntry
+      summary: Append an activity log entry
+      description: Auto-associates with the current active mission if one exists.
+      tags: [activity]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message:
+                  type: string
+                agent:
+                  type: string
+                level:
+                  $ref: '#/components/schemas/ActivityLevel'
+                  default: info
+      responses:
+        '201':
+          description: Entry logged
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [logged, timestamp]
+                    properties:
+                      logged:
+                        type: boolean
+                      timestamp:
+                        type: string
+                        format: date-time
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ── Deps ─────────────────────────────────────────────────────────────────────
+  /api/deps/check:
+    get:
+      operationId: checkDeps
+      summary: Validate the dependency graph
+      description: Detects cycles and identifies which items are ready to start.
+      tags: [deps]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Dependency analysis
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [valid, cycles, readyItems, blockedItems]
+                    properties:
+                      valid:
+                        type: boolean
+                      cycles:
+                        type: array
+                        items:
+                          type: array
+                          items:
+                            type: string
+                      readyItems:
+                        type: array
+                        items:
+                          type: string
+                      blockedItems:
+                        type: array
+                        items:
+                          type: string
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ── Hook events ───────────────────────────────────────────────────────────────
+  /api/hooks/events:
+    post:
+      operationId: storeHookEvents
+      summary: Store observer hook events
+      description: |
+        Accepts a single event object or an array of up to 100 events.
+        Events with the same `correlationId` + `eventType` pair are silently deduplicated.
+      tags: [hooks]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/HookEventInput'
+                - type: array
+                  items:
+                    $ref: '#/components/schemas/HookEventInput'
+                  maxItems: 100
+      responses:
+        '201':
+          description: Event(s) stored
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    oneOf:
+                      - $ref: '#/components/schemas/HookEventRecord'
+                      - type: object
+                        required: [created, skipped]
+                        properties:
+                          created:
+                            type: integer
+                          skipped:
+                            type: integer
+                            description: Deduplicated (same correlationId + eventType)
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/hooks/events/prune:
+    post:
+      operationId: pruneHookEvents
+      summary: Delete old hook events
+      description: |
+        Deletes events older than the given timestamp, up to 1000 per call.
+        Events belonging to active missions are always preserved.
+      tags: [hooks]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [olderThan]
+              properties:
+                olderThan:
+                  type: string
+                  format: date-time
+                  description: Delete events with timestamp before this value
+      responses:
+        '200':
+          description: Events pruned
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [pruned]
+                    properties:
+                      pruned:
+                        type: integer
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/hooks/events/backfill:
+    post:
+      operationId: backfillHookEvents
+      summary: Assign missionId to orphan hook events
+      description: |
+        Retroactively sets missionId on events that were recorded without one,
+        by matching event timestamps against known mission time ranges.
+      tags: [hooks]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Backfill complete
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [updated, unmatched]
+                    properties:
+                      updated:
+                        type: integer
+                      unmatched:
+                        type: integer
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ── Projects ──────────────────────────────────────────────────────────────────
+  /api/projects:
+    get:
+      operationId: listProjects
+      summary: List all projects
+      description: Does not require X-Project-ID.
+      tags: [projects]
+      responses:
+        '200':
+          description: Project list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Project'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+    post:
+      operationId: createProject
+      summary: Create a project
+      description: Does not require X-Project-ID. ID is normalized to lowercase.
+      tags: [projects]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, name]
+              properties:
+                id:
+                  type: string
+                  pattern: '^[a-z0-9_-]{1,100}$'
+                  description: Alphanumeric, hyphens, underscores; max 100 chars
+                name:
+                  type: string
+      responses:
+        '201':
+          description: Project created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: '#/components/schemas/Project'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: CONFLICT — project ID already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/projects/{id}:
+    get:
+      operationId: getProject
+      summary: Get a project by ID
+      description: Does not require X-Project-ID.
+      tags: [projects]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Project
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: '#/components/schemas/Project'
+        '404':
+          description: PROJECT_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ── Stages ────────────────────────────────────────────────────────────────────
+  /api/stages/{id}:
+    patch:
+      operationId: updateStage
+      summary: Update a stage's WIP limit
+      description: Set wipLimit to null for unlimited.
+      tags: [stages]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/StageId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [wipLimit]
+              properties:
+                wipLimit:
+                  type: integer
+                  nullable: true
+                  minimum: 0
+                  description: Maximum items allowed. null means unlimited.
+      responses:
+        '200':
+          description: Stage updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: '#/components/schemas/Stage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: STAGE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+# ── Hook event schemas (referenced above) ────────────────────────────────────
+# Placed after paths to keep paths section readable
+
+components:
+  schemas:
+    HookEventInput:
+      type: object
+      required: [eventType, agentName, status, summary, timestamp]
+      properties:
+        eventType:
+          $ref: '#/components/schemas/HookEventType'
+        agentName:
+          type: string
+        status:
+          type: string
+        summary:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        toolName:
+          type: string
+        durationMs:
+          type: integer
+          minimum: 0
+        payload:
+          type: string
+          description: Raw event payload (max 1 MB)
+          maxLength: 1048576
+        correlationId:
+          type: string
+        inputTokens:
+          type: integer
+          minimum: 0
+        outputTokens:
+          type: integer
+          minimum: 0
+        cacheCreationTokens:
+          type: integer
+          minimum: 0
+        cacheReadTokens:
+          type: integer
+          minimum: 0
+        model:
+          type: string
+
+    HookEventRecord:
+      allOf:
+        - $ref: '#/components/schemas/HookEventInput'
+        - type: object
+          required: [id, projectId]
+          properties:
+            id:
+              type: integer
+            projectId:
+              type: string
+            missionId:
+              type: string
+              nullable: true
+
+tags:
+  - name: board
+    description: Board state and item movement
+  - name: items
+    description: Work item CRUD
+  - name: agents
+    description: Agent lifecycle (start/stop work)
+  - name: missions
+    description: Mission lifecycle and token tracking
+  - name: activity
+    description: Activity log
+  - name: deps
+    description: Dependency graph validation
+  - name: hooks
+    description: Observer hook event storage
+  - name: projects
+    description: Project management
+  - name: stages
+    description: Stage configuration
