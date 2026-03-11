@@ -9,14 +9,15 @@ import (
 )
 
 var itemsDeleteItemCmd = &cobra.Command{
-	Use: "deleteItem",
+	Use: "deleteItem <id>",
 	Short: "Soft-delete a work item",
-	Args: cobra.NoArgs,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		baseURL, _ := cmd.Root().PersistentFlags().GetString("base-url")
 		token := os.Getenv("ATEAM_TOKEN")
 		c := client.NewClient(baseURL, token)
 		pathParams := map[string]string{}
+		pathParams["id"] = args[0]
 		queryParams := map[string]string{}
 		resp, err := c.Do("DELETE", "/api/items/{id}", pathParams, queryParams, nil)
 		if err != nil {

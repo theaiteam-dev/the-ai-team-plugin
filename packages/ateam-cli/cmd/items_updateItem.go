@@ -25,14 +25,14 @@ var (
 )
 
 var itemsUpdateItemCmd = &cobra.Command{
-	Use: "updateItem",
+	Use: "updateItem <id>",
 	Short: "Update a work item",
-	Args: cobra.NoArgs,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		baseURL, _ := cmd.Root().PersistentFlags().GetString("base-url")
 		token := os.Getenv("ATEAM_TOKEN")
 		c := client.NewClient(baseURL, token)
-		pathParams := map[string]string{}
+		pathParams := map[string]string{"id": args[0]}
 		queryParams := map[string]string{}
 		if cmd.Flags().Changed("priority") { if err := validate.Enum("priority", itemsUpdateItemCmd_priority, []string{"critical", "high", "medium", "low"}); err != nil { return err } }
 		if cmd.Flags().Changed("type") { if err := validate.Enum("type", itemsUpdateItemCmd_type, []string{"feature", "bug", "enhancement", "task"}); err != nil { return err } }
