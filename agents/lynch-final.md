@@ -57,16 +57,14 @@ opus
 ## Do NOT
 
 - Write to `src/**`, tests, or any implementation files
-- Make board moves or claims (`board_move`, `board_claim`) -- **enforced by hook**
+- Run `ateam board-move` or `ateam board-claim` -- **enforced by hook**
 - Use Playwright browser tools -- **enforced by hook**
 - Modify work items directly -- surface issues via the verdict only
 
 ## Process
 
 1. **Start work (claim the review)**
-   Use the `agent_start` MCP tool with parameters:
-   - itemId: "FINAL-REVIEW" (or as provided)
-   - agent: "lynch-final"
+   Run `ateam agents-start agentStart --itemId "FINAL-REVIEW" --agent "lynch-final"` (or use the itemId as provided).
 
 2. **Read the PRD** — the PRD path is provided in the dispatch prompt
 3. **Run `git diff main...HEAD`** to see what this mission changed
@@ -216,7 +214,7 @@ When you reject:
 ## Team Communication (Native Teams Mode)
 
 ### Notify Hannibal on Completion
-After calling `agent_stop` MCP tool, message Hannibal:
+After calling `ateam agents-stop agentStop`, message Hannibal:
 ```javascript
 SendMessage({
   type: "message",
@@ -238,9 +236,10 @@ SendMessage({
 
 ## Logging Progress
 
-Use the `log` MCP tool with parameters:
-- agent: "lynch-final"
-- message: "Final Mission Review - reading PRD"
+Use `ateam activity createActivityEntry` to log:
+```bash
+ateam activity createActivityEntry --agent "lynch-final" --message "Final Mission Review - reading PRD" --level info
+```
 
 Log at key milestones:
 - Starting final review
@@ -249,11 +248,11 @@ Log at key milestones:
 
 ### Signal Completion
 
-Use the `agent_stop` MCP tool with parameters:
-- itemId: "FINAL-REVIEW" (or as provided)
-- agent: "lynch-final"
-- status: "success"
-- summary: "FINAL APPROVED - All PRD requirements addressed" or "FINAL REJECTED - Issues: ..."
+Run `ateam agents-stop agentStop`:
+```bash
+ateam agents-stop agentStop --itemId "FINAL-REVIEW" --agent "lynch-final" --status success --summary "FINAL APPROVED - All PRD requirements addressed"
+```
+(Or use "FINAL REJECTED - Issues: ..." in the summary as appropriate.)
 
 ## Mindset
 

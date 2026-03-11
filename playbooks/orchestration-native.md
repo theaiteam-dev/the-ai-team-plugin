@@ -44,19 +44,19 @@ Hannibal runs precheck by executing commands and forwarding results to the API �
      passed   = all exit codes were 0
      blockers = human-readable failure messages for each failed check
      output   = { lint: {stdout,stderr,timedOut}, tests: {stdout,stderr,timedOut} }
-4. Call mission_precheck({ passed, blockers, output })
+4. Run: ateam missions-precheck missionPrecheck --passed {passed} --blockers [...] --output {...}
 ```
 
 ### precheck_failure: Recoverable State
 
 `precheck_failure` is a **non-terminal, recoverable** state. It means the checks ran but found problems. The mission is NOT failed — it can be retried.
 
-**When `mission_current` returns `precheck_failure`:**
+**When `ateam missions-current getCurrentMission` returns `precheck_failure`:**
 - The mission state is `precheck_failure` — blockers from the last run are stored in the API database.
   Fetch them via `GET /api/missions/current` (REST endpoint) with header `X-Project-ID: <ATEAM_PROJECT_ID>`
-  — this returns the full mission record including the `precheckBlockers` array. The `mission_current`
-  MCP tool returns a simplified object without the `precheckBlockers` field; use the REST endpoint or
-  the `mission_precheck` response instead.
+  — this returns the full mission record including the `precheckBlockers` array. The
+  `ateam missions-current getCurrentMission` command returns a simplified object without the
+  `precheckBlockers` field; use the REST endpoint or the `ateam missions-precheck` response instead.
 - Display the blockers to the operator:
   ```
   [Hannibal] Previous precheck failed. Blockers:
@@ -74,11 +74,11 @@ Hannibal runs precheck by executing commands and forwarding results to the API �
 
 ## Mission-Active Marker
 
-The MCP server automatically manages a marker file (`/tmp/.ateam-mission-active-{projectId}`) that tells enforcement hooks a mission is running:
+The API server automatically manages a marker file (`/tmp/.ateam-mission-active-{projectId}`) that tells enforcement hooks a mission is running:
 
-- **`mission_precheck`** sets the marker when all checks pass
-- **`mission_archive(complete: true)`** clears the marker
-- **`mission_init`** clears any stale marker from a previous crashed session
+- **`ateam missions-precheck missionPrecheck`** sets the marker when all checks pass
+- **`ateam missions-archive archiveMission`** clears the marker
+- **`ateam missions createMission`** clears any stale marker from a previous crashed session
 
 No manual `Bash` commands needed — the marker lifecycle is handled at the code level.
 
@@ -159,7 +159,7 @@ If mission state is `precheck_failure`:
   - Display blockers to operator (fetch from `GET /api/missions/current` REST endpoint with header `X-Project-ID: <ATEAM_PROJECT_ID>`)
   - Re-run the precheck flow (same steps as in the Precheck Flow section above)
   - If passed: continue to main orchestration loop below
-  - If failed: call `mission_precheck({ passed: false, blockers, output })` to update blockers and exit — operator must fix issues before retrying
+  - If failed: run `ateam missions-precheck missionPrecheck` with `passed: false` to update blockers and exit — operator must fix issues before retrying
 
 **Two concerns, handled differently:**
 1. **Dependency gates** - items wait in `ready` stage for deps (between waves)
@@ -174,7 +174,7 @@ LOOP CONTINUOUSLY:
     # PHASE 1: PROCESS INCOMING MESSAGES - ADVANCE ON COMPLETION
     # ═══════════════════════════════════════════════════════════
     # Messages from teammates are AUTO-DELIVERED to you.
-    # When a teammate completes work, they call agent_stop and
+    # When a teammate completes work, they call `ateam agents-stop agentStop` and
     # then SendMessage to you. The message arrives as a new
     # conversation turn - you do NOT need to poll.
     #
@@ -185,48 +185,48 @@ LOOP CONTINUOUSLY:
         del active_teammates[item_id]
 
         if item was in testing:
-            board_move(itemId=item_id, to="implementing", agent="B.A.")
+            Bash("ateam board-move moveItem --itemId {item_id} --toStage implementing --agent B.A.")
             spawn or message B.A. with new work
             active_teammates[item_id] = "ba"
             # Don't wait for other testing items!
 
         elif item was in implementing:
-            board_move(itemId=item_id, to="review", agent="Lynch")
+            Bash("ateam board-move moveItem --itemId {item_id} --toStage review --agent Lynch")
             spawn or message Lynch with new work
             active_teammates[item_id] = "lynch"
 
         elif item was in review:
             if APPROVED:
                 # ═══ MANDATORY: Amy probes EVERY approved feature ═══
-                board_move(itemId=item_id, to="probing", agent="Amy")
+                Bash("ateam board-move moveItem --itemId {item_id} --toStage probing --agent Amy")
                 spawn or message Amy with new work
                 active_teammates[item_id] = "amy"
                 # DO NOT skip probing! DO NOT move directly to done!
-            if REJECTED: item_reject(itemId=item_id, reason=..., agent="Lynch")
+            if REJECTED: Bash("ateam items rejectItem --id {item_id}")
 
         elif item was in probing:
             # Amy has completed investigation
-            if VERIFIED: board_move(itemId=item_id, to="done")
-            if FLAG: item_reject(itemId=item_id, reason=..., agent="Amy")
+            if VERIFIED: Bash("ateam board-move moveItem --itemId {item_id} --toStage done")
+            if FLAG: Bash("ateam items rejectItem --id {item_id}")
             # Moving to done may unlock Wave 2 items!
 
     # ═══════════════════════════════════════════════════════════
     # PHASE 2: CHECK DEPENDENCY GATES - UNLOCK NEXT WAVE ITEMS
     # ═══════════════════════════════════════════════════════════
-    deps_result = deps_check()
+    deps_result = Bash("ateam deps-check checkDeps --json")
 
     for item_id in deps_result.readyItems:
         if item is in briefings stage:
-            board_move(itemId=item_id, to="ready")
+            Bash("ateam board-move moveItem --itemId {item_id} --toStage ready")
 
     # ═══════════════════════════════════════════════════════════
     # PHASE 3: FILL PIPELINE FROM READY (per-column WIP limits)
     # ═══════════════════════════════════════════════════════════
     # No global WIP throttle — each column enforces its own limit.
-    # board_move rejects moves when the target column is full.
+    # board-move rejects moves when the target column is full.
     while ready stage not empty:
         pick ONE item from ready stage
-        result = board_move(itemId=item_id, to="testing", agent="Murdock")
+        result = Bash("ateam board-move moveItem --itemId {item_id} --toStage testing --agent Murdock")
         if result is WIP error: break  # testing column is full
         spawn or message Murdock with new work
         active_teammates[item_id] = "murdock"
@@ -237,19 +237,19 @@ LOOP CONTINUOUSLY:
 **KEY BEHAVIORS:**
 - Phase 1: Messages arrive automatically - no polling required
 - Phase 2: Unlock next-wave items when deps complete (correct waiting)
-- Phase 3: Keep pipeline full — per-column WIP limits enforced by board_move
+- Phase 3: Keep pipeline full — per-column WIP limits enforced by board-move
 
 ## Minimizing Per-Cycle Token Spend
 
-- Use `deps_check()` (without `verbose: true`) in the orchestration loop. Only use `deps_check(verbose: true)` for debugging stuck dependencies.
-- Call `board_read()` only when you need the full board state (start of loop, after wave completion). Between those, track state from teammate completion messages instead of re-reading the full board.
-- Use `item_list(stage: "ready")` instead of `board_read()` when you only need to check the ready queue.
+- Use `ateam deps-check checkDeps --json` (default) in the orchestration loop. Only add `--verbose` for debugging stuck dependencies.
+- Run `ateam board getBoard --json` only when you need the full board state (start of loop, after wave completion). Between those, track state from teammate completion messages instead of re-reading the full board.
+- Use `ateam items listItems --json` filtered to `stage=ready` instead of `ateam board getBoard` when you only need to check the ready queue.
 
 ## Message-Based Completion Detection
 
 In native teams mode, completion works differently from legacy polling:
 
-1. **Teammate finishes work** → calls `agent_stop` MCP tool → calls `SendMessage` to Hannibal
+1. **Teammate finishes work** → calls `ateam agents-stop agentStop` → calls `SendMessage` to Hannibal
 2. **Message auto-delivered** → appears as a new conversation turn in your context
 3. **You process immediately** → advance the item, dispatch next agent
 
@@ -290,7 +290,7 @@ Parse the message to determine:
 
 ```
 # Move to testing AND claim for Murdock
-board_move(itemId: "001", to: "testing", agent: "Murdock")
+ateam board-move moveItem --itemId 001 --toStage testing --agent Murdock
 ```
 
 Then spawn (first time) or message (if already active):
@@ -312,7 +312,7 @@ Task(
 
   STOP after creating these files. Do NOT create {outputs.impl}.
 
-  When done, call agent_stop, then notify Hannibal:
+  When done, run `ateam agents-stop agentStop`, then notify Hannibal:
   SendMessage(type: 'message', recipient: 'hannibal', content: 'DONE: {itemId} - summary', summary: 'Tests complete for {itemId}')"
 )
 ```
@@ -322,7 +322,7 @@ Task(
 SendMessage(
   type: "message",
   recipient: "murdock",
-  content: "New work: WI-005 - {title}\nTest file: {outputs.test}\nTypes file: {outputs.types}\nFetch full details with item_get(id: 'WI-005') or item_render(id: 'WI-005').",
+  content: "New work: WI-005 - {title}\nTest file: {outputs.test}\nTypes file: {outputs.types}\nFetch full details with `ateam items getItem --id WI-005 --json` or `ateam items renderItem --id WI-005`.",
   summary: "New test work for WI-005"
 )
 ```
@@ -331,7 +331,7 @@ SendMessage(
 
 ```
 # Move to implementing AND claim for B.A. (auto-releases Murdock's claim)
-board_move(itemId: "001", to: "implementing", agent: "B.A.")
+ateam board-move moveItem --itemId 001 --toStage implementing --agent B.A.
 ```
 
 **First spawn:**
@@ -349,7 +349,7 @@ Task(
   Test file is at: {outputs.test}
   Create the implementation at: {outputs.impl}
 
-  When done, call agent_stop, then notify Hannibal:
+  When done, run `ateam agents-stop agentStop`, then notify Hannibal:
   SendMessage(type: 'message', recipient: 'hannibal', content: 'DONE: {itemId} - summary', summary: 'Implementation complete for {itemId}')"
 )
 ```
@@ -359,7 +359,7 @@ Task(
 SendMessage(
   type: "message",
   recipient: "ba",
-  content: "New work: WI-005 - {title}\nTest file: {outputs.test}\nImpl file: {outputs.impl}\nFetch full details with item_get(id: 'WI-005') or item_render(id: 'WI-005').",
+  content: "New work: WI-005 - {title}\nTest file: {outputs.test}\nImpl file: {outputs.impl}\nFetch full details with `ateam items getItem --id WI-005 --json` or `ateam items renderItem --id WI-005`.",
   summary: "New implementation work for WI-005"
 )
 ```
@@ -368,7 +368,7 @@ SendMessage(
 
 ```
 # Move to review AND claim for Lynch (auto-releases B.A.'s claim)
-board_move(itemId: "001", to: "review", agent: "Lynch")
+ateam board-move moveItem --itemId 001 --toStage review --agent Lynch
 ```
 
 **First spawn:**
@@ -388,7 +388,7 @@ Task(
   - Implementation: {outputs.impl}
   - Types (if exists): {outputs.types}
 
-  When done, call agent_stop, then notify Hannibal:
+  When done, run `ateam agents-stop agentStop`, then notify Hannibal:
   SendMessage(type: 'message', recipient: 'hannibal', content: 'DONE: {itemId} - APPROVED/REJECTED - summary', summary: 'Review complete for {itemId}')"
 )
 ```
@@ -398,7 +398,7 @@ Task(
 SendMessage(
   type: "message",
   recipient: "lynch",
-  content: "New review: WI-005 - {title}\nTest: {outputs.test}\nImpl: {outputs.impl}\nTypes: {outputs.types}\nFetch full details with item_get(id: 'WI-005') or item_render(id: 'WI-005').",
+  content: "New review: WI-005 - {title}\nTest: {outputs.test}\nImpl: {outputs.impl}\nTypes: {outputs.types}\nFetch full details with `ateam items getItem --id WI-005 --json` or `ateam items renderItem --id WI-005`.",
   summary: "New review work for WI-005"
 )
 ```
@@ -407,7 +407,7 @@ SendMessage(
 
 ```
 # Move to probing AND claim for Amy (auto-releases Lynch's claim)
-board_move(itemId: "001", to: "probing", agent: "Amy")
+ateam board-move moveItem --itemId 001 --toStage probing --agent Amy
 ```
 
 **First spawn:**
@@ -429,7 +429,7 @@ Task(
 
   Execute the Raptor Protocol. Respond with VERIFIED or FLAG.
 
-  When done, call agent_stop, then notify Hannibal:
+  When done, run `ateam agents-stop agentStop`, then notify Hannibal:
   SendMessage(type: 'message', recipient: 'hannibal', content: 'DONE: {itemId} - VERIFIED/FLAG - summary', summary: 'Probing complete for {itemId}')"
 )
 ```
@@ -441,7 +441,7 @@ Task(
 SendMessage(
   type: "message",
   recipient: "amy",
-  content: "New probe: WI-005 - {title}\nTest: {outputs.test}\nImpl: {outputs.impl}\nTypes: {outputs.types}\nFetch full details with item_get(id: 'WI-005') or item_render(id: 'WI-005').",
+  content: "New probe: WI-005 - {title}\nTest: {outputs.test}\nImpl: {outputs.impl}\nTypes: {outputs.types}\nFetch full details with `ateam items getItem --id WI-005 --json` or `ateam items renderItem --id WI-005`.",
   summary: "New probing work for WI-005"
 )
 ```
@@ -469,7 +469,7 @@ Task(
 
   Update documentation and create the final commit.
 
-  When done, call agent_stop, then notify Hannibal:
+  When done, run `ateam agents-stop agentStop`, then notify Hannibal:
   SendMessage(type: 'message', recipient: 'hannibal', content: 'DONE: docs - summary with commit hash', summary: 'Documentation and commit complete')"
 )
 ```
@@ -478,7 +478,7 @@ Wait for Tawnia's completion message (auto-delivered).
 
 ## Final Mission Review Dispatch
 
-When ALL items reach `done` stage, fetch `prdPath` from the `mission_current` response.
+When ALL items reach `done` stage, fetch `prdPath` from `ateam missions-current getCurrentMission --json`.
 
 **Always spawn a new Lynch-Final agent** for the final review (it uses a different, slimmer prompt optimized for PRD+diff review):
 
@@ -490,7 +490,7 @@ Task(
   description: "Lynch: Final Mission Review",
   prompt: "You are Colonel Lynch conducting a FINAL MISSION REVIEW.
 
-  PRD path: {prdPath from mission_current}
+  PRD path: {prdPath from ateam missions-current getCurrentMission}
 
   Review scope: Read the PRD, then run `git diff main...HEAD` to see what
   this mission changed. Review the diff against the PRD requirements.
@@ -500,7 +500,7 @@ Task(
   2. The mission's commits — correct, consistent, secure?
   3. Integration — do changes wire into the existing codebase?
 
-  When done, call agent_stop, then notify Hannibal:
+  When done, run `ateam agents-stop agentStop`, then notify Hannibal:
   SendMessage(type: 'message', recipient: 'hannibal', content: 'DONE: FINAL-REVIEW - FINAL APPROVED/REJECTED - summary', summary: 'Final mission review complete')"
 )
 ```
@@ -514,13 +514,14 @@ Setup:
 - Wave 1: 003 (depends on 001), 004 (depends on 001, 002)
 
 ```
-T=0s    deps_check() → readyItems: [001, 002], 003/004 blocked
-        Move 001, 002 to ready stage
-        board_move(itemId="001", to="testing", agent="Murdock")
+T=0s    ateam deps-check checkDeps --json → readyItems: [001, 002], 003/004 blocked
+        ateam board-move moveItem --itemId 001 --toStage ready
+        ateam board-move moveItem --itemId 002 --toStage ready
+        ateam board-move moveItem --itemId 001 --toStage testing --agent Murdock
         Task(team_name: "mission-M1", name: "murdock", subagent_type: "ai-team:murdock", ...)
         active_teammates = {001: "murdock"}
 
-        board_move(itemId="002", to="testing", agent="Murdock")
+        ateam board-move moveItem --itemId 002 --toStage testing --agent Murdock
         # Murdock already spawned - send message with new work
         SendMessage(type: "message", recipient: "murdock",
           content: "New work: WI-002...", summary: "Test work for WI-002")
@@ -529,38 +530,38 @@ T=0s    deps_check() → readyItems: [001, 002], 003/004 blocked
         # Wait for messages...
 
 T=30s   MESSAGE from murdock: "DONE: WI-001 - Created 3 test cases"
-        → IMMEDIATELY: board_move(itemId="001", to="implementing", agent="B.A.")
+        → IMMEDIATELY: ateam board-move moveItem --itemId 001 --toStage implementing --agent B.A.
         Task(team_name: "mission-M1", name: "ba", subagent_type: "ai-team:ba", ...)
         active_teammates = {001: "ba", 002: "murdock"}
         # 002 still in testing - that's fine!
 
 T=45s   MESSAGE from murdock: "DONE: WI-002 - Created 4 test cases"
-        → IMMEDIATELY: board_move(itemId="002", to="implementing", agent="B.A.")
+        → IMMEDIATELY: ateam board-move moveItem --itemId 002 --toStage implementing --agent B.A.
         SendMessage(type: "message", recipient: "ba",
           content: "New work: WI-002...", summary: "Implement WI-002")
         active_teammates = {001: "ba", 002: "ba"}
 
 T=60s   MESSAGE from ba: "DONE: WI-001 - All tests passing"
-        → IMMEDIATELY: board_move(itemId="001", to="review", agent="Lynch")
+        → IMMEDIATELY: ateam board-move moveItem --itemId 001 --toStage review --agent Lynch
         Task(team_name: "mission-M1", name: "lynch", subagent_type: "ai-team:lynch", ...)
         active_teammates = {001: "lynch", 002: "ba"}
 
 T=90s   MESSAGE from lynch: "DONE: WI-001 - APPROVED"
-        → board_move(itemId="001", to="probing", agent="Amy")
+        → ateam board-move moveItem --itemId 001 --toStage probing --agent Amy
         Task(team_name: "mission-M1", name: "amy", subagent_type: "ai-team:amy", ...)
         active_teammates = {001: "amy", 002: "ba"}
 
 T=100s  MESSAGE from amy: "DONE: WI-001 - VERIFIED"
-        → board_move(itemId="001", to="done")
-        deps_check() → readyItems: [003]  ← 003's dep (001) satisfied!
-        board_move(itemId="003", to="ready")
-        board_move(itemId="003", to="testing", agent="Murdock")
+        → ateam board-move moveItem --itemId 001 --toStage done
+        ateam deps-check checkDeps --json → readyItems: [003]  ← 003's dep (001) satisfied!
+        ateam board-move moveItem --itemId 003 --toStage ready
+        ateam board-move moveItem --itemId 003 --toStage testing --agent Murdock
         SendMessage(type: "message", recipient: "murdock",
           content: "New work: WI-003...", summary: "Test work for WI-003")
         active_teammates = {002: "ba", 003: "murdock"}
 
 T=105s  MESSAGE from ba: "DONE: WI-002 - All tests passing"
-        → board_move(itemId="002", to="review", agent="Lynch")
+        → ateam board-move moveItem --itemId 002 --toStage review --agent Lynch
         SendMessage(type: "message", recipient: "lynch",
           content: "Review WI-002...", summary: "Review WI-002")
         active_teammates = {002: "lynch", 003: "murdock"}
@@ -612,29 +613,29 @@ Native teams are ephemeral - they don't survive session restarts. On resume:
 
 3. **Read board state and re-spawn at current stages:**
    ```
-   board = board_read()
+   board = Bash("ateam board getBoard --json")
    active_teammates = {}
 
    for item in testing stage:
-       board_release(itemId)
+       Bash("ateam board-release releaseItem --itemId {item_id}")
        Task(team_name: "mission-{missionId}", name: "murdock",
             subagent_type: "ai-team:murdock", ...)
        active_teammates[item_id] = "murdock"
 
    for item in implementing stage:
-       board_release(itemId)
+       Bash("ateam board-release releaseItem --itemId {item_id}")
        Task(team_name: "mission-{missionId}", name: "ba",
             subagent_type: "ai-team:ba", ...)
        active_teammates[item_id] = "ba"
 
    for item in review stage:
-       board_release(itemId)
+       Bash("ateam board-release releaseItem --itemId {item_id}")
        Task(team_name: "mission-{missionId}", name: "lynch",
             subagent_type: "ai-team:lynch", ...)
        active_teammates[item_id] = "lynch"
 
    for item in probing stage:
-       board_release(itemId)
+       Bash("ateam board-release releaseItem --itemId {item_id}")
        Task(team_name: "mission-{missionId}", name: "amy",
             subagent_type: "ai-team:amy", ...)
        active_teammates[item_id] = "amy"
@@ -642,4 +643,4 @@ Native teams are ephemeral - they don't survive session restarts. On resume:
 
 4. **Enter normal orchestration loop** with populated `active_teammates`
 
-**MCP state is the source of truth.** Work items, board positions, and work logs are all preserved in the database. Only the teammate sessions are lost - not the work state.
+**API state is the source of truth.** Work items, board positions, and work logs are all preserved in the database. Only the teammate sessions are lost - not the work state.

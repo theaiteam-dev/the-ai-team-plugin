@@ -104,12 +104,12 @@ async function checkCoverage() {
     activityLog = await activityResponse.json();
   }
 
-  // Count item_render calls by sosa
+  // Count ateam items render calls by sosa (via Bash tool)
   const renderCalls = activityLog.filter(
     (entry) =>
       entry.agent === 'sosa' &&
       entry.message &&
-      entry.message.includes('item_render')
+      (entry.message.includes('ateam items render') || entry.message.includes('item_render'))
   );
 
   const itemsCount = briefingsItems.length;
@@ -122,13 +122,13 @@ async function checkCoverage() {
 You have ${itemsCount} item(s) in the briefings stage that need your review.
 
 Before finishing, you MUST:
-1. Use item_list MCP tool to get all items in briefings stage
-2. Use item_render MCP tool to read EVERY item (${itemsCount}/${itemsCount})
+1. Run: ateam items list --stage briefings
+2. Run: ateam items render <itemId> for EVERY item (${itemsCount}/${itemsCount})
 3. Evaluate each item against your Analysis Framework
 4. Produce a refinement report with findings
 
 Your job is to review the decomposition, not just explore the codebase.
-Start by calling item_list with stage: "briefings", then render each item.`;
+Start by running ateam items list --stage briefings, then render each item.`;
 
     console.log(
       JSON.stringify({

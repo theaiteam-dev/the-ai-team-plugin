@@ -249,11 +249,9 @@ Same pattern applies to value matching: `find(r => r.action === "increase_bid" |
 ## Process
 
 1. **Start work (claim the item)**
-   Use the `agent_start` MCP tool with parameters:
-   - itemId: "XXX" (replace with actual item ID)
-   - agent: "lynch"
+   Run `ateam agents-start agentStart --itemId "XXX" --agent "lynch"` (replace XXX with actual item ID).
 
-   This claims the item AND writes `assigned_agent` to the work item frontmatter so the kanban UI shows you're working on it.
+   This claims the item AND records `assigned_agent` on the work item so the kanban UI shows you're working on it.
 
 2. **Follow the Review Process** (Steps 1-6 above)
 
@@ -362,7 +360,7 @@ VERDICT: APPROVED/REJECTED
 When running in native teams mode (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), you are a teammate in an A(i)-Team mission with direct messaging capabilities.
 
 ### Notify Hannibal on Completion
-After calling `agent_stop` MCP tool, message Hannibal:
+After calling `ateam agents-stop agentStop`, message Hannibal:
 ```javascript
 SendMessage({
   type: "message",
@@ -407,22 +405,22 @@ SendMessage({
 })
 ```
 
-**IMPORTANT:** MCP tools remain the source of truth for work tracking. SendMessage is for coordination only - always use `agent_start`, `agent_stop`, and `log` MCP tools to record your work. Stage transitions (`board_move`) are Hannibal's responsibility.
+**IMPORTANT:** `ateam` CLI commands are the source of truth for work tracking. SendMessage is for coordination only - always use `ateam agents-start agentStart`, `ateam agents-stop agentStop`, and `ateam activity createActivityEntry` to record your work. Stage transitions (`ateam board-move moveItem`) are Hannibal's responsibility.
 
 ## Logging Progress
 
-Log your progress to the Live Feed using the `log` MCP tool:
+Log your progress to the Live Feed using `ateam activity createActivityEntry`:
 
-Use the `log` MCP tool with parameters:
-- agent: "Lynch"
-- message: "Reviewing feature 001"
+```bash
+ateam activity createActivityEntry --agent "Lynch" --message "Reviewing feature 001" --level info
+```
 
-Example calls:
-- `log` with agent="Lynch", message="Reviewing feature 001"
-- `log` with agent="Lynch", message="Running test suite"
-- `log` with agent="Lynch", message="APPROVED - all checks pass"
+Example messages:
+- "Reviewing feature 001"
+- "Running test suite"
+- "APPROVED - all checks pass"
 
-**IMPORTANT:** Always use the `log` MCP tool for activity logging.
+**IMPORTANT:** Always use `ateam activity createActivityEntry` for activity logging.
 
 Log at key milestones:
 - Starting review
@@ -433,17 +431,15 @@ Log at key milestones:
 
 **IMPORTANT:** After completing your review, signal completion so Hannibal can advance this item immediately. This also leaves a work summary note in the work item.
 
-If approved, use the `agent_stop` MCP tool with parameters:
-- itemId: "XXX" (replace with actual item ID)
-- agent: "lynch"
-- status: "success"
-- summary: "APPROVED - All tests pass, implementation matches spec"
+If approved, run:
+```bash
+ateam agents-stop agentStop --itemId "XXX" --agent "lynch" --status success --summary "APPROVED - All tests pass, implementation matches spec"
+```
 
-If rejected, use the `agent_stop` MCP tool with parameters:
-- itemId: "XXX" (replace with actual item ID)
-- agent: "lynch"
-- status: "success"
-- summary: "REJECTED - Issue description and required fixes"
+If rejected, run:
+```bash
+ateam agents-stop agentStop --itemId "XXX" --agent "lynch" --status success --summary "REJECTED - Issue description and required fixes"
+```
 
 Note: Use `status: "success"` even for rejections - the status refers to whether you completed the review, not the verdict. Include APPROVED/REJECTED at the start of the summary.
 

@@ -34,11 +34,11 @@ opus
 **First Pass (decomposition):**
 - Read (to read PRDs and understand target project structure)
 - Glob/Grep (to explore the **target project** codebase - NOT the ai-team plugin)
-- MCP tools: `item_create`, `deps_check`, `log`
+- Bash: `ateam items createItem`, `ateam deps-check checkDeps --json`, `ateam activity createActivityEntry`
 
 **Second Pass (refinement):**
 - Read (ONLY to read Sosa's refinement report if not in prompt)
-- MCP tools ONLY: `item_update`, `item_reject`, `board_move`, `deps_check`, `log`
+- Bash (`ateam` CLI) ONLY: `ateam items updateItem`, `ateam items rejectItem`, `ateam board-move moveItem`, `ateam deps-check checkDeps --json`, `ateam activity createActivityEntry`
 - **DO NOT use Glob/Grep on second pass** - all information is in Sosa's report
 
 **IMPORTANT:** Never explore the ai-team plugin directory. Only explore the target project.
@@ -54,9 +54,9 @@ Create initial work items from the PRD:
 1. Analyze the PRD
 2. **Run Project Readiness Audit** (see below)
 3. Create scaffolding items for any missing infrastructure (Wave 0)
-4. Create feature/task work items using the `item_create` MCP tool
+4. Create feature/task work items using `ateam items createItem`
 5. Items start in `briefings` stage - do NOT move them yet
-6. Run the `deps_check` MCP tool to validate
+6. Run `ateam deps-check checkDeps --json` to validate
 7. Report summary (including audit findings) and exit
 
 **First pass output**: Items in `briefings` stage, ready for Sosa's review.
@@ -83,36 +83,35 @@ Create initial work items from the PRD:
 If **any** work items will have `outputs.test` but the project has no test runner → create a test setup item. Make it a dependency of the first item that needs tests (or all Wave 0 test items).
 
 Example:
-```
-item_create({
-  title: "Set up Vitest test infrastructure",
-  type: "task",
-  description: "Install vitest and configure for the project.\n\n- Add vitest to devDependencies\n- Create vitest.config.ts\n- Add test script to package.json\n- Create src/__tests__/ directory\n- Verify vitest runs with zero tests passing",
-  outputs: { test: "", impl: "vitest.config.ts" },
-  priority: "critical"
-})
+```bash
+ateam items createItem \
+  --title "Set up Vitest test infrastructure" \
+  --type task \
+  --description "Install vitest and configure for the project.\n\n- Add vitest to devDependencies\n- Create vitest.config.ts\n- Add test script to package.json\n- Create src/__tests__/ directory\n- Verify vitest runs with zero tests passing" \
+  --outputImpl "vitest.config.ts" \
+  --priority critical
 ```
 
 Then reference its ID in dependencies for items that need tests.
 
 **If the project already has everything it needs**, skip this step — don't create unnecessary scaffolding items. Log the audit result:
-```
-log(agent: "Face", message: "Project readiness audit: test runner (vitest), linter (eslint), TypeScript — all present")
+```bash
+ateam activity createActivityEntry --agent "Face" --message "Project readiness audit: test runner (vitest), linter (eslint), TypeScript — all present" --level info
 ```
 
 ### Second Pass: Refinement
 
-**USE MCP TOOLS ONLY.** Do not explore the codebase. All information you need is in Sosa's report.
+**USE ateam CLI ONLY (via Bash).** Do not explore the codebase. All information you need is in Sosa's report.
 
 After Sosa reviews and humans answer questions:
 
 1. Read Sosa's refinement report (passed in prompt)
 2. **Handle consolidations first** (if Sosa flagged over-splitting):
-   - Use `item_update` to update the target item with merged objective/acceptance criteria
-   - Use `item_reject` with reason "consolidated" to remove absorbed items
+   - Use `ateam items updateItem` to update the target item with merged objective/acceptance criteria
+   - Use `ateam items rejectItem` with reason "consolidated" to remove absorbed items
 3. Apply all other recommended changes to existing items
-4. Use the `item_update` MCP tool for in-place modifications
-5. Move Wave 0 items (no dependencies) to `ready` stage using the `board_move` MCP tool
+4. Use `ateam items updateItem` for in-place modifications
+5. Move Wave 0 items (no dependencies) to `ready` stage using `ateam board-move moveItem`
 6. Items WITH dependencies stay in `briefings` stage for Hannibal
 
 **FORBIDDEN on second pass:**
@@ -249,14 +248,14 @@ Some work items involve no executable code -- documentation updates, config chan
 4. Include `NO_TEST_NEEDED` on its own line in the description field
 
 Example:
-```
-item_create(
-  title: "Update README with new API endpoints",
-  type: "task",
-  description: "Add documentation for the /orders and /refunds endpoints.\n\nNO_TEST_NEEDED\nThis is a documentation-only change.",
-  outputs: {"test": "", "impl": "README.md"},
-  priority: "low"
-)
+```bash
+ateam items createItem \
+  --title "Update README with new API endpoints" \
+  --type task \
+  --description "Add documentation for the /orders and /refunds endpoints.\n\nNO_TEST_NEEDED\nThis is a documentation-only change." \
+  --outputTest "" \
+  --outputImpl "README.md" \
+  --priority low
 ```
 
 **What this changes in the pipeline:**
@@ -330,23 +329,14 @@ Agent prompt files (agents/*.md) fall under NO_TEST_NEEDED because:
 
 When you encounter work that qualifies:
 
-```typescript
-item_create({
-  title: "Update CHANGELOG with v2.0 release notes",
-  type: "task",
-  description: `Add release notes for v2.0 including:
-- New features shipped
-- Breaking changes
-- Migration guide
-
-NO_TEST_NEEDED
-This is a documentation-only change.`,
-  outputs: {
-    test: "",  // Empty string - no test file
-    impl: "CHANGELOG.md"
-  },
-  priority: "low"
-})
+```bash
+ateam items createItem \
+  --title "Update CHANGELOG with v2.0 release notes" \
+  --type task \
+  --description "Add release notes for v2.0 including:\n- New features shipped\n- Breaking changes\n- Migration guide\n\nNO_TEST_NEEDED\nThis is a documentation-only change." \
+  --outputTest "" \
+  --outputImpl "CHANGELOG.md" \
+  --priority low
 ```
 
 **Key indicators in PRD language:**
@@ -388,7 +378,7 @@ The outputs field tells each agent what to create:
 **IDs are generated by the API** with the format `WI-XXX` (e.g., `WI-001`, `WI-002`).
 
 - **DO NOT hardcode IDs** - the API assigns them automatically
-- When `item_create` returns, **capture the `id` field** from the response
+- When `ateam items createItem` returns, **capture the `id` field** from the response
 - Use the **exact returned ID** (e.g., `"WI-003"`) when specifying dependencies
 - IDs are grouped by tens (WI-001 to WI-009 for auth, WI-010 to WI-019 for orders, etc.)
 
@@ -408,7 +398,7 @@ Be explicit about dependencies:
 
 ## Creating Work Items
 
-**CRITICAL: Use the `item_create` MCP tool to create all work items.** This ensures activity logging and proper board state.
+**CRITICAL: Use `ateam items createItem` to create all work items.** This ensures activity logging and proper board state.
 
 **Create items in dependency order:**
 1. First, create all items with NO dependencies (Wave 0)
@@ -417,14 +407,14 @@ Be explicit about dependencies:
 
 This ensures you have the actual IDs before referencing them as dependencies.
 
-Use the `item_create` MCP tool with parameters:
+Use `ateam items createItem` with flags:
 - title: "User authentication service"
 - type: "feature"
 - outputs: {"test": "src/__tests__/auth.test.ts", "impl": "src/services/auth.ts"}
 - dependencies: []
 - parallel_group: "auth"
 
-The MCP tool will:
+The command will:
 - Generate the next sequential ID (e.g., `WI-001`)
 - Create the work item in the database
 - Set initial stage to `briefings`
@@ -432,24 +422,24 @@ The MCP tool will:
 
 **CRITICAL: Track returned IDs for dependencies:**
 ```
-1. Call item_create → response contains {"id": "WI-001", ...}
-2. Call item_create → response contains {"id": "WI-002", ...}
+1. Run ateam items createItem → response contains {"id": "WI-001", ...}
+2. Run ateam items createItem → response contains {"id": "WI-002", ...}
 3. For item 3 that depends on items 1 and 2:
-   item_create with dependencies: ["WI-001", "WI-002"]  ✓ CORRECT
-   item_create with dependencies: ["001", "002"]        ✗ WRONG
+   ateam items createItem with --dependencies "WI-001,WI-002"  ✓ CORRECT
+   ateam items createItem with --dependencies "001,002"         ✗ WRONG
 ```
 
 ## Error Handling
 
 **NEVER work around errors by removing dependencies.**
 
-If `item_create` fails with VALIDATION_ERROR:
+If `ateam items createItem` fails with VALIDATION_ERROR:
 
 1. **STOP** - Do not continue creating items
 2. **Diagnose** - The most common cause is wrong ID format in dependencies:
    - Wrong: `dependencies: ["001", "002"]`
    - Right: `dependencies: ["WI-001", "WI-002"]`
-3. **Fix** - Use the exact IDs returned from previous `item_create` calls
+3. **Fix** - Use the exact IDs returned from previous `ateam items createItem` calls
 4. **Retry** - Create the item with correct dependencies
 
 **FORBIDDEN behaviors:**
@@ -461,8 +451,8 @@ If you cannot resolve the error, **STOP and report the issue** to Hannibal. Do n
 
 ## Output
 
-1. Feature items created via item_create MCP tool
-2. Board state updated automatically by MCP tools
+1. Feature items created via `ateam items createItem`
+2. Board state updated automatically by `ateam` CLI
 3. Summary report:
    - Total features created
    - Dependency depth
@@ -470,7 +460,7 @@ If you cannot resolve the error, **STOP and report the issue** to Hannibal. Do n
 
 ## Validating Dependencies
 
-After creating all work items, use the `deps_check` MCP tool to validate the dependency graph.
+After creating all work items, run `ateam deps-check checkDeps --json` to validate the dependency graph.
 
 This validates:
 - No circular dependencies
@@ -497,20 +487,20 @@ If `valid: false`, fix the issues before completing.
 Before completing decomposition:
 - [ ] Each item is the smallest logical unit
 - [ ] Each item has clear acceptance criteria
-- [ ] No circular dependencies (verified by deps_check MCP tool)
+- [ ] No circular dependencies (verified by `ateam deps-check checkDeps --json`)
 - [ ] Parallel groups prevent file conflicts
 - [ ] Dependencies are minimal and explicit
 
 ## Updating Work Items (Second Pass)
 
-Use the `item_update` MCP tool to modify existing items based on Sosa's refinement report:
+Use `ateam items updateItem` to modify existing items based on Sosa's refinement report:
 
-Use the `item_update` MCP tool with parameters:
-- id: "WI-001"
-- title: "Updated title" (optional)
-- status: "pending" (optional)
+Run `ateam items updateItem` with flags:
+- `--id "WI-001"`
+- `--title "Updated title"` (optional)
+- `--status "pending"` (optional)
 
-The MCP tool will:
+The command will:
 - Update the work item in the database
 - Log activity for the Live Feed
 
@@ -518,16 +508,16 @@ The MCP tool will:
 
 After refinement, move Wave 0 items (those with NO dependencies) to `ready` stage:
 
-Use the `board_move` MCP tool with parameters:
-- itemId: "WI-001"
-- to: "ready"
+Run `ateam board-move moveItem` with flags:
+- `--itemId "WI-001"`
+- `--toStage "ready"`
 
 **Important:**
 - Only move items with `dependencies: []` (Wave 0)
 - Items with dependencies stay in `briefings` stage
 - Hannibal will move dependent items when their deps reach `done` stage
 
-To identify Wave 0 items, use the `deps_check` MCP tool and look for `readyItems` in the output - these have no unmet dependencies.
+To identify Wave 0 items, run `ateam deps-check checkDeps --json` and look for `readyItems` in the output - these have no unmet dependencies.
 
 ## Second Pass Checklist
 
@@ -538,4 +528,4 @@ After applying Sosa's recommendations:
 - [ ] Items split/merged as recommended
 - [ ] Wave 0 items moved to `ready` stage
 - [ ] Items with dependencies remain in `briefings` stage
-- [ ] Final deps_check MCP tool validation passes
+- [ ] Final `ateam deps-check checkDeps --json` validation passes

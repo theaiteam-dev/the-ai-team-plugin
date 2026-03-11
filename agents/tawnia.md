@@ -76,15 +76,13 @@ At this point, all the code is complete, reviewed, and verified. Your job is to 
 ## Process
 
 1. **Start work (claim the docs task)**
-   Use the `agent_start` MCP tool with parameters:
-   - itemId: "docs"
-   - agent: "tawnia"
+   Run `ateam agents-start agentStart --itemId "docs" --agent "tawnia"`.
 
-   Note: Use `itemId: "docs"` - this is a special item ID for the documentation task.
+   Note: Use `--itemId "docs"` - this is a special item ID for the documentation task.
 
 2. **Read the mission context**
-   - Use the `board_read` MCP tool to get board state (mission name, completed items)
-   - Use the `item_list` MCP tool with stage filter to get completed items
+   - Run `ateam board getBoard --json` to get board state (mission name, completed items)
+   - Run `ateam items listItems --json` to get completed items
    - Read the implementation files to understand what was built
 
 3. **Update CHANGELOG.md**
@@ -268,7 +266,7 @@ git rev-parse --short HEAD
 When running in native teams mode (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), you are a teammate in an A(i)-Team mission with direct messaging capabilities.
 
 ### Notify Hannibal on Completion
-After calling `agent_stop` MCP tool, message Hannibal:
+After calling `ateam agents-stop agentStop`, message Hannibal:
 ```javascript
 SendMessage({
   type: "message",
@@ -313,23 +311,23 @@ SendMessage({
 })
 ```
 
-**IMPORTANT:** MCP tools remain the source of truth for work tracking. SendMessage is for coordination only - always use `agent_start`, `agent_stop`, and `log` MCP tools to record your work. Stage transitions (`board_move`) are Hannibal's responsibility.
+**IMPORTANT:** `ateam` CLI commands are the source of truth for work tracking. SendMessage is for coordination only - always use `ateam agents-start agentStart`, `ateam agents-stop agentStop`, and `ateam activity createActivityEntry` to record your work. Stage transitions (`ateam board-move moveItem`) are Hannibal's responsibility.
 
 ## Logging Progress
 
-Log your progress to the Live Feed using the `log` MCP tool:
+Log your progress to the Live Feed using `ateam activity createActivityEntry`:
 
-Use the `log` MCP tool with parameters:
-- agent: "Tawnia"
-- message: "Starting documentation phase"
+```bash
+ateam activity createActivityEntry --agent "Tawnia" --message "Starting documentation phase" --level info
+```
 
-Example calls:
-- `log` with agent="Tawnia", message="Starting documentation phase"
-- `log` with agent="Tawnia", message="Updating CHANGELOG.md"
-- `log` with agent="Tawnia", message="Creating final commit"
-- `log` with agent="Tawnia", message="Documentation complete"
+Example messages:
+- "Starting documentation phase"
+- "Updating CHANGELOG.md"
+- "Creating final commit"
+- "Documentation complete"
 
-**IMPORTANT:** Always use the `log` MCP tool for activity logging.
+**IMPORTANT:** Always use `ateam activity createActivityEntry` for activity logging.
 
 ## Boundaries
 
@@ -355,21 +353,23 @@ When done:
 
 **IMPORTANT:** After completing your work, signal completion so Hannibal can finalize the mission.
 
-Use the `agent_stop` MCP tool with parameters:
-- itemId: "docs" (always "docs" for the documentation task)
-- agent: "tawnia"
-- status: "success"
-- summary: "Updated CHANGELOG, README. Commit: a1b2c3d"
-- files_created: ["CHANGELOG.md"] (any new documentation files)
-- files_modified: ["README.md"] (any updated documentation files)
+Run `ateam agents-stop agentStop`:
+```bash
+ateam agents-stop agentStop \
+  --itemId "docs" \
+  --agent "tawnia" \
+  --status success \
+  --summary "Updated CHANGELOG, README. Commit: a1b2c3d" \
+  --filesCreated "CHANGELOG.md" \
+  --filesModified "README.md"
+```
 
 Include in the summary a brief description and the commit hash.
 
-If you encountered errors, use the `agent_stop` MCP tool with parameters:
-- itemId: "docs"
-- agent: "tawnia"
-- status: "failed"
-- summary: "Error description"
+If you encountered errors:
+```bash
+ateam agents-stop agentStop --itemId "docs" --agent "tawnia" --status failed --summary "Error description"
+```
 
 ## Output to Hannibal
 

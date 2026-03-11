@@ -16,7 +16,7 @@ Unblock a stuck work item and return it to the ready queue.
 ## Behavior
 
 1. **Validate mission exists**
-   Use `mission_current` MCP tool to check for active mission.
+   Run `ateam missions-current getCurrentMission --json` to check for active mission.
    ```
    if mission not found:
        error "No mission found."
@@ -24,7 +24,7 @@ Unblock a stuck work item and return it to the ready queue.
    ```
 
 2. **Find the blocked item**
-   Use `item_list` MCP tool with `stage: "blocked"` to list blocked items.
+   Run `ateam items listItems --json` filtered to `stage: "blocked"` to list blocked items.
    ```
    if item-id not in blocked items:
        error "Item {item-id} is not blocked."
@@ -33,16 +33,16 @@ Unblock a stuck work item and return it to the ready queue.
    ```
 
 3. **Read item details**
-   - Use `item_get` MCP tool to load the work item
+   - Run `ateam items getItem --id <id> --json` to load the work item
    - Show rejection history
    - Display last feedback
 
 4. **Apply human guidance** (if provided)
-   Use `item_update` MCP tool to add guidance to the item context.
+   Run `ateam items updateItem --id <id>` to add guidance to the item context.
 
 5. **Reset for retry**
-   - Use `item_update` MCP tool to reset `rejection_count` to 0
-   - Use `board_move` MCP tool to move item from `blocked` to `ready` stage
+   - Run `ateam items updateItem --id <id>` to reset `rejection_count` to 0
+   - Run `ateam board-move moveItem --itemId <id> --toStage ready` to move item from `blocked` to `ready` stage
 
 6. **Confirm unblock**
    ```
@@ -134,15 +134,15 @@ Shows:
 ═══════════════════════════════════════════════════════════════
 ```
 
-## MCP Tools Used
+## CLI Commands Used
 
-| Tool | Purpose |
-|------|---------|
-| `mission_current` | Check mission exists |
-| `item_list` | List blocked items |
-| `item_get` | Get item details |
-| `item_update` | Reset rejection count, add guidance |
-| `board_move` | Move from blocked to ready stage |
+| Command | Purpose |
+|---------|---------|
+| `ateam missions-current getCurrentMission --json` | Check mission exists |
+| `ateam items listItems --json` | List blocked items |
+| `ateam items getItem --id <id> --json` | Get item details |
+| `ateam items updateItem --id <id>` | Reset rejection count, add guidance |
+| `ateam board-move moveItem --itemId <id> --toStage ready` | Move from blocked to ready stage |
 
 ## Errors
 

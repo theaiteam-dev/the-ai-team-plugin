@@ -2,8 +2,8 @@
 /**
  * block-worker-board-claim.js - PreToolUse hook for working agents
  *
- * Blocks working agents from calling the raw board_claim MCP tool.
- * Workers should use agent_start to claim items, which handles both
+ * Blocks working agents from calling `ateam board-claim` directly via Bash.
+ * Workers should use `ateam agents-start` to claim items, which handles both
  * the board claim and the assigned_agent metadata in one call.
  *
  * Targets: murdock, ba, lynch, lynch-final, amy, tawnia
@@ -34,13 +34,16 @@ try {
   }
 
   const toolName = hookInput.tool_name || '';
+  const toolInput = hookInput.tool_input || {};
+  const command = toolInput.command || '';
 
-  if (toolName === 'mcp__plugin_ai-team_ateam__board_claim') {
+  // Check for ateam board-claim CLI calls via Bash
+  if (toolName === 'Bash' && command.includes('ateam') && command.includes('board-claim')) {
     try {
-      sendDeniedEvent({ agentName: agent, toolName, reason: 'BLOCKED: Working agents cannot call board_claim directly. Use agent_start instead.' });
+      sendDeniedEvent({ agentName: agent, toolName, reason: 'BLOCKED: Working agents cannot call ateam board-claim directly. Use ateam agents-start instead.' });
     } finally {
-      process.stderr.write('BLOCKED: Working agents cannot call board_claim directly.\n');
-      process.stderr.write('Use agent_start to claim items — it handles both the board claim and metadata.\n');
+      process.stderr.write('BLOCKED: Working agents cannot call ateam board-claim directly.\n');
+      process.stderr.write('Use ateam agents-start to claim items — it handles both the board claim and metadata.\n');
       process.exit(2);
     }
   }

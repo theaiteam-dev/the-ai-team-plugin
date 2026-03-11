@@ -57,7 +57,7 @@ opus
 ## Tools
 
 - Read (to read PRD and understand context)
-- MCP tools (item_list, deps_check, log)
+- Bash: `ateam items listItems --json`, `ateam deps-check checkDeps --json`, `ateam activity createActivityEntry`
 - Glob (to explore codebase structure)
 - Grep (to understand existing patterns)
 - AskUserQuestion (to get human clarification on ambiguities)
@@ -217,18 +217,18 @@ Cross-reference the PRD against the work items to verify nothing was dropped. Re
 ## Process
 
 1. **Get the full item inventory**
-   Use the `item_list` MCP tool with `stage: "briefings"` to get all items.
+   Run `ateam items listItems --json` (filtered to briefings stage) to get all items.
    Record the total count — you MUST review every single one.
 
 2. **Render and review EVERY item**
-   Use `item_render` MCP tool for EACH item. No sampling, no skipping.
+   Run `ateam items renderItem --id <id>` for EACH item. No sampling, no skipping.
    For each item, evaluate against the Analysis Framework above.
 
    **This step is MANDATORY and enforced by hook.** You cannot complete
    your review without rendering all items.
 
 3. **Run dependency check**
-   Use the `deps_check` MCP tool to validate the dependency graph.
+   Run `ateam deps-check checkDeps --json` to validate the dependency graph.
    Review for cycles, orphans, and depth issues.
 
 4. **Explore the codebase for context** (targeted, not exhaustive)
@@ -386,7 +386,7 @@ For each item needing changes, specific instructions:
 **Sosa reviews. She does NOT rewrite.**
 
 - **Does**: Identify problems, ask clarifying questions, provide recommendations
-- **Does**: Run dependency validation via MCP tools
+- **Does**: Run dependency validation via `ateam deps-check checkDeps --json`
 - **Does**: Check for codebase fit
 - **Does**: Use AskUserQuestion for ambiguous business logic
 - **Does NOT**: Create or modify work items (that's Face's job)

@@ -32,7 +32,7 @@ Hannibal's job is coordination, not deep reasoning. Sonnet handles dispatch loop
 ## Behavior
 
 1. **Validate mission exists**
-   Use `mission_current` MCP tool to check for active mission.
+   Run `ateam missions-current getCurrentMission --json` to check for active mission.
    ```
    if mission not found:
        error "No mission found. Nothing to resume."
@@ -40,7 +40,7 @@ Hannibal's job is coordination, not deep reasoning. Sonnet handles dispatch loop
    ```
 
 2. **Check mission state**
-   - Use `board_read` MCP tool to get current state
+   - Run `ateam board getBoard --json` to get current state
    - Count items in each stage
    - Identify interrupted work
 
@@ -50,23 +50,23 @@ Hannibal's job is coordination, not deep reasoning. Sonnet handles dispatch loop
    and re-dispatch the appropriate agent to resume work. This avoids backward moves
    that are not allowed by VALID_TRANSITIONS in board.ts.
 
-   Use `board_release` to clear stale assignments, then re-dispatch agents:
+   Run `ateam board-release releaseItem --itemId <id>` to clear stale assignments, then re-dispatch agents:
    ```
    for item in testing stage:
-       board_release(itemId)          # Clear stale Murdock assignment
-       dispatch Murdock on item       # Re-run tests from current state
+       ateam board-release releaseItem --itemId <id>   # Clear stale Murdock assignment
+       dispatch Murdock on item                         # Re-run tests from current state
 
    for item in implementing stage:
-       board_release(itemId)          # Clear stale B.A. assignment
-       dispatch B.A. on item          # Resume implementation (tests already exist)
+       ateam board-release releaseItem --itemId <id>   # Clear stale B.A. assignment
+       dispatch B.A. on item                            # Resume implementation (tests already exist)
 
    for item in review stage:
-       board_release(itemId)          # Clear stale Lynch assignment
-       dispatch Lynch on item         # Re-review (tests + impl already exist)
+       ateam board-release releaseItem --itemId <id>   # Clear stale Lynch assignment
+       dispatch Lynch on item                           # Re-review (tests + impl already exist)
 
    for item in probing stage:
-       board_release(itemId)          # Clear stale Amy assignment
-       dispatch Amy on item           # Re-probe (tests + impl + review done)
+       ateam board-release releaseItem --itemId <id>   # Clear stale Amy assignment
+       dispatch Amy on item                             # Re-probe (tests + impl + review done)
    ```
 
    **Rationale:** Re-dispatching at the current stage is safe because:
@@ -77,9 +77,9 @@ Hannibal's job is coordination, not deep reasoning. Sonnet handles dispatch loop
 
 4. **Load dispatch playbook and re-dispatch agents**
 
-   First, get the plugin root path:
+   First, get the plugin root path from the `CLAUDE_PLUGIN_ROOT` environment variable:
    ```
-   plugin_root()  # MCP tool - returns the absolute path to the plugin directory
+   Bash("echo $CLAUDE_PLUGIN_ROOT")
    ```
 
    Then check the environment variable (same as `/ai-team:run`):
@@ -88,19 +88,19 @@ Hannibal's job is coordination, not deep reasoning. Sonnet handles dispatch loop
    ```
 
    Using the plugin root path from above:
-   - If "1": `Read("{plugin_root}/playbooks/orchestration-native.md")`
-   - Otherwise: `Read("{plugin_root}/playbooks/orchestration-legacy.md")`
+   - If "1": `Read("$CLAUDE_PLUGIN_ROOT/playbooks/orchestration-native.md")`
+   - Otherwise: `Read("$CLAUDE_PLUGIN_ROOT/playbooks/orchestration-legacy.md")`
 
    Follow the playbook's resume/recovery section for dispatch mechanics.
 
-   **MCP state is the source of truth:**
+   **API state is the source of truth:**
    - Work items track all progress via `work_log`
    - Board stage positions are preserved in the database
    - Only the agent sessions are lost - not the work state
    - Agents pick up from the current board state, not from memory
 
 5. **Validate board integrity**
-   - Use `deps_check` MCP tool to verify dependency graph
+   - Run `ateam deps-check checkDeps --json` to verify dependency graph
    - Check for orphaned items
    - Ensure no items are "lost"
 
@@ -194,8 +194,8 @@ Current state:
 
 This command:
 
-1. Uses `board_read` MCP tool to get current state
-2. Uses `board_release` MCP tool to clear stale agent assignments
+1. Runs `ateam board getBoard --json` to get current state
+2. Runs `ateam board-release releaseItem` to clear stale agent assignments
 3. Loads the orchestration playbook (same env var check as `/ai-team:run`)
 4. Re-dispatches agents at their current stage using the playbook's resume/recovery section
 5. Main Claude BECOMES Hannibal and continues orchestration
@@ -212,14 +212,14 @@ Main Claude (as Hannibal)
 
 The dispatch mode (legacy Task/TaskOutput vs. native TeamCreate/SendMessage) is determined by the orchestration playbook loaded in step 4.
 
-## MCP Tools Used
+## CLI Commands Used
 
-| Tool | Purpose |
-|------|---------|
-| `mission_current` | Check mission exists |
-| `board_read` | Get current board state |
-| `board_release` | Clear stale agent assignments |
-| `deps_check` | Verify dependency graph integrity |
+| Command | Purpose |
+|---------|---------|
+| `ateam missions-current getCurrentMission --json` | Check mission exists |
+| `ateam board getBoard --json` | Get current board state |
+| `ateam board-release releaseItem --itemId <id>` | Clear stale agent assignments |
+| `ateam deps-check checkDeps --json` | Verify dependency graph integrity |
 
 ## Errors
 

@@ -15,8 +15,8 @@ This document contains Hannibal-only reference material for mission orchestratio
 │         └───────────────────┼───────────────────┘           │
 │                             │                               │
 │                    ┌────────▼────────┐                      │
-│                    │   MCP Server    │                      │
-│                    │  (21 tools)     │                      │
+│                    │   ateam CLI     │                      │
+│                    │  (Bash calls)   │                      │
 │                    └────────┬────────┘                      │
 └─────────────────────────────┼───────────────────────────────┘
                               │ HTTP + X-Project-ID header
@@ -53,7 +53,8 @@ This document contains Hannibal-only reference material for mission orchestratio
 │         └────────────────┬───────────────────┘              │
 │                          │                                  │
 │                 ┌────────▼────────┐                         │
-│                 │   MCP Server    │                         │
+│                 │   ateam CLI     │                         │
+│                 │  (Bash calls)   │                         │
 │                 └────────┬────────┘                         │
 └──────────────────────────┤──────────────────────────────────┘
                            │
@@ -63,7 +64,7 @@ This document contains Hannibal-only reference material for mission orchestratio
                  └─────────────────┘
 ```
 
-Native handles orchestration, MCP handles persistence.
+Native handles orchestration, ateam CLI handles persistence.
 
 ## Plugin Commands
 
@@ -129,7 +130,7 @@ Run `/ai-team:setup` once per project to configure required permissions in `.cla
 }
 ```
 
-**CRITICAL:** Both `ATEAM_PROJECT_ID` and `ATEAM_API_URL` must be in the `env` section. The MCP server reads these as environment variables.
+**CRITICAL:** Both `ATEAM_PROJECT_ID` and `ATEAM_API_URL` must be in the `env` section. The `ateam` CLI reads these as environment variables.
 
 | Permission | Used By | Purpose |
 |------------|---------|---------|
@@ -141,7 +142,7 @@ Run `/ai-team:setup` once per project to configure required permissions in `.cla
 
 ## Environment Variables
 
-The MCP server reads the following environment variables:
+The `ateam` CLI reads the following environment variables:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
@@ -203,12 +204,12 @@ The `/ai-team:setup` command **auto-detects** project settings and creates `atea
 - `restart`: Command to restart the server (e.g., to pick up code changes)
 - `managed`: If false, user manages server; Amy checks if running but doesn't start/restart it
 
-**Pre-mission checks** (`mission_precheck` MCP tool):
+**Pre-mission checks** (`ateam missions-precheck missionPrecheck`):
 - Run before `/ai-team:run` starts execution
 - Ensures codebase is in clean state (no existing lint/test failures)
 - Establishes baseline for mission work
 
-**Post-mission checks** (`mission_postcheck` MCP tool):
+**Post-mission checks** (`ateam missions-postcheck missionPostcheck`):
 - Run after Lynch completes Final Mission Review
 - Proves all code works together (lint + unit + e2e all passing)
 - Required for mission completion (enforced by Hannibal's Stop hook)

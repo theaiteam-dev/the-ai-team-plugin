@@ -106,7 +106,7 @@ describe('enforce-completion-log', () => {
       expect(output.additionalContext).toBeDefined();
     });
 
-    it('should include agent_stop MCP tool reference in block message', () => {
+    it('should include ateam agents-stop CLI reference in block message', () => {
       const result = runHook(COMPLETION_HOOK, {
         __TEST_MOCK_RESPONSE__: JSON.stringify({
           id: 'WI-007',
@@ -120,8 +120,8 @@ describe('enforce-completion-log', () => {
 
       const output = JSON.parse(result.stdout);
       expect(output.decision).toBe('block');
-      // Must reference MCP agent_stop tool
-      expect(output.additionalContext).toMatch(/agent_stop/);
+      // Must reference ateam agents-stop CLI command
+      expect(output.additionalContext).toMatch(/ateam agents-stop/);
     });
 
     it('should NOT reference legacy item-agent-stop.js in block message', () => {
@@ -292,7 +292,7 @@ describe('enforce-final-review', () => {
       expect(result.stderr).toMatch(/post.*check/i);
     });
 
-    it('should reference mission_postcheck MCP tool in postcheck error', () => {
+    it('should reference ateam missions postcheck CLI command in postcheck error', () => {
       const result = runHook(FINAL_REVIEW_HOOK, {
         __TEST_MOCK_BOARD__: JSON.stringify({
           columns: {
@@ -307,8 +307,8 @@ describe('enforce-final-review', () => {
       });
 
       expect(result.exitCode).toBe(2);
-      // Must reference the MCP tool name
-      expect(result.stderr).toMatch(/mission_postcheck/);
+      // Must reference the ateam CLI command
+      expect(result.stderr).toMatch(/ateam missions postcheck/);
     });
 
     it('should NOT reference legacy mission-postcheck.js script', () => {

@@ -75,11 +75,9 @@ You receive a feature item that has already been through the testing stage:
 ## Process
 
 1. **Start work (claim the item)**
-   Use the `agent_start` MCP tool with parameters:
-   - `itemId`: "XXX" (replace with actual item ID)
-   - `agent`: "ba"
+   Run `ateam agents-start agentStart --itemId "XXX" --agent "ba"` (replace XXX with actual item ID).
 
-   This claims the item AND writes `assigned_agent` to the work item frontmatter so the kanban UI shows you're working on it.
+   This claims the item AND records `assigned_agent` on the work item so the kanban UI shows you're working on it.
 
 2. **Read the feature item**
    - Understand the objective
@@ -295,12 +293,12 @@ Before calling this done, verify:
 - [ ] No debug code left behind
 - [ ] No linting errors
 
-### Before Calling agent_stop
+### Before Calling ateam agents-stop agentStop
 
 You MUST verify before marking work complete:
 1. Run `pnpm test` (or project equivalent) — **all tests must pass**
 2. Run `pnpm typecheck` (if available) — **no type errors**
-3. If either fails, **keep working** — do NOT call agent_stop with failing tests
+3. If either fails, **keep working** — do NOT call `ateam agents-stop agentStop` with failing tests
 
 ## Boundaries
 
@@ -310,7 +308,7 @@ You MUST verify before marking work complete:
 - If a test is genuinely broken, message Hannibal to have Murdock fix it
 - Do NOT start a dev server (`pnpm dev`, `npm start`, etc.) — if tests need a running server, message Hannibal — enforced by hook
 - Do NOT use `git stash` to check whether failures are "pre-existing" — fix your implementation — enforced by hook
-- Do NOT use `board_move` or `board_claim` — use `agent_start`/`agent_stop` only — enforced by hook
+- Do NOT use `ateam board-move` or `ateam board-claim` — use `ateam agents-start`/`ateam agents-stop` only — enforced by hook
 
 ## Output
 
@@ -325,7 +323,7 @@ Report back to Hannibal with the file created.
 When running in native teams mode (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), you are a teammate in an A(i)-Team mission with direct messaging capabilities.
 
 ### Notify Hannibal on Completion
-After calling `agent_stop` MCP tool, message Hannibal:
+After calling `ateam agents-stop agentStop`, message Hannibal:
 ```javascript
 SendMessage({
   type: "message",
@@ -370,21 +368,21 @@ SendMessage({
 })
 ```
 
-**IMPORTANT:** MCP tools remain the source of truth for work tracking. SendMessage is for coordination only - always use `agent_start`, `agent_stop`, and `log` MCP tools to record your work. Stage transitions (`board_move`) are Hannibal's responsibility.
+**IMPORTANT:** `ateam` CLI commands are the source of truth for work tracking. SendMessage is for coordination only - always use `ateam agents-start agentStart`, `ateam agents-stop agentStop`, and `ateam activity createActivityEntry` to record your work. Stage transitions (`ateam board-move moveItem`) are Hannibal's responsibility.
 
 ## Logging Progress
 
-Log your progress to the Live Feed using the `log` MCP tool:
+Log your progress to the Live Feed using `ateam activity createActivityEntry`:
 
-- `log` tool with parameters:
-  - `agent`: "B.A."
-  - `message`: "Implementing order sync service"
+```bash
+ateam activity createActivityEntry --agent "B.A." --message "Implementing order sync service" --level info
+```
 
 Example messages:
 - "Implementing order sync service"
 - "All tests passing"
 
-**IMPORTANT:** Always use the `log` MCP tool for activity logging.
+**IMPORTANT:** Always use `ateam activity createActivityEntry` for activity logging.
 
 Log at key milestones:
 - Starting implementation
@@ -395,12 +393,12 @@ Log at key milestones:
 
 **IMPORTANT:** After completing your work, signal completion so Hannibal can advance this item immediately. This also leaves a work summary note in the work item.
 
-Use the `agent_stop` MCP tool with parameters:
-- `itemId`: "XXX" (replace with actual item ID from the feature item frontmatter)
-- `agent`: "ba"
-- `status`: "success"
-- `summary`: "Implemented feature, all N tests passing"
-- `files_created`: ["path/to/impl.ts"]
+Run `ateam agents-stop agentStop` with:
+- `--itemId "XXX"` (replace with actual item ID from the feature item)
+- `--agent "ba"`
+- `--status success`
+- `--summary "Implemented feature, all N tests passing"`
+- `--filesCreated "path/to/impl.ts"`
 
 Replace:
 - The itemId with the actual item ID from the feature item frontmatter

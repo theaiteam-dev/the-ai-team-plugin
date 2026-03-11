@@ -23,8 +23,8 @@ A self-orchestrating Claude Code plugin that transforms a PRD into working, test
 │         └───────────────────┼───────────────────┘           │
 │                             │                               │
 │                    ┌────────▼────────┐                      │
-│                    │   MCP Server    │                      │
-│                    │  (22 tools)     │                      │
+│                    │   ateam CLI     │                      │
+│                    │  (Bash calls)   │                      │
 │                    └────────┬────────┘                      │
 └─────────────────────────────┼───────────────────────────────┘
                               │ HTTP + X-Project-ID header
@@ -46,6 +46,8 @@ All mission state is stored in the **A(i)-Team API database**, enabling:
 - **Web-based Kanban UI** for real-time visibility
 - **Activity feeds** for live logging
 - **Persistence** across Claude Code sessions
+
+Agents interact with the API via the `ateam` CLI binary (`${CLAUDE_PLUGIN_ROOT}/bin/ateam`), called through Claude's `Bash` tool.
 
 ## The Team
 
@@ -179,7 +181,7 @@ Use `--skip-refinement` to bypass Sosa for simple PRDs.
 ### Execution Phase (`/ai-team:run`)
 
 **Before starting execution:**
-- **Pre-Mission Checks**: Runs `mission_precheck` MCP tool to verify lint and tests pass (establishes baseline)
+- **Pre-Mission Checks**: Runs `ateam missions-precheck missionPrecheck` to verify lint and tests pass (establishes baseline)
 
 Each feature flows through stages sequentially:
 
@@ -215,7 +217,7 @@ briefings → ready → testing → implementing → review → probing → done
 4. `review → probing`: Amy probes for bugs beyond tests (APPROVED)
 5. `probing → done`: Feature complete (VERIFIED), or back to ready (FLAG)
 6. `all done → final review`: Lynch reviews entire codebase holistically
-7. `final review → post-checks`: Run `mission_postcheck` MCP tool (lint, unit, e2e)
+7. `final review → post-checks`: Run `ateam missions-postcheck missionPostcheck` (lint, unit, e2e)
 8. `post-checks → documentation`: Tawnia updates CHANGELOG, README, docs/
 9. `documentation → complete`: Tawnia creates final commit with all co-authors
 
@@ -245,8 +247,8 @@ Time T2: 002 completes → immediately move to implementing, dispatch B.A.
 
 This is achieved through:
 1. **TaskOutput polling** - Hannibal polls each background agent individually
-2. **Completion signaling** - Agents call `agent_stop` MCP tool when done
-3. **Per-item tracking** - `board_move` MCP tool stores assignments in database
+2. **Completion signaling** - Agents run `ateam agents-stop agentStop` when done
+3. **Per-item tracking** - `ateam board-move moveItem` stores assignments in database
 
 ## Feature Item Format
 
@@ -295,7 +297,7 @@ If issues are found, specific items return to the pipeline for fixes.
 
 ### Mission Lifecycle Checks
 
-**Pre-Mission Checks** (`mission_precheck` MCP tool):
+**Pre-Mission Checks** (`ateam missions-precheck missionPrecheck`):
 - Run before `/ai-team:run` starts execution
 - Configured via `ateam.config.json` (typically lint + unit tests)
 - Ensures codebase is in clean state before mission begins
@@ -309,7 +311,7 @@ If issues are found, specific items return to the pipeline for fixes.
 - All planning work (Face decomposition, Sosa review, work items) remains intact
 - Dashboard shows recoverable `precheck_failure` with blocker details and retry affordance
 
-**Post-Mission Checks** (`mission_postcheck` MCP tool):
+**Post-Mission Checks** (`ateam missions-postcheck missionPostcheck`):
 - Run after Lynch's Final Mission Review approves
 - Configured via `ateam.config.json` (typically lint + unit + e2e)
 - Proves all code works together
@@ -402,40 +404,53 @@ Test a feature from a real user's perspective. Combines static code analysis wit
 /perspective-test src/components/UserProfile.tsx
 ```
 
-## MCP Server
+## ateam CLI
 
-The plugin includes an MCP (Model Context Protocol) server that exposes board operations as tools that Claude Code can invoke directly.
+The plugin uses the `ateam` Go CLI binary to interact with the A(i)-Team API. All agents call `ateam` via the `Bash` tool — no MCP server required.
 
 ### Setup
 
-1. **Build the MCP server:**
-   ```bash
-   bun install              # from repo root
-   cd packages/shared && bun run build   # shared must build first
-   cd packages/mcp-server && bun run build
-   ```
+The `/ai-team:setup` command downloads the correct platform binary automatically. To build locally during development:
 
-2. **Configure environment** (via `.claude/settings.local.json`):
-   ```json
-   {
-     "env": {
-       "ATEAM_PROJECT_ID": "my-project-name",
-       "ATEAM_API_URL": "http://localhost:3000"
-     }
-   }
-   ```
+```bash
+cd packages/ateam-cli
+go build -o ~/go/bin/ateam .
+```
 
-### Available Tools
+Configure environment via `.claude/settings.local.json`:
+```json
+{
+  "env": {
+    "ATEAM_PROJECT_ID": "my-project-name",
+    "ATEAM_API_URL": "http://localhost:3000"
+  }
+}
+```
 
-The MCP server provides 22 tools across 5 modules:
+### CLI → API Mapping
 
-| Module | Tools | Description |
-|--------|-------|-------------|
-| **Board** | `board_read`, `board_move`, `board_claim`, `board_release` | Board state and item movement |
-| **Items** | `item_create`, `item_update`, `item_get`, `item_list`, `item_reject`, `item_render` | Work item CRUD operations |
-| **Agents** | `agent_start`, `agent_stop` | Agent lifecycle hooks |
-| **Missions** | `mission_init`, `mission_current`, `mission_precheck`, `mission_postcheck`, `mission_list`, `mission_archive` | Mission lifecycle management |
-| **Utils** | `plugin_root`, `deps_check`, `activity_log`, `log` | Plugin path resolution, dependency validation, and logging |
+| CLI Command | Purpose |
+|-------------|---------|
+| `ateam board getBoard --json` | Get board state |
+| `ateam board-move moveItem --itemId <id> --toStage <stage>` | Move item between stages |
+| `ateam board-claim claimItem --itemId <id> --agent <name>` | Claim item for agent |
+| `ateam board-release releaseItem --itemId <id>` | Release item claim |
+| `ateam items createItem --title "..." --type feature` | Create work item |
+| `ateam items getItem --id <id> --json` | Get item details |
+| `ateam items listItems --json` | List all items |
+| `ateam items updateItem --id <id>` | Update item |
+| `ateam items rejectItem --id <id>` | Reject item (returns to pipeline) |
+| `ateam items renderItem --id <id>` | Render item as markdown |
+| `ateam agents-start agentStart --itemId <id> --agent <name>` | Signal agent start |
+| `ateam agents-stop agentStop --itemId <id> --agent <name> --status success --summary "..."` | Signal agent completion |
+| `ateam missions createMission` | Initialize mission |
+| `ateam missions-current getCurrentMission --json` | Get active mission |
+| `ateam missions-precheck missionPrecheck` | Submit precheck results |
+| `ateam missions-postcheck missionPostcheck --json` | Run postcheck |
+| `ateam missions-archive archiveMission --json` | Archive mission |
+| `ateam deps-check checkDeps --json` | Check dependency readiness |
+| `ateam activity createActivityEntry --agent <name> --message "..." --level info` | Log activity |
+| `ateam activity listActivity --json` | View activity log |
 
 ### Environment Variables
 
@@ -444,8 +459,6 @@ The MCP server provides 22 tools across 5 modules:
 | `ATEAM_PROJECT_ID` | `default` | Project identifier for multi-project isolation |
 | `ATEAM_API_URL` | `http://localhost:3000` | A(i)-Team API server URL |
 | `ATEAM_API_KEY` | - | Optional API key for authentication |
-| `ATEAM_TIMEOUT` | `10000` | Request timeout in ms |
-| `ATEAM_RETRIES` | `3` | Max retry attempts |
 
 ## Plugin Structure
 
@@ -453,7 +466,6 @@ The MCP server provides 22 tools across 5 modules:
 ai-team/                     # Add as .claude/ai-team submodule
 ├── .claude-plugin/
 │   └── plugin.json          # Plugin configuration
-├── .mcp.json                # MCP server configuration for Claude Code
 ├── package.json             # Bun workspaces root
 ├── bun.lock                 # Bun lock file
 ├── docker-compose.yml       # Docker setup for kanban-viewer
@@ -469,23 +481,9 @@ ai-team/                     # Add as .claude/ai-team submodule
 │   │       ├── items.ts     # Work item types
 │   │       ├── errors.ts    # Error types
 │   │       └── __tests__/   # Type tests
-│   ├── mcp-server/          # @ai-team/mcp-server - MCP server implementation
-│   │   ├── package.json
-│   │   ├── tsconfig.json
-│   │   ├── src/
-│   │   │   ├── index.ts     # Entry point (stdio transport)
-│   │   │   ├── server.ts    # McpServer instance
-│   │   │   ├── config.ts    # Environment configuration (projectId, apiUrl)
-│   │   │   ├── client/      # HTTP client with retry logic
-│   │   │   ├── lib/         # Error handling utilities
-│   │   │   └── tools/       # Tool implementations
-│   │   │       ├── board.ts     # Board operations (4 tools)
-│   │   │       ├── items.ts     # Item operations (6 tools)
-│   │   │       ├── agents.ts    # Agent lifecycle (2 tools)
-│   │   │       ├── missions.ts  # Mission lifecycle (6 tools)
-│   │   │       ├── utils.ts     # Utilities (4 tools)
-│   │   │       └── index.ts     # Tool registration
-│   │   └── dist/            # Compiled JavaScript
+│   ├── ateam-cli/           # Go CLI binary - agents call this via Bash
+│   │   ├── main.go          # Entry point
+│   │   └── ...              # Generated command implementations
 │   └── kanban-viewer/       # @ai-team/kanban-viewer - Web-based Kanban UI
 │       ├── package.json
 │       ├── Dockerfile
@@ -574,11 +572,11 @@ The plugin uses Claude Code's hook system to enforce workflow discipline. All ag
 
 **Boundary enforcement hooks** prevent agents from taking actions outside their role:
 - Hannibal cannot write to source or test files, cannot use raw `mv` for stage transitions, and cannot exit until final review and post-checks pass
-- Amy cannot create test files (findings belong in `agent_stop` work_log, not as file artifacts)
-- All working agents (Murdock, B.A., Lynch, Amy, Tawnia) must use the `log` MCP tool for activity logging (raw `echo` is blocked)
+- Amy cannot create test files (findings belong in `ateam agents-stop agentStop` work_log, not as file artifacts)
+- All working agents (Murdock, B.A., Lynch, Amy, Tawnia) must use `ateam activity createActivityEntry` for activity logging (raw `echo` is blocked)
 
 **Completion enforcement hooks** ensure proper handoff:
-- All working agents must call `agent_stop` before exiting — the Stop hook blocks premature exit
+- All working agents must run `ateam agents-stop agentStop` before exiting — the Stop hook blocks premature exit
 - Hannibal's Stop hook validates that all items are in `done`, Lynch's Final Review is complete, and post-checks have passed
 
 **Observer hooks** for telemetry (Raw Agent View) fire automatically for all sessions via `hooks/hooks.json` — no per-project configuration needed.
@@ -634,7 +632,7 @@ Hook scripts live in `scripts/hooks/`. Exit code 0 = allow, non-zero = block.
 ```
 
 ### Cannot connect to API server
-**Symptom:** MCP tools return connection errors.
+**Symptom:** `ateam` CLI commands return connection errors.
 
 **Cause:** A(i)-Team API server is not running.
 

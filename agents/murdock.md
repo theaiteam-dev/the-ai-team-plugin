@@ -106,8 +106,8 @@ If you receive a work item with `NO_TEST_NEEDED` in the description and `outputs
 
 **You should not be dispatched for this item at all.** Hannibal should skip the testing stage and move it directly to implementing. If you ARE dispatched for such an item by mistake:
 
-1. Log the situation: `log(agent: "Murdock", message: "Item {id} is flagged NO_TEST_NEEDED - no tests to write")`
-2. Call `agent_stop` with `status: "success"` and `summary: "No tests needed - item is a non-code change (documentation/config)"` with `files_created: []`
+1. Log the situation: `ateam activity createActivityEntry --agent "Murdock" --message "Item {id} is flagged NO_TEST_NEEDED - no tests to write" --level info`
+2. Run `ateam agents-stop agentStop --itemId "{id}" --agent "murdock" --status success --summary "No tests needed - item is a non-code change (documentation/config)"`
 3. Do NOT create an empty test file or a placeholder test
 4. Report back to Hannibal that no tests were written
 
@@ -123,11 +123,9 @@ If you receive a work item with `NO_TEST_NEEDED` in the description and `outputs
 
 ### Step 1: Claim the Work Item
 
-Use the `agent_start` MCP tool with parameters:
-- `itemId`: "XXX" (replace with actual item ID)
-- `agent`: "murdock"
+Run `ateam agents-start agentStart --itemId "XXX" --agent "murdock"` (replace XXX with actual item ID).
 
-This claims the item AND writes `assigned_agent` to the work item frontmatter so the kanban UI shows you're working on it.
+This claims the item AND records `assigned_agent` on the work item so the kanban UI shows you're working on it.
 
 ### Step 2: Reconnaissance
 
@@ -233,7 +231,7 @@ describe('Checkout Flow', () => {
 - Do NOT modify existing implementation files -- **enforced by hook**
 - Do NOT create files at `outputs.impl` path -- that is B.A.'s job
 - If you need a type or schema that is not a `.d.ts` or in a `/types/` directory, create it as a `.d.ts` file
-- Do NOT call `board_move` or `board_claim` -- **enforced by hook** (stage transitions are Hannibal's responsibility)
+- Do NOT call `ateam board-move` or `ateam board-claim` -- **enforced by hook** (stage transitions are Hannibal's responsibility)
 
 If you find yourself writing actual functionality, STOP. You are overstepping.
 
@@ -285,18 +283,18 @@ describe('OrderSyncService', () => {
 
 ## Logging Progress
 
-Log your progress to the Live Feed so the team can track your work using the `log` MCP tool:
+Log your progress to the Live Feed using `ateam activity createActivityEntry`:
 
-- `log` tool with parameters:
-  - `agent`: "Murdock"
-  - `message`: "Writing tests for order sync"
+```bash
+ateam activity createActivityEntry --agent "Murdock" --message "Writing tests for order sync" --level info
+```
 
 Example messages:
 - "Writing tests for order sync"
 - "Created 4 test cases"
 - "Tests ready - all failing as expected"
 
-**IMPORTANT:** Always use the `log` MCP tool for activity logging.
+**IMPORTANT:** Always use `ateam activity createActivityEntry` for activity logging.
 
 Log at key milestones:
 - Starting work on a feature
@@ -308,7 +306,7 @@ Log at key milestones:
 When running in native teams mode (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), you are a teammate in an A(i)-Team mission with direct messaging capabilities.
 
 ### Notify Hannibal on Completion
-After calling `agent_stop` MCP tool, message Hannibal:
+After calling `ateam agents-stop agentStop`, message Hannibal:
 ```javascript
 SendMessage({
   type: "message",
@@ -353,7 +351,7 @@ SendMessage({
 })
 ```
 
-**IMPORTANT:** MCP tools remain the source of truth for work tracking. SendMessage is for coordination only - always use `agent_start`, `agent_stop`, and `log` MCP tools to record your work. Stage transitions (`board_move`) are Hannibal's responsibility.
+**IMPORTANT:** `ateam` CLI commands are the source of truth for work tracking. SendMessage is for coordination only - always use `ateam agents-start agentStart`, `ateam agents-stop agentStop`, and `ateam activity createActivityEntry` to record your work. Stage transitions (`ateam board-move moveItem`) are Hannibal's responsibility.
 
 ## Completion
 
@@ -361,12 +359,12 @@ SendMessage({
 
 **IMPORTANT:** After completing your work, signal completion so Hannibal can advance this item immediately. This also leaves a work summary note in the work item.
 
-Use the `agent_stop` MCP tool with parameters:
-- `itemId`: "XXX" (replace with actual item ID from the feature item frontmatter)
-- `agent`: "murdock"
-- `status`: "success"
-- `summary`: "Created N test cases covering happy path and edge cases"
-- `files_created`: ["path/to/test.ts"]
+Run `ateam agents-stop agentStop` with:
+- `--itemId "XXX"` (replace with actual item ID from the feature item)
+- `--agent "murdock"`
+- `--status success`
+- `--summary "Created N test cases covering happy path and edge cases"`
+- `--filesCreated "path/to/test.ts"`
 
 Replace:
 - The itemId with the actual item ID from the feature item frontmatter

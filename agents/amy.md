@@ -234,7 +234,7 @@ The config contains:
 2. If not running (non-200), tell Hannibal: "Dev server not running at {url}. Please start it with: {start}"
 3. Don't try to start it yourself - the user manages the dev server
 
-To read the config, use the `board_read` MCP tool to get board state which includes config information, or use Read tool on `ateam.config.json`.
+To read the config, run `ateam board getBoard --json` to get board state which includes config information, or use the Read tool on `ateam.config.json`.
 
 **If code changes need to be picked up:**
 - Suggest restart: "Changes may not be reflected. User can run: {restart}"
@@ -431,11 +431,9 @@ console.log('[DEBUG] API response', response);
 ## Process
 
 1. **Start work (claim the item)**
-   Use the `agent_start` MCP tool with parameters:
-   - itemId: "XXX" (replace with actual item ID)
-   - agent: "amy"
+   Run `ateam agents-start agentStart --itemId "XXX" --agent "amy"` (replace XXX with actual item ID).
 
-   This claims the item AND writes `assigned_agent` to the work item frontmatter so the kanban UI shows you're working on it.
+   This claims the item AND records `assigned_agent` on the work item so the kanban UI shows you're working on it.
 
 2. **Read the feature item and outputs**
    - Understand what was built
@@ -531,14 +529,14 @@ FLAG - [CRITICAL issue]: [brief description with file:line]
 - **Does NOT**: Write test files (*.test.ts, *.spec.ts, *-raptor*) — enforced by hook
 - **Does NOT**: Fix bugs (that's B.A.'s job on retry)
 - **Does NOT**: Modify implementation files (beyond temporary debug logging)
-- **Does NOT**: Call `item_reject` — report findings to Hannibal and let him handle rejections
-- **Does NOT**: Call `board_move` or `board_claim` — enforced by hook
+- **Does NOT**: Call `ateam items rejectItem` — report findings to Hannibal and let him handle rejections
+- **Does NOT**: Call `ateam board-move` or `ateam board-claim` — enforced by hook
 
 If you find yourself writing actual fixes, STOP. Your job is to find and document issues, not fix them.
 
 ## Investigation Output
 
-Your investigation findings go in the `agent_stop` summary — NOT in file artifacts.
+Your investigation findings go in the `ateam agents-stop agentStop` summary — NOT in file artifacts.
 
 **Do NOT create:**
 - `*-raptor.test.ts` files
@@ -547,7 +545,7 @@ Your investigation findings go in the `agent_stop` summary — NOT in file artif
 - Any persistent test scripts
 
 **Do create:**
-- A thorough investigation report in your `agent_stop` summary
+- A thorough investigation report in your `ateam agents-stop agentStop` summary
 - The summary should follow the Output Format template above
 - Include all probe results, evidence, and verdict
 
@@ -569,19 +567,19 @@ Amy is part of the **standard pipeline** - every feature passes through her:
 
 ## Logging Progress
 
-Log your investigation to the Live Feed using the `log` MCP tool:
+Log your investigation to the Live Feed using `ateam activity createActivityEntry`:
 
-Use the `log` MCP tool with parameters:
-- agent: "Amy"
-- message: "Investigating feature 001"
+```bash
+ateam activity createActivityEntry --agent "Amy" --message "Investigating feature 001" --level info
+```
 
-Example calls:
-- `log` with agent="Amy", message="Investigating feature 001"
-- `log` with agent="Amy", message="Forming hypotheses: H1-handler not attached, H2-logic error"
-- `log` with agent="Amy", message="H1 CONFIRMED - onClick missing at Button.tsx:42"
-- `log` with agent="Amy", message="FLAG - Critical wiring bug found"
+Example messages:
+- "Investigating feature 001"
+- "Forming hypotheses: H1-handler not attached, H2-logic error"
+- "H1 CONFIRMED - onClick missing at Button.tsx:42"
+- "FLAG - Critical wiring bug found"
 
-**IMPORTANT:** Always use the `log` MCP tool for activity logging.
+**IMPORTANT:** Always use `ateam activity createActivityEntry` for activity logging.
 
 Log at key milestones:
 - Starting investigation
@@ -594,7 +592,7 @@ Log at key milestones:
 When running in native teams mode (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), you are a teammate in an A(i)-Team mission with direct messaging capabilities.
 
 ### Notify Hannibal on Completion
-After calling `agent_stop` MCP tool, message Hannibal:
+After calling `ateam agents-stop agentStop`, message Hannibal:
 ```javascript
 SendMessage({
   type: "message",
@@ -639,7 +637,7 @@ SendMessage({
 })
 ```
 
-**IMPORTANT:** MCP tools remain the source of truth for work tracking. SendMessage is for coordination only - always use `agent_start`, `agent_stop`, and `log` MCP tools to record your work. Stage transitions (`board_move`) are Hannibal's responsibility.
+**IMPORTANT:** `ateam` CLI commands are the source of truth for work tracking. SendMessage is for coordination only - always use `ateam agents-start agentStart`, `ateam agents-stop agentStop`, and `ateam activity createActivityEntry` to record your work. Stage transitions (`ateam board-move moveItem`) are Hannibal's responsibility.
 
 ## Completion
 
@@ -654,21 +652,19 @@ When done:
 
 **IMPORTANT:** After completing your investigation, signal completion so Hannibal can advance this item immediately. This also leaves a work summary note in the work item.
 
-If verified (all probes pass), use the `agent_stop` MCP tool with parameters:
-- itemId: "XXX" (replace with actual item ID)
-- agent: "amy"
-- status: "success"
-- summary: "VERIFIED - All probes pass, wiring confirmed, user-visible behavior correct"
+If verified (all probes pass), run:
+```bash
+ateam agents-stop agentStop --itemId "XXX" --agent "amy" --status success --summary "VERIFIED - All probes pass, wiring confirmed, user-visible behavior correct"
+```
 
-If flagged (issues found), use the `agent_stop` MCP tool with parameters:
-- itemId: "XXX" (replace with actual item ID)
-- agent: "amy"
-- status: "success"
-- summary: "FLAG - Found N issues: brief description of critical findings"
+If flagged (issues found), run:
+```bash
+ateam agents-stop agentStop --itemId "XXX" --agent "amy" --status success --summary "FLAG - Found N issues: brief description of critical findings"
+```
 
 Note: Use `status: "success"` even for flags - the status refers to whether you completed the investigation, not the verdict. Include VERIFIED/FLAG at the start of the summary.
 
-**Do NOT call `item_reject` yourself.** After calling `agent_stop`, message Hannibal with your findings. Hannibal decides whether to reject the item and send it back through the pipeline.
+**Do NOT call `ateam items rejectItem` yourself.** After calling `ateam agents-stop agentStop`, message Hannibal with your findings. Hannibal decides whether to reject the item and send it back through the pipeline.
 
 Report back with your findings.
 

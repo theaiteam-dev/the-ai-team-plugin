@@ -120,17 +120,17 @@ async function checkCompletion() {
   // No completion logged - block and inject message
   const message = `STOP: You haven't logged your work completion yet.
 
-Before finishing, you MUST call the agent_stop MCP tool to record your work:
+Before finishing, you MUST call ateam agents-stop to record your work:
 
-  agent_stop(itemId="${detectedItemId}", agent="${agentName || 'YOUR_AGENT_NAME'}", status="success", summary="Your summary here")
+  ateam agents-stop agentStop --itemId "${detectedItemId}" --agent "${agentName || 'YOUR_AGENT_NAME'}" --status "success" --summary "Your summary here"
 
 Parameters:
 - itemId: "${detectedItemId}"
 - agent: your agent name (murdock, ba, lynch, amy, or tawnia)
 - status: "success" or "failed"
 - summary: A brief human-readable overview of your work
-- files_created: list of files you created
-- files_modified: list of files you modified
+- files_created: list of files you created (optional)
+- files_modified: list of files you modified (optional)
 
 **About the summary:** This is for HUMANS reading the work item to understand what was done. Write a light overview that complements the code.
 
