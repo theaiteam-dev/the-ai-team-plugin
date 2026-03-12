@@ -337,6 +337,61 @@ components:
             details:
               description: Optional structured context for the error
 
+    HookEventInput:
+      type: object
+      required: [eventType, agentName, status, summary, timestamp]
+      properties:
+        eventType:
+          $ref: '#/components/schemas/HookEventType'
+        agentName:
+          type: string
+        status:
+          type: string
+        summary:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        toolName:
+          type: string
+        durationMs:
+          type: integer
+          minimum: 0
+        payload:
+          type: string
+          description: Raw event payload (max 1 MB)
+          maxLength: 1048576
+        correlationId:
+          type: string
+        inputTokens:
+          type: integer
+          minimum: 0
+        outputTokens:
+          type: integer
+          minimum: 0
+        cacheCreationTokens:
+          type: integer
+          minimum: 0
+        cacheReadTokens:
+          type: integer
+          minimum: 0
+        model:
+          type: string
+
+    HookEventRecord:
+      allOf:
+        - $ref: '#/components/schemas/HookEventInput'
+        - type: object
+          required: [id, projectId]
+          properties:
+            id:
+              type: integer
+            projectId:
+              type: string
+            missionId:
+              type: string
+              nullable: true
+
   responses:
     BadRequest:
       description: Invalid input
@@ -1928,66 +1983,6 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
           $ref: '#/components/responses/ServerError'
-
-# ── Hook event schemas (referenced above) ────────────────────────────────────
-# Placed after paths to keep paths section readable
-
-components:
-  schemas:
-    HookEventInput:
-      type: object
-      required: [eventType, agentName, status, summary, timestamp]
-      properties:
-        eventType:
-          $ref: '#/components/schemas/HookEventType'
-        agentName:
-          type: string
-        status:
-          type: string
-        summary:
-          type: string
-        timestamp:
-          type: string
-          format: date-time
-        toolName:
-          type: string
-        durationMs:
-          type: integer
-          minimum: 0
-        payload:
-          type: string
-          description: Raw event payload (max 1 MB)
-          maxLength: 1048576
-        correlationId:
-          type: string
-        inputTokens:
-          type: integer
-          minimum: 0
-        outputTokens:
-          type: integer
-          minimum: 0
-        cacheCreationTokens:
-          type: integer
-          minimum: 0
-        cacheReadTokens:
-          type: integer
-          minimum: 0
-        model:
-          type: string
-
-    HookEventRecord:
-      allOf:
-        - $ref: '#/components/schemas/HookEventInput'
-        - type: object
-          required: [id, projectId]
-          properties:
-            id:
-              type: integer
-            projectId:
-              type: string
-            missionId:
-              type: string
-              nullable: true
 
 tags:
   - name: board
