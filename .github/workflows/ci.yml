@@ -94,6 +94,7 @@ jobs:
       - run: bun install
         working-directory: .
       - run: bunx prisma generate
+      - run: mkdir -p prisma/data
       - run: bunx prisma migrate deploy
       - run: bun run lint
       - run: bunx tsc --noEmit
