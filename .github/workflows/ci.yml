@@ -94,4 +94,13 @@ jobs:
       - run: bun install
         working-directory: .
       - run: bunx prisma generate
+      - run: mkdir -p ${{ github.workspace }}/packages/kanban-viewer/prisma/data
+      - run: bunx prisma migrate deploy --config prisma/prisma.config.ts
+        env:
+          DATABASE_URL: file:${{ github.workspace }}/packages/kanban-viewer/prisma/data/dev.db
+      - run: bun run lint
+      - run: bunx tsc --noEmit
+      - run: bun run test
+        env:
+          DATABASE_URL: file:${{ github.workspace }}/packages/kanban-viewer/prisma/data/dev.db
       - run: bun run build

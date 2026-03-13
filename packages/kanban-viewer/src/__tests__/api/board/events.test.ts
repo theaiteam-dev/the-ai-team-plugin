@@ -81,8 +81,8 @@ const mockActivityLogs = [
   },
 ];
 
-// Create mock Prisma client
-const mockPrisma = {
+// Create mock Prisma client using vi.hoisted to ensure it's available when vi.mock is hoisted
+const mockPrisma = vi.hoisted(() => ({
   item: {
     findMany: vi.fn(),
   },
@@ -92,7 +92,13 @@ const mockPrisma = {
   activityLog: {
     findMany: vi.fn(),
   },
-};
+  hookEvent: {
+    findMany: vi.fn(),
+  },
+  missionTokenUsage: {
+    findMany: vi.fn(),
+  },
+}));
 
 // Mock the db module
 vi.mock('@/lib/db', () => ({
@@ -111,6 +117,8 @@ describe('GET /api/board/events (Database Polling)', () => {
     mockPrisma.item.findMany.mockResolvedValue([...mockItems]);
     mockPrisma.mission.findFirst.mockResolvedValue(mockMission);
     mockPrisma.activityLog.findMany.mockResolvedValue([...mockActivityLogs]);
+    mockPrisma.hookEvent.findMany.mockResolvedValue([]);
+    mockPrisma.missionTokenUsage.findMany.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -774,7 +782,7 @@ describe('GET /api/board/events (Database Polling)', () => {
       expect(data.success).toBe(false);
       expect(data.error).toBeDefined();
       expect(data.error.code).toBe('VALIDATION_ERROR');
-      expect(data.error.message).toContain('projectId');
+      expect(data.error.message).toContain('X-Project-ID');
     });
 
     it('should return 400 with clear error message explaining projectId is required', async () => {

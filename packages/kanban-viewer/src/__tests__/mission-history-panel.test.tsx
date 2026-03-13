@@ -48,7 +48,7 @@ function createMockFetchWithMissions(missions: ApiMission[]) {
       });
     }
     return Promise.reject(new Error(`Unmocked URL: ${url}`));
-  });
+  }) as unknown as typeof global.fetch;
 }
 
 // Import components — will fail until B.A. creates them
@@ -73,7 +73,7 @@ describe('HeaderBar history icon button', () => {
       },
       wipCurrent: 2,
       wipLimit: 5,
-      projects: [{ id: 'proj-1', name: 'Project 1', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+      projects: [{ id: 'proj-1', name: 'Project 1', createdAt: new Date(), updatedAt: new Date() }],
       selectedProjectId: 'proj-1',
       onProjectChange: vi.fn(),
       projectsLoading: false,

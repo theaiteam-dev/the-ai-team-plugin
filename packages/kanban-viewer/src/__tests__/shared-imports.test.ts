@@ -163,9 +163,11 @@ describe('kanban-viewer shared imports', () => {
     it('should declare @ai-team/shared as workspace dependency', async () => {
       // Read package.json directly
       const pkg = await import('../../package.json');
+      const deps = pkg.dependencies as Record<string, string> | undefined;
+      const devDeps = pkg.devDependencies as Record<string, string> | undefined;
       const hasDep =
-        pkg.dependencies?.['@ai-team/shared'] ||
-        pkg.devDependencies?.['@ai-team/shared'];
+        deps?.['@ai-team/shared'] ||
+        devDeps?.['@ai-team/shared'];
 
       expect(hasDep).toBeDefined();
       expect(typeof hasDep).toBe('string');

@@ -101,7 +101,7 @@ describe('validateProjectId', () => {
 
       expect(result).not.toBeNull();
       expect(result?.code).toBe('VALIDATION_ERROR');
-      expect(result?.message).toContain('projectId');
+      expect(result?.message).toContain('X-Project-ID');
     });
 
     it('should return error for undefined projectId', () => {

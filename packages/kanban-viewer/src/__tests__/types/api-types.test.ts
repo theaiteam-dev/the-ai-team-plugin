@@ -145,8 +145,8 @@ describe('Board Types (src/types/board.ts)', () => {
     });
 
     it('should use StageId for the id property', () => {
-      // @ts-expect-error - 'invalid_stage' is not a valid StageId
       const invalidStage: Stage = {
+        // @ts-expect-error - 'invalid_stage' is not a valid StageId
         id: 'invalid_stage',
         name: 'Invalid',
         order: 99,
@@ -469,8 +469,8 @@ describe('Agent Types (src/types/agent.ts)', () => {
     });
 
     it('should use AgentName type for agentName property', () => {
-      // @ts-expect-error - 'InvalidAgent' is not a valid AgentName
       const invalidClaim: AgentClaim = {
+        // @ts-expect-error - 'InvalidAgent' is not a valid AgentName
         agentName: 'InvalidAgent',
         itemId: 'WI-001',
         claimedAt: new Date(),
@@ -1343,16 +1343,16 @@ describe('Strict Type Enforcement', () => {
   });
 
   it('should not allow any type in API request agent fields', () => {
-    // @ts-expect-error - agent must be AgentName, not arbitrary string
     const badRequest: ClaimItemRequest = {
       itemId: 'WI-001',
+      // @ts-expect-error - agent must be AgentName, not arbitrary string
       agent: 'NotAnAgent',
     };
     expect(badRequest).toBeDefined();
 
-    // @ts-expect-error - agent must be AgentName, not arbitrary string
     const badStartRequest: AgentStartRequest = {
       itemId: 'WI-001',
+      // @ts-expect-error - agent must be AgentName, not arbitrary string
       agent: 'InvalidAgent',
     };
     expect(badStartRequest).toBeDefined();

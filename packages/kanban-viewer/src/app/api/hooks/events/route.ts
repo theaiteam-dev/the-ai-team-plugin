@@ -263,11 +263,25 @@ export async function POST(
         if (!isBatch) {
           singleEventResult = createdEvent;
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         // Handle unique constraint violation (duplicate correlationId + eventType)
-        if (error.code === 'P2002' || error.message?.includes('UNIQUE constraint')) {
-          skipped++;
-          continue; // Skip duplicate
+        const err = typeof error === 'object' && error !== null
+          ? (error as { code?: string; message?: string; meta?: { target?: unknown } })
+          : null;
+        if (err?.code === 'P2002') {
+          // Check meta.target (PostgreSQL driver format: array of field names)
+          const target = Array.isArray(err?.meta?.target) ? (err.meta.target as unknown[]) : [];
+          const targetMatchesFields =
+            target.includes('correlationId') && target.includes('eventType');
+          // Check error message (libsql/SQLite driver format: message contains field names)
+          const messageMatchesFields =
+            typeof err.message === 'string' &&
+            err.message.includes('correlationId') &&
+            err.message.includes('eventType');
+          if (targetMatchesFields || messageMatchesFields) {
+            skipped++;
+            continue; // Skip duplicate
+          }
         }
         // Re-throw other errors
         throw error;

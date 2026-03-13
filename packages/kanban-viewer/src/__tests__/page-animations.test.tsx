@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 import type { UseBoardEventsOptions } from '@/hooks/use-board-events';
-import type { WorkItem, Stage } from '@/types';
+import type { WorkItem, Stage, CardAnimationDirection } from '@/types';
 
 // Mock Next.js navigation hooks
 vi.mock('next/navigation', () => ({

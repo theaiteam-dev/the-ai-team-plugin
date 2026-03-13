@@ -96,10 +96,10 @@ describe('SSE Hook Event Emissions', () => {
     // Verify summary fields are present
     const summary: HookEventSummary = {
       id: mockSSEData.data.id,
-      eventType: mockSSEData.data.eventType as any,
+      eventType: mockSSEData.data.eventType as string,
       agentName: mockSSEData.data.agentName,
       toolName: mockSSEData.data.toolName,
-      status: mockSSEData.data.status as any,
+      status: mockSSEData.data.status as string,
       summary: mockSSEData.data.summary,
       timestamp: new Date(mockSSEData.data.timestamp),
     };
@@ -196,7 +196,7 @@ describe('useBoardEvents Hook Integration', () => {
     // Type-level test: verify onHookEvent is part of the options interface
     const mockOptions: UseBoardEventsOptions = {
       projectId: 'test-project',
-      onHookEvent: (event: HookEventSummary) => {
+      onHookEvent: (event: HookEventSummary | HookEventSummary[]) => {
         // Mock callback
         console.log('Hook event received:', event);
       },

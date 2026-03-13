@@ -3,16 +3,10 @@ import type {
   AgentName,
   Mission,
   BoardMetadata,
-  // These types should be added by B.A. - tests will fail until then
-  // @ts-expect-error - FinalReviewStatus type does not exist yet
   FinalReviewStatus,
-  // @ts-expect-error - PostChecksStatus type does not exist yet
   PostChecksStatus,
-  // @ts-expect-error - CheckResult type does not exist yet
   CheckResult,
-  // @ts-expect-error - DocumentationStatus type does not exist yet
   DocumentationStatus,
-  // @ts-expect-error - MissionPhase type does not exist yet
   MissionPhase,
 } from '../types';
 
@@ -150,8 +144,8 @@ describe('Mission Completion Flow Types', () => {
     });
 
     it('should reject invalid status at compile time', () => {
-      // @ts-expect-error - 'invalid_status' is not valid for CheckResult.status
       const result: CheckResult = {
+        // @ts-expect-error - 'invalid_status' is not valid for CheckResult.status
         status: 'invalid_status',
         completed_at: undefined,
       };

@@ -377,7 +377,7 @@ describe('Migration Script: scripts/migrate-projects.ts', () => {
         }
       );
 
-      await mockPrismaClient.$transaction(async (prisma) => {
+      await mockPrismaClient.$transaction(async (prisma: typeof mockPrismaClient) => {
         await prisma.project.upsert({
           where: { id: 'kanban-viewer' },
           create: DEFAULT_PROJECT,

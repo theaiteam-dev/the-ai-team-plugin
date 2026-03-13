@@ -220,11 +220,14 @@ describe('SSE Utils', () => {
       const formatted = formatSSEEvent(event);
       const parsed = parseSSEEvent(formatted);
 
-      expect(parsed.type).toBe('item-moved');
-      expect(parsed.timestamp).toBe('2026-01-15T10:00:00Z');
-      expect(parsed.data.itemId).toBe('001');
-      expect(parsed.data.fromStage).toBe('ready');
-      expect(parsed.data.toStage).toBe('testing');
+      expect(parsed).not.toBeNull();
+      expect(parsed!.type).toBe('item-moved');
+      expect(parsed!.timestamp).toBe('2026-01-15T10:00:00Z');
+      if (parsed?.type === 'item-moved') {
+        expect(parsed.data.itemId).toBe('001');
+        expect(parsed.data.fromStage).toBe('ready');
+        expect(parsed.data.toStage).toBe('testing');
+      }
     });
 
     it('should parse complex WorkItem objects', () => {
@@ -258,11 +261,15 @@ describe('SSE Utils', () => {
       const formatted = formatSSEEvent(event);
       const parsed = parseSSEEvent(formatted);
 
-      expect(parsed.data.item?.id).toBe('007');
-      expect(parsed.data.item?.title).toBe('Parse Test');
-      expect(parsed.data.item?.assigned_agent).toBe('Murdock');
-      expect(parsed.data.item?.rejection_count).toBe(2);
-      expect(parsed.data.item?.dependencies).toEqual(['005', '006']);
+      expect(parsed).not.toBeNull();
+      if (parsed?.type === 'item-updated') {
+        const parsedItem = parsed.data.item as WorkItem | undefined;
+        expect(parsedItem?.id).toBe('007');
+        expect(parsedItem?.title).toBe('Parse Test');
+        expect(parsedItem?.assigned_agent).toBe('Murdock');
+        expect(parsedItem?.rejection_count).toBe(2);
+        expect(parsedItem?.dependencies).toEqual(['005', '006']);
+      }
     });
 
     it('should handle empty data objects', () => {
@@ -275,9 +282,12 @@ describe('SSE Utils', () => {
       const formatted = formatSSEEvent(event);
       const parsed = parseSSEEvent(formatted);
 
-      expect(parsed.type).toBe('board-updated');
-      expect(parsed.timestamp).toBe('2026-01-15T18:00:00Z');
-      expect(parsed.data).toEqual({});
+      expect(parsed).not.toBeNull();
+      expect(parsed!.type).toBe('board-updated');
+      expect(parsed!.timestamp).toBe('2026-01-15T18:00:00Z');
+      if (parsed?.type === 'board-updated') {
+        expect(parsed.data).toEqual({});
+      }
     });
 
     it('should throw on invalid SSE format', () => {
@@ -305,8 +315,11 @@ describe('SSE Utils', () => {
       const withSingleNewline = formatted.replace('\n\n', '\n');
       const parsed = parseSSEEvent(withSingleNewline);
 
-      expect(parsed.type).toBe('item-deleted');
-      expect(parsed.data.itemId).toBe('999');
+      expect(parsed).not.toBeNull();
+      expect(parsed!.type).toBe('item-deleted');
+      if (parsed?.type === 'item-deleted') {
+        expect(parsed.data.itemId).toBe('999');
+      }
     });
   });
 
@@ -371,18 +384,19 @@ describe('SSE Utils', () => {
       ];
 
       eventTypes.forEach((type) => {
-        const event: BoardEvent = {
+        const event = {
           type,
           timestamp: '2026-01-15T21:00:00Z',
           data: {
             itemId: '999',
           },
-        };
+        } as unknown as BoardEvent;
 
         const formatted = formatSSEEvent(event);
         const parsed = parseSSEEvent(formatted);
 
-        expect(parsed.type).toBe(type);
+        expect(parsed).not.toBeNull();
+        expect(parsed!.type).toBe(type);
       });
     });
   });

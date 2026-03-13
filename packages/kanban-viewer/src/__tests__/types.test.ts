@@ -508,8 +508,9 @@ describe('Type Definitions', () => {
       };
 
       expect(event.data).toEqual({});
-      expect(event.data.itemId).toBeUndefined();
-      expect(event.data.item).toBeUndefined();
+      const eventData = event.data as Record<string, unknown>;
+      expect(eventData.itemId).toBeUndefined();
+      expect(eventData.item).toBeUndefined();
       expect(event.data.board).toBeUndefined();
     });
   });

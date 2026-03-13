@@ -47,7 +47,18 @@ describe('HookEvent Prisma Model', () => {
   it('should allow optional fields (missionId, toolName, durationMs, correlationId)', () => {
 
     // This should compile - optional fields omitted
-    const minimalEventData = {
+    const minimalEventData: {
+      projectId: string;
+      eventType: string;
+      agentName: string;
+      status: string;
+      summary: string;
+      timestamp: Date;
+      missionId?: string | null;
+      toolName?: string | null;
+      durationMs?: number | null;
+      correlationId?: string | null;
+    } = {
       projectId: 'test-project',
       eventType: 'stop',
       agentName: 'hannibal',

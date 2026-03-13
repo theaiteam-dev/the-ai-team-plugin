@@ -19,8 +19,8 @@ function createProps(overrides = {}): React.ComponentProps<typeof HeaderBar> {
     wipCurrent: 2,
     wipLimit: 5,
     projects: [
-      { id: 'kanban-viewer', name: 'Kanban Viewer', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-      { id: 'project-2', name: 'Project 2', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+      { id: 'kanban-viewer', name: 'Kanban Viewer', createdAt: new Date(), updatedAt: new Date() },
+      { id: 'project-2', name: 'Project 2', createdAt: new Date(), updatedAt: new Date() },
     ],
     selectedProjectId: 'kanban-viewer',
     onProjectChange: vi.fn(),
@@ -160,7 +160,7 @@ describe('HeaderBar - Project Selector Display', () => {
   describe('edge cases', () => {
     it('should handle single project', () => {
       render(<HeaderBar {...createProps({
-        projects: [{ id: 'solo', name: 'Solo Project', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+        projects: [{ id: 'solo', name: 'Solo Project', createdAt: new Date(), updatedAt: new Date() }],
         selectedProjectId: 'solo'
       })} />);
 
@@ -170,7 +170,7 @@ describe('HeaderBar - Project Selector Display', () => {
 
     it('should preserve project names with special characters', () => {
       render(<HeaderBar {...createProps({
-        projects: [{ id: 'special', name: 'my_project-v2.0', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+        projects: [{ id: 'special', name: 'my_project-v2.0', createdAt: new Date(), updatedAt: new Date() }],
         selectedProjectId: 'special'
       })} />);
 
@@ -182,8 +182,8 @@ describe('HeaderBar - Project Selector Display', () => {
         projects: [{
           id: 'long',
           name: 'Very Long Project Name That Should Display Properly',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          createdAt: new Date(),
+          updatedAt: new Date()
         }],
         selectedProjectId: 'long'
       })} />);
@@ -197,8 +197,8 @@ describe('HeaderBar - Project Selector Display', () => {
         projects: [{
           id: 'very-long',
           name: veryLongName,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          createdAt: new Date(),
+          updatedAt: new Date()
         }],
         selectedProjectId: 'very-long'
       })} />);

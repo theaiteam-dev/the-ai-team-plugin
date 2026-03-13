@@ -35,6 +35,13 @@ class MockEventSource {
       this.onmessage(new MessageEvent("message", { data: JSON.stringify(data) }));
     }
   }
+
+  // Helper to simulate a raw message event with arbitrary (potentially malformed) data
+  simulateRawMessage(data: unknown) {
+    if (this.onmessage) {
+      this.onmessage(new MessageEvent("message", { data: JSON.stringify(data) }));
+    }
+  }
 }
 
 // Replace global EventSource
@@ -75,7 +82,7 @@ describe("useBoardEvents - onActivityEntry callback", () => {
   describe("event handling", () => {
     it("should call onActivityEntry when activity-entry-added event is received", () => {
       const onActivityEntry = vi.fn();
-      renderHook(() => useBoardEvents({ onActivityEntry }));
+      renderHook(() => useBoardEvents({ projectId: 'kanban-viewer', onActivityEntry }));
 
       act(() => {
         MockEventSource.instances[0].simulateOpen();
@@ -99,7 +106,7 @@ describe("useBoardEvents - onActivityEntry callback", () => {
 
     it("should receive LogEntry with correct structure and fields", () => {
       const onActivityEntry = vi.fn();
-      renderHook(() => useBoardEvents({ onActivityEntry }));
+      renderHook(() => useBoardEvents({ projectId: 'kanban-viewer', onActivityEntry }));
 
       act(() => {
         MockEventSource.instances[0].simulateOpen();
@@ -128,7 +135,7 @@ describe("useBoardEvents - onActivityEntry callback", () => {
 
     it("should handle LogEntry with highlightType field", () => {
       const onActivityEntry = vi.fn();
-      renderHook(() => useBoardEvents({ onActivityEntry }));
+      renderHook(() => useBoardEvents({ projectId: 'kanban-viewer', onActivityEntry }));
 
       act(() => {
         MockEventSource.instances[0].simulateOpen();
@@ -173,7 +180,7 @@ describe("useBoardEvents - onActivityEntry callback", () => {
 
     it("should not call onActivityEntry for other event types", () => {
       const onActivityEntry = vi.fn();
-      renderHook(() => useBoardEvents({ onActivityEntry }));
+      renderHook(() => useBoardEvents({ projectId: 'kanban-viewer', onActivityEntry }));
 
       act(() => {
         MockEventSource.instances[0].simulateOpen();
@@ -185,17 +192,17 @@ describe("useBoardEvents - onActivityEntry callback", () => {
           type: "item-added",
           timestamp: "2026-01-15T10:00:00Z",
           data: { itemId: "001" },
-        },
+        } as unknown as BoardEvent,
         {
           type: "item-moved",
           timestamp: "2026-01-15T10:01:00Z",
           data: { itemId: "001", fromStage: "ready", toStage: "testing" },
-        },
+        } as unknown as BoardEvent,
         {
           type: "item-updated",
           timestamp: "2026-01-15T10:02:00Z",
           data: { itemId: "001" },
-        },
+        } as unknown as BoardEvent,
         {
           type: "item-deleted",
           timestamp: "2026-01-15T10:03:00Z",
@@ -219,21 +226,19 @@ describe("useBoardEvents - onActivityEntry callback", () => {
 
     it("should not call onActivityEntry when logEntry data is missing", () => {
       const onActivityEntry = vi.fn();
-      renderHook(() => useBoardEvents({ onActivityEntry }));
+      renderHook(() => useBoardEvents({ projectId: 'kanban-viewer', onActivityEntry }));
 
       act(() => {
         MockEventSource.instances[0].simulateOpen();
       });
 
-      // Event with no logEntry in data
-      const event: BoardEvent = {
-        type: "activity-entry-added",
-        timestamp: "2026-01-15T10:42:15Z",
-        data: {},
-      };
-
+      // Event with no logEntry in data (malformed input — use simulateRawMessage to bypass type constraints)
       act(() => {
-        MockEventSource.instances[0].simulateMessage(event);
+        MockEventSource.instances[0].simulateRawMessage({
+          type: "activity-entry-added",
+          timestamp: "2026-01-15T10:42:15Z",
+          data: {},
+        });
       });
 
       expect(onActivityEntry).not.toHaveBeenCalled();
@@ -246,7 +251,7 @@ describe("useBoardEvents - onActivityEntry callback", () => {
       const onActivityEntry2 = vi.fn();
 
       const { rerender } = renderHook(
-        ({ onActivityEntry }) => useBoardEvents({ onActivityEntry }),
+        ({ onActivityEntry }) => useBoardEvents({ projectId: 'kanban-viewer', onActivityEntry }),
         { initialProps: { onActivityEntry: onActivityEntry1 } }
       );
 
@@ -281,7 +286,7 @@ describe("useBoardEvents - onActivityEntry callback", () => {
       const onActivityEntry2 = vi.fn();
 
       const { rerender } = renderHook(
-        ({ onActivityEntry }) => useBoardEvents({ onActivityEntry }),
+        ({ onActivityEntry }) => useBoardEvents({ projectId: 'kanban-viewer', onActivityEntry }),
         { initialProps: { onActivityEntry: onActivityEntry1 } }
       );
 
@@ -331,6 +336,7 @@ describe("useBoardEvents - onActivityEntry callback", () => {
 
       renderHook(() =>
         useBoardEvents({
+          projectId: 'kanban-viewer',
           onActivityEntry,
           onItemAdded,
           onBoardUpdated,
@@ -363,6 +369,7 @@ describe("useBoardEvents - onActivityEntry callback", () => {
 
       renderHook(() =>
         useBoardEvents({
+          projectId: 'kanban-viewer',
           onActivityEntry,
           onItemMoved,
         })

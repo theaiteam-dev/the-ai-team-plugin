@@ -166,8 +166,8 @@ describe('AgentClaim with B.A. agent', () => {
 
   it('should NOT accept BA without dot in AgentClaim after fix', () => {
     // BUG FIX: 'BA' without dot now correctly causes a TypeScript error
-    // @ts-expect-error - 'BA' is not valid in AgentName (should be 'B.A.')
     const claimWithBuggyName: AgentClaim = {
+      // @ts-expect-error - 'BA' is not valid in AgentName (should be 'B.A.')
       agentName: 'BA',
       itemId: 'WI-001',
       claimedAt: new Date(),

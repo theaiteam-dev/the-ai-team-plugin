@@ -42,6 +42,13 @@ class MockEventSource {
       this.onerror(new Event("error"));
     }
   }
+
+  // Helper to simulate a raw message event with arbitrary (potentially malformed) data
+  simulateRawMessage(data: unknown) {
+    if (this.onmessage) {
+      this.onmessage(new MessageEvent("message", { data: JSON.stringify(data) }));
+    }
+  }
 }
 
 // Replace global EventSource
@@ -308,18 +315,16 @@ describe("useBoardEvents", () => {
         MockEventSource.instances[0].simulateOpen();
       });
 
-      // Missing toStage
-      const event: BoardEvent = {
-        type: "item-moved",
-        timestamp: "2026-01-15T10:00:00Z",
-        data: {
-          itemId: "001",
-          fromStage: "ready",
-        },
-      };
-
+      // Missing toStage (malformed input — use simulateRawMessage to bypass type constraints)
       act(() => {
-        MockEventSource.instances[0].simulateMessage(event);
+        MockEventSource.instances[0].simulateRawMessage({
+          type: "item-moved",
+          timestamp: "2026-01-15T10:00:00Z",
+          data: {
+            itemId: "001",
+            fromStage: "ready",
+          },
+        });
       });
 
       expect(onItemMoved).not.toHaveBeenCalled();
@@ -327,7 +332,7 @@ describe("useBoardEvents", () => {
 
     it("should call onMissionCompleted when mission-completed event is received", async () => {
       const onMissionCompleted = vi.fn();
-      renderHook(() => useBoardEvents({ onMissionCompleted }));
+      renderHook(() => useBoardEvents({ projectId: 'kanban-viewer', onMissionCompleted }));
 
       act(() => {
         MockEventSource.instances[0].simulateOpen();
@@ -355,7 +360,7 @@ describe("useBoardEvents", () => {
 
     it("should receive correct payload fields in onMissionCompleted callback", async () => {
       const onMissionCompleted = vi.fn();
-      renderHook(() => useBoardEvents({ onMissionCompleted }));
+      renderHook(() => useBoardEvents({ projectId: 'kanban-viewer', onMissionCompleted }));
 
       act(() => {
         MockEventSource.instances[0].simulateOpen();

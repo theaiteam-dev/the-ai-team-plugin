@@ -56,6 +56,11 @@ try {
     process.exit(0);
   }
 
+  // Allow Go test files: *_test.go
+  if (filePath.match(/_test\.go$/)) {
+    process.exit(0);
+  }
+
   // Allow files inside __tests__/ directories
   if (filePath.includes('/__tests__/')) {
     process.exit(0);

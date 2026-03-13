@@ -23,7 +23,7 @@ import type {
  */
 export interface UseBoardEventsOptions {
   /** Project ID to subscribe to events for */
-  projectId: string;
+  projectId?: string;
   /** Callback when an item is added to the board */
   onItemAdded?: (item: WorkItem) => void;
   /** Callback when an item moves between stages */
@@ -336,6 +336,13 @@ export function useBoardEvents(
   }, []);
 
   const connect = useCallback(() => {
+    // Short-circuit if projectId is absent to prevent connecting with an empty ID
+    // (the SSE route rejects empty projectId with a permanent 400)
+    if (!projectId) {
+      setRawConnectionState('disconnected');
+      return;
+    }
+
     // Clean up any existing connection
     if (eventSourceRef.current) {
       eventSourceRef.current.close();

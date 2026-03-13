@@ -109,8 +109,8 @@ describe('isValidTransition', () => {
   });
 
   describe('testing transitions (Murdock)', () => {
-    it('should allow testing -> review', () => {
-      expect(isValidTransition('testing', 'review')).toBe(true);
+    it('should allow testing -> implementing', () => {
+      expect(isValidTransition('testing', 'implementing')).toBe(true);
     });
 
     it('should allow testing -> blocked', () => {
@@ -187,8 +187,8 @@ describe('isValidTransition', () => {
   });
 
   describe('review transitions (Lynch)', () => {
-    it('should allow review -> done (approved)', () => {
-      expect(isValidTransition('review', 'done')).toBe(true);
+    it('should reject review -> done', () => {
+      expect(isValidTransition('review', 'done')).toBe(false);
     });
 
     it('should allow review -> testing (rejected, needs tests)', () => {

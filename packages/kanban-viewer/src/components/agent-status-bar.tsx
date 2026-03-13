@@ -1,11 +1,18 @@
 import type { AgentName, AgentStatus } from '@/types';
-import { AGENT_DISPLAY_NAMES } from '@ai-team/shared';
 
 export interface AgentStatusBarProps {
   agents: Partial<Record<AgentName, AgentStatus>>;
 }
 
-export const AGENT_NAMES: AgentName[] = Object.values(AGENT_DISPLAY_NAMES) as AgentName[];
+export const AGENT_NAMES: AgentName[] = [
+  'Hannibal',
+  'Face',
+  'Murdock',
+  'B.A.',
+  'Amy',
+  'Lynch',
+  'Tawnia',
+];
 
 export const AGENT_INITIALS: Record<AgentName, string> = {
   Hannibal: 'H',

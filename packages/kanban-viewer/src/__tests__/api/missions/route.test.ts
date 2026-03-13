@@ -924,7 +924,7 @@ describe('POST /api/missions', () => {
       expect(data.success).toBe(false);
       expect(data.error).toBeDefined();
       expect(data.error.code).toBe('VALIDATION_ERROR');
-      expect(data.error.message).toContain('projectId');
+      expect(data.error.message).toContain('X-Project-ID');
     });
 
     it('should return 400 with clear error message for missing projectId', async () => {
@@ -1045,7 +1045,7 @@ describe('GET /api/missions - projectId validation (WI-045)', () => {
     expect(data.success).toBe(false);
     expect(data.error).toBeDefined();
     expect(data.error.code).toBe('VALIDATION_ERROR');
-    expect(data.error.message).toContain('projectId');
+    expect(data.error.message).toContain('X-Project-ID');
   });
 
   it('should return 400 with clear error message for missing projectId', async () => {

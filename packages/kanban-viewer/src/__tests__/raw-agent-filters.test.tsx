@@ -468,8 +468,8 @@ describe('filterHookEvents pure function', () => {
     it('should handle events with null or undefined agentName gracefully', () => {
       const events: HookEventSummary[] = [
         createHookEvent({ id: 1, agentName: 'murdock' }),
-        createHookEvent({ id: 2, agentName: undefined as any }),
-        createHookEvent({ id: 3, agentName: null as any }),
+        createHookEvent({ id: 2, agentName: undefined as unknown as string }),
+        createHookEvent({ id: 3, agentName: null as unknown as string }),
       ];
 
       const filters: RawAgentFilterState = {
@@ -526,7 +526,7 @@ describe('filterHookEvents pure function', () => {
     it('should handle events with empty string status', () => {
       const events: HookEventSummary[] = [
         createHookEvent({ id: 1, status: 'success' }),
-        createHookEvent({ id: 2, status: '' as any }),
+        createHookEvent({ id: 2, status: '' }),
         createHookEvent({ id: 3, status: 'failure' }),
       ];
 

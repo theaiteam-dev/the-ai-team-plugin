@@ -14,7 +14,7 @@ export interface FilterBarProps {
   onAgentFilterChange: (value: AgentFilter) => void;
   onStatusFilterChange: (value: StatusFilter) => void;
   onSearchQueryChange: (value: string) => void;
-  onClearFilters: () => void;
+  onClearFilters?: () => void;
 }
 
 const TYPE_OPTIONS: TypeFilter[] = [
@@ -283,7 +283,7 @@ export function FilterBar({
         isActive={isStatusActive}
         dropdownRef={statusDropdownRef}
       />
-      {hasActiveFilters && (
+      {hasActiveFilters && onClearFilters && (
         <button
           type="button"
           data-testid="clear-filters-button"

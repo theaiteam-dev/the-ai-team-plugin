@@ -1,3 +1,4 @@
+import { NextRequest } from 'next/server';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { POST } from '@/app/api/hooks/events/route';
 import { prisma } from '@/lib/db';
@@ -30,7 +31,7 @@ describe('POST /api/hooks/events', () => {
       timestamp: new Date().toISOString(),
     };
 
-    const request = new Request('http://localhost:3000/api/hooks/events', {
+    const request = new NextRequest('http://localhost:3000/api/hooks/events', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -88,7 +89,7 @@ describe('POST /api/hooks/events', () => {
       },
     ];
 
-    const request = new Request('http://localhost:3000/api/hooks/events', {
+    const request = new NextRequest('http://localhost:3000/api/hooks/events', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -142,7 +143,7 @@ describe('POST /api/hooks/events', () => {
       },
     ];
 
-    const request1 = new Request('http://localhost:3000/api/hooks/events', {
+    const request1 = new NextRequest('http://localhost:3000/api/hooks/events', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -187,7 +188,7 @@ describe('POST /api/hooks/events', () => {
       },
     ];
 
-    const request2 = new Request('http://localhost:3000/api/hooks/events', {
+    const request2 = new NextRequest('http://localhost:3000/api/hooks/events', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -219,7 +220,7 @@ describe('POST /api/hooks/events', () => {
       timestamp: new Date().toISOString(),
     };
 
-    const request = new Request('http://localhost:3000/api/hooks/events', {
+    const request = new NextRequest('http://localhost:3000/api/hooks/events', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -246,7 +247,7 @@ describe('POST /api/hooks/events', () => {
       timestamp: new Date().toISOString(),
     };
 
-    const request = new Request('http://localhost:3000/api/hooks/events', {
+    const request = new NextRequest('http://localhost:3000/api/hooks/events', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -279,7 +280,7 @@ describe('POST /api/hooks/events', () => {
       timestamp: new Date().toISOString(),
     };
 
-    const request = new Request('http://localhost:3000/api/hooks/events', {
+    const request = new NextRequest('http://localhost:3000/api/hooks/events', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -311,7 +312,7 @@ describe('POST /api/hooks/events', () => {
       timestamp: new Date().toISOString(),
     };
 
-    const request = new Request('http://localhost:3000/api/hooks/events', {
+    const request = new NextRequest('http://localhost:3000/api/hooks/events', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -322,11 +323,11 @@ describe('POST /api/hooks/events', () => {
 
     // Submit the same event concurrently 5 times
     const responses = await Promise.all([
-      POST(request.clone()),
-      POST(request.clone()),
-      POST(request.clone()),
-      POST(request.clone()),
-      POST(request.clone()),
+      POST(request.clone() as unknown as NextRequest),
+      POST(request.clone() as unknown as NextRequest),
+      POST(request.clone() as unknown as NextRequest),
+      POST(request.clone() as unknown as NextRequest),
+      POST(request.clone() as unknown as NextRequest),
     ]);
 
     // All responses should succeed (201)
@@ -355,7 +356,7 @@ describe('POST /api/hooks/events', () => {
       timestamp: 'not-a-valid-timestamp', // Invalid
     };
 
-    const request = new Request('http://localhost:3000/api/hooks/events', {
+    const request = new NextRequest('http://localhost:3000/api/hooks/events', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -413,7 +414,7 @@ describe('POST /api/hooks/events', () => {
       model: 'claude-opus-4-6',
     };
 
-    const request = new Request('http://localhost:3000/api/hooks/events', {
+    const request = new NextRequest('http://localhost:3000/api/hooks/events', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -445,7 +446,7 @@ describe('POST /api/hooks/events', () => {
       timestamp: new Date().toISOString(),
     }));
 
-    const request = new Request('http://localhost:3000/api/hooks/events', {
+    const request = new NextRequest('http://localhost:3000/api/hooks/events', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
