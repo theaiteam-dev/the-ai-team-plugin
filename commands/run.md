@@ -89,7 +89,7 @@ WIP limit controls how many features are in-flight (not in briefings, ready, or 
 ## Behavior
 
 1. **Validate mission exists**
-   Use `mission_current` MCP tool to check for active mission.
+   Run `ateam missions-current getCurrentMission --json` to check for active mission.
    ```
    if mission not found:
        error "No mission found. Run /ai-team:plan first."
@@ -115,7 +115,7 @@ WIP limit controls how many features are in-flight (not in briefings, ready, or 
 
    Read `ateam.config.json` to get the list of check names (`config.precheck`) and their commands
    (`config.checks`). Run each check via Bash, capturing stdout, stderr, and exit code.
-   Then call `mission_precheck` with the computed result:
+   Then call `ateam missions-precheck missionPrecheck` with the computed result:
 
    ```
    config = Read("ateam.config.json")  # parse JSON
@@ -144,7 +144,7 @@ WIP limit controls how many features are in-flight (not in briefings, ready, or 
            passed = false
            blockers.append(checkName + " failed: " + result.stdout.slice(0,200))
 
-   mission_precheck({ passed, blockers, output })
+   ateam missions-precheck missionPrecheck --passed {passed} --blockers {blockers} --output {output}
    ```
 
    - If `passed = true`: mission transitions to `running`, proceed to next step
@@ -160,9 +160,9 @@ WIP limit controls how many features are in-flight (not in briefings, ready, or 
 
 3. **Detect dispatch mode and load orchestration playbook**
 
-   First, get the plugin root path:
+   First, get the plugin root path from the `CLAUDE_PLUGIN_ROOT` environment variable:
    ```
-   plugin_root()  # MCP tool - returns the absolute path to the plugin directory
+   Bash("echo $CLAUDE_PLUGIN_ROOT")
    ```
 
    Then check the environment variable:
@@ -171,8 +171,8 @@ WIP limit controls how many features are in-flight (not in briefings, ready, or 
    ```
 
    Using the plugin root path from above:
-   - If output is "1": `Read("{plugin_root}/playbooks/orchestration-native.md")`
-   - Otherwise: `Read("{plugin_root}/playbooks/orchestration-legacy.md")`
+   - If output is "1": `Read("$CLAUDE_PLUGIN_ROOT/playbooks/orchestration-native.md")`
+   - Otherwise: `Read("$CLAUDE_PLUGIN_ROOT/playbooks/orchestration-legacy.md")`
 
    **Read exactly ONE playbook. Do not read both.**
    The playbook contains your complete orchestration loop, dispatch
@@ -185,8 +185,8 @@ WIP limit controls how many features are in-flight (not in briefings, ready, or 
 5. **Orchestration loop:**
    Follow the loaded orchestration playbook for the complete loop,
    dispatch patterns, and completion detection.
-   - Use `board_move` to advance items between stages
-   - Use `deps_check` to find items ready to move from briefings → ready
+   - Use `ateam board-move moveItem` to advance items between stages
+   - Use `ateam deps-check checkDeps` to find items ready to move from briefings → ready
    - Start new features if under WIP limit
 
 6. **Final Mission Review:**
@@ -197,7 +197,7 @@ WIP limit controls how many features are in-flight (not in briefings, ready, or 
    - If FINAL REJECTED → specified items return to pipeline
 
 7. **Post-Mission Checks:**
-   Use the `mission_postcheck` MCP tool.
+   Run `ateam missions-postcheck missionPostcheck --json`.
    - Run after final review approves
    - Verifies lint, unit tests, and e2e tests all pass
    - Updates mission state with postcheck results
@@ -290,22 +290,22 @@ This flat structure:
 
 The dispatch mode (legacy Task/TaskOutput vs. native TeamCreate/SendMessage) is determined by the orchestration playbook loaded in step 3.
 
-## MCP Tools Used
+## CLI Commands Used
 
-| Tool | Purpose |
-|------|---------|
-| `mission_current` | Check mission exists and get state |
-| `mission_precheck` | Run lint/tests before starting |
-| `mission_postcheck` | Run lint/tests after all done |
-| `board_read` | Get current board state |
-| `board_move` | Move items between stages |
-| `board_claim` | Assign agent to item |
-| `board_release` | Release agent assignment |
-| `item_list` | List items by stage |
-| `deps_check` | Find items ready to advance |
-| `agent_start` | Signal agent beginning work |
-| `agent_stop` | Signal agent completed work |
-| `log` | Write to activity feed |
+| Command | Purpose |
+|---------|---------|
+| `ateam missions-current getCurrentMission --json` | Check mission exists and get state |
+| `ateam missions-precheck missionPrecheck` | Run lint/tests before starting |
+| `ateam missions-postcheck missionPostcheck --json` | Run lint/tests after all done |
+| `ateam board getBoard --json` | Get current board state |
+| `ateam board-move moveItem --itemId <id> --toStage <stage>` | Move items between stages |
+| `ateam board-claim claimItem --itemId <id> --agent <name>` | Assign agent to item |
+| `ateam board-release releaseItem --itemId <id>` | Release agent assignment |
+| `ateam items listItems --json` | List items by stage |
+| `ateam deps-check checkDeps --json` | Find items ready to advance |
+| `ateam agents-start agentStart --itemId <id> --agent <name>` | Signal agent beginning work |
+| `ateam agents-stop agentStop --itemId <id> --agent <name> --status success --summary "..."` | Signal agent completed work |
+| `ateam activity createActivityEntry --agent <name> --message "..." --level info` | Write to activity feed |
 
 ## Errors
 

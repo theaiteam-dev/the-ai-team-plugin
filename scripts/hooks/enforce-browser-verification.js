@@ -152,7 +152,7 @@ ALTERNATIVE: Use Playwright MCP tools directly:
   - mcp__plugin_playwright_playwright__browser_click
   - mcp__plugin_playwright_playwright__browser_take_screenshot
 
-If this feature has NO user-facing UI, call agent_stop again with
+If this feature has NO user-facing UI, call ateam agents-stop agentStop again with
 "NO_UI_COMPONENT" in the summary to skip browser verification.`;
 
   console.log(

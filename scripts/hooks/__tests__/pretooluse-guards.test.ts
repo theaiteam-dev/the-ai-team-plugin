@@ -912,83 +912,83 @@ describe('block-raw-mv — agent guards', () => {
 describe('block-worker-board-claim — agent guards', () => {
   const HOOK = hookPath('block-worker-board-claim.js');
 
-  it('blocks murdock calling board_claim (exit 2)', () => {
+  it('blocks murdock calling ateam board-claim via Bash (exit 2)', () => {
     const result = runHook(HOOK, {
       agent_type: 'murdock',
-      tool_name: 'mcp__plugin_ai-team_ateam__board_claim',
-      tool_input: { itemId: 'WI-001' },
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-claim WI-001' },
     });
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toMatch(/BLOCKED/i);
   });
 
-  it('blocks ba calling board_claim (exit 2)', () => {
+  it('blocks ba calling ateam board-claim via Bash (exit 2)', () => {
     const result = runHook(HOOK, {
       agent_type: 'ba',
-      tool_name: 'mcp__plugin_ai-team_ateam__board_claim',
-      tool_input: { itemId: 'WI-001' },
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-claim WI-001' },
     });
     expect(result.exitCode).toBe(2);
   });
 
-  it('blocks lynch calling board_claim (exit 2)', () => {
+  it('blocks lynch calling ateam board-claim via Bash (exit 2)', () => {
     const result = runHook(HOOK, {
       agent_type: 'lynch',
-      tool_name: 'mcp__plugin_ai-team_ateam__board_claim',
-      tool_input: { itemId: 'WI-001' },
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-claim WI-001' },
     });
     expect(result.exitCode).toBe(2);
   });
 
-  it('blocks amy calling board_claim (exit 2)', () => {
+  it('blocks amy calling ateam board-claim via Bash (exit 2)', () => {
     const result = runHook(HOOK, {
       agent_type: 'amy',
-      tool_name: 'mcp__plugin_ai-team_ateam__board_claim',
-      tool_input: { itemId: 'WI-001' },
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-claim WI-001' },
     });
     expect(result.exitCode).toBe(2);
   });
 
-  it('blocks tawnia calling board_claim (exit 2)', () => {
+  it('blocks tawnia calling ateam board-claim via Bash (exit 2)', () => {
     const result = runHook(HOOK, {
       agent_type: 'tawnia',
-      tool_name: 'mcp__plugin_ai-team_ateam__board_claim',
-      tool_input: { itemId: 'WI-001' },
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-claim WI-001' },
     });
     expect(result.exitCode).toBe(2);
   });
 
-  it('blocks lynch-final calling board_claim (exit 2)', () => {
+  it('blocks lynch-final calling ateam board-claim via Bash (exit 2)', () => {
     const result = runHook(HOOK, {
       agent_type: 'lynch-final',
-      tool_name: 'mcp__plugin_ai-team_ateam__board_claim',
-      tool_input: { itemId: 'WI-001' },
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-claim WI-001' },
     });
     expect(result.exitCode).toBe(2);
   });
 
-  it('allows non-target agent hannibal to call board_claim (exit 0)', () => {
+  it('allows non-target agent hannibal to call ateam board-claim (exit 0)', () => {
     const result = runHook(HOOK, {
       agent_type: 'hannibal',
-      tool_name: 'mcp__plugin_ai-team_ateam__board_claim',
-      tool_input: { itemId: 'WI-001' },
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-claim WI-001' },
     });
     expect(result.exitCode).toBe(0);
   });
 
-  it('allows unknown agent Explore to call board_claim (exit 0, fail-open)', () => {
+  it('allows unknown agent Explore to call ateam board-claim (exit 0, fail-open)', () => {
     const result = runHook(HOOK, {
       agent_type: 'Explore',
-      tool_name: 'mcp__plugin_ai-team_ateam__board_claim',
-      tool_input: { itemId: 'WI-001' },
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-claim WI-001' },
     });
     expect(result.exitCode).toBe(0);
   });
 
   it('allows null/missing agent_type (exit 0, fail-open)', () => {
     const result = runHook(HOOK, {
-      tool_name: 'mcp__plugin_ai-team_ateam__board_claim',
-      tool_input: { itemId: 'WI-001' },
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-claim WI-001' },
     });
     expect(result.exitCode).toBe(0);
   });
@@ -1000,83 +1000,83 @@ describe('block-worker-board-claim — agent guards', () => {
 describe('block-worker-board-move — agent guards', () => {
   const HOOK = hookPath('block-worker-board-move.js');
 
-  it('blocks murdock calling board_move (exit 2)', () => {
+  it('blocks murdock calling ateam board-move via Bash (exit 2)', () => {
     const result = runHook(HOOK, {
       agent_type: 'murdock',
-      tool_name: 'mcp__plugin_ai-team_ateam__board_move',
-      tool_input: { itemId: 'WI-001', to: 'review' },
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-move WI-001 --to review' },
     });
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toMatch(/BLOCKED/i);
   });
 
-  it('blocks ba calling board_move (exit 2)', () => {
+  it('blocks ba calling ateam board-move via Bash (exit 2)', () => {
     const result = runHook(HOOK, {
       agent_type: 'ba',
-      tool_name: 'mcp__plugin_ai-team_ateam__board_move',
-      tool_input: { itemId: 'WI-001', to: 'review' },
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-move WI-001 --to review' },
     });
     expect(result.exitCode).toBe(2);
   });
 
-  it('blocks lynch calling board_move (exit 2)', () => {
+  it('blocks lynch calling ateam board-move via Bash (exit 2)', () => {
     const result = runHook(HOOK, {
       agent_type: 'lynch',
-      tool_name: 'mcp__plugin_ai-team_ateam__board_move',
-      tool_input: { itemId: 'WI-001', to: 'probing' },
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-move WI-001 --to probing' },
     });
     expect(result.exitCode).toBe(2);
   });
 
-  it('blocks amy calling board_move (exit 2)', () => {
+  it('blocks amy calling ateam board-move via Bash (exit 2)', () => {
     const result = runHook(HOOK, {
       agent_type: 'amy',
-      tool_name: 'mcp__plugin_ai-team_ateam__board_move',
-      tool_input: { itemId: 'WI-001', to: 'done' },
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-move WI-001 --to done' },
     });
     expect(result.exitCode).toBe(2);
   });
 
-  it('blocks tawnia calling board_move (exit 2)', () => {
+  it('blocks tawnia calling ateam board-move via Bash (exit 2)', () => {
     const result = runHook(HOOK, {
       agent_type: 'tawnia',
-      tool_name: 'mcp__plugin_ai-team_ateam__board_move',
-      tool_input: { itemId: 'WI-001', to: 'done' },
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-move WI-001 --to done' },
     });
     expect(result.exitCode).toBe(2);
   });
 
-  it('blocks lynch-final calling board_move (exit 2)', () => {
+  it('blocks lynch-final calling ateam board-move via Bash (exit 2)', () => {
     const result = runHook(HOOK, {
       agent_type: 'lynch-final',
-      tool_name: 'mcp__plugin_ai-team_ateam__board_move',
-      tool_input: { itemId: 'WI-001', to: 'done' },
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-move WI-001 --to done' },
     });
     expect(result.exitCode).toBe(2);
   });
 
-  it('allows non-target agent hannibal to call board_move (exit 0)', () => {
+  it('allows non-target agent hannibal to call ateam board-move (exit 0)', () => {
     const result = runHook(HOOK, {
       agent_type: 'hannibal',
-      tool_name: 'mcp__plugin_ai-team_ateam__board_move',
-      tool_input: { itemId: 'WI-001', to: 'done' },
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-move WI-001 --to done' },
     });
     expect(result.exitCode).toBe(0);
   });
 
-  it('allows unknown agent Explore to call board_move (exit 0, fail-open)', () => {
+  it('allows unknown agent Explore to call ateam board-move (exit 0, fail-open)', () => {
     const result = runHook(HOOK, {
       agent_type: 'Explore',
-      tool_name: 'mcp__plugin_ai-team_ateam__board_move',
-      tool_input: { itemId: 'WI-001', to: 'done' },
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-move WI-001 --to done' },
     });
     expect(result.exitCode).toBe(0);
   });
 
   it('allows null/missing agent_type (exit 0, fail-open)', () => {
     const result = runHook(HOOK, {
-      tool_name: 'mcp__plugin_ai-team_ateam__board_move',
-      tool_input: { itemId: 'WI-001', to: 'done' },
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-move WI-001 --to done' },
     });
     expect(result.exitCode).toBe(0);
   });

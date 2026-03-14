@@ -169,7 +169,7 @@ async function checkCompletion() {
       JSON.stringify({
         decision: 'block',
         additionalContext:
-          'Final review is complete but post-checks have not passed. Run mission_postcheck MCP tool.',
+          'Final review is complete but post-checks have not passed. Run ateam missions postcheck.',
       })
     );
     process.exit(0);

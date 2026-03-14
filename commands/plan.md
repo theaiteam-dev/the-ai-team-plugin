@@ -23,7 +23,7 @@ Initialize a mission from a PRD file with two-pass refinement.
          │
          ▼
 ┌─────────────────────────────────────┐
-│ 1. mission_init MCP tool            │
+│ 1. ateam missions createMission     │
 │    Initialize fresh mission in DB   │
 └─────────────────────────────────────┘
          │
@@ -31,13 +31,13 @@ Initialize a mission from a PRD file with two-pass refinement.
 ┌─────────────────────────────────────┐
 │ 2. Face (opus) - FIRST PASS         │
 │    • Decompose PRD into items       │
-│    • Create items via item_create   │
+│    • Create items via ateam CLI     │
 │    • Items start in 'briefings'     │
 └─────────────────────────────────────┘
          │
          ▼
 ┌─────────────────────────────────────┐
-│ 3. deps_check MCP tool              │
+│ 3. ateam deps-check checkDeps       │
 │    Validate dependency graph        │
 └─────────────────────────────────────┘
          │
@@ -54,7 +54,7 @@ Initialize a mission from a PRD file with two-pass refinement.
 ┌─────────────────────────────────────┐
 │ 5. Face (opus) - SECOND PASS        │
 │    • Apply Sosa's recommendations   │
-│    • Update items via item_update   │
+│    • Update items via ateam CLI     │
 │    • Move Wave 0 → ready stage      │
 │    • Dependent items stay briefings │
 └─────────────────────────────────────┘
@@ -78,11 +78,11 @@ if not exists(prd-file):
 
 ### 2. Initialize mission
 
-Use the `mission_init` MCP tool with parameters:
+Run `ateam missions createMission` with parameters:
 - `name`: Project name extracted from PRD (first H1 header or filename)
 - `force`: Set to `true` to archive existing mission
 
-The tool:
+This command:
 - Archives existing mission data (if any) in the database
 - Creates fresh mission record for this project
 - Initializes empty board state
@@ -102,14 +102,14 @@ Task(
 
   {prd_content}
 
-  Create work items using the item_create MCP tool.
-  When done, use deps_check MCP tool and report summary."
+  Create work items using the ateam CLI (ateam items createItem).
+  When done, run ateam deps-check checkDeps and report summary."
 )
 ```
 
 ### 4. Validate dependencies
 
-Use the `deps_check` MCP tool.
+Run `ateam deps-check checkDeps --json`.
 
 Check for:
 - Circular dependencies
@@ -142,7 +142,7 @@ Task(
 ```
 
 Sosa will:
-- Read all items using `item_list` with stage filter
+- Read all items using `ateam items listItems --json` with stage filter
 - Identify issues and ambiguities
 - Use `AskUserQuestion` to get human clarification
 - Produce a detailed refinement report
@@ -166,12 +166,12 @@ Task(
   {sosa_report}
 
   For each item needing changes:
-  1. Use item_update MCP tool to modify the item
+  1. Use ateam items updateItem to modify the item
   2. Apply the specific recommendations
 
   After all updates:
-  1. Use deps_check MCP tool to get the readyItems list
-  2. Move items with NO dependencies to ready stage using board_move
+  1. Run ateam deps-check checkDeps --json to get the readyItems list
+  2. Move items with NO dependencies to ready stage using ateam board-move moveItem
   3. Leave items WITH dependencies in briefings stage
 
   Report what was updated and moved."
@@ -226,16 +226,16 @@ With skip refinement:
 - **Refinement blocked**: Critical issues Sosa can't resolve
 - **API unavailable**: Cannot connect to A(i)-Team server
 
-## MCP Tools Used
+## CLI Commands Used
 
-| Tool | Purpose |
-|------|---------|
-| `mission_init` | Archive existing mission, create fresh state |
-| `item_create` | Create work items (Face first pass) |
-| `item_update` | Update work items (Face second pass) |
-| `item_list` | List items by stage (Sosa review) |
-| `board_move` | Move items between stages (Face second pass) |
-| `deps_check` | Validate dependency graph |
+| Command | Purpose |
+|---------|---------|
+| `ateam missions createMission` | Archive existing mission, create fresh state |
+| `ateam items createItem` | Create work items (Face first pass) |
+| `ateam items updateItem --id <id>` | Update work items (Face second pass) |
+| `ateam items listItems --json` | List items by stage (Sosa review) |
+| `ateam board-move moveItem --itemId <id> --toStage <stage>` | Move items between stages (Face second pass) |
+| `ateam deps-check checkDeps --json` | Validate dependency graph |
 
 ## Agent Invocations
 

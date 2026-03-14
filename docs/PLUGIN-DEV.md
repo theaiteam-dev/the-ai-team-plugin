@@ -6,15 +6,14 @@ This document contains development-specific information for working on the A(i)-
 
 **Before modifying code in a subdirectory, read its AGENTS.md first** to understand local patterns and invariants.
 
-- **MCP Server**: `packages/mcp-server/AGENTS.md` - Bridge between Claude Code and the A(i)-Team API (21 tools, HTTP client, Zod schemas)
+- **ateam CLI**: `packages/ateam-cli/` - Go CLI generated from OpenAPI spec; agents call this via `Bash` for all API interaction
 - **Agent Prompts**: `agents/AGENTS.md` - Agent behavior contracts, hooks, boundaries, and dispatch patterns
 - **Kanban Viewer**: `packages/kanban-viewer/CLAUDE.md` - Next.js web UI with Prisma/SQLite (already documented)
 
 ### Global Invariants
 
-- All mission state lives in the API database, not the filesystem. Use MCP tools for state changes.
-- The `@ai-team/shared` package must be built before `@ai-team/mcp-server` (workspace dependency).
-- Both shared and mcp-server use `moduleResolution: "NodeNext"` — all relative imports need `.js` extensions.
+- All mission state lives in the API database, not the filesystem. Agents use `ateam` CLI via `Bash` for state changes.
+- The `@ai-team/shared` package must be built before `@ai-team/kanban-viewer` (workspace dependency).
 - Tests use **vitest** (not bun's native test runner). Run `bun run test`, never bare `bun test`.
 - Agent files use YAML frontmatter with hooks that enforce workflow boundaries at runtime.
 
@@ -29,18 +28,16 @@ This plugin will be published and added to user projects as a submodule (typical
 ```
 @ai-team/shared
     ↑
-    ├── @ai-team/mcp-server (MCP tools depend on shared types)
     └── @ai-team/kanban-viewer (UI depends on shared types)
 ```
 
-The `@ai-team/shared` package provides TypeScript types and constants used by both the MCP server and Kanban viewer, ensuring type consistency across the system.
+The `@ai-team/shared` package provides TypeScript types and constants used by the Kanban viewer, ensuring type consistency across the system. The `ateam` CLI (`packages/ateam-cli/`) is a separate Go binary generated from the OpenAPI spec.
 
 ## File Organization
 
 ```
 ai-team/
 ├── .claude-plugin/plugin.json  # Plugin configuration
-├── .mcp.json                # MCP server configuration
 ├── package.json             # Bun workspaces root (run `bun install`)
 ├── bun.lockb                # Bun lock file
 ├── docker-compose.yml       # Docker setup for kanban-viewer
@@ -55,23 +52,10 @@ ai-team/
 │   │       ├── items.ts     # Work item types
 │   │       ├── errors.ts    # Error types
 │   │       └── __tests__/   # Type tests
-│   ├── mcp-server/          # @ai-team/mcp-server - MCP server for Claude Code integration
-│   │   ├── package.json     # MCP server dependencies
-│   │   ├── tsconfig.json
-│   │   ├── src/
-│   │   │   ├── index.ts     # Entry point (stdio transport)
-│   │   │   ├── server.ts    # McpServer instance
-│   │   │   ├── config.ts    # Environment configuration (projectId, apiUrl, etc.)
-│   │   │   ├── client/      # HTTP client with retry logic
-│   │   │   ├── lib/         # Error handling utilities
-│   │   │   └── tools/       # Tool implementations (21 tools)
-│   │   │       ├── board.ts     # Board operations (4 tools)
-│   │   │       ├── items.ts     # Item operations (6 tools)
-│   │   │       ├── agents.ts    # Agent lifecycle (2 tools)
-│   │   │       ├── missions.ts  # Mission lifecycle (5 tools)
-│   │   │       ├── utils.ts     # Utilities (4 tools)
-│   │   │       └── index.ts     # Tool registration
-│   │   └── dist/            # Compiled JavaScript
+│   ├── ateam-cli/           # Go CLI binary - generated from OpenAPI spec
+│   │   ├── main.go          # Entry point
+│   │   ├── openapi.yaml     # API spec (source of truth for CLI generation)
+│   │   └── ...              # Generated command implementations
 │   └── kanban-viewer/       # @ai-team/kanban-viewer - Web-based Kanban UI
 │       ├── package.json
 │       ├── Dockerfile
@@ -156,15 +140,12 @@ ai-team/
 ```
 
 **Monorepo Structure:**
-The repository uses bun workspaces with three packages:
+The repository uses bun workspaces with two TypeScript packages plus a Go CLI:
 - `@ai-team/shared` - Shared types and constants used by other packages
-- `@ai-team/mcp-server` - MCP server (depends on @ai-team/shared)
 - `@ai-team/kanban-viewer` - Web UI (depends on @ai-team/shared)
+- `packages/ateam-cli/` - Go CLI binary (not a bun workspace; built with `go build`)
 
 Plugin-specific files (agents/, commands/, skills/, scripts/) remain at the repository root.
-
-**MCP Server Configuration:**
-The `.mcp.json` file at the repository root points to `packages/mcp-server/src/index.ts` as the MCP server entry point. The server uses bun to run TypeScript directly without a separate build step for development.
 
 ## Agent Lifecycle Hooks
 
@@ -197,9 +178,9 @@ These hooks fire for all sessions where the plugin is enabled:
 
 All working agents share these hooks in their frontmatter:
 
-- **PreToolUse(Bash)** → `block-raw-echo-log.js`: Forces MCP `log` tool instead of raw echo
+- **PreToolUse(Bash)** → `block-raw-echo-log.js`: Forces `ateam activity createActivityEntry` instead of raw echo
 - **PreToolUse(board_move)** → `block-worker-board-move.js`: Stage transitions are Hannibal's responsibility
-- **PreToolUse(board_claim)** → `block-worker-board-claim.js`: Item claims go through `agent_start`
+- **PreToolUse(board_claim)** → `block-worker-board-claim.js`: Item claims go through `ateam agents-start agentStart`
 - **PreToolUse(no matcher)** → `observe-pre-tool-use.js {agent}`: Telemetry
 - **PostToolUse(no matcher)** → `observe-post-tool-use.js {agent}`: Telemetry
 - **Stop** → `enforce-completion-log.js`: Requires `agent_stop` before finishing
@@ -268,11 +249,11 @@ bun install
 # Build shared package (must be built first)
 cd packages/shared && bun run build
 
-# Build MCP server
-cd packages/mcp-server && bun run build
+# Build the ateam CLI (Go binary)
+cd packages/ateam-cli && go build -o ~/go/bin/ateam .
 
 # Start Kanban UI (optional, for viewing mission progress)
 docker compose up -d
 ```
 
-The shared package must be built before other packages since they depend on it.
+The shared package must be built before the kanban-viewer since it depends on it. The `ateam` CLI is built separately with Go and does not depend on the bun workspace packages.

@@ -155,7 +155,7 @@ async function checkFinalReview() {
       );
       process.stderr.write('\n');
       process.stderr.write(
-        'Run the mission_postcheck MCP tool to verify lint, tests, and e2e all pass.\n'
+        'Run ateam missions postcheck to verify lint, tests, and e2e all pass.\n'
       );
       process.exit(2);
     }

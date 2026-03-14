@@ -74,8 +74,8 @@ Hannibal's behavior is enforced by Claude Code hooks defined in the frontmatter:
 
 **PreToolUse Hook** (`block-raw-mv.js`):
 - Blocks raw `mv` commands on mission files
-- You MUST use the `board_move` MCP tool to move items between stages
-- The tool ensures board state is properly updated in the database
+- You MUST use `ateam board-move moveItem` to move items between stages
+- The command ensures board state is properly updated in the database
 
 **Stop Hook** (`enforce-final-review.js`):
 - Blocks mission completion until all items are in `done` stage
@@ -88,19 +88,19 @@ These hooks enforce role separation - you can't accidentally (or intentionally) 
 
 **Before dispatching background agents**, ensure `/ai-team:setup` has been run. Background agents cannot prompt for permissions and will fail with "auto-denied" errors if permissions aren't pre-configured. See CLAUDE.md "Background Agent Permissions" section.
 
-## MCP Tools
+## ateam CLI Commands
 
-**CRITICAL: Use these MCP tools for ALL board operations.** They handle stage transitions, state updates, activity logging, and validation atomically.
+**CRITICAL: Use these `ateam` CLI commands for ALL board operations.** They handle stage transitions, state updates, activity logging, and validation atomically.
 
-| Tool | Purpose | Parameters |
-|------|---------|------------|
-| `board_read` | Read board state | `filter` (optional): "agents", "column:{name}", "item:{id}" |
-| `board_move` | Move item between stages | `itemId`, `to`, `agent` (optional) |
-| `board_claim` | Manually assign agent (rarely needed) | `itemId`, `agent` |
-| `board_release` | Manually release claim (rarely needed) | `itemId` |
-| `item_reject` | Record rejection | `itemId`, `reason`, `agent` (optional), `diagnosis` (optional) |
+| Command | Purpose |
+|---------|---------|
+| `ateam board getBoard --json` | Read full board state |
+| `ateam board-move moveItem --itemId <id> --toStage <stage>` | Move item between stages |
+| `ateam board-claim claimItem --itemId <id> --agent <name>` | Manually assign agent (rarely needed) |
+| `ateam board-release releaseItem --itemId <id>` | Manually release claim (rarely needed) |
+| `ateam items rejectItem --id <id>` | Record rejection |
 
-**Never use `mv` to move items or manually manage state.** The MCP tools ensure:
+**Never use `mv` to move items or manually manage state.** The `ateam` CLI ensures:
 - Stage is updated in the database
 - Board state is synchronized
 - Activity is logged
@@ -131,13 +131,13 @@ Some work items are pure documentation, config changes, or markdown updates that
 
 If both conditions are met, **skip the testing stage entirely**:
 
-```
+```bash
 # Instead of:
-board_move(itemId: "005", to: "testing", agent: "Murdock")  # SKIP THIS
+ateam board-move moveItem --itemId "WI-005" --toStage "testing" --agent "Murdock"  # SKIP THIS
 
 # Go directly to:
-board_move(itemId: "005", to: "implementing", agent: "B.A.")
-dispatch B.A. in background
+ateam board-move moveItem --itemId "WI-005" --toStage "implementing" --agent "B.A."
+# dispatch B.A. in background
 ```
 
 **The rest of the pipeline still applies:**
@@ -154,11 +154,11 @@ while in_flight < WIP_LIMIT and ready stage not empty:
 
     if item has NO_TEST_NEEDED and outputs.test is empty:
         # Fast-track: skip testing, go straight to implementing
-        board_move(itemId=item_id, to="implementing", agent="B.A.")
+        ateam board-move moveItem --itemId=item_id --toStage="implementing" --agent="B.A."
         new_task = dispatch B.A. in background
     else:
         # Normal flow: start with testing
-        board_move(itemId=item_id, to="testing", agent="Murdock")
+        ateam board-move moveItem --itemId=item_id --toStage="testing" --agent="Murdock"
         new_task = dispatch Murdock in background
 
     active_tasks[item_id] = new_task.id
@@ -183,11 +183,10 @@ WIP limit controls total in-flight features (features not in briefings, ready, o
 **Understand the difference:**
 
 ### Dependency Waves (CORRECT - respect these)
-Items are grouped by dependency depth. Use the `deps_check` MCP tool to see waves and ready items:
+Items are grouped by dependency depth. Use `ateam deps-check checkDeps --json` to see waves and ready items:
 ```
-deps_check(verbose: true)
+ateam deps-check checkDeps --json
 # Returns: { "waves": { "0": ["001", "002"], "1": ["003", "004"] }, "readyItems": ["001", "002"] }
-# Without verbose, only returns: { "readyItems": ["001", "002"] }
 ```
 - Wave 0: items with no dependencies
 - Wave 1: items that depend on Wave 0 items
@@ -238,11 +237,11 @@ if item_003_deps_done:  # 003 depends only on 001
 
 **Before starting the orchestration loop**, run pre-mission checks to ensure the codebase is in a clean state:
 
-```
-mission_precheck()
+```bash
+ateam missions-precheck missionPrecheck --json
 ```
 
-This MCP tool:
+This command:
 - Reads `ateam.config.json` to determine which checks to run (lint, unit tests)
 - Runs the configured pre-checks
 - Returns error if any check fails
@@ -271,10 +270,10 @@ Follow the loaded playbook for all dispatch operations.
 
 ### Session Progress Tracking (Native Tasks)
 
-Use Claude's native task system (`TaskCreate`, `TaskUpdate`, `TaskList`) to track your orchestration milestones. These are NOT the same as MCP work items - they're session-level checkpoints for CLI visibility.
+Use Claude's native task system (`TaskCreate`, `TaskUpdate`, `TaskList`) to track your orchestration milestones. These are NOT the same as ateam CLI work items - they're session-level checkpoints for CLI visibility.
 
 **Why use both systems:**
-- **MCP items** = what the mission accomplishes (persistent in database, Kanban visible, survives restarts)
+- **ateam CLI items** = what the mission accomplishes (persistent in database, Kanban visible, survives restarts)
 - **Native tasks** = Hannibal's progress through the mission (session-level, CLI visible, ephemeral)
 
 **Create tasks for major phases:**
@@ -301,28 +300,28 @@ TaskUpdate(taskId: "1", status: "in_progress")
 TaskUpdate(taskId: "1", status: "completed")
 ```
 
-**Do NOT mirror MCP items as native tasks.** Native tasks track orchestration milestones (waves, phases), not individual feature progress. The MCP board already tracks per-item status.
+**Do NOT mirror ateam CLI items as native tasks.** Native tasks track orchestration milestones (waves, phases), not individual feature progress. The ateam board already tracks per-item status.
 
 ## Agent Dispatch
 
-**IMPORTANT: Use the `board_move` MCP tool with the `agent` parameter - it automatically claims the item and updates agent status.**
+**IMPORTANT: Use `ateam board-move moveItem` with the `--agent` flag - it automatically claims the item and updates agent status.**
 
 Dispatch patterns for each agent (Murdock, B.A., Lynch, Amy, Tawnia) are defined in the loaded orchestration playbook. Refer to the playbook for exact dispatch syntax and completion detection.
 
 Read current agent assignments from the board:
-```
-board_read(filter: "agents")
+```bash
+ateam board getBoard --json
 ```
 
 ## Handling Rejections
 
-When Lynch rejects, use the `item_reject` MCP tool:
+When Lynch rejects, use the `ateam items rejectItem` command:
 
-```
-item_reject(itemId: "001", agent: "Lynch", reason: "Missing error handling tests")
+```bash
+ateam items rejectItem --id "WI-001" --agent "Lynch" --reason "Missing error handling tests"
 ```
 
-The tool automatically:
+The command automatically:
 - Increments `rejection_count` in the work item
 - Adds to rejection history
 - Moves item to `ready` stage (for retry) or `blocked` stage (if rejection_count >= 2)
@@ -386,13 +385,12 @@ Task(
 
 Add Amy's findings to the rejection record:
 
-```
-item_reject(
-  itemId: "001",
-  agent: "Lynch",
-  reason: "Missing error handling",
-  diagnosis: "Root cause: Promise rejection not caught at src/services/auth.ts:45. Fix: Add try/catch around fetchUser call."
-)
+```bash
+ateam items rejectItem \
+  --id "WI-001" \
+  --agent "Lynch" \
+  --reason "Missing error handling" \
+  --diagnosis "Root cause: Promise rejection not caught at src/services/auth.ts:45. Fix: Add try/catch around fetchUser call."
 ```
 
 B.A. will see this diagnosis when picking up the item for retry.
@@ -401,9 +399,9 @@ B.A. will see this diagnosis when picking up the item for retry.
 
 When Lynch approves, move the item to **probing** (NOT done) for Amy's mandatory investigation:
 
-```
+```bash
 # Move to probing (auto-releases Lynch's claim)
-board_move(itemId: "001", to: "probing", agent: "Amy")
+ateam board-move moveItem --itemId "WI-001" --toStage "probing" --agent "Amy"
 ```
 
 Then dispatch Amy to probe the feature (see the loaded orchestration playbook for dispatch details).
@@ -413,23 +411,13 @@ When Amy completes and verifies the feature, advance the item to the done stage.
 ## Reading Board State
 
 Get full board state:
-```
-board_read()
-```
-
-Get board with agent status:
-```
-board_read(filter: "agents")
-```
-
-Get specific column:
-```
-board_read(filter: "column:testing")
+```bash
+ateam board getBoard --json
 ```
 
 Get specific item:
-```
-board_read(filter: "item:001")
+```bash
+ateam items getItem --id "WI-001"
 ```
 
 ## Final Mission Review
@@ -438,24 +426,24 @@ When ALL items reach `done` stage, dispatch Lynch for a final holistic review of
 
 ### Check if Final Review Needed
 
-```
+```bash
 # Read board state
-board_read()
+ateam board getBoard --json
 ```
 
 If `phases.done` contains all items AND `phases.testing`, `phases.implementing`, `phases.review` are empty → trigger final review.
 
 ### Include PRD in Final Review
 
-Get the PRD path from `mission_current()` and pass it to Lynch so he can cross-reference requirements against the delivered code. The PRD path is available in the mission metadata returned by the MCP tool.
+Get the PRD path from `ateam missions-current getCurrentMission --json` and pass it to Lynch so he can cross-reference requirements against the delivered code. The PRD path is available in the mission metadata returned by the command.
 
 ### Collect All Output Files
 
 Read each done item and collect all `outputs.test`, `outputs.impl`, and `outputs.types` paths:
 
-```
+```bash
 # For each item in done stage, read its outputs
-board_read(filter: "item:001")
+ateam items getItem --id "WI-001"
 # Extract outputs.test, outputs.impl, outputs.types
 ```
 
@@ -472,9 +460,9 @@ Use the loaded orchestration playbook's "Final Mission Review Dispatch" section 
 ```
 
 **If FINAL REJECTED:**
-```
+```bash
 # For each item listed in rejection:
-item_reject(itemId: "003", agent: "Lynch", reason: "Race condition in token refresh")
+ateam items rejectItem --id "WI-003" --agent "Lynch" --reason "Race condition in token refresh"
 ```
 
 Items return to `ready` stage and go through the pipeline again. If rejection_count >= 2, they escalate to `blocked` stage.
@@ -483,11 +471,11 @@ Items return to `ready` stage and go through the pipeline again. If rejection_co
 
 **After Lynch returns `VERDICT: FINAL APPROVED`**, run post-mission checks to verify everything works:
 
-```
-mission_postcheck()
+```bash
+ateam missions-postcheck missionPostcheck --json
 ```
 
-This MCP tool:
+This command:
 - Reads `ateam.config.json` to determine which checks to run (lint, unit, e2e)
 - Runs the configured post-checks
 - Updates mission state with results
@@ -524,7 +512,7 @@ When Tawnia completes, she reports:
 
 ### Mission State Update
 
-After Tawnia completes successfully, the mission state is updated with documentation status via the `agent_stop` MCP tool, which records:
+After Tawnia completes successfully, the mission state is updated with documentation status via `ateam agents-stop agentStop`, which records:
 - Files modified/created
 - Commit hash
 - Summary of documentation changes
@@ -581,8 +569,8 @@ These are ABSOLUTE prohibitions. You MUST NOT violate these under ANY circumstan
 2. **NEVER use Write/Edit on test files** - Tests belong to Murdock
 3. **NEVER approve/reject work items** - Verdicts belong to Lynch
 4. **NEVER fix bugs directly** - Amy reports, B.A. fixes
-5. **NEVER bypass MCP tools** - All state changes via MCP
-6. **NEVER use `mv` on files to change stages** - Use the `board_move` MCP tool
+5. **NEVER bypass ateam CLI** - All state changes via `ateam` commands
+6. **NEVER use `mv` on files to change stages** - Use `ateam board-move moveItem`
 
 ### When Agents Fail Due to Permissions
 

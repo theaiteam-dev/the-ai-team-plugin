@@ -61,9 +61,9 @@ Each feature flows through stages sequentially. Different features can be at dif
 1. **Dependency waves** - Items wait in `briefings` until deps reach `done` (correct waiting)
 2. **Pipeline flow** - Items advance IMMEDIATELY on completion, no stage batching (critical)
 
-Use the `deps_check` MCP tool to see which items are ready. Within a wave, items flow independently through stages.
+Use `ateam deps-check checkDeps --json` to see which items are ready. Within a wave, items flow independently through stages.
 
-**True Individual Item Tracking:** Items advance immediately when their agent completes - no waiting for batch completion. In legacy mode, Hannibal polls TaskOutput for each background agent individually. In native teams mode, agents send completion messages via SendMessage. In both modes, agents signal completion via the `agent_stop` MCP tool.
+**True Individual Item Tracking:** Items advance immediately when their agent completes - no waiting for batch completion. In legacy mode, Hannibal polls TaskOutput for each background agent individually. In native teams mode, agents send completion messages via SendMessage. In both modes, agents signal completion via `ateam agents-stop agentStop`.
 
 When ALL features reach `done`, Lynch performs a **Final Mission Review** of the entire codebase, checking for cross-cutting issues (consistency, race conditions, security, code quality).
 
@@ -76,7 +76,7 @@ All mission state is stored in the **A(i)-Team API database**, not on the local 
 - **Activity feeds**: Live logging of agent actions
 - **Persistence**: Mission state survives Claude Code session restarts
 
-The MCP server acts as a bridge between Claude Code and the API, sending the project ID in every request via the `X-Project-ID` HTTP header.
+The `ateam` CLI binary communicates with the API, reading `ATEAM_PROJECT_ID` from the environment automatically and sending it with every request.
 
 ### Work Item Format
 
@@ -95,8 +95,8 @@ outputs:
 dependencies: []
 parallel_group: "group-name"
 rejection_count: 0
-assigned_agent: "Murdock"                   # Set by agent_start, cleared by agent_stop
-work_log:                                   # Populated by agent_stop
+assigned_agent: "Murdock"                   # Set by agentStart, cleared by agentStop
+work_log:                                   # Populated by agentStop
   - agent: "Murdock"
     timestamp: "2024-01-15T10:30:00Z"
     status: "success"
@@ -113,11 +113,11 @@ The `outputs` field is critical - without it, Murdock and B.A. don't know where 
 - The target project is the user's working directory where `/ai-team:*` commands are run
 - NEVER explore, search, or modify files in the ai-team plugin directory (`.claude/ai-team/` or similar)
 - When Face or other agents explore codebases, they explore the TARGET PROJECT's `src/`, `tests/`, etc.
-- The MCP tools handle all communication with the A(i)-Team system - no need to explore plugin internals
+- The `ateam` CLI binary handles all communication with the A(i)-Team system - no need to explore plugin internals
 
 ### Agent Boundaries
 - **Hannibal**: Orchestrates ONLY. NEVER uses Write/Edit on `src/**` or test files. Delegates ALL coding to subagents. If pipeline is stuck, reports status and waits for human intervention - never codes a workaround.
-- **Face**: Creates and updates work items via MCP tools. Does NOT write tests or implementation. On second pass, uses MCP tools ONLY (no Glob/Grep).
+- **Face**: Creates and updates work items via `ateam` CLI. Does NOT write tests or implementation. On second pass, uses `ateam` CLI ONLY (no Glob/Grep).
 - **Sosa**: Reviews and critiques work items. Does NOT modify items directly - provides recommendations for Face.
 - **Murdock**: Writes ONLY tests and types. Does NOT write implementation code.
 - **B.A.**: Writes ONLY implementation. Tests already exist from Murdock.
@@ -127,7 +127,7 @@ The `outputs` field is critical - without it, Murdock and B.A. don't know where 
 
 ### Stage Transitions
 
-Use the `board_move` MCP tool for all stage transitions. The tool:
+Use `ateam board-move moveItem` for all stage transitions. The command:
 - Validates the transition is allowed
 - Enforces WIP limits
 - Logs the transition to the activity feed
@@ -185,7 +185,7 @@ Smallest independently-completable units:
 
 The A(i)-Team uses two distinct task tracking systems for different purposes:
 
-**MCP Work Items** (`item_create`, `board_move`, etc.):
+**ateam CLI Work Items** (`ateam items createItem`, `ateam board-move moveItem`, etc.):
 - Persistent in API database
 - Visible in Kanban UI
 - Survive session restarts
@@ -197,7 +197,7 @@ The A(i)-Team uses two distinct task tracking systems for different purposes:
 - Lost on session restart
 - Track: Hannibal's orchestration milestones (waves, phases)
 
-Use MCP tools for mission items. Use native tasks for orchestration checkpoints. Do NOT mirror one system to the other - they track different concerns.
+Use `ateam` CLI for mission items. Use native tasks for orchestration checkpoints. Do NOT mirror one system to the other - they track different concerns.
 
 ### Agent Dispatch
 
@@ -219,46 +219,61 @@ Model selection is defined in each agent's frontmatter (`agents/*.md`) — do NO
 - Lynch-Final: `subagent_type: "ai-team:lynch-final"` → Final Mission Review (PRD+diff scoped)
 - Tawnia: `subagent_type: "ai-team:tawnia"` → after post-checks pass
 
-## MCP Tools
+## ateam CLI
 
-Agents use MCP tools for all board and item operations. The MCP server exposes 21 tools across 5 modules:
+Agents interact with the A(i)-Team API by running the `ateam` binary via the `Bash` tool. The binary lives at `${CLAUDE_PLUGIN_ROOT}/bin/ateam` (installed) or `~/go/bin/ateam` (dev). It reads `ATEAM_PROJECT_ID` from the environment automatically.
 
-| Module | Tools | Description |
-|--------|-------|-------------|
-| **Board** | `board_read`, `board_move`, `board_claim`, `board_release` | Board state and item movement |
-| **Items** | `item_create`, `item_update`, `item_get`, `item_list`, `item_reject`, `item_render` | Work item CRUD operations |
-| **Agents** | `agent_start`, `agent_stop` | Agent lifecycle hooks |
-| **Missions** | `mission_init`, `mission_current`, `mission_precheck`, `mission_postcheck`, `mission_archive` | Mission lifecycle management |
-| **Utils** | `plugin_root`, `deps_check`, `activity_log`, `log` | Plugin path resolution, dependency validation, and logging |
+Usage: `ateam <resource> <command> [flags]`
 
-### Agent Lifecycle Tools
+### CLI Reference
 
-Working agents (Murdock, B.A., Lynch, Lynch-Final, Amy, Tawnia) use lifecycle tools:
+| Operation | Command |
+|-----------|---------|
+| Read board | `ateam board getBoard --json` |
+| Move item | `ateam board-move moveItem --itemId <id> --toStage <stage>` |
+| Claim item | `ateam board-claim claimItem --itemId <id> --agent <name>` |
+| Release item | `ateam board-release releaseItem --itemId <id>` |
+| Create item | `ateam items createItem --title "..." --type feature ...` |
+| Get item | `ateam items getItem --id <id>` |
+| List items | `ateam items listItems --json` |
+| Update item | `ateam items updateItem --id <id> [flags]` |
+| Reject item | `ateam items rejectItem --id <id>` |
+| Render item | `ateam items renderItem --id <id>` |
+| Agent start | `ateam agents-start agentStart --itemId <id> --agent <name>` |
+| Agent stop | `ateam agents-stop agentStop --itemId <id> --agent <name> --status success --summary "..."` |
+| Create mission | `ateam missions createMission [flags]` |
+| Current mission | `ateam missions-current getCurrentMission --json` |
+| Pre-check | `ateam missions-precheck missionPrecheck --json` |
+| Post-check | `ateam missions-postcheck missionPostcheck --json` |
+| Archive mission | `ateam missions-archive archiveMission --json` |
+| Check deps | `ateam deps-check checkDeps --json` |
+| Log activity | `ateam activity createActivityEntry --agent <name> --message "..." --level info` |
+| List activity | `ateam activity listActivity --json` |
 
-**Start Tool** (`agent_start`):
-```
-Parameters:
-  - itemId: "007"
-  - agent: "murdock"
+### Agent Lifecycle Commands
+
+Working agents (Murdock, B.A., Lynch, Lynch-Final, Amy, Tawnia) use lifecycle commands:
+
+**Start** (`ateam agents-start agentStart`):
+```bash
+ateam agents-start agentStart --itemId "WI-007" --agent "murdock"
 ```
 - Claims the item in the database
 - Records `assigned_agent` on the work item
 - The kanban UI shows which agent is working on each card
 
-**Stop Tool** (`agent_stop`):
-```
-Parameters:
-  - itemId: "007"
-  - agent: "murdock"
-  - status: "success"
-  - summary: "Created 5 test cases"
-  - files_created: ["src/__tests__/feature.test.ts"]
+**Stop** (`ateam agents-stop agentStop`):
+```bash
+ateam agents-stop agentStop \
+  --itemId "WI-007" \
+  --agent "murdock" \
+  --status success \
+  --summary "Created 5 test cases" \
+  --filesCreated "src/__tests__/feature.test.ts"
 ```
 - Marks completion in the database
 - Clears `assigned_agent` from the item
 - Appends work summary to `work_log` array
-
-All tools automatically include the `X-Project-ID` header from the `ATEAM_PROJECT_ID` environment variable.
 
 ### Observability: Hook Events & Token Usage
 
@@ -284,7 +299,7 @@ Returns per-agent breakdown with model, token counts, and estimated cost:
 }
 ```
 
-**Useful API endpoints** (all require `X-Project-ID` header):
+**Useful API endpoints** (all require `X-Project-ID` header, sent automatically by `ateam`):
 - `GET /api/projects` — list all projects
 - `GET /api/missions` — list missions for a project
 - `GET /api/missions/current` — get active mission

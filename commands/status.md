@@ -11,7 +11,7 @@ Check mission progress and current state.
 ## Behavior
 
 1. **Validate mission exists**
-   Use `mission_current` MCP tool to check for active mission.
+   Run `ateam missions-current getCurrentMission --json` to check for active mission.
    ```
    if mission not found:
        error "No mission found. Run /ai-team:plan first."
@@ -19,7 +19,7 @@ Check mission progress and current state.
    ```
 
 2. **Read board state**
-   - Use `board_read` MCP tool to get board state
+   - Run `ateam board getBoard --json` to get board state
    - Count items in each stage
    - Check current assignments
 
@@ -88,23 +88,23 @@ BLOCKED: 0
 ═══════════════════════════════════════════════════════════════
 ```
 
-## MCP Tools Used
+## CLI Commands Used
 
-| Tool | Purpose |
-|------|---------|
-| `mission_current` | Check mission exists and get metadata |
-| `board_read` | Get full board state with items by stage |
-| `item_list` | Get items filtered by stage (optional) |
+| Command | Purpose |
+|---------|---------|
+| `ateam missions-current getCurrentMission --json` | Check mission exists and get metadata |
+| `ateam board getBoard --json` | Get full board state with items by stage |
+| `ateam items listItems --json` | Get items filtered by stage (optional) |
 
 ## Implementation Notes
 
 This is a read-only command that:
 
-1. Calls `board_read` MCP tool to get board state
+1. Runs `ateam board getBoard --json` to get board state
 2. Formats ASCII table output
 3. Calculates statistics from the response
 
-No agents are launched - this uses MCP tools directly.
+No agents are launched - this uses the ateam CLI directly.
 
 ## Errors
 

@@ -1,8 +1,9 @@
 {
+  "ateamCliVersion": "latest",
   "packageManager": "bun",
   "checks": {
-    "lint": "cd packages/mcp-server && bun run lint",
-    "unit": "cd packages/mcp-server && bun run test",
+    "lint": null,
+    "unit": null,
     "e2e": null
   },
   "precheck": ["lint", "unit"],

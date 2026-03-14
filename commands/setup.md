@@ -15,10 +15,11 @@ Configure Claude Code permissions and project settings for A(i)-Team.
 3. **Sets up** permissions for background agents
 4. **Configures** native Agent Teams if desired (optional)
 5. **Creates** `ateam.config.json` with project-specific settings
-6. **Injects** A(i)-Team instructions into CLAUDE.md (so Claude uses the workflow)
-7. **Detects** Docker and offers to start kanban-viewer if not running
-8. **Verifies** API server connectivity
-9. **Checks** for Playwright plugin (optional, for browser testing)
+6. **Downloads** the `ateam` CLI binary from GitHub releases (if not already present)
+7. **Injects** A(i)-Team instructions into CLAUDE.md (so Claude uses the workflow)
+8. **Detects** Docker and offers to start kanban-viewer if not running
+9. **Verifies** API server connectivity
+10. **Checks** for Playwright plugin (optional, for browser testing)
 
 ## Behavior
 
@@ -75,7 +76,7 @@ AskUserQuestion({
 }
 ```
 
-**IMPORTANT:** Both `ATEAM_PROJECT_ID` and `ATEAM_API_URL` must be set in `.claude/settings.local.json` for the MCP server to function correctly. The MCP server reads these from environment variables, NOT from `ateam.config.json`.
+**IMPORTANT:** Both `ATEAM_PROJECT_ID` and `ATEAM_API_URL` must be set in `.claude/settings.local.json`. The `ateam` CLI reads these from environment variables, NOT from `ateam.config.json`.
 
 ### Step 2: Auto-Detect Project Settings
 
@@ -268,7 +269,157 @@ Based on answers, create `ateam.config.json` in project root:
 - `devServer.restart`: Command to restart the server (e.g., to pick up code changes)
 - `devServer.managed`: If false, user manages server; Amy checks if running but doesn't start/restart it
 
-### Step 8: Inject A(i)-Team Instructions into CLAUDE.md
+### Step 8: Download `ateam` CLI Binary
+
+The `ateam` CLI provides local tooling for mission management. Download it from GitHub releases if not already present.
+
+**Read the desired version from `ateam.config.json`:**
+```
+Read ateam.config.json and extract the "ateamCliVersion" field.
+Default to "latest" if not set.
+```
+
+**Run the following bash script to detect platform and download:**
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
+BIN_DIR="${PLUGIN_ROOT}/bin"
+BINARY="${BIN_DIR}/ateam"
+
+# TODO: Update this if the repo is hosted elsewhere
+GITHUB_REPO="queso/the-ai-team-plugin"
+
+# Read desired version from ateam.config.json (default: "latest")
+DESIRED_VERSION="latest"
+if [ -f ateam.config.json ]; then
+  DETECTED=$(grep -o '"ateamCliVersion"[[:space:]]*:[[:space:]]*"[^"]*"' ateam.config.json | sed 's/.*"ateamCliVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')
+  if [ -n "$DETECTED" ]; then
+    DESIRED_VERSION="$DETECTED"
+  fi
+fi
+
+# Detect platform
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m)
+
+case "$OS" in
+  darwin) PLATFORM="darwin" ;;
+  linux)  PLATFORM="linux" ;;
+  *)
+    echo "ERROR: Unsupported operating system: $OS"
+    echo "The ateam CLI supports darwin (macOS) and linux only."
+    exit 1
+    ;;
+esac
+
+case "$ARCH" in
+  x86_64|amd64) ARCH_SUFFIX="amd64" ;;
+  arm64|aarch64) ARCH_SUFFIX="arm64" ;;
+  *)
+    echo "ERROR: Unsupported architecture: $ARCH"
+    echo "The ateam CLI supports amd64 and arm64 only."
+    exit 1
+    ;;
+esac
+
+ASSET_NAME="ateam-${PLATFORM}-${ARCH_SUFFIX}"
+
+# Check if binary already exists and matches desired version
+if [ -f "$BINARY" ] && [ -x "$BINARY" ]; then
+  CURRENT_VERSION=$("$BINARY" --version 2>/dev/null || echo "unknown")
+  if [ "$DESIRED_VERSION" != "latest" ] && [ "$CURRENT_VERSION" = "$DESIRED_VERSION" ]; then
+    echo "✓ ateam CLI already installed (${CURRENT_VERSION})"
+    exit 0
+  fi
+  echo "Existing ateam CLI version: ${CURRENT_VERSION}"
+  echo "Desired version: ${DESIRED_VERSION} — updating..."
+fi
+
+# Resolve download URL
+if [ "$DESIRED_VERSION" = "latest" ]; then
+  DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/latest/download/${ASSET_NAME}"
+else
+  DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${DESIRED_VERSION}/${ASSET_NAME}"
+fi
+
+# Create bin directory
+mkdir -p "$BIN_DIR"
+
+# Download the binary
+echo "Downloading ateam CLI (${ASSET_NAME})..."
+echo "  URL: ${DOWNLOAD_URL}"
+
+HTTP_STATUS=$(curl -fSL -w "%{http_code}" -o "$BINARY" "$DOWNLOAD_URL" 2>/dev/null || true)
+
+if [ ! -f "$BINARY" ] || [ "$(wc -c < "$BINARY" | tr -d ' ')" -lt 1000 ]; then
+  echo ""
+  echo "ERROR: Failed to download ateam CLI binary."
+  echo "  URL: ${DOWNLOAD_URL}"
+  echo "  HTTP status: ${HTTP_STATUS:-unknown}"
+  echo ""
+  echo "Possible causes:"
+  echo "  - No release published yet for this version"
+  echo "  - Network connectivity issue"
+  echo "  - Repository is private (may need GITHUB_TOKEN)"
+  echo ""
+  echo "You can download it manually from:"
+  echo "  https://github.com/${GITHUB_REPO}/releases"
+  rm -f "$BINARY"
+  exit 1
+fi
+
+# Make executable
+chmod +x "$BINARY"
+
+# Verify it runs
+if "$BINARY" --help >/dev/null 2>&1; then
+  INSTALLED_VERSION=$("$BINARY" --version 2>/dev/null || echo "unknown")
+  echo "✓ ateam CLI installed successfully (${INSTALLED_VERSION})"
+  echo "  Location: ${BINARY}"
+else
+  echo ""
+  echo "WARNING: Binary downloaded but failed to execute."
+  echo "  This may indicate a platform mismatch or corrupt download."
+  echo "  Location: ${BINARY}"
+  echo "  Expected: ${ASSET_NAME}"
+  echo ""
+  echo "Try downloading manually from:"
+  echo "  https://github.com/${GITHUB_REPO}/releases"
+  exit 1
+fi
+```
+
+**Success output:**
+```
+Downloading ateam CLI (ateam-darwin-arm64)...
+✓ ateam CLI installed successfully (v1.2.3)
+  Location: /path/to/plugin/bin/ateam
+```
+
+**If already installed and up to date:**
+```
+✓ ateam CLI already installed (v1.2.3)
+```
+
+**If download fails:**
+```
+ERROR: Failed to download ateam CLI binary.
+  URL: https://github.com/queso/the-ai-team-plugin/releases/latest/download/ateam-darwin-arm64
+
+Possible causes:
+  - No release published yet for this version
+  - Network connectivity issue
+  - Repository is private (may need GITHUB_TOKEN)
+
+You can download it manually from:
+  https://github.com/queso/the-ai-team-plugin/releases
+```
+
+**Note:** The binary is downloaded to `${CLAUDE_PLUGIN_ROOT}/bin/ateam` which is gitignored. Each machine downloads its own platform-specific binary.
+
+### Step 9: Inject A(i)-Team Instructions into CLAUDE.md
 
 **Purpose:** Ensure Claude knows to use the A(i)-Team system for PRD work in this project.
 
@@ -340,7 +491,7 @@ Checking CLAUDE.md...
   ✓ A(i)-Team section already present
 ```
 
-### Step 9: Docker Detection and Kanban-Viewer Startup
+### Step 10: Docker Detection and Kanban-Viewer Startup
 
 The A(i)-Team kanban-viewer is included in this monorepo and provides a web-based Kanban board for mission tracking. It also serves as the API backend.
 
@@ -413,12 +564,12 @@ Alternatively, you can start it manually:
   cd packages/kanban-viewer && bun run dev
 ```
 
-### Step 10: Verify API Connectivity
+### Step 11: Verify API Connectivity
 
 Test connection to the A(i)-Team API server:
 
 ```
-Using mission_current MCP tool to verify API connectivity...
+Using ateam CLI to verify API connectivity...
 
 ✓ Connected to A(i)-Team API at http://localhost:3000
 ✓ Project ID: my-awesome-app
@@ -438,7 +589,7 @@ Or configure a different URL:
   Set ATEAM_API_URL in .claude/settings.local.json
 ```
 
-### Step 11: Check Browser Testing Tools
+### Step 12: Check Browser Testing Tools
 
 Check for agent-browser CLI (preferred) and Playwright plugin (fallback). See Plugin Dependencies section below.
 
@@ -464,9 +615,9 @@ Add these permissions to `.claude/settings.local.json`:
 }
 ```
 
-**CRITICAL:** Both `ATEAM_PROJECT_ID` and `ATEAM_API_URL` MUST be in the `env` section. The MCP server reads these as environment variables - it does NOT read from `ateam.config.json`.
+**CRITICAL:** Both `ATEAM_PROJECT_ID` and `ATEAM_API_URL` MUST be in the `env` section. The `ateam` CLI reads these as environment variables - it does NOT read from `ateam.config.json`.
 
-**Note:** All board and item operations are handled via MCP tools that communicate with the API server. No filesystem permissions are needed for mission state management.
+**Note:** All board and item operations are handled via `ateam` CLI calls that communicate with the API server. No filesystem permissions are needed for mission state management.
 
 | Permission | Purpose |
 |------------|---------|
@@ -478,7 +629,7 @@ Add these permissions to `.claude/settings.local.json`:
 
 ## Environment Variables
 
-The MCP server reads the following environment variables:
+The `ateam` CLI reads the following environment variables:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
@@ -516,6 +667,9 @@ Settings updated: .claude/settings.local.json
   env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1"
   env.ATEAM_TEAMMATE_MODE = "auto"
 
+Downloading ateam CLI...
+  ✓ ateam CLI installed (v1.2.3) at .claude/ai-team/bin/ateam
+
 Updating CLAUDE.md...
   ✓ Added A(i)-Team integration instructions
 
@@ -531,7 +685,7 @@ Background agents can now:
   - Write implementation files
   - Create git commits (Tawnia)
 
-Board operations handled via MCP tools → API server.
+Board operations handled via ateam CLI → API server.
 CLAUDE.md updated with A(i)-Team workflow instructions.
 
 ⚠️  RESTART REQUIRED
@@ -605,11 +759,11 @@ To check if Playwright tools are available, look for MCP tools matching `mcp__*p
 - `mcp__plugin_playwright_playwright__browser_snapshot`
 - `mcp__plugin_playwright_playwright__browser_click`
 
-If these tools exist, Playwright is properly installed.
+If these tools exist, Playwright is properly installed as a fallback browser tool for Amy.
 
 ## Notes
 
-- **Restart required after first setup** - The MCP server reads environment variables at startup, so you must restart Claude Code after initial setup for `ATEAM_PROJECT_ID` and `ATEAM_API_URL` to take effect
+- **Restart required after first setup** - Environment variables are loaded when Claude Code starts, so you must restart Claude Code after initial setup for `ATEAM_PROJECT_ID` and `ATEAM_API_URL` to take effect
 - Uses `settings.local.json` by default (gitignored) to avoid committing permissions
 - Run this once per project before using `/ai-team:plan`
 - Safe to run multiple times - won't duplicate permissions, CLAUDE.md sections, or teammate config
