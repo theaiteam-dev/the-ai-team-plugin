@@ -107,8 +107,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json(apiError, { status: 400 });
     }
 
-    const body = await request.json();
-    const { passed, blockers = [], output = {} } = body;
+    // Parse request body — must happen before any DB writes so that invalid
+    // input returns a 400 without leaving the mission stuck in 'postchecking'.
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      const apiError: ApiError = {
+        success: false,
+        error: {
+          code: 'INVALID_JSON',
+          message: 'Request body contains invalid JSON',
+        },
+      };
+      return NextResponse.json(apiError, { status: 400 });
+    }
+
+    const { passed, blockers = [], output = {} } = body as Record<string, unknown>;
 
     // Validate body fields
     if (typeof passed !== 'boolean') {
@@ -142,6 +157,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         },
       };
       return NextResponse.json(apiError, { status: 400 });
+    }
+
+    // Validate that every value in output is a non-null object (not e.g. null or a primitive)
+    for (const [key, value] of Object.entries(output as Record<string, unknown>)) {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        const apiError: ApiError = {
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: `output["${key}"] must be a non-null object`,
+          },
+        };
+        return NextResponse.json(apiError, { status: 400 });
+      }
     }
 
     // Update mission state to postchecking

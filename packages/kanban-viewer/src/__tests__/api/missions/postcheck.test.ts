@@ -309,6 +309,25 @@ describe('POST /api/missions/postcheck', () => {
   });
 
   describe('input validation', () => {
+    it('should return 400 for malformed JSON body', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+
+      const request = new NextRequest('http://localhost:3000/api/missions/postcheck', {
+        method: 'POST',
+        headers: { 'X-Project-ID': 'test-project', 'Content-Type': 'application/json' },
+        body: 'not-valid-json{{{',
+      });
+
+      const response = await POST(request);
+
+      expect(response.status).toBe(400);
+      const data: ApiError = await response.json();
+      expect(data.success).toBe(false);
+      expect(data.error.code).toBe('INVALID_JSON');
+      // mission must NOT have been moved to postchecking
+      expect(mockPrismaClient.mission.update).not.toHaveBeenCalled();
+    });
+
     it('should return 400 if passed is missing from body', async () => {
       mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
 
@@ -319,6 +338,8 @@ describe('POST /api/missions/postcheck', () => {
       const data: ApiError = await response.json();
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('VALIDATION_ERROR');
+      // mission must NOT have been moved to postchecking
+      expect(mockPrismaClient.mission.update).not.toHaveBeenCalled();
     });
 
     it('should return 400 if blockers is not an array', async () => {
@@ -341,6 +362,22 @@ describe('POST /api/missions/postcheck', () => {
       expect(response.status).toBe(400);
       const data: ApiError = await response.json();
       expect(data.success).toBe(false);
+      // mission must NOT have been moved to postchecking
+      expect(mockPrismaClient.mission.update).not.toHaveBeenCalled();
+    });
+
+    it('should return 400 if an output entry value is null', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+
+      const body = { passed: true, blockers: [], output: { lint: null } };
+      const response = await POST(makeRequest(body as unknown as Record<string, unknown>));
+
+      expect(response.status).toBe(400);
+      const data: ApiError = await response.json();
+      expect(data.success).toBe(false);
+      expect(data.error.code).toBe('VALIDATION_ERROR');
+      // mission must NOT have been moved to postchecking
+      expect(mockPrismaClient.mission.update).not.toHaveBeenCalled();
     });
 
     it('should use empty defaults when blockers and output are omitted', async () => {

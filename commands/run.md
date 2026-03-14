@@ -214,7 +214,11 @@ WIP limit controls how many features are in-flight (not in briefings, ready, or 
    # config.checks maps each name to its shell command.
    # Results are stored in output keyed by check name: output["lint"], output["unit"], etc.
    for checkName in config.postcheck:
-       if checkName not in config.checks or config.checks[checkName] is null:
+       if checkName not in config.checks:
+           passed = false
+           blockers.append("Check '" + checkName + "' is listed in config.postcheck but has no command in config.checks")
+           continue
+       if config.checks[checkName] is null:
            # Skip null commands (e.g. e2e: null means no e2e checks)
            continue
 
