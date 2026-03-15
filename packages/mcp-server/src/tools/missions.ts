@@ -198,9 +198,15 @@ interface MissionPrecheckResult {
 
 interface MissionPostcheckResult {
   success: boolean;
-  allPassed: boolean;
-  checks: CheckResult[];
-  boardUpdated?: boolean;
+  data: {
+    passed: boolean;
+    lintErrors: number;
+    unitTestsPassed: number;
+    unitTestsFailed: number;
+    e2eTestsPassed: number;
+    e2eTestsFailed: number;
+    blockers: string[];
+  };
 }
 
 interface MissionArchiveResult {

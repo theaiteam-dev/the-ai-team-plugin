@@ -215,10 +215,11 @@ describe('POST /api/missions/postcheck', () => {
 
     it('should parse unitTestsPassed and unitTestsFailed from output.unit', async () => {
       mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+      mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'failed' });
 
       const body = {
-        passed: true,
-        blockers: [],
+        passed: false,
+        blockers: ['unit tests failing: 2 failed'],
         output: {
           lint: { stdout: '', stderr: '', timedOut: false },
           unit: { stdout: 'Tests: 8 passed, 2 failed, 10 total', stderr: '', timedOut: false },
@@ -234,10 +235,11 @@ describe('POST /api/missions/postcheck', () => {
 
     it('should parse e2eTestsPassed and e2eTestsFailed from output.e2e', async () => {
       mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+      mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'failed' });
 
       const body = {
-        passed: true,
-        blockers: [],
+        passed: false,
+        blockers: ['e2e: 1 test failed'],
         output: {
           lint: { stdout: '', stderr: '', timedOut: false },
           unit: { stdout: '', stderr: '', timedOut: false },
@@ -269,11 +271,12 @@ describe('POST /api/missions/postcheck', () => {
 
     it('should handle custom check names dynamically (not hardcoded lint/unit/e2e)', async () => {
       mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+      mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'failed' });
 
       // "linting" contains "lint" → lintErrors; "tests" → unitTests; "playwright" → e2e
       const body = {
-        passed: true,
-        blockers: [],
+        passed: false,
+        blockers: ['linting: 2 errors found', 'tests: 1 failed'],
         output: {
           linting: { stdout: '2 errors found', stderr: '', timedOut: false },
           tests: { stdout: 'Tests: 7 passed, 1 failed', stderr: '', timedOut: false },

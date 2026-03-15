@@ -456,12 +456,15 @@ describe('Mission Tools', () => {
         const mockResponse = {
           data: {
             success: true,
-            allPassed: true,
-            checks: [
-              { name: 'lint', passed: true },
-              { name: 'unit', passed: true },
-            ],
-            boardUpdated: true,
+            data: {
+              passed: true,
+              lintErrors: 0,
+              unitTestsPassed: 10,
+              unitTestsFailed: 0,
+              e2eTestsPassed: 0,
+              e2eTestsFailed: 0,
+              blockers: [],
+            },
           },
           status: 200,
           headers: {},
@@ -485,18 +488,22 @@ describe('Mission Tools', () => {
           blockers: [],
           output: input.output,
         });
-        expect(result.content[0].text).toContain('allPassed');
+        expect(result.content[0].text).toContain('"passed":true');
       });
 
       it('should forward pre-computed failing results to API', async () => {
         const mockResponse = {
           data: {
             success: true,
-            allPassed: false,
-            checks: [
-              { name: 'lint', passed: false, error: '5 errors found' },
-            ],
-            boardUpdated: false,
+            data: {
+              passed: false,
+              lintErrors: 5,
+              unitTestsPassed: 0,
+              unitTestsFailed: 0,
+              e2eTestsPassed: 0,
+              e2eTestsFailed: 0,
+              blockers: ['lint failed: 5 errors found'],
+            },
           },
           status: 200,
           headers: {},
@@ -519,12 +526,23 @@ describe('Mission Tools', () => {
           blockers: input.blockers,
           output: input.output,
         });
-        expect(result.content[0].text).toContain('"allPassed":false');
+        expect(result.content[0].text).toContain('"passed":false');
       });
 
       it('should use empty defaults for blockers and output when omitted', async () => {
         const mockResponse = {
-          data: { success: true, allPassed: true, checks: [], boardUpdated: false },
+          data: {
+            success: true,
+            data: {
+              passed: true,
+              lintErrors: 0,
+              unitTestsPassed: 0,
+              unitTestsFailed: 0,
+              e2eTestsPassed: 0,
+              e2eTestsFailed: 0,
+              blockers: [],
+            },
+          },
           status: 200,
           headers: {},
         };
