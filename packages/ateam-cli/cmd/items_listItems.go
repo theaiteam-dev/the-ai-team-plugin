@@ -28,10 +28,10 @@ var itemsListItemsCmd = &cobra.Command{
 		c := client.NewClient(baseURL, token)
 		pathParams := map[string]string{}
 		queryParams := map[string]string{}
-		queryParams["stage"] = itemsListItemsCmd_stage
-		queryParams["type"] = itemsListItemsCmd_type
-		queryParams["priority"] = itemsListItemsCmd_priority
-		queryParams["agent"] = itemsListItemsCmd_agent
+		if cmd.Flags().Changed("stage")    { queryParams["stage"] = itemsListItemsCmd_stage }
+		if cmd.Flags().Changed("type")     { queryParams["type"] = itemsListItemsCmd_type }
+		if cmd.Flags().Changed("priority") { queryParams["priority"] = itemsListItemsCmd_priority }
+		if cmd.Flags().Changed("agent")    { queryParams["agent"] = itemsListItemsCmd_agent }
 		queryParams["includeArchived"] = strconv.FormatBool(itemsListItemsCmd_includeArchived)
 		if cmd.Flags().Changed("stage") { if err := validate.Enum("stage", itemsListItemsCmd_stage, []string{"briefings", "ready", "testing", "implementing", "review", "probing", "done", "blocked"}); err != nil { return err } }
 		if cmd.Flags().Changed("type") { if err := validate.Enum("type", itemsListItemsCmd_type, []string{"feature", "bug", "enhancement", "task"}); err != nil { return err } }
