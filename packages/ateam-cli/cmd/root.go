@@ -7,8 +7,9 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "ateam",
-	Short: "A(i)-Team Kanban Viewer API",
+	Use:     "ateam",
+	Short:   "A(i)-Team Kanban Viewer API",
+	Version: Version,
 }
 
 // Execute is the conventional cobra entry point called from main.

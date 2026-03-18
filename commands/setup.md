@@ -12,14 +12,13 @@ Configure Claude Code permissions and project settings for A(i)-Team.
 
 1. **Auto-detects** project settings from CLAUDE.md and package.json
 2. **Configures** the project ID environment variable for multi-project isolation
-3. **Sets up** permissions for background agents
-4. **Configures** native Agent Teams if desired (optional)
-5. **Creates** `ateam.config.json` with project-specific settings
-6. **Downloads** the `ateam` CLI binary from GitHub releases (if not already present)
-7. **Injects** A(i)-Team instructions into CLAUDE.md (so Claude uses the workflow)
-8. **Detects** Docker and offers to start kanban-viewer if not running
-9. **Verifies** API server connectivity
-10. **Checks** for Playwright plugin (optional, for browser testing)
+3. **Configures** native Agent Teams if desired (optional)
+4. **Creates** `ateam.config.json` with project-specific settings
+5. **Downloads** the `ateam` CLI binary from GitHub releases (if not already present)
+6. **Injects** A(i)-Team instructions into CLAUDE.md (so Claude uses the workflow)
+7. **Detects** Docker and offers to start kanban-viewer if not running
+8. **Verifies** API server connectivity
+9. **Checks** for Playwright plugin (optional, for browser testing)
 
 ## Behavior
 
@@ -95,19 +94,7 @@ AskUserQuestion({
 
 3. **Build detected config** from findings
 
-### Step 3: Configure Permissions
-
-Background agents (`run_in_background: true`) cannot prompt for user approval, so we pre-approve necessary permissions.
-
-1. **Check for existing settings**
-   - Look for `.claude/settings.local.json` (project-level, gitignored)
-   - Or `.claude/settings.json` (project-level, committed)
-
-2. **Determine project structure**
-   - Use detected source directory or default to `src/`
-   - Use detected test pattern or default to `__tests__`
-
-### Step 4: Configure Native Teams (Optional)
+### Step 3: Configure Native Teams (Optional)
 
 Claude Code supports native Agent Teams via `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, which provides direct agent-to-agent communication, interactive control via Shift+Up/Down arrows, and split pane visualization in the terminal.
 
@@ -183,7 +170,7 @@ Split pane visualization requires tmux. Either:
   3. Switch to "in-process" mode (no split panes)
 ```
 
-### Step 5: Confirm Detected Settings
+### Step 4: Confirm Detected Settings
 
 If settings were auto-detected from CLAUDE.md/package.json, **confirm them** instead of asking from scratch:
 
@@ -203,7 +190,7 @@ Does this look correct?
 
 Then use `AskUserQuestion` with detected values as the recommended option.
 
-### Step 6: Fill Gaps with Questions
+### Step 5: Fill Gaps with Questions
 
 Only ask questions for settings that **could not be detected**. Use `AskUserQuestion` for missing settings:
 
@@ -241,7 +228,7 @@ AskUserQuestion({
 })
 ```
 
-### Step 7: Write Config File
+### Step 6: Write Config File
 
 Based on answers, create `ateam.config.json` in project root:
 
@@ -269,7 +256,7 @@ Based on answers, create `ateam.config.json` in project root:
 - `devServer.restart`: Command to restart the server (e.g., to pick up code changes)
 - `devServer.managed`: If false, user manages server; Amy checks if running but doesn't start/restart it
 
-### Step 8: Download `ateam` CLI Binary
+### Step 7: Download `ateam` CLI Binary
 
 The `ateam` CLI provides local tooling for mission management. Download it from GitHub releases if not already present.
 
@@ -291,7 +278,17 @@ BINARY="${BIN_DIR}/ateam"
 # TODO: Update this if the repo is hosted elsewhere
 GITHUB_REPO="queso/the-ai-team-plugin"
 
-# Read desired version from ateam.config.json (default: "latest")
+# Read minimum required version from plugin.json (set by plugin authors on each release)
+MIN_CLI_VERSION=""
+PLUGIN_JSON="${PLUGIN_ROOT}/.claude-plugin/plugin.json"
+if [ -f "$PLUGIN_JSON" ]; then
+  DETECTED=$(grep -o '"minCliVersion"[[:space:]]*:[[:space:]]*"[^"]*"' "$PLUGIN_JSON" | sed 's/.*"minCliVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')
+  if [ -n "$DETECTED" ]; then
+    MIN_CLI_VERSION="$DETECTED"
+  fi
+fi
+
+# Read desired version from ateam.config.json (user pin, default: "latest")
 DESIRED_VERSION="latest"
 if [ -f ateam.config.json ]; then
   DETECTED=$(grep -o '"ateamCliVersion"[[:space:]]*:[[:space:]]*"[^"]*"' ateam.config.json | sed 's/.*"ateamCliVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')
@@ -299,6 +296,11 @@ if [ -f ateam.config.json ]; then
     DESIRED_VERSION="$DETECTED"
   fi
 fi
+
+# Semver comparison helper: returns 0 if $1 >= $2, 1 otherwise
+semver_gte() {
+  [ "$(printf '%s\n%s' "$1" "$2" | sort -V | head -1)" = "$2" ]
+}
 
 # Detect platform
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -326,15 +328,36 @@ esac
 
 ASSET_NAME="ateam-${PLATFORM}-${ARCH_SUFFIX}"
 
-# Check if binary already exists and matches desired version
+# Check if binary already exists and satisfies version requirements
 if [ -f "$BINARY" ] && [ -x "$BINARY" ]; then
-  CURRENT_VERSION=$("$BINARY" --version 2>/dev/null || echo "unknown")
-  if [ "$DESIRED_VERSION" != "latest" ] && [ "$CURRENT_VERSION" = "$DESIRED_VERSION" ]; then
+  CURRENT_VERSION=$("$BINARY" --version 2>/dev/null | awk '{print $NF}' || echo "unknown")
+
+  # Check minimum version requirement from plugin.json
+  MEETS_MIN=true
+  if [ -n "$MIN_CLI_VERSION" ] && [ "$CURRENT_VERSION" != "unknown" ]; then
+    if ! semver_gte "$CURRENT_VERSION" "$MIN_CLI_VERSION"; then
+      MEETS_MIN=false
+      echo "⚠ ateam CLI ${CURRENT_VERSION} is below minimum required version ${MIN_CLI_VERSION}"
+      echo "  Updating..."
+    fi
+  fi
+
+  # If pinned version matches and minimum is met, skip download
+  if [ "$MEETS_MIN" = "true" ] && [ "$DESIRED_VERSION" != "latest" ] && [ "$CURRENT_VERSION" = "$DESIRED_VERSION" ]; then
     echo "✓ ateam CLI already installed (${CURRENT_VERSION})"
     exit 0
   fi
-  echo "Existing ateam CLI version: ${CURRENT_VERSION}"
-  echo "Desired version: ${DESIRED_VERSION} — updating..."
+
+  # If latest requested and minimum is met, skip download
+  if [ "$MEETS_MIN" = "true" ] && [ "$DESIRED_VERSION" = "latest" ]; then
+    echo "✓ ateam CLI already installed (${CURRENT_VERSION})"
+    exit 0
+  fi
+
+  if [ "$MEETS_MIN" = "true" ]; then
+    echo "Existing ateam CLI version: ${CURRENT_VERSION}"
+    echo "Desired version: ${DESIRED_VERSION} — updating..."
+  fi
 fi
 
 # Resolve download URL
@@ -419,7 +442,7 @@ You can download it manually from:
 
 **Note:** The binary is downloaded to `${CLAUDE_PLUGIN_ROOT}/bin/ateam` which is gitignored. Each machine downloads its own platform-specific binary.
 
-### Step 9: Inject A(i)-Team Instructions into CLAUDE.md
+### Step 8: Inject A(i)-Team Instructions into CLAUDE.md
 
 **Purpose:** Ensure Claude knows to use the A(i)-Team system for PRD work in this project.
 
@@ -491,7 +514,7 @@ Checking CLAUDE.md...
   ✓ A(i)-Team section already present
 ```
 
-### Step 10: Docker Detection and Kanban-Viewer Startup
+### Step 9: Docker Detection and Kanban-Viewer Startup
 
 The A(i)-Team kanban-viewer is included in this monorepo and provides a web-based Kanban board for mission tracking. It also serves as the API backend.
 
@@ -564,7 +587,7 @@ Alternatively, you can start it manually:
   cd packages/kanban-viewer && bun run dev
 ```
 
-### Step 11: Verify API Connectivity
+### Step 10: Verify API Connectivity
 
 Test connection to the A(i)-Team API server:
 
@@ -589,35 +612,15 @@ Or configure a different URL:
   Set ATEAM_API_URL in .claude/settings.local.json
 ```
 
-### Step 12: Check Browser Testing Tools
+### Step 11: Check Browser Testing Tools
 
 Check for agent-browser CLI (preferred) and Playwright plugin (fallback). See Plugin Dependencies section below.
 
-## Required Permissions
+## Permissions
 
-Add these permissions to `.claude/settings.local.json`:
+Setup does **not** modify your permissions — that's your call. Background agents will prompt for approval when they need to write files or run git commands unless you pre-approve them.
 
-```json
-{
-  "env": {
-    "ATEAM_PROJECT_ID": "my-project-name",
-    "ATEAM_API_URL": "http://localhost:3000"
-  },
-  "permissions": {
-    "allow": [
-      "Bash(mkdir *)",
-      "Bash(git add *)",
-      "Bash(git commit *)",
-      "Write(src/**)",
-      "Edit(src/**)"
-    ]
-  }
-}
-```
-
-**CRITICAL:** Both `ATEAM_PROJECT_ID` and `ATEAM_API_URL` MUST be in the `env` section. The `ateam` CLI reads these as environment variables - it does NOT read from `ateam.config.json`.
-
-**Note:** All board and item operations are handled via `ateam` CLI calls that communicate with the API server. No filesystem permissions are needed for mission state management.
+If you want agents to run without interruption, add permissions to `.claude/settings.local.json` yourself:
 
 | Permission | Purpose |
 |------------|---------|
@@ -626,6 +629,10 @@ Add these permissions to `.claude/settings.local.json`:
 | `Bash(git commit *)` | Tawnia creates final commit |
 | `Write(src/**)` | Murdock writes tests, B.A. writes implementations |
 | `Edit(src/**)` | B.A. edits existing files during implementation |
+
+Adjust the glob patterns to match your project layout (e.g. `Write(lib/**)`, `Write(packages/*/src/**)`).
+
+**CRITICAL:** `ATEAM_PROJECT_ID` and `ATEAM_API_URL` MUST be in the `env` section of `.claude/settings.local.json`. The `ateam` CLI reads these as environment variables — it does NOT read from `ateam.config.json`.
 
 ## Environment Variables
 
@@ -650,13 +657,6 @@ Configuring project...
   Project ID: my-awesome-app (from folder name)
   API URL: http://localhost:3000
 
-Checking permissions...
-  + Bash(mkdir *)
-  + Bash(git add *)
-  + Bash(git commit *)
-  + Write(src/**)
-  + Edit(src/**)
-
 Configuring native teams...
   ✓ Agent Teams enabled
   ✓ Teammate mode: auto
@@ -680,11 +680,6 @@ Verifying API connectivity...
 Checking plugin dependencies...
   ✓ Playwright plugin detected
 
-Background agents can now:
-  - Write test files
-  - Write implementation files
-  - Create git commits (Tawnia)
-
 Board operations handled via ateam CLI → API server.
 CLAUDE.md updated with A(i)-Team workflow instructions.
 
@@ -706,13 +701,6 @@ If your project uses a different structure or API server, edit `.claude/settings
   "env": {
     "ATEAM_PROJECT_ID": "custom-project-id",
     "ATEAM_API_URL": "https://api.example.com"
-  },
-  "permissions": {
-    "allow": [
-      "Write(lib/**)",
-      "Write(test/**)",
-      "Write(packages/*/src/**)"
-    ]
   }
 }
 ```
@@ -764,9 +752,9 @@ If these tools exist, Playwright is properly installed as a fallback browser too
 ## Notes
 
 - **Restart required after first setup** - Environment variables are loaded when Claude Code starts, so you must restart Claude Code after initial setup for `ATEAM_PROJECT_ID` and `ATEAM_API_URL` to take effect
-- Uses `settings.local.json` by default (gitignored) to avoid committing permissions
+- Uses `settings.local.json` for env vars (gitignored) — permissions are not touched
 - Run this once per project before using `/ai-team:plan`
-- Safe to run multiple times - won't duplicate permissions, CLAUDE.md sections, or teammate config
+- Safe to run multiple times - won't duplicate CLAUDE.md sections or teammate config
 - Playwright plugin is recommended but not strictly required
 - Project ID enables running multiple A(i)-Team projects simultaneously
 - CLAUDE.md injection ensures Claude uses `/ai-team:plan` for PRD work instead of ad-hoc development

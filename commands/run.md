@@ -16,6 +16,33 @@ Execute the mission with the pipeline flow.
 - `--wip N` (optional): Set WIP limit (default: 3)
 - `--max-wip M` (optional): Set maximum WIP for adaptive scaling (default: 5)
 
+## Pre-Flight: CLI Version Check
+
+Before doing anything else, verify the `ateam` CLI meets the minimum version required by this plugin:
+
+```bash
+# Read minCliVersion from plugin.json
+MIN_CLI_VERSION=$(grep -o '"minCliVersion"[[:space:]]*:[[:space:]]*"[^"]*"' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json" | sed 's/.*"minCliVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')
+
+# Get current CLI version
+CURRENT_VERSION=$(${CLAUDE_PLUGIN_ROOT}/bin/ateam --version 2>/dev/null | awk '{print $NF}' || echo "not found")
+
+# Compare (sort -V puts older versions first)
+IS_SUFFICIENT=$([ "$(printf '%s\n%s' "$CURRENT_VERSION" "$MIN_CLI_VERSION" | sort -V | head -1)" = "$MIN_CLI_VERSION" ] && echo "yes" || echo "no")
+```
+
+```text
+if CURRENT_VERSION is "not found" OR IS_SUFFICIENT is "no":
+    Output to user:
+    "⚠ ateam CLI is outdated or missing (have: {CURRENT_VERSION}, need: ≥{MIN_CLI_VERSION}).
+
+    Run /ai-team:setup to update it, then re-run /ai-team:run"
+
+    STOP. Do not proceed.
+```
+
+If the version check passes, continue silently — no output needed.
+
 ## Pre-Flight: Model Check
 
 Before doing anything else, check your current model. Your system prompt contains your model ID (e.g., "You are powered by the model named Opus 4.6").
@@ -197,11 +224,48 @@ WIP limit controls how many features are in-flight (not in briefings, ready, or 
    - If FINAL REJECTED → specified items return to pipeline
 
 7. **Post-Mission Checks:**
-   Run `ateam missions-postcheck missionPostcheck --json`.
-   - Run after final review approves
-   - Verifies lint, unit tests, and e2e tests all pass
-   - Updates mission state with postcheck results
-   - If checks fail, items return to pipeline for fixes
+   Run checks via Bash first (like precheck), then call `ateam missions-postcheck missionPostcheck` with results.
+
+   Read `ateam.config.json` to get the list of check names (`config.postcheck`) and their commands
+   (`config.checks`). Run each check via Bash, capturing stdout, stderr, and exit code.
+   Then call `ateam missions-postcheck missionPostcheck` with the computed result:
+
+   ```text
+   config = Read("ateam.config.json")  # parse JSON
+
+   passed   = true
+   blockers = []
+   output   = {}
+
+   # config.postcheck lists the check names to run (e.g. ["lint", "unit"] by default).
+   # config.checks maps each name to its shell command.
+   # Results are stored in output keyed by check name: output["lint"], output["unit"], etc.
+   for checkName in config.postcheck:
+       if checkName not in config.checks:
+           passed = false
+           blockers.append("Check '" + checkName + "' is listed in config.postcheck but has no command in config.checks")
+           continue
+       if config.checks[checkName] is null:
+           # Skip null commands (e.g. e2e: null means no e2e checks)
+           continue
+
+       result = Bash(config.checks[checkName], capture: stdout+stderr+exitcode, timeout: 300s)
+       timedOut = (result.exitcode == TIMEOUT_CODE)
+       output[checkName] = { stdout: result.stdout, stderr: result.stderr, timedOut }
+
+       if timedOut:
+           passed = false
+           blockers.append(checkName + " timed out after 5 minutes")
+       elif result.exitcode != 0:
+           passed = false
+           blockers.append(checkName + " failed: " + result.stdout.slice(0,200))
+
+   ateam missions-postcheck missionPostcheck --passed {passed} --blockers {blockers} --output {output}
+   ```
+
+   - If `passed = true`: mission transitions to `completed`.
+   - If `passed = false`: mission transitions to `failed`. Report blockers to user.
+     Items that caused the failure return to pipeline for fixes.
 
 8. **Documentation Phase (Tawnia):**
    - Dispatch Tawnia when ALL three conditions are met:

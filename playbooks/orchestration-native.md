@@ -364,6 +364,31 @@ SendMessage(
 )
 ```
 
+**On retry (item was previously rejected):** Spawn a fresh agent named `ba-{id}-r{n}` and include rejection context. Do NOT reuse the existing ba session — it may have stale context from the failed attempt.
+```
+Task(
+  team_name: "mission-{missionId}",
+  name: "ba-{id}-r{n}",
+  subagent_type: "ai-team:ba",
+  description: "B.A.: {feature title} (retry {n})",
+  prompt: "... [B.A. prompt from agents/ba.md]
+
+  ## Prior Rejection
+  Lynch rejected this item: {rejection reason from work log}
+  {Amy diagnosis if available}
+  Address this specifically before anything else.
+
+  Feature Item:
+  [Full content of the work item]
+
+  Test file is at: {outputs.test}
+  Update the implementation at: {outputs.impl}
+
+  When done, run `ateam agents-stop agentStop`, then notify Hannibal:
+  SendMessage(type: 'message', recipient: 'hannibal', content: 'DONE: {itemId} - summary', summary: 'Implementation complete for {itemId}')"
+)
+```
+
 ### Dispatching Lynch (review stage)
 
 ```

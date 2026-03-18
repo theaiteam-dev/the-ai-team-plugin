@@ -452,17 +452,19 @@ describe('Mission Tools', () => {
 
   describe('mission_postcheck', () => {
     describe('happy path', () => {
-      it('should run all configured postcheck checks', async () => {
+      it('should forward pre-computed passing results to API', async () => {
         const mockResponse = {
           data: {
             success: true,
-            allPassed: true,
-            checks: [
-              { name: 'lint', command: 'npm run lint', passed: true },
-              { name: 'unit', command: 'npm test', passed: true },
-              { name: 'e2e', command: 'npm run test:e2e', passed: true },
-            ],
-            boardUpdated: true,
+            data: {
+              passed: true,
+              lintErrors: 0,
+              unitTestsPassed: 10,
+              unitTestsFailed: 0,
+              e2eTestsPassed: 0,
+              e2eTestsFailed: 0,
+              blockers: [],
+            },
           },
           status: 200,
           headers: {},
@@ -471,49 +473,37 @@ describe('Mission Tools', () => {
 
         const { missionPostcheck } = await import('../../tools/missions.js');
 
-        const result = await missionPostcheck({});
-
-        expect(mockPost).toHaveBeenCalledWith('/api/missions/postcheck', {});
-        expect(result.content[0].text).toContain('allPassed');
-        expect(result.content[0].text).toContain('e2e');
-      });
-
-      it('should run specific checks when provided', async () => {
-        const mockResponse = {
-          data: {
-            success: true,
-            allPassed: true,
-            checks: [
-              { name: 'lint', command: 'npm run lint', passed: true },
-            ],
-            boardUpdated: false,
+        const input = {
+          passed: true,
+          blockers: [],
+          output: {
+            lint: { stdout: '', stderr: '', timedOut: false },
+            unit: { stdout: 'Tests: 10 passed', stderr: '', timedOut: false },
           },
-          status: 200,
-          headers: {},
         };
-        mockPost.mockResolvedValueOnce(mockResponse);
-
-        const { missionPostcheck } = await import('../../tools/missions.js');
-
-        const result = await missionPostcheck({
-          checks: ['lint'],
-        });
+        const result = await missionPostcheck(input);
 
         expect(mockPost).toHaveBeenCalledWith('/api/missions/postcheck', {
-          checks: ['lint'],
+          passed: true,
+          blockers: [],
+          output: input.output,
         });
+        expect(result.content[0].text).toContain('"passed":true');
       });
 
-      it('should report failed checks', async () => {
+      it('should forward pre-computed failing results to API', async () => {
         const mockResponse = {
           data: {
             success: true,
-            allPassed: false,
-            checks: [
-              { name: 'lint', command: 'npm run lint', passed: true },
-              { name: 'e2e', command: 'npm run test:e2e', passed: false, error: 'E2E tests failed' },
-            ],
-            boardUpdated: false,
+            data: {
+              passed: false,
+              lintErrors: 5,
+              unitTestsPassed: 0,
+              unitTestsFailed: 0,
+              e2eTestsPassed: 0,
+              e2eTestsFailed: 0,
+              blockers: ['lint failed: 5 errors found'],
+            },
           },
           status: 200,
           headers: {},
@@ -522,10 +512,51 @@ describe('Mission Tools', () => {
 
         const { missionPostcheck } = await import('../../tools/missions.js');
 
-        const result = await missionPostcheck({});
+        const input = {
+          passed: false,
+          blockers: ['lint failed: 5 errors found'],
+          output: {
+            lint: { stdout: '5 errors and 2 warnings', stderr: '', timedOut: false },
+          },
+        };
+        const result = await missionPostcheck(input);
 
-        expect(result.content[0].text).toContain('"allPassed":false');
-        expect(result.content[0].text).toContain('E2E tests failed');
+        expect(mockPost).toHaveBeenCalledWith('/api/missions/postcheck', {
+          passed: false,
+          blockers: input.blockers,
+          output: input.output,
+        });
+        expect(result.content[0].text).toContain('"passed":false');
+      });
+
+      it('should use empty defaults for blockers and output when omitted', async () => {
+        const mockResponse = {
+          data: {
+            success: true,
+            data: {
+              passed: true,
+              lintErrors: 0,
+              unitTestsPassed: 0,
+              unitTestsFailed: 0,
+              e2eTestsPassed: 0,
+              e2eTestsFailed: 0,
+              blockers: [],
+            },
+          },
+          status: 200,
+          headers: {},
+        };
+        mockPost.mockResolvedValueOnce(mockResponse);
+
+        const { missionPostcheck } = await import('../../tools/missions.js');
+
+        await missionPostcheck({ passed: true });
+
+        expect(mockPost).toHaveBeenCalledWith('/api/missions/postcheck', {
+          passed: true,
+          blockers: [],
+          output: {},
+        });
       });
     });
 
@@ -540,7 +571,7 @@ describe('Mission Tools', () => {
 
         const { missionPostcheck } = await import('../../tools/missions.js');
 
-        const result = await missionPostcheck({});
+        const result = await missionPostcheck({ passed: true });
 
         expect(result.isError).toBe(true);
         if ('message' in result) {

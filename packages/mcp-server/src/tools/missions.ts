@@ -94,9 +94,18 @@ export const MissionListInputSchema = z.object({
 
 /**
  * Schema for mission_postcheck tool input.
+ * Accepts a pre-computed result from the caller — no shell execution here.
+ * Hannibal reads ateam.config.json, runs checks via Bash in the target project,
+ * then passes results here.
  */
 export const MissionPostcheckInputSchema = z.object({
-  checks: z.array(z.string()).optional(),
+  passed: z.boolean(),
+  blockers: z.array(z.string()).default([]),
+  output: z.record(z.object({
+    stdout: z.string(),
+    stderr: z.string(),
+    timedOut: z.boolean(),
+  })).default({}),
 });
 
 /**
@@ -115,7 +124,7 @@ export const MissionArchiveInputSchema = z.object({
 type MissionInitInput = z.infer<typeof MissionInitInputSchema>;
 type MissionCurrentInput = z.infer<typeof MissionCurrentInputSchema>;
 type MissionPrecheckInput = z.infer<typeof MissionPrecheckInputSchema>;
-type MissionPostcheckInput = z.infer<typeof MissionPostcheckInputSchema>;
+type MissionPostcheckInput = z.input<typeof MissionPostcheckInputSchema>;
 type MissionArchiveInput = z.infer<typeof MissionArchiveInputSchema>;
 type MissionListInput = z.infer<typeof MissionListInputSchema>;
 
@@ -189,9 +198,15 @@ interface MissionPrecheckResult {
 
 interface MissionPostcheckResult {
   success: boolean;
-  allPassed: boolean;
-  checks: CheckResult[];
-  boardUpdated?: boolean;
+  data: {
+    passed: boolean;
+    lintErrors: number;
+    unitTestsPassed: number;
+    unitTestsFailed: number;
+    e2eTestsPassed: number;
+    e2eTestsFailed: number;
+    blockers: string[];
+  };
 }
 
 interface MissionArchiveResult {
@@ -322,16 +337,19 @@ export async function missionList(
 }
 
 /**
- * Runs configured post-completion checks.
+ * Records pre-computed post-completion check results.
+ * The caller (Hannibal) runs checks via Bash in the target project first,
+ * then passes results here to update mission state.
  */
 export async function missionPostcheck(
   input: MissionPostcheckInput
 ): Promise<ToolResponse<MissionPostcheckResult> | McpErrorResponse> {
   const handler = async (args: MissionPostcheckInput) => {
-    const body: Record<string, unknown> = {};
-    if (args.checks !== undefined) {
-      body.checks = args.checks;
-    }
+    const body: Record<string, unknown> = {
+      passed: args.passed,
+      blockers: args.blockers ?? [],
+      output: args.output ?? {},
+    };
 
     const result = await client.post<MissionPostcheckResult>('/api/missions/postcheck', body);
     return {
@@ -410,7 +428,7 @@ export const missionTools = [
   },
   {
     name: 'mission_postcheck',
-    description: 'Run configured post-completion checks (lint, unit tests, e2e) after all items are done.',
+    description: 'Record pre-computed post-completion check results (lint, unit tests, e2e) after all items are done. Caller must run checks via Bash first using commands from ateam.config.json, then pass { passed, blockers, output } here.',
     inputSchema: zodToJsonSchema(MissionPostcheckInputSchema),
     zodSchema: MissionPostcheckInputSchema,
     handler: missionPostcheck,

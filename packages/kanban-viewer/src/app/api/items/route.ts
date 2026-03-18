@@ -86,7 +86,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     // Agent filter
     const agent = searchParams.get('agent');
-    if (agent !== null) {
+    if (agent !== null && agent !== '') {
       where.assignedAgent = agent === 'null' ? null : agent;
     }
 
@@ -299,7 +299,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // Find current active mission (if any)
     const currentMission = await prisma.mission.findFirst({
-      where: { archivedAt: null },
+      where: { projectId, archivedAt: null },
       orderBy: { startedAt: 'desc' },
     });
 

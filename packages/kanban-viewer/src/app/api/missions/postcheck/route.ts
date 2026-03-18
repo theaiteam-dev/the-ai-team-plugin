@@ -1,106 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import * as childProcess from 'child_process';
 import { prisma } from '@/lib/db';
 import { getAndValidateProjectId } from '@/lib/project-utils';
 import type { PostcheckResponse, ApiError } from '@/types/api';
 import type { PostcheckResult } from '@/types/mission';
-
-/**
- * Default timeout for lint command in milliseconds.
- */
-const DEFAULT_LINT_TIMEOUT_MS = 60000;
-
-/**
- * Default timeout for unit test command in milliseconds.
- */
-const DEFAULT_UNIT_TIMEOUT_MS = 120000;
-
-/**
- * Default timeout for e2e test command in milliseconds.
- */
-const DEFAULT_E2E_TIMEOUT_MS = 300000;
-
-/**
- * Gets the lint timeout from environment variable or default.
- */
-function getLintTimeout(): number {
-  const envTimeout = process.env.POSTCHECK_LINT_TIMEOUT_MS;
-  if (envTimeout) {
-    const parsed = parseInt(envTimeout, 10);
-    if (!isNaN(parsed) && parsed > 0) {
-      return parsed;
-    }
-  }
-  return DEFAULT_LINT_TIMEOUT_MS;
-}
-
-/**
- * Gets the unit test timeout from environment variable or default.
- */
-function getUnitTestTimeout(): number {
-  const envTimeout = process.env.POSTCHECK_UNIT_TIMEOUT_MS;
-  if (envTimeout) {
-    const parsed = parseInt(envTimeout, 10);
-    if (!isNaN(parsed) && parsed > 0) {
-      return parsed;
-    }
-  }
-  return DEFAULT_UNIT_TIMEOUT_MS;
-}
-
-/**
- * Gets the e2e test timeout from environment variable or default.
- */
-function getE2ETimeout(): number {
-  const envTimeout = process.env.POSTCHECK_E2E_TIMEOUT_MS;
-  if (envTimeout) {
-    const parsed = parseInt(envTimeout, 10);
-    if (!isNaN(parsed) && parsed > 0) {
-      return parsed;
-    }
-  }
-  return DEFAULT_E2E_TIMEOUT_MS;
-}
-
-/**
- * Executes a shell command with a timeout.
- * Returns the result including stdout, stderr, and success status.
- */
-function executeCommand(
-  command: string,
-  timeout: number
-): Promise<{ success: boolean; stdout: string; stderr: string; timedOut: boolean }> {
-  return new Promise((resolve) => {
-    childProcess.exec(
-      command,
-      { timeout },
-      (error: Error | null, stdoutOrResult: string | { stdout: string; stderr: string }, stderrArg?: string) => {
-        const typedError = error as Error & { killed?: boolean; signal?: string };
-        const timedOut = typedError?.killed === true && typedError?.signal === 'SIGTERM';
-
-        // Handle both real exec signature and mock signature
-        // Real: (error, stdout: string, stderr: string)
-        // Mock: (error, { stdout, stderr })
-        let stdout: string;
-        let stderr: string;
-        if (typeof stdoutOrResult === 'object' && stdoutOrResult !== null) {
-          stdout = stdoutOrResult.stdout || '';
-          stderr = stdoutOrResult.stderr || '';
-        } else {
-          stdout = stdoutOrResult || '';
-          stderr = stderrArg || '';
-        }
-
-        resolve({
-          success: !error,
-          stdout,
-          stderr,
-          timedOut,
-        });
-      }
-    );
-  });
-}
 
 /**
  * Parses lint output to count errors.
@@ -145,23 +47,21 @@ function parseTestResults(stdout: string, stderr: string): { passed: number; fai
 /**
  * POST /api/missions/postcheck
  *
- * Runs post-mission validation checks (lint, unit tests, e2e tests) and updates mission state.
- *
- * Query parameters:
- * - projectId (string, required): Filter by project ID
+ * Accepts a pre-computed postcheck result { passed, blockers, output } from the MCP tool.
+ * Does NOT execute shell commands itself — the caller (Hannibal) runs checks via Bash
+ * in the target project directory and passes results here.
  *
  * State transitions:
- * - running -> postchecking (when starting)
- * - postchecking -> completed (on success)
- * - postchecking -> failed (on failure)
+ * - passed=true:  running -> completed
+ * - passed=false: running -> failed
  *
  * Returns PostcheckResponse with:
  * - passed: boolean indicating if all checks passed
- * - lintErrors: count of lint errors found
- * - unitTestsPassed: count of passing unit tests
- * - unitTestsFailed: count of failing unit tests
- * - e2eTestsPassed: count of passing e2e tests
- * - e2eTestsFailed: count of failing e2e tests
+ * - lintErrors: count of lint errors found (parsed from output.lint)
+ * - unitTestsPassed: count of passing unit tests (parsed from output.unit)
+ * - unitTestsFailed: count of failing unit tests (parsed from output.unit)
+ * - e2eTestsPassed: count of passing e2e tests (parsed from output.e2e)
+ * - e2eTestsFailed: count of failing e2e tests (parsed from output.e2e)
  * - blockers: array of blocking issues
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -184,7 +84,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       },
     });
 
-    // Return 404 if no active mission
     if (!mission) {
       const apiError: ApiError = {
         success: false,
@@ -208,6 +107,72 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json(apiError, { status: 400 });
     }
 
+    // Parse request body — must happen before any DB writes so that invalid
+    // input returns a 400 without leaving the mission stuck in 'postchecking'.
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      const apiError: ApiError = {
+        success: false,
+        error: {
+          code: 'INVALID_JSON',
+          message: 'Request body contains invalid JSON',
+        },
+      };
+      return NextResponse.json(apiError, { status: 400 });
+    }
+
+    const { passed, blockers = [], output = {} } = body as Record<string, unknown>;
+
+    // Validate body fields
+    if (typeof passed !== 'boolean') {
+      const apiError: ApiError = {
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: '`passed` must be a boolean',
+        },
+      };
+      return NextResponse.json(apiError, { status: 400 });
+    }
+
+    if (!Array.isArray(blockers) || !blockers.every((b: unknown) => typeof b === 'string')) {
+      const apiError: ApiError = {
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: '`blockers` must be an array of strings',
+        },
+      };
+      return NextResponse.json(apiError, { status: 400 });
+    }
+
+    if (typeof output !== 'object' || output === null || Array.isArray(output)) {
+      const apiError: ApiError = {
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: '`output` must be an object',
+        },
+      };
+      return NextResponse.json(apiError, { status: 400 });
+    }
+
+    // Validate that every value in output is a non-null object (not e.g. null or a primitive)
+    for (const [key, value] of Object.entries(output as Record<string, unknown>)) {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        const apiError: ApiError = {
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: `output["${key}"] must be a non-null object`,
+          },
+        };
+        return NextResponse.json(apiError, { status: 400 });
+      }
+    }
+
     // Update mission state to postchecking
     await prisma.mission.update({
       where: { id: mission.id },
@@ -225,62 +190,31 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       },
     });
 
-    const blockers: string[] = [];
+    // Parse counts from output map dynamically — avoids hardcoding "lint"/"unit"/"e2e"
+    // so renamed check keys in ateam.config.json continue to work.
+    // Heuristic: check names containing "lint" use parseLintErrors; all others use parseTestResults.
+    type CheckOutput = { stdout?: string; stderr?: string; timedOut?: boolean };
     let lintErrors = 0;
     let unitTestsPassed = 0;
     let unitTestsFailed = 0;
     let e2eTestsPassed = 0;
     let e2eTestsFailed = 0;
 
-    // Run lint command
-    const lintTimeout = getLintTimeout();
-    const lintResult = await executeCommand('npm run lint', lintTimeout);
-
-    if (lintResult.timedOut) {
-      blockers.push('Lint command timeout');
-    } else if (!lintResult.success) {
-      lintErrors = parseLintErrors(lintResult.stdout, lintResult.stderr);
-      if (lintErrors === 0) {
-        // If we couldn't parse errors but lint failed, report at least 1
-        lintErrors = 1;
-      }
-      blockers.push(`Lint failed with ${lintErrors} error(s)`);
-    }
-
-    // Run unit test command
-    const unitTestTimeout = getUnitTestTimeout();
-    const unitTestResult = await executeCommand('npm test', unitTestTimeout);
-
-    if (unitTestResult.timedOut) {
-      blockers.push('Unit test command timeout');
-    } else {
-      const unitTestCounts = parseTestResults(unitTestResult.stdout, unitTestResult.stderr);
-      unitTestsPassed = unitTestCounts.passed;
-      unitTestsFailed = unitTestCounts.failed;
-
-      if (!unitTestResult.success) {
-        blockers.push(`Unit tests failed: ${unitTestsFailed} test(s) failed`);
+    for (const [checkName, checkOut] of Object.entries(output as Record<string, CheckOutput>)) {
+      const stdout = checkOut.stdout ?? '';
+      const stderr = checkOut.stderr ?? '';
+      if (checkName.includes('lint')) {
+        lintErrors += parseLintErrors(stdout, stderr);
+      } else if (checkName.includes('e2e') || checkName.includes('playwright')) {
+        const counts = parseTestResults(stdout, stderr);
+        e2eTestsPassed += counts.passed;
+        e2eTestsFailed += counts.failed;
+      } else {
+        const counts = parseTestResults(stdout, stderr);
+        unitTestsPassed += counts.passed;
+        unitTestsFailed += counts.failed;
       }
     }
-
-    // Run e2e test command
-    const e2eTimeout = getE2ETimeout();
-    const e2eResult = await executeCommand('npx playwright test', e2eTimeout);
-
-    if (e2eResult.timedOut) {
-      blockers.push('E2E test command timeout');
-    } else {
-      const e2eTestCounts = parseTestResults(e2eResult.stdout, e2eResult.stderr);
-      e2eTestsPassed = e2eTestCounts.passed;
-      e2eTestsFailed = e2eTestCounts.failed;
-
-      if (!e2eResult.success) {
-        blockers.push(`E2E tests failed: ${e2eTestsFailed} test(s) failed`);
-      }
-    }
-
-    // Determine overall pass/fail
-    const passed = blockers.length === 0;
 
     // Update mission state based on result
     const newState = passed ? 'completed' : 'failed';
