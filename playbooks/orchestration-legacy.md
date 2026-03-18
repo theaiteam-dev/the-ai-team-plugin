@@ -293,6 +293,28 @@ Task(
 )
 ```
 
+**On retry (item was previously rejected):** Use agent name `ba-{id}-r{n}` and prepend rejection context:
+```
+Task(
+  subagent_type: "ai-team:ba",
+  run_in_background: true,
+  description: "B.A.: {feature title} (retry {n})",
+  name: "ba-{id}-r{n}",
+  prompt: "... [B.A. prompt from agents/ba.md]
+
+  ## Prior Rejection
+  Lynch rejected this item: {rejection reason from work log}
+  {Amy diagnosis if available}
+  Address this specifically before anything else.
+
+  Feature Item:
+  [Full content of the work item]
+
+  Test file is at: {outputs.test}
+  Update the implementation at: {outputs.impl}"
+)
+```
+
 ### Dispatching Lynch (review stage)
 
 ```

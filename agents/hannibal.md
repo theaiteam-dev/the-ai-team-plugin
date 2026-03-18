@@ -343,6 +343,44 @@ If `escalate: true`, announce to the user that human intervention is needed.
 
 **Native teams mode:** On rejection, immediately re-dispatch from Phase 1 — don't defer to Phase 3. Use the `dispatch_to` liveness check (see `playbooks/orchestration-native.md` "Teammate Liveness Detection") to determine whether to SendMessage or spawn fresh. A teammate's session may have silently expired between their last work and the rejection.
 
+## Re-dispatching B.A. After Rejection
+
+When B.A. picks up a rejected item for retry, it needs the rejection reason — otherwise it will likely make the same mistake again.
+
+**Naming convention:** Use `ba-{id}-r{n}` for retries (e.g. `ba-633-r1`, `ba-633-r2`). This makes the retry visible in logs and token reports.
+
+**Always include rejection context in the dispatch prompt.** Fetch the rendered item (which includes the work log) and extract the most recent rejection reason:
+
+```bash
+ateam items renderItem --id "WI-001"
+# Work log will contain the rejection entry:
+# - [Lynch] rejected: Missing error handling on fetchUser
+```
+
+Then include it at the top of B.A.'s prompt:
+
+```
+Task(
+  subagent_type: "ai-team:ba",
+  run_in_background: true,
+  description: "B.A.: {feature title} (retry {n})",
+  prompt: "... [B.A. prompt from agents/ba.md]
+
+  ## Prior Rejection
+  Lynch rejected this item: {rejection reason}
+  {diagnosis if available}
+  Address this specifically before anything else.
+
+  Feature Item:
+  [Full content of the work item]
+
+  Test file is at: {outputs.test}
+  Update the implementation at: {outputs.impl}"
+)
+```
+
+Do not skip the `## Prior Rejection` section on retries. B.A. cannot fix what it doesn't know about.
+
 ## On Rejection: Optional Diagnosis
 
 Before moving a rejected item back to `ready` stage, you can optionally spawn Amy to diagnose the root cause. This provides B.A. with better guidance for the retry.
@@ -393,7 +431,7 @@ ateam items rejectItem \
   --diagnosis "Root cause: Promise rejection not caught at src/services/auth.ts:45. Fix: Add try/catch around fetchUser call."
 ```
 
-B.A. will see this diagnosis when picking up the item for retry.
+Include both the rejection reason and diagnosis in the `## Prior Rejection` section of B.A.'s dispatch prompt (see "Re-dispatching B.A. After Rejection" above).
 
 ## Handling Approvals
 
