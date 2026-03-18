@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Plugin distribution:** Added `.claude-plugin/marketplace.json` — users can now install via `/plugin marketplace add queso/the-ai-team-plugin` + `/plugin install ai-team@the-ai-team-plugin` instead of git submodule.
+- **Setup command:** Removed automatic permission injection. `setup` no longer writes `permissions.allow` entries to `settings.local.json` — permissions are the user's decision. The Permissions section in the setup docs is now informational guidance only.
+- **B.A. retry guidance:** Added `ba-{id}-r{n}` naming convention for re-dispatched agents after rejection. Hannibal now injects a `## Prior Rejection` section at the top of B.A.'s prompt on retries so Lynch's rejection reason is prominent rather than buried in the work log. Fixed misleading comment implying B.A. saw the diagnosis automatically.
+- **MCP server:** `MissionPostcheckInput` now uses `z.input` instead of `z.infer` so callers can legally omit defaulted fields (`blockers`, `output`).
+
 ### Added — PRD-009: Recoverable Precheck Failure State
 
 New `precheck_failure` mission state distinguishes transient precheck failures from terminal execution failures. When lint or test checks fail during precheck, the mission now enters `precheck_failure` (recoverable) instead of `failed` (terminal). Operator can fix lint/test issues and retry without re-running the expensive planning phase.
