@@ -1,0 +1,22 @@
+{
+  "name": "the-ai-team-plugin",
+  "owner": {
+    "name": "Josh / Arcane Ops"
+  },
+  "plugins": [
+    {
+      "name": "ai-team",
+      "source": {
+        "source": "github",
+        "repo": "queso/the-ai-team-plugin"
+      },
+      "description": "Parallel Agent Orchestration - transforms PRDs into working, tested code through a TDD pipeline with specialized agents.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Josh / Arcane Ops"
+      },
+      "repository": "https://github.com/queso/the-ai-team-plugin",
+      "keywords": ["ai", "agents", "tdd", "orchestration", "parallel"]
+    }
+  ]
+}
