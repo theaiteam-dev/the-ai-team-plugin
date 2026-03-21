@@ -516,7 +516,7 @@ Checking CLAUDE.md...
 
 ### Step 9: Docker Detection and Kanban-Viewer Startup
 
-The A(i)-Team kanban-viewer is included in this monorepo and provides a web-based Kanban board for mission tracking. It also serves as the API backend.
+The A(i)-Team kanban-viewer is a web-based Kanban board and API backend. It ships as a pre-built Docker image on GHCR — no local build required.
 
 **Check Docker availability and kanban-viewer status:**
 
@@ -547,11 +547,11 @@ Ask the user if they want to start it:
 ```
 AskUserQuestion({
   questions: [{
-    question: "The kanban-viewer is included in this monorepo. Would you like to start it now?",
+    question: "The A(i)-Team kanban-viewer provides a web UI and API backend. Would you like to start it now?",
     header: "Kanban UI",
     options: [
-      { label: "Start with Docker (Recommended)", description: "Run 'docker compose up -d' from repo root" },
-      { label: "Skip for now", description: "You can start it later with 'docker compose up -d'" }
+      { label: "Start with Docker (Recommended)", description: "Pulls ghcr.io/queso/kanban-viewer and starts the container" },
+      { label: "Skip for now", description: "You can start it later — see setup docs" }
     ],
     multiSelect: false
   }]
@@ -559,13 +559,16 @@ AskUserQuestion({
 ```
 
 **If user chooses "Start with Docker":**
-1. Run `docker compose up -d` from the repo root
-2. Wait 3-5 seconds for startup
+1. Run:
+   ```bash
+   docker compose -f "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/docker-compose.yml" up -d
+   ```
+2. Wait 5 seconds for startup (first run pulls the image, takes longer)
 3. Verify API responds: `curl -s http://localhost:3000/api/missions/current`
 4. Show confirmation:
 ```
 ✓ Kanban-viewer started at http://localhost:3000
-✓ Docker container running
+  Data persisted at ~/.ateam/data
 ```
 
 **If Docker NOT available:**
@@ -574,17 +577,15 @@ Show installation instructions:
 ```
 The kanban-viewer provides a web-based Kanban board for mission tracking.
 
-To use it, you need Docker installed:
-  macOS:  brew install --cask docker
+To use it, install Docker first:
+  macOS:  https://docs.docker.com/desktop/install/mac-install/
   Linux:  https://docs.docker.com/engine/install/
 
 Once Docker is running:
-  docker compose up -d
+  docker compose -f "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/docker-compose.yml" up -d
 
 The kanban board will be available at http://localhost:3000
-
-Alternatively, you can start it manually:
-  cd packages/kanban-viewer && bun run dev
+Mission data is persisted at ~/.ateam/data
 ```
 
 ### Step 10: Verify API Connectivity

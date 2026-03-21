@@ -64,24 +64,25 @@ Agents interact with the API via the `ateam` CLI binary (`${CLAUDE_PLUGIN_ROOT}/
 
 ## Installation
 
-Add as a git submodule to any project:
+**Via Claude Code plugin marketplace (recommended):**
 
 ```bash
-# Add to your project's .claude folder
-git submodule add git@github.com:yourorg/ai-team.git .claude/ai-team
+/plugin marketplace add queso/the-ai-team-plugin
+/plugin install ai-team@the-ai-team-plugin
 ```
 
-**Project structure after install:**
-```
-your-project/
-├── .claude/
-│   └── ai-team/           # This plugin (submodule)
-├── ateam.config.json      # Created by /ai-team:setup
-└── src/
+**Via git submodule (self-hosted / development):**
+
+```bash
+git submodule add git@github.com:queso/the-ai-team-plugin.git .claude/ai-team
 ```
 
 **Updating:**
 ```bash
+# Marketplace install
+/plugin update ai-team@the-ai-team-plugin
+
+# Submodule
 git submodule update --remote .claude/ai-team
 ```
 
@@ -109,14 +110,19 @@ git submodule update --remote .claude/ai-team
 
 ## Kanban Dashboard
 
-The A(i)-Team includes a web-based dashboard for real-time visibility into mission progress. Start it with Docker:
+The A(i)-Team includes a web-based dashboard for real-time visibility into mission progress. It ships as a pre-built Docker image — no build step required.
 
 ```bash
-# From the ai-team plugin directory
-docker compose up -d
+# Start the kanban-viewer (pulls image on first run)
+docker compose -f ~/.claude/plugins/ai-team/the-ai-team-plugin/.claude-plugin/docker-compose.yml up -d
 
-# Visit http://localhost:3001
+# Or let /ai-team:setup handle it for you
+/ai-team:setup
+
+# Visit http://localhost:3000
 ```
+
+Mission data is persisted at `~/.ateam/data` on your host machine and survives container restarts and upgrades.
 
 The dashboard provides two views:
 
@@ -463,12 +469,13 @@ Configure environment via `.claude/settings.local.json`:
 ## Plugin Structure
 
 ```
-ai-team/                     # Add as .claude/ai-team submodule
+ai-team/                     # Installed via marketplace or git submodule
 ├── .claude-plugin/
-│   └── plugin.json          # Plugin configuration
+│   ├── plugin.json          # Plugin configuration (version, minCliVersion)
+│   ├── marketplace.json     # Marketplace distribution metadata
+│   └── docker-compose.yml   # Start kanban-viewer with pre-built GHCR image
 ├── package.json             # Bun workspaces root
 ├── bun.lock                 # Bun lock file
-├── docker-compose.yml       # Docker setup for kanban-viewer
 ├── vitest.config.js         # Test runner configuration
 ├── packages/                # Monorepo packages
 │   ├── shared/              # @ai-team/shared - Shared types and constants
@@ -634,9 +641,12 @@ Hook scripts live in `scripts/hooks/`. Exit code 0 = allow, non-zero = block.
 ### Cannot connect to API server
 **Symptom:** `ateam` CLI commands return connection errors.
 
-**Cause:** A(i)-Team API server is not running.
+**Cause:** The kanban-viewer container is not running.
 
-**Fix:** Start the API server and ensure `ATEAM_API_URL` is configured correctly in `.claude/settings.local.json`.
+**Fix:** Start the container and ensure `ATEAM_API_URL` is configured correctly in `.claude/settings.local.json`:
+```bash
+docker compose -f "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/docker-compose.yml" up -d
+```
 
 ### Agents not creating files
 **Symptom:** Murdock/B.A. complete but no test/impl files appear.

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Kanban-Viewer Docker Image (GHCR)
+
+The kanban-viewer now ships as a pre-built multi-platform Docker image published to GHCR on every release. Users no longer need to clone the repo or build locally — `/ai-team:setup` pulls and starts the container automatically.
+
+#### New Files
+- `.claude-plugin/docker-compose.yml` — one-file compose config pointing at `ghcr.io/queso/kanban-viewer:latest`; data persisted at `~/.ateam/data`
+- `packages/kanban-viewer/docker-entrypoint.sh` — initializes the SQLite database on first boot when a fresh volume is mounted (copies baked-in seed DB), then starts the server
+
+#### Changed
+- `packages/kanban-viewer/Dockerfile` — seeds database to `prisma/data.init/` at build time (not `prisma/data/`); runner stage ships the seed DB separately so volume mounts don't hide it; uses `docker-entrypoint.sh` as CMD
+- `.github/workflows/release.yml` — added `packages: write` permission and `docker` job that builds and pushes `linux/amd64` + `linux/arm64` images to GHCR tagged as `:vX.Y.Z` and `:latest` on every `v*` tag; uses GHA layer cache for fast rebuilds
+- `commands/setup.md` — Step 9 updated to use `docker compose -f "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/docker-compose.yml" up -d` (works for marketplace installs, no repo clone required)
+- `README.md` — marketplace install promoted as primary method; kanban dashboard section updated with correct compose command and data persistence notes
+
 ### Changed
 
 - **Versioning:** `ateam` CLI binary now embeds version via ldflags (`-X ateam/cmd.Version`), exposing `ateam --version`. Release workflow injects the git tag. `plugin.json` gains a `minCliVersion` field; `/ai-team:run` aborts with a clear message if the installed CLI is below the minimum, and `/ai-team:setup` auto-updates the binary when it is. Lock-step versioning: plugin version == CLI minimum version.

@@ -1,0 +1,8 @@
+services:
+  kanban-viewer:
+    image: ghcr.io/queso/kanban-viewer:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ~/.ateam/data:/app/prisma/data
+    restart: unless-stopped
