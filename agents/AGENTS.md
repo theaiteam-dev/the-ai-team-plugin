@@ -35,7 +35,7 @@ The `skills:` key is optional and lists skill files (from `skills/`) to load whe
 | **Murdock** | Tests + types | Implementation code | `block-raw-echo-log`, `enforce-completion-log` |
 | **B.A.** | Implementation | Tests | Same as Murdock |
 | **Lynch** | Review verdicts | Any code | Same as Murdock + `block-lynch-writes`, `block-lynch-browser` |
-| **Lynch-Final** | Final review verdicts | Any code | Same as Lynch (per-feature) |
+| **Stockwell** | Final review verdicts | Any code | Same as Lynch (per-feature) |
 | **Amy** | Debug scripts only | Production code, tests | Same as Murdock + `track-browser-usage`, `enforce-browser-verification` |
 | **Tawnia** | Docs (CHANGELOG, README) | `src/**`, tests | Same as Murdock |
 
@@ -92,7 +92,7 @@ Hook scripts share utilities in `scripts/hooks/lib/`:
 **`resolve-agent.js`** — canonical agent identification:
 - `resolveAgent(hookInput)` — extracts agent name from Claude Code hook stdin JSON; returns lowercase agent name (e.g. `"ba"`, `"murdock"`) or `null`
 - `isKnownAgent(name)` — checks against `KNOWN_AGENTS` list; use for fail-open on unknown/system agents (Explore, Plan, etc.)
-- `KNOWN_AGENTS` — `['hannibal', 'face', 'sosa', 'murdock', 'ba', 'lynch', 'lynch-final', 'amy', 'tawnia']`
+- `KNOWN_AGENTS` — `['hannibal', 'face', 'sosa', 'murdock', 'ba', 'lynch', 'stockwell', 'amy', 'tawnia']`
 
 **`send-denied-event.js`** — denied event telemetry:
 - `sendDeniedEvent({ agentName, toolName, reason })` — fire-and-forget POST to API with `status: "denied"`
@@ -128,7 +128,7 @@ In both modes, `ateam` CLI commands are the source of truth. Communication tools
 briefings → ready → testing → implementing → review → probing → done
                       Murdock    B.A.          Lynch    Amy
 ```
-Then: Final Review (Lynch-Final, opus, PRD+diff) → Post-Checks → Documentation (Tawnia, haiku) → Complete.
+Then: Final Review (Stockwell, opus, PRD+diff) → Post-Checks → Documentation (Tawnia, haiku) → Complete.
 
 ## Related Context
 

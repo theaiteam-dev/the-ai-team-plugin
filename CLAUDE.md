@@ -37,7 +37,7 @@ briefings → ready → testing → implementing → review → probing → done
                                                                   ▼
                                                         ┌─────────────────┐
                                                         │  Final Review   │
-                                                        │  (Lynch-Final)  │
+                                                        │  (Stockwell)  │
                                                         └────────┬────────┘
                                                                  │
                                                                  ▼
@@ -121,7 +121,7 @@ The `outputs` field is critical - without it, Murdock and B.A. don't know where 
 - **Sosa**: Reviews and critiques work items. Does NOT modify items directly - provides recommendations for Face.
 - **Murdock**: Writes ONLY tests and types. Does NOT write implementation code.
 - **B.A.**: Writes ONLY implementation. Tests already exist from Murdock.
-- **Lynch / Lynch-Final**: Reviews only. Does NOT write code.
+- **Lynch / Stockwell**: Reviews only. Does NOT write code.
 - **Amy**: Investigates only. Does NOT write production code or tests. Reports findings with proof.
 - **Tawnia**: Writes documentation only (CHANGELOG, README, docs/). Does NOT modify source code or tests. Makes the final commit.
 
@@ -147,7 +147,7 @@ Every feature MUST flow through ALL stages. Skipping stages is NOT permitted.
 5. If rejected at any stage (max 2 times), item goes to `blocked`
 
 **Mission Completion (after ALL items reach done):**
-6. **Lynch-Final** performs **Final Mission Review** (PRD+diff scoped holistic review)
+6. **Stockwell** performs **Final Mission Review** (PRD+diff scoped holistic review)
 7. **Post-checks** run (lint, unit, e2e)
 8. **Tawnia** updates documentation and creates final commit ← MANDATORY, NOT OPTIONAL
 
@@ -216,7 +216,7 @@ Model selection is defined in each agent's frontmatter (`agents/*.md`) — do NO
 - Amy: `subagent_type: "ai-team:amy"` → probing stage (EVERY feature, no exceptions)
 
 **Mission Completion (MANDATORY):**
-- Lynch-Final: `subagent_type: "ai-team:lynch-final"` → Final Mission Review (PRD+diff scoped)
+- Stockwell: `subagent_type: "ai-team:stockwell"` → Final Mission Review (PRD+diff scoped)
 - Tawnia: `subagent_type: "ai-team:tawnia"` → after post-checks pass
 
 ## ateam CLI
@@ -252,7 +252,7 @@ Usage: `ateam <resource> <command> [flags]`
 
 ### Agent Lifecycle Commands
 
-Working agents (Murdock, B.A., Lynch, Lynch-Final, Amy, Tawnia) use lifecycle commands:
+Working agents (Murdock, B.A., Lynch, Stockwell, Amy, Tawnia) use lifecycle commands:
 
 **Start** (`ateam agents-start agentStart`):
 ```bash

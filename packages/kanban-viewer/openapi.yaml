@@ -51,7 +51,7 @@ components:
 
     AgentName:
       type: string
-      enum: [Hannibal, Face, Murdock, B.A., Amy, Lynch, Lynch-Final, Sosa, Tawnia]
+      enum: [Hannibal, Face, Murdock, B.A., Amy, Lynch, Stockwell, Sosa, Tawnia]
 
     MissionState:
       type: string

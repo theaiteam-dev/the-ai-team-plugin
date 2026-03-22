@@ -43,6 +43,7 @@ export const agentColors: Record<AgentName, string> = {
   Amy: "text-pink-500",
   Lynch: "text-blue-500",
   Tawnia: "text-teal-500",
+  Stockwell: "text-gray-400",
 };
 
 // Get message highlight class based on content

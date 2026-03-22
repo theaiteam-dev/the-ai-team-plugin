@@ -95,6 +95,7 @@ describe('Shared Package', () => {
         'face',
         'sosa',
         'tawnia',
+        'stockwell',
       ]);
     });
 

@@ -12,6 +12,7 @@ const AGENT_COLORS: Record<AgentName, string> = {
   Amy: 'bg-pink-500',
   Lynch: 'bg-purple-500',
   Tawnia: 'bg-teal-500',
+  Stockwell: 'bg-gray-700',
 };
 
 export function AgentBadge({ agent }: AgentBadgeProps) {

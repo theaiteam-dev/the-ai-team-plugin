@@ -55,6 +55,7 @@ const AGENT_TEXT_COLORS: Record<AgentName, string> = {
   'Amy': 'text-pink-500',
   'Lynch': 'text-blue-500',
   'Tawnia': 'text-teal-500',
+  'Stockwell': 'text-gray-400',
 };
 
 const AGENT_BULLET_COLORS: Record<AgentName, string> = {
@@ -65,6 +66,7 @@ const AGENT_BULLET_COLORS: Record<AgentName, string> = {
   'Amy': 'bg-pink-500',
   'Lynch': 'bg-blue-500',
   'Tawnia': 'bg-teal-500',
+  'Stockwell': 'bg-gray-700',
 };
 
 interface WorkLogActionConfig {

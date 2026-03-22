@@ -27,7 +27,7 @@ var boardClaimClaimItemCmd = &cobra.Command{
 		c := client.NewClient(baseURL, token)
 		pathParams := map[string]string{}
 		queryParams := map[string]string{}
-		if err := validate.Enum("agent", boardClaimClaimItemCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Lynch-Final", "Sosa", "Tawnia"}); err != nil { return err }
+		if err := validate.Enum("agent", boardClaimClaimItemCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}); err != nil { return err }
 		if boardClaimClaimItemCmdBodyFile != "" {
 			fileData, err := os.ReadFile(boardClaimClaimItemCmdBodyFile)
 			if err != nil {
@@ -83,9 +83,9 @@ func init() {
 	boardClaimCmd.AddCommand(boardClaimClaimItemCmd)
 	boardClaimClaimItemCmd.Flags().StringVar(&boardClaimClaimItemCmdBody, "body", "", "Raw JSON body (overrides individual flags)")
 	boardClaimClaimItemCmd.Flags().StringVar(&boardClaimClaimItemCmdBodyFile, "body-file", "", "Path to JSON file to use as request body")
-	boardClaimClaimItemCmd.Flags().StringVar(&boardClaimClaimItemCmd_agent, "agent", "", "(Hannibal|Face|Murdock|B.A.|Amy|Lynch|Lynch-Final|Sosa|Tawnia)")
+	boardClaimClaimItemCmd.Flags().StringVar(&boardClaimClaimItemCmd_agent, "agent", "", "(Hannibal|Face|Murdock|B.A.|Amy|Lynch|Stockwell|Sosa|Tawnia)")
 	boardClaimClaimItemCmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Lynch-Final", "Sosa", "Tawnia"}, cobra.ShellCompDirectiveNoFileComp
+		return []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	boardClaimClaimItemCmd.Flags().StringVar(&boardClaimClaimItemCmd_itemId, "itemId", "", "")
 	boardClaimClaimItemCmd.MarkFlagRequired("agent")

@@ -135,7 +135,7 @@ Unlike legacy mode, you do NOT need task IDs for polling. Teammates send message
 | Murdock | `murdock` | `ai-team:murdock` | QA Engineer - writes tests |
 | B.A. | `ba` | `ai-team:ba` | Implementer - writes code |
 | Lynch | `lynch` | `ai-team:lynch` | Reviewer - per-feature reviews |
-| Lynch (Final) | `lynch-final` | `ai-team:lynch-final` | Final Mission Review (PRD+diff) |
+| Lynch (Final) | `stockwell` | `ai-team:stockwell` | Final Mission Review (PRD+diff) |
 | Amy | `amy` | `ai-team:amy` | Investigator - probes for bugs |
 | Tawnia | `tawnia` | `ai-team:tawnia` | Documentation writer |
 
@@ -505,13 +505,13 @@ Wait for Tawnia's completion message (auto-delivered).
 
 When ALL items reach `done` stage, fetch `prdPath` from `ateam missions-current getCurrentMission --json`.
 
-**Always spawn a new Lynch-Final agent** for the final review (it uses a different, slimmer prompt optimized for PRD+diff review):
+**Always spawn a new Stockwell agent** for the final review (it uses a different, slimmer prompt optimized for PRD+diff review):
 
 ```
 Task(
   team_name: "mission-{missionId}",
-  name: "lynch-final",
-  subagent_type: "ai-team:lynch-final",
+  name: "stockwell",
+  subagent_type: "ai-team:stockwell",
   description: "Lynch: Final Mission Review",
   prompt: "You are Colonel Lynch conducting a FINAL MISSION REVIEW.
 
@@ -530,7 +530,7 @@ Task(
 )
 ```
 
-Wait for Lynch-Final's completion message with the verdict.
+Wait for Stockwell's completion message with the verdict.
 
 ## Concrete Example: Dependency Waves + Pipeline Parallelism
 
