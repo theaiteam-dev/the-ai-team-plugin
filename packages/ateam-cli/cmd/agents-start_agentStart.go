@@ -27,7 +27,7 @@ var agentsStartAgentStartCmd = &cobra.Command{
 		c := client.NewClient(baseURL, token)
 		pathParams := map[string]string{}
 		queryParams := map[string]string{}
-		if err := validate.Enum("agent", agentsStartAgentStartCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Lynch-Final", "Sosa", "Tawnia"}); err != nil { return err }
+		if err := validate.Enum("agent", agentsStartAgentStartCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}); err != nil { return err }
 		if agentsStartAgentStartCmdBodyFile != "" {
 			fileData, err := os.ReadFile(agentsStartAgentStartCmdBodyFile)
 			if err != nil {
@@ -83,9 +83,9 @@ func init() {
 	agentsStartCmd.AddCommand(agentsStartAgentStartCmd)
 	agentsStartAgentStartCmd.Flags().StringVar(&agentsStartAgentStartCmdBody, "body", "", "Raw JSON body (overrides individual flags)")
 	agentsStartAgentStartCmd.Flags().StringVar(&agentsStartAgentStartCmdBodyFile, "body-file", "", "Path to JSON file to use as request body")
-	agentsStartAgentStartCmd.Flags().StringVar(&agentsStartAgentStartCmd_agent, "agent", "", "(Hannibal|Face|Murdock|B.A.|Amy|Lynch|Lynch-Final|Sosa|Tawnia)")
+	agentsStartAgentStartCmd.Flags().StringVar(&agentsStartAgentStartCmd_agent, "agent", "", "(Hannibal|Face|Murdock|B.A.|Amy|Lynch|Stockwell|Sosa|Tawnia)")
 	agentsStartAgentStartCmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Lynch-Final", "Sosa", "Tawnia"}, cobra.ShellCompDirectiveNoFileComp
+		return []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	agentsStartAgentStartCmd.Flags().StringVar(&agentsStartAgentStartCmd_itemId, "itemId", "", "")
 	agentsStartAgentStartCmd.MarkFlagRequired("agent")

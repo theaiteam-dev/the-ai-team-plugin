@@ -2,16 +2,72 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]    # semantic-release determines if a new version is needed
+    tags: ["v*"]        # manual tag fallback
+  workflow_dispatch:     # manual trigger for re-runs
 
 permissions:
   contents: write
   packages: write
 
 jobs:
+  # ── Step 1: Semantic Release (only on push to main) ─────────────────
+  # Analyzes conventional commits since last tag, determines the next
+  # version, creates a GitHub Release + git tag. Skipped for manual tags.
+  semantic-release:
+    name: Semantic Release
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      new-release: ${{ steps.release.outputs.new_release_published }}
+      version: ${{ steps.release.outputs.new_release_git_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: cycjimmy/semantic-release-action@v4
+        id: release
+        with:
+          extra_plugins: |
+            @semantic-release/commit-analyzer
+            @semantic-release/release-notes-generator
+            @semantic-release/github
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release result
+        if: steps.release.outputs.new_release_published == 'true'
+        run: echo "Released ${{ steps.release.outputs.new_release_git_tag }}"
+
+  # ── Step 2: Resolve version ─────────────────────────────────────────
+  # Normalizes the version tag whether it came from semantic-release or
+  # a manual tag push, so downstream jobs have a single source of truth.
+  resolve-version:
+    name: Resolve Version
+    needs: [semantic-release]
+    if: |
+      !failure() && !cancelled() && (
+        startsWith(github.ref, 'refs/tags/v') ||
+        needs.semantic-release.outputs.new-release == 'true'
+      )
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ needs.semantic-release.outputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+      - run: echo "Version → ${{ steps.version.outputs.version }}"
+
+  # ── Step 3: Build CLI binaries ──────────────────────────────────────
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: [resolve-version]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -38,7 +94,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-        run: go build -ldflags="-s -w -X ateam/cmd.Version=${{ github.ref_name }}" -o ateam-${{ matrix.goos }}-${{ matrix.goarch }} .
+        run: go build -ldflags="-s -w -X ateam/cmd.Version=${{ needs.resolve-version.outputs.version }}" -o ateam-${{ matrix.goos }}-${{ matrix.goarch }} .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -46,9 +102,12 @@ jobs:
           name: ateam-${{ matrix.goos }}-${{ matrix.goarch }}
           path: packages/ateam-cli/ateam-${{ matrix.goos }}-${{ matrix.goarch }}
 
-  release:
-    name: Create Release
-    needs: build
+  # ── Step 4: Upload release assets ───────────────────────────────────
+  # Attaches binaries to the GitHub Release. If semantic-release already
+  # created the release, this adds to it. For manual tags, it creates one.
+  upload-assets:
+    name: Upload Release Assets
+    needs: [build, resolve-version]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -57,14 +116,16 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Create release
+      - name: Attach binaries to release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          tag_name: ${{ needs.resolve-version.outputs.version }}
           files: artifacts/ateam-*
 
+  # ── Step 5: Publish Docker image ────────────────────────────────────
   docker:
     name: Publish kanban-viewer image
+    needs: [resolve-version]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -90,7 +151,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/kanban-viewer:${{ github.ref_name }}
+            ghcr.io/${{ github.repository_owner }}/kanban-viewer:${{ needs.resolve-version.outputs.version }}
             ghcr.io/${{ github.repository_owner }}/kanban-viewer:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -386,10 +386,10 @@ When ALL items reach `done` stage, fetch `prdPath` from `ateam missions-current 
 
 ```
 Task(
-  subagent_type: "ai-team:lynch-final",
+  subagent_type: "ai-team:stockwell",
   run_in_background: true,
-  description: "Lynch: Final Mission Review",
-  prompt: "You are Colonel Lynch conducting a FINAL MISSION REVIEW.
+  description: "Stockwell: Final Mission Review",
+  prompt: "You are Stockwell conducting a FINAL MISSION REVIEW.
 
   PRD path: {prdPath from ateam missions-current getCurrentMission}
 

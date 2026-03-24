@@ -12,6 +12,7 @@ export const AGENT_NAMES: AgentName[] = [
   'Amy',
   'Lynch',
   'Tawnia',
+  'Stockwell',
 ];
 
 export const AGENT_INITIALS: Record<AgentName, string> = {
@@ -22,6 +23,7 @@ export const AGENT_INITIALS: Record<AgentName, string> = {
   Amy: 'A',
   Lynch: 'L',
   Tawnia: 'T',
+  Stockwell: 'S',
 };
 
 export const AGENT_COLORS: Record<AgentName, string> = {
@@ -32,6 +34,7 @@ export const AGENT_COLORS: Record<AgentName, string> = {
   Amy: 'bg-pink-500',
   Lynch: 'bg-blue-500',
   Tawnia: 'bg-teal-500',
+  Stockwell: 'bg-gray-700',
 };
 
 const STATUS_DOT_COLORS: Record<AgentStatus, string> = {

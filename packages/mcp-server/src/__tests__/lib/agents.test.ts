@@ -18,7 +18,7 @@ import {
 describe('lib/agents - shared agent validation', () => {
   describe('VALID_AGENTS_LOWER', () => {
     it('contains all expected agent names', () => {
-      const expected = ['murdock', 'ba', 'lynch', 'amy', 'hannibal', 'face', 'sosa', 'tawnia'];
+      const expected = ['murdock', 'ba', 'lynch', 'amy', 'hannibal', 'face', 'sosa', 'tawnia', 'stockwell'];
       expect([...VALID_AGENTS_LOWER]).toEqual(expect.arrayContaining(expected));
       expect(VALID_AGENTS_LOWER).toHaveLength(expected.length);
     });

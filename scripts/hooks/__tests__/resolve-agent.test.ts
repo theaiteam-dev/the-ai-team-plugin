@@ -83,7 +83,7 @@ describe('isKnownAgent()', () => {
 describe('KNOWN_AGENTS', () => {
   it('contains all nine A(i)-Team agents', () => {
     expect(KNOWN_AGENTS).toEqual(
-      expect.arrayContaining(['hannibal', 'face', 'sosa', 'murdock', 'ba', 'lynch', 'lynch-final', 'amy', 'tawnia'])
+      expect.arrayContaining(['hannibal', 'face', 'sosa', 'murdock', 'ba', 'lynch', 'stockwell', 'amy', 'tawnia'])
     );
     expect(KNOWN_AGENTS).toHaveLength(9);
   });

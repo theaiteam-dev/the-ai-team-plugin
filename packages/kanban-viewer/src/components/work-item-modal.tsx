@@ -18,6 +18,7 @@ const AGENT_ROLES: Record<AgentName, string> = {
   'B.A.': 'Implementation',
   Amy: 'Investigation',
   Lynch: 'Review',
+  Stockwell: 'Final Review',
   Tawnia: 'Documentation',
 };
 

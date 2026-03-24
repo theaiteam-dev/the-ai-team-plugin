@@ -39,7 +39,8 @@ describe('Shared Package Integration', () => {
       expect(VALID_AGENTS).toContain('face');
       expect(VALID_AGENTS).toContain('sosa');
       expect(VALID_AGENTS).toContain('tawnia');
-      expect(VALID_AGENTS.length).toBe(8);
+      expect(VALID_AGENTS).toContain('stockwell');
+      expect(VALID_AGENTS.length).toBe(9);
     });
 
     it('should use shared normalizeAgentName function', () => {

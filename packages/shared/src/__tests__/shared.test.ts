@@ -95,6 +95,7 @@ describe('Shared Package', () => {
         'face',
         'sosa',
         'tawnia',
+        'stockwell',
       ]);
     });
 
@@ -103,15 +104,18 @@ describe('Shared Package', () => {
       expect(normalizeAgentName('B.A.')).toBe('ba');
       expect(normalizeAgentName('b.a.')).toBe('ba');
       expect(normalizeAgentName('MURDOCK')).toBe('murdock');
+      expect(normalizeAgentName('Stockwell')).toBe('stockwell');
     });
 
     it('should validate agent names and map to display names', () => {
       expect(isValidAgent('murdock')).toBe(true);
       expect(isValidAgent('B.A.')).toBe(true);
       expect(isValidAgent('invalid')).toBe(false);
+      expect(isValidAgent('stockwell')).toBe(true);
 
       expect(AGENT_DISPLAY_NAMES['ba']).toBe('B.A.');
       expect(AGENT_DISPLAY_NAMES['hannibal']).toBe('Hannibal');
+      expect(AGENT_DISPLAY_NAMES['stockwell']).toBe('Stockwell');
     });
   });
 

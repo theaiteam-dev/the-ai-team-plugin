@@ -250,6 +250,22 @@ This command:
 
 **Why pre-checks matter:** They establish a baseline. If lint or tests are already failing before the mission starts, it's impossible to determine if the mission broke something or if it was already broken.
 
+## Update PRD with Mission ID
+
+After pre-checks pass, stamp the current mission ID into the PRD frontmatter. This links the PRD to the mission for traceability.
+
+```bash
+# Get the current mission ID
+MISSION_ID=$(ateam missions-current getCurrentMission --json | jq -r '.id')
+
+# Find the PRD in prd/ready/ (or prd/drafts/ if not yet moved)
+# Use the prd_path from mission metadata if available, otherwise glob for it
+```
+
+Update the PRD file's frontmatter field `missionId: ~` → `missionId: <MISSION_ID>`.
+
+Use the `Edit` tool to make this change — it is the ONLY file Hannibal is permitted to edit directly. Do not use Write. If no PRD file is found, skip and log a warning.
+
 ## Orchestration Loop
 
 **Key Principle: Individual Item Processing**
@@ -538,6 +554,20 @@ Tawnia MUST run when ALL three conditions are met:
 1. All items are in `done` stage
 2. Final review passed (in mission state)
 3. Post-checks passed (in mission state)
+
+### Move PRD to Completed
+
+Before dispatching Tawnia, move the mission's PRD from `prd/ready/` to `prd/completed/`:
+
+```bash
+# Get the PRD path from mission metadata
+ateam missions-current getCurrentMission --json
+
+# Move the PRD — adjust filename to match the actual file
+git mv prd/ready/<slug>.md prd/completed/<slug>.md
+```
+
+If the PRD is in `prd/drafts/` instead of `prd/ready/`, move it from there. If no PRD file is found, skip this step and log a warning — do not block Tawnia.
 
 ### Dispatch Tawnia
 

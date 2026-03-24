@@ -1046,9 +1046,9 @@ describe('block-worker-board-move — agent guards', () => {
     expect(result.exitCode).toBe(2);
   });
 
-  it('blocks lynch-final calling ateam board-move via Bash (exit 2)', () => {
+  it('blocks stockwell calling ateam board-move via Bash (exit 2)', () => {
     const result = runHook(HOOK, {
-      agent_type: 'lynch-final',
+      agent_type: 'stockwell',
       tool_name: 'Bash',
       tool_input: { command: 'ateam board-move WI-001 --to done' },
     });

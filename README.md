@@ -655,6 +655,71 @@ Hook scripts live in `scripts/hooks/`. Exit code 0 = allow, non-zero = block.
 }
 ```
 
+## Development
+
+### Commit Conventions
+
+All commits must follow [Conventional Commits](https://www.conventionalcommits.org/). This is enforced by [commitlint](https://commitlint.js.org/) on every PR to `main`.
+
+```
+feat: add token cost breakdown to dashboard
+fix: postcheck no longer runs commands in wrong context
+docs: update pipeline flow diagram
+refactor: extract agent dispatch into shared utility
+test: add Stockwell normalization assertions
+ci: add commitlint workflow for PRs
+chore: update Go dependencies
+```
+
+**Breaking changes** use a footer:
+```
+feat: replace MCP server with ateam CLI binary
+
+BREAKING CHANGE: MCP server package removed. All agent communication
+now goes through the ateam CLI binary via Bash tool calls.
+```
+
+### Release Process
+
+Releases are **fully automated** — merging a PR to `main` is all it takes.
+
+```
+Branch → PR to main → commitlint validates → merge → semantic-release
+                                                         │
+                                              Analyzes commits since last tag
+                                                         │
+                                              feat: → minor   (v1.1.0)
+                                              fix:  → patch   (v1.0.2)
+                                              BREAKING CHANGE → major (v2.0.0)
+                                              docs:/chore:/ci: → no release
+                                                         │
+                                              Creates GitHub Release + git tag
+                                                         │
+                                         ┌───────────────┼───────────────┐
+                                         │               │               │
+                                    Go CLI build    Docker image    Release notes
+                                   (4 platforms)   (GHCR publish)  (auto-generated)
+```
+
+**What gets built on release:**
+- `ateam` CLI binaries for darwin/arm64, darwin/amd64, linux/arm64, linux/amd64
+- `kanban-viewer` Docker image pushed to GHCR (`:vX.Y.Z` and `:latest`)
+- GitHub Release with auto-generated notes from conventional commits
+
+**Manual tag fallback** — if you need to cut a release outside the normal flow:
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+**Changelogs** are maintained manually in `CHANGELOG.md` — semantic-release does not auto-generate them.
+
+**Configuration files:**
+- `.releaserc.json` — semantic-release plugins (commit-analyzer, release-notes-generator, github)
+- `.commitlintrc.yml` — commit message validation rules
+- `.github/workflows/release.yml` — the full release pipeline
+- `.github/workflows/commitlint.yml` — PR commit validation
+
 ## Troubleshooting
 
 ### Background agents getting permission denied

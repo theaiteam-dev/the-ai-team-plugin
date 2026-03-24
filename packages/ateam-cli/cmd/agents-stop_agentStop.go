@@ -29,7 +29,7 @@ var agentsStopAgentStopCmd = &cobra.Command{
 		c := client.NewClient(baseURL, token)
 		pathParams := map[string]string{}
 		queryParams := map[string]string{}
-		if err := validate.Enum("agent", agentsStopAgentStopCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Lynch-Final", "Sosa", "Tawnia"}); err != nil { return err }
+		if err := validate.Enum("agent", agentsStopAgentStopCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}); err != nil { return err }
 		if cmd.Flags().Changed("outcome") { if err := validate.Enum("outcome", agentsStopAgentStopCmd_outcome, []string{"completed", "blocked"}); err != nil { return err } }
 		if agentsStopAgentStopCmdBodyFile != "" {
 			fileData, err := os.ReadFile(agentsStopAgentStopCmdBodyFile)
@@ -88,9 +88,9 @@ func init() {
 	agentsStopCmd.AddCommand(agentsStopAgentStopCmd)
 	agentsStopAgentStopCmd.Flags().StringVar(&agentsStopAgentStopCmdBody, "body", "", "Raw JSON body (overrides individual flags)")
 	agentsStopAgentStopCmd.Flags().StringVar(&agentsStopAgentStopCmdBodyFile, "body-file", "", "Path to JSON file to use as request body")
-	agentsStopAgentStopCmd.Flags().StringVar(&agentsStopAgentStopCmd_agent, "agent", "", "(Hannibal|Face|Murdock|B.A.|Amy|Lynch|Lynch-Final|Sosa|Tawnia)")
+	agentsStopAgentStopCmd.Flags().StringVar(&agentsStopAgentStopCmd_agent, "agent", "", "(Hannibal|Face|Murdock|B.A.|Amy|Lynch|Stockwell|Sosa|Tawnia)")
 	agentsStopAgentStopCmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Lynch-Final", "Sosa", "Tawnia"}, cobra.ShellCompDirectiveNoFileComp
+		return []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	agentsStopAgentStopCmd.Flags().StringVar(&agentsStopAgentStopCmd_itemId, "itemId", "", "")
 	agentsStopAgentStopCmd.Flags().StringVar(&agentsStopAgentStopCmd_outcome, "outcome", "", "(completed|blocked)")

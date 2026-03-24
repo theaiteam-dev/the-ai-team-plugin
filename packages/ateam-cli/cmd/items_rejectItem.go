@@ -28,7 +28,7 @@ var itemsRejectItemCmd = &cobra.Command{
 		pathParams := map[string]string{}
 		pathParams["id"] = args[0]
 		queryParams := map[string]string{}
-		if err := validate.Enum("agent", itemsRejectItemCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Lynch-Final", "Sosa", "Tawnia"}); err != nil { return err }
+		if err := validate.Enum("agent", itemsRejectItemCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}); err != nil { return err }
 		if itemsRejectItemCmdBodyFile != "" {
 			fileData, err := os.ReadFile(itemsRejectItemCmdBodyFile)
 			if err != nil {
@@ -85,9 +85,9 @@ func init() {
 	itemsRejectItemCmd.Flags().StringVar(&itemsRejectItemCmdBody, "body", "", "Raw JSON body (overrides individual flags)")
 	itemsRejectItemCmd.Flags().StringVar(&itemsRejectItemCmdBodyFile, "body-file", "", "Path to JSON file to use as request body")
 	itemsRejectItemCmd.Flags().StringVar(&itemsRejectItemCmd_reason, "reason", "", "")
-	itemsRejectItemCmd.Flags().StringVar(&itemsRejectItemCmd_agent, "agent", "", "(Hannibal|Face|Murdock|B.A.|Amy|Lynch|Lynch-Final|Sosa|Tawnia)")
+	itemsRejectItemCmd.Flags().StringVar(&itemsRejectItemCmd_agent, "agent", "", "(Hannibal|Face|Murdock|B.A.|Amy|Lynch|Stockwell|Sosa|Tawnia)")
 	itemsRejectItemCmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Lynch-Final", "Sosa", "Tawnia"}, cobra.ShellCompDirectiveNoFileComp
+		return []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	itemsRejectItemCmd.MarkFlagRequired("reason")
 	itemsRejectItemCmd.MarkFlagRequired("agent")

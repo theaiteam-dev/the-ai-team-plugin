@@ -10,7 +10,7 @@
 /**
  * All known A(i)-Team agents.
  */
-export const KNOWN_AGENTS = ['hannibal', 'face', 'sosa', 'murdock', 'ba', 'lynch', 'lynch-final', 'amy', 'tawnia'];
+export const KNOWN_AGENTS = ['hannibal', 'face', 'sosa', 'murdock', 'ba', 'lynch', 'stockwell', 'amy', 'tawnia'];
 
 /**
  * Extracts and normalizes the agent name from a Claude Code hook input object.

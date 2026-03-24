@@ -18,7 +18,8 @@ Configure Claude Code permissions and project settings for A(i)-Team.
 6. **Injects** A(i)-Team instructions into CLAUDE.md (so Claude uses the workflow)
 7. **Detects** Docker and offers to start kanban-viewer if not running
 8. **Verifies** API server connectivity
-9. **Checks** for Playwright plugin (optional, for browser testing)
+9. **Configures** observer hook event reporting (telemetry)
+10. **Checks** for Playwright plugin (optional, for browser testing)
 
 ## Behavior
 
@@ -613,7 +614,38 @@ Or configure a different URL:
   Set ATEAM_API_URL in .claude/settings.local.json
 ```
 
-### Step 11: Check Browser Testing Tools
+### Step 11: Configure Observer Hook Event Reporting
+
+Check API availability before enabling hook event reporting. The observer hooks provide real-time telemetry for mission monitoring.
+
+**If API is reachable, ask the user:**
+```
+Would you like to enable hook event reporting?
+
+This sends tool-call and agent lifecycle events to the API for
+observability (token usage, agent activity, mission telemetry).
+
+- Enable hook event reporting  (Recommended if using Kanban UI)
+- Disable hook event reporting (Events are not sent to the API)
+```
+
+**If enabled**, configure hooks in `.claude/settings.local.json`:
+```json
+{
+  "hooks": {
+    "PostToolUse": [{ "command": "node scripts/hooks/post-tool-use.js" }],
+    "SubagentStop": [{ "command": "node scripts/hooks/subagent-stop.js" }]
+  }
+}
+```
+
+**If disabled or API unreachable**, skip hooks configuration:
+```
+⚠ Hook event reporting disabled — observer hooks will not be configured.
+  You can enable this later by re-running /ai-team:setup.
+```
+
+### Step 12: Check Browser Testing Tools
 
 Check for agent-browser CLI (preferred) and Playwright plugin (fallback). See Plugin Dependencies section below.
 

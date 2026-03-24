@@ -36,6 +36,7 @@ const AGENT_TEXT_COLORS: Record<AgentName, string> = {
   'Amy': 'text-pink-500',
   'Lynch': 'text-blue-500',
   'Tawnia': 'text-teal-500',
+  'Stockwell': 'text-gray-400',
 };
 
 const ACTIVE_STAGES: Stage[] = ['testing', 'implementing', 'review', 'probing'];

@@ -36,6 +36,7 @@ const AGENT_OPTIONS: AgentFilter[] = [
   "B.A.",
   "Amy",
   "Lynch",
+  "Stockwell",
   "Unassigned",
 ];
 

@@ -8,13 +8,13 @@ import {
 import { agentColors } from '../components/live-feed-panel';
 
 /**
- * Tests for agent constants - verifies colors and configuration for all 7 agents
- * including Amy (pink) and Tawnia (teal).
+ * Tests for agent constants - verifies colors and configuration for all 8 agents
+ * including Amy (pink), Tawnia (teal), and Stockwell (gray).
  */
 describe('Agent Constants', () => {
   describe('AGENT_NAMES array', () => {
-    it('should include exactly 7 agents', () => {
-      expect(AGENT_NAMES).toHaveLength(7);
+    it('should include exactly 8 agents', () => {
+      expect(AGENT_NAMES).toHaveLength(8);
     });
 
     it('should include Amy', () => {
@@ -43,7 +43,7 @@ describe('Agent Constants', () => {
       expect(AGENT_COLORS['Tawnia']).toBe('bg-teal-500');
     });
 
-    it('should have colors for all 7 agents', () => {
+    it('should have colors for all 8 agents', () => {
       const expectedAgents: AgentName[] = [
         'Hannibal',
         'Face',
@@ -52,6 +52,7 @@ describe('Agent Constants', () => {
         'Amy',
         'Lynch',
         'Tawnia',
+        'Stockwell',
       ];
       expectedAgents.forEach((agent) => {
         expect(AGENT_COLORS[agent]).toBeDefined();
@@ -112,7 +113,7 @@ describe('Agent Constants', () => {
       expect(agentColors['Tawnia']).toBe('text-teal-500');
     });
 
-    it('should have colors for all 7 agents', () => {
+    it('should have colors for all 8 agents', () => {
       const expectedAgents: AgentName[] = [
         'Hannibal',
         'Face',
@@ -121,6 +122,7 @@ describe('Agent Constants', () => {
         'Amy',
         'Lynch',
         'Tawnia',
+        'Stockwell',
       ];
       expectedAgents.forEach((agent) => {
         expect(agentColors[agent]).toBeDefined();

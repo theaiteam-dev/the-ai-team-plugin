@@ -15,7 +15,8 @@ export type AgentName =
   | 'B.A.'
   | 'Lynch'
   | 'Amy'
-  | 'Tawnia';
+  | 'Tawnia'
+  | 'Stockwell';
 
 /**
  * Agent claim on a work item.

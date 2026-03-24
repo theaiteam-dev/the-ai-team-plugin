@@ -5,7 +5,7 @@
  * Blocks working agents (Murdock, B.A., Lynch, Amy, Tawnia) from calling
  * `ateam board-move` via Bash. Stage transitions are Hannibal's responsibility.
  *
- * Targets: murdock, ba, lynch, lynch-final, amy, tawnia
+ * Targets: murdock, ba, lynch, stockwell, amy, tawnia
  *
  * Claude Code sends hook context via stdin JSON (tool_name, tool_input).
  */
@@ -27,7 +27,7 @@ try {
   const agent = resolveAgent(hookInput);
 
   // Only enforce for working agents
-  const TARGET_AGENTS = ['murdock', 'ba', 'lynch', 'lynch-final', 'amy', 'tawnia'];
+  const TARGET_AGENTS = ['murdock', 'ba', 'lynch', 'stockwell', 'amy', 'tawnia'];
   if (!agent || !TARGET_AGENTS.includes(agent)) {
     process.exit(0);
   }
