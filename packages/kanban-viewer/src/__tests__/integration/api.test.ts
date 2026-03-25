@@ -85,12 +85,14 @@ vi.mock('@/lib/db', () => ({
 // ============ Test Data Fixtures ============
 
 const createMockStages = () => [
-  { id: 'backlog', name: 'Backlog', order: 0, wipLimit: null },
+  { id: 'briefings', name: 'Briefings', order: 0, wipLimit: null },
   { id: 'ready', name: 'Ready', order: 1, wipLimit: 10 },
-  { id: 'in_progress', name: 'In Progress', order: 2, wipLimit: 5 },
-  { id: 'review', name: 'Review', order: 3, wipLimit: 3 },
-  { id: 'done', name: 'Done', order: 4, wipLimit: null },
-  { id: 'blocked', name: 'Blocked', order: 5, wipLimit: null },
+  { id: 'testing', name: 'Testing', order: 2, wipLimit: 3 },
+  { id: 'implementing', name: 'Implementing', order: 3, wipLimit: 3 },
+  { id: 'review', name: 'Review', order: 4, wipLimit: 3 },
+  { id: 'probing', name: 'Probing', order: 5, wipLimit: 3 },
+  { id: 'done', name: 'Done', order: 6, wipLimit: null },
+  { id: 'blocked', name: 'Blocked', order: 7, wipLimit: null },
 ];
 
 const createMockItem = (overrides: Record<string, unknown> = {}) => ({
@@ -161,7 +163,7 @@ describe('Board Endpoints Integration', () => {
       const mockStages = createMockStages();
       const mockItems = [
         createMockItem({ id: 'WI-001', stageId: 'ready' }),
-        createMockItem({ id: 'WI-002', stageId: 'in_progress', assignedAgent: 'Murdock' }),
+        createMockItem({ id: 'WI-002', stageId: 'implementing', assignedAgent: 'Murdock' }),
       ];
       const mockClaims = [createMockClaim({ agentName: 'Murdock', itemId: 'WI-002' })];
       const mockMission = createMockMission();
@@ -568,7 +570,7 @@ describe('Item Endpoints Integration', () => {
 
   describe('POST /api/items - Create item', () => {
     it('should create item with auto-generated ID in WI-NNN format', async () => {
-      const newItem = createMockItem({ id: 'WI-001', stageId: 'backlog' });
+      const newItem = createMockItem({ id: 'WI-001', stageId: 'briefings' });
 
       mockPrisma.item.count.mockResolvedValue(0);
       mockPrisma.item.create.mockResolvedValue(newItem);
@@ -594,7 +596,7 @@ describe('Item Endpoints Integration', () => {
       const data = await response.json();
       expect(data.success).toBe(true);
       expect(data.data.id).toMatch(/^WI-\d{3}$/);
-      expect(data.data.stageId).toBe('backlog');
+      expect(data.data.stageId).toBe('briefings');
     });
 
     it('should validate title is required and max 200 chars', async () => {
@@ -878,9 +880,9 @@ describe('Agent Endpoints Integration', () => {
   });
 
   describe('POST /api/agents/start - Start work on item', () => {
-    it('should create claim, move item to in_progress, and create work log', async () => {
+    it('should create claim, move item to work stage, and create work log', async () => {
       const mockItem = createMockItem({ id: 'WI-001', stageId: 'ready', dependsOn: [] });
-      const updatedItem = { ...mockItem, stageId: 'in_progress', assignedAgent: 'Hannibal' };
+      const updatedItem = { ...mockItem, stageId: 'implementing', assignedAgent: 'Hannibal' };
 
       mockPrisma.item.findFirst.mockResolvedValue(mockItem);
       mockPrisma.item.findUnique.mockResolvedValue(mockItem);
@@ -918,12 +920,12 @@ describe('Agent Endpoints Integration', () => {
 
       const data = await response.json();
       expect(data.success).toBe(true);
-      expect(data.data.item.stageId).toBe('in_progress');
+      expect(data.data.item.stageId).toBe('implementing');
       expect(data.data.item.assignedAgent).toBe('Hannibal');
     });
 
     it('should validate item is in ready stage', async () => {
-      const mockItem = createMockItem({ id: 'WI-001', stageId: 'in_progress', dependsOn: [] });
+      const mockItem = createMockItem({ id: 'WI-001', stageId: 'implementing', dependsOn: [] });
       mockPrisma.item.findFirst.mockResolvedValue(mockItem);
       mockPrisma.item.findUnique.mockResolvedValue(mockItem);
 
@@ -949,7 +951,7 @@ describe('Agent Endpoints Integration', () => {
         id: 'WI-001',
         stageId: 'ready',
         dependsOn: [
-          { dependsOnId: 'WI-000', dependsOn: { id: 'WI-000', stageId: 'in_progress' } },
+          { dependsOnId: 'WI-000', dependsOn: { id: 'WI-000', stageId: 'implementing' } },
         ],
       });
       mockPrisma.item.findFirst.mockResolvedValue(mockItem);
@@ -977,7 +979,7 @@ describe('Agent Endpoints Integration', () => {
     it('should release claim, move item to review, and create work log', async () => {
       const mockItem = createMockItem({
         id: 'WI-001',
-        stageId: 'in_progress',
+        stageId: 'implementing',
         assignedAgent: 'Hannibal',
       });
       const mockClaim = createMockClaim({ agentName: 'Hannibal', itemId: 'WI-001' });
@@ -1028,7 +1030,7 @@ describe('Agent Endpoints Integration', () => {
     it('should move item to blocked when outcome is blocked', async () => {
       const mockItem = createMockItem({
         id: 'WI-001',
-        stageId: 'in_progress',
+        stageId: 'implementing',
         assignedAgent: 'Murdock',
       });
       const mockClaim = createMockClaim({ agentName: 'Murdock', itemId: 'WI-001' });
@@ -1769,7 +1771,7 @@ describe('Transaction Rollback on Errors', () => {
         const tx = {
           ...mockPrisma,
           agentClaim: { create: vi.fn().mockResolvedValue(mockClaim) },
-          item: { update: vi.fn().mockResolvedValue({ ...mockItem, stageId: 'in_progress' }) },
+          item: { update: vi.fn().mockResolvedValue({ ...mockItem, stageId: 'implementing' }) },
           workLog: { create: vi.fn().mockRejectedValue(new Error('Work log creation failed')) },
         };
         return callback(tx);

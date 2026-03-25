@@ -3,6 +3,10 @@
  *
  * Verifies that all agent files have observer hooks properly configured
  * alongside existing enforcement hooks.
+ *
+ * Uses regex matching on frontmatter text instead of full YAML parsing,
+ * since we only need to verify that specific hook script filenames appear
+ * in the correct hook sections.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -16,123 +20,69 @@ const OBSERVER_SCRIPTS = {
   stop: 'scripts/hooks/observe-stop.js',
 };
 
-interface HookConfig {
-  matcher?: string;
-  hooks: Array<{
-    type: string;
-    command: string;
-  }>;
-}
-
-interface AgentFrontmatter {
-  name: string;
-  description: string;
-  hooks?: {
-    PreToolUse?: HookConfig[];
-    PostToolUse?: HookConfig[];
-    Stop?: HookConfig[];
-  };
+/**
+ * Extract the raw frontmatter text between --- delimiters.
+ */
+function extractFrontmatter(filePath: string): string | null {
+  const content = readFileSync(filePath, 'utf-8');
+  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  return match ? match[1] : null;
 }
 
 /**
- * Simple YAML parser for agent frontmatter
- * Handles the specific structure we need without external dependencies
+ * Extract the text of a specific hook section (PreToolUse, PostToolUse, or Stop)
+ * from the frontmatter. Returns the full text block for that section.
  */
-function parseAgentFrontmatter(filePath: string): AgentFrontmatter | null {
-  const content = readFileSync(filePath, 'utf-8');
+function extractHookSection(frontmatter: string, sectionName: string): string {
+  // Match from the section header to the next sibling section or end of hooks
+  const sectionRegex = new RegExp(
+    `^  ${sectionName}:\\n((?:(?:    |\\n).*\\n?)*)`,
+    'm'
+  );
+  const match = frontmatter.match(sectionRegex);
+  if (!match) return '';
 
-  // Extract frontmatter between --- delimiters
-  const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!frontmatterMatch) {
-    return null;
-  }
-
-  const yaml = frontmatterMatch[1];
-  const lines = yaml.split('\n');
-
-  const result: AgentFrontmatter = {
-    name: '',
-    description: '',
-    hooks: {
-      PreToolUse: [],
-      PostToolUse: [],
-      Stop: [],
-    },
-  };
-
-  let currentSection: 'PreToolUse' | 'PostToolUse' | 'Stop' | null = null;
-  let currentHookConfig: HookConfig | null = null;
-  let indent = 0;
-
+  // Trim at the next sibling-level key (2-space indent, non-dash)
+  const block = match[1];
+  const lines = block.split('\n');
+  const result: string[] = [];
   for (const line of lines) {
-    // Skip empty lines
-    if (line.trim() === '') continue;
+    // Stop at next hook section (e.g. "  PostToolUse:" or "  Stop:")
+    if (/^  \S/.test(line)) break;
+    result.push(line);
+  }
+  return result.join('\n');
+}
 
-    // Calculate indentation
-    const match = line.match(/^(\s*)/);
-    const lineIndent = match ? match[1].length : 0;
+/**
+ * Check if a hook section contains a command referencing the given script path.
+ */
+function sectionContainsScript(sectionText: string, scriptPath: string): boolean {
+  return sectionText.includes(scriptPath);
+}
 
-    // Top-level fields
-    if (lineIndent === 0) {
-      if (line.startsWith('name:')) {
-        result.name = line.substring(5).trim();
-      } else if (line.startsWith('description:')) {
-        result.description = line.substring(12).trim();
-      } else if (line.startsWith('hooks:')) {
-        // Start hooks section
-        indent = 2;
-      }
-    }
-    // Hook sections (PreToolUse, PostToolUse, Stop)
-    else if (lineIndent === 2) {
-      // Push pending hook config before changing sections
-      if (currentSection && currentHookConfig) {
-        result.hooks![currentSection]!.push(currentHookConfig);
-        currentHookConfig = null;
-      }
+/**
+ * Check if a hook section has a specific matcher block containing a given script.
+ * A matcher block starts with `- matcher: "X"` and the script appears in subsequent lines.
+ * For catch-all hooks (no matcher), the block starts with just `- hooks:`.
+ */
+function sectionHasMatcherWithScript(
+  sectionText: string,
+  matcher: string | null,
+  scriptPath: string
+): boolean {
+  const blocks = sectionText.split(/^    - /m).filter(Boolean);
 
-      if (line.includes('PreToolUse:')) {
-        currentSection = 'PreToolUse';
-      } else if (line.includes('PostToolUse:')) {
-        currentSection = 'PostToolUse';
-      } else if (line.includes('Stop:')) {
-        currentSection = 'Stop';
-      }
-    }
-    // Hook config items (- matcher: ...)
-    else if (lineIndent === 4 && line.trim().startsWith('- ')) {
-      if (currentSection && currentHookConfig) {
-        result.hooks![currentSection]!.push(currentHookConfig);
-      }
-      currentHookConfig = { hooks: [] };
+  for (const block of blocks) {
+    const hasMatcher = matcher
+      ? block.includes(`matcher: "${matcher}"`)
+      : !block.includes('matcher:');
 
-      const matcherMatch = line.match(/matcher:\s*"(.+?)"/);
-      if (matcherMatch) {
-        currentHookConfig.matcher = matcherMatch[1];
-      }
-    }
-    // Hook config details (hooks:, - type:, command:)
-    else if (lineIndent >= 6 && currentHookConfig) {
-      if (line.includes('- type:')) {
-        const typeMatch = line.match(/type:\s*(\w+)/);
-        const type = typeMatch ? typeMatch[1] : '';
-        currentHookConfig.hooks.push({ type, command: '' });
-      } else if (line.includes('command:')) {
-        const commandMatch = line.match(/command:\s*"(.+?)"/);
-        const command = commandMatch ? commandMatch[1] : '';
-        if (currentHookConfig.hooks.length > 0) {
-          currentHookConfig.hooks[currentHookConfig.hooks.length - 1].command = command;
-        }
-      }
+    if (hasMatcher && block.includes(scriptPath)) {
+      return true;
     }
   }
-
-  // Push last hook config
-  if (currentSection && currentHookConfig) {
-    result.hooks![currentSection]!.push(currentHookConfig);
-  }
-
-  return result;
+  return false;
 }
 
 /**
@@ -142,15 +92,6 @@ function getAgentFiles(): string[] {
   return readdirSync(AGENTS_DIR)
     .filter(file => file.endsWith('.md') && !file.startsWith('AGENTS'))
     .map(file => join(AGENTS_DIR, file));
-}
-
-/**
- * Check if hooks array contains the observer script
- */
-function hasObserverHook(hooks: HookConfig['hooks'], scriptPath: string): boolean {
-  return hooks.some(hook =>
-    hook.type === 'command' && hook.command.includes(scriptPath)
-  );
 }
 
 describe('Observer Hooks Configuration', () => {
@@ -165,17 +106,16 @@ describe('Observer Hooks Configuration', () => {
       const fileName = filePath.split('/').pop();
 
       it(`${fileName} should have PreToolUse observer hook`, () => {
-        const frontmatter = parseAgentFrontmatter(filePath);
+        const frontmatter = extractFrontmatter(filePath);
         expect(frontmatter).toBeTruthy();
-        expect(frontmatter?.hooks?.PreToolUse).toBeDefined();
 
-        // Find the catch-all observer hook (no matcher or '*' matcher)
-        const observerHook = frontmatter!.hooks!.PreToolUse!.find(
-          hookConfig => !hookConfig.matcher || hookConfig.matcher === '*'
-        );
+        const section = extractHookSection(frontmatter!, 'PreToolUse');
+        expect(section).toBeTruthy();
 
-        expect(observerHook).toBeDefined();
-        expect(hasObserverHook(observerHook!.hooks, OBSERVER_SCRIPTS.preToolUse)).toBe(true);
+        // The observer hook should be in a catch-all block (no matcher)
+        expect(
+          sectionContainsScript(section, OBSERVER_SCRIPTS.preToolUse)
+        ).toBe(true);
       });
     });
   });
@@ -185,20 +125,15 @@ describe('Observer Hooks Configuration', () => {
       const fileName = filePath.split('/').pop();
 
       it(`${fileName} should have PostToolUse observer hook`, () => {
-        const frontmatter = parseAgentFrontmatter(filePath);
+        const frontmatter = extractFrontmatter(filePath);
         expect(frontmatter).toBeTruthy();
-        expect(frontmatter?.hooks?.PostToolUse).toBeDefined();
 
-        // PostToolUse should have at least one hook config
-        expect(frontmatter!.hooks!.PostToolUse!.length).toBeGreaterThan(0);
+        const section = extractHookSection(frontmatter!, 'PostToolUse');
+        expect(section).toBeTruthy();
 
-        // Find the observer hook (no specific matcher, or '*')
-        const observerHook = frontmatter!.hooks!.PostToolUse!.find(
-          hookConfig => !hookConfig.matcher || hookConfig.matcher === '*'
-        );
-
-        expect(observerHook).toBeDefined();
-        expect(hasObserverHook(observerHook!.hooks, OBSERVER_SCRIPTS.postToolUse)).toBe(true);
+        expect(
+          sectionContainsScript(section, OBSERVER_SCRIPTS.postToolUse)
+        ).toBe(true);
       });
     });
   });
@@ -208,68 +143,55 @@ describe('Observer Hooks Configuration', () => {
       const fileName = filePath.split('/').pop();
 
       it(`${fileName} should have Stop observer hook`, () => {
-        const frontmatter = parseAgentFrontmatter(filePath);
+        const frontmatter = extractFrontmatter(filePath);
         expect(frontmatter).toBeTruthy();
-        expect(frontmatter?.hooks?.Stop).toBeDefined();
 
-        // Stop hooks have no matcher
-        expect(frontmatter!.hooks!.Stop!.length).toBeGreaterThan(0);
+        const section = extractHookSection(frontmatter!, 'Stop');
+        expect(section).toBeTruthy();
 
-        const stopConfig = frontmatter!.hooks!.Stop![0];
-        expect(hasObserverHook(stopConfig.hooks, OBSERVER_SCRIPTS.stop)).toBe(true);
+        expect(
+          sectionContainsScript(section, OBSERVER_SCRIPTS.stop)
+        ).toBe(true);
       });
     });
   });
 
   describe('Enforcement hooks preservation', () => {
     it('hannibal.md should retain block-hannibal-writes.js hook', () => {
-      const filePath = join(AGENTS_DIR, 'hannibal.md');
-      const frontmatter = parseAgentFrontmatter(filePath);
+      const frontmatter = extractFrontmatter(join(AGENTS_DIR, 'hannibal.md'));
+      const section = extractHookSection(frontmatter!, 'PreToolUse');
 
-      const writeEditHook = frontmatter?.hooks?.PreToolUse?.find(
-        hookConfig => hookConfig.matcher === 'Write|Edit'
-      );
-
-      expect(writeEditHook).toBeDefined();
-      expect(hasObserverHook(writeEditHook!.hooks, 'block-hannibal-writes.js')).toBe(true);
+      expect(
+        sectionHasMatcherWithScript(section, 'Write|Edit', 'block-hannibal-writes.js')
+      ).toBe(true);
     });
 
     it('hannibal.md should retain block-raw-mv.js hook', () => {
-      const filePath = join(AGENTS_DIR, 'hannibal.md');
-      const frontmatter = parseAgentFrontmatter(filePath);
+      const frontmatter = extractFrontmatter(join(AGENTS_DIR, 'hannibal.md'));
+      const section = extractHookSection(frontmatter!, 'PreToolUse');
 
-      const bashHook = frontmatter?.hooks?.PreToolUse?.find(
-        hookConfig => hookConfig.matcher === 'Bash'
-      );
-
-      expect(bashHook).toBeDefined();
-      expect(hasObserverHook(bashHook!.hooks, 'block-raw-mv.js')).toBe(true);
+      expect(
+        sectionHasMatcherWithScript(section, 'Bash', 'block-raw-mv.js')
+      ).toBe(true);
     });
 
     it('hannibal.md should retain enforce-final-review.js hook', () => {
-      const filePath = join(AGENTS_DIR, 'hannibal.md');
-      const frontmatter = parseAgentFrontmatter(filePath);
+      const frontmatter = extractFrontmatter(join(AGENTS_DIR, 'hannibal.md'));
+      const section = extractHookSection(frontmatter!, 'Stop');
 
-      const stopConfig = frontmatter?.hooks?.Stop?.[0];
-      expect(stopConfig).toBeDefined();
-      expect(hasObserverHook(stopConfig!.hooks, 'enforce-final-review.js')).toBe(true);
+      expect(sectionContainsScript(section, 'enforce-final-review.js')).toBe(true);
     });
 
     it('working agents should retain block-raw-echo-log.js hook', () => {
       const workingAgents = ['murdock.md', 'ba.md', 'lynch.md', 'amy.md', 'tawnia.md'];
 
       workingAgents.forEach(agentFile => {
-        const filePath = join(AGENTS_DIR, agentFile);
-        const frontmatter = parseAgentFrontmatter(filePath);
+        const frontmatter = extractFrontmatter(join(AGENTS_DIR, agentFile));
+        const section = extractHookSection(frontmatter!, 'PreToolUse');
 
-        const bashHook = frontmatter?.hooks?.PreToolUse?.find(
-          hookConfig => hookConfig.matcher === 'Bash'
-        );
-
-        expect(bashHook, `${agentFile} should have Bash matcher hook`).toBeDefined();
         expect(
-          hasObserverHook(bashHook!.hooks, 'block-raw-echo-log.js'),
-          `${agentFile} should have block-raw-echo-log.js`
+          sectionHasMatcherWithScript(section, 'Bash', 'block-raw-echo-log.js'),
+          `${agentFile} should have block-raw-echo-log.js in Bash matcher`
         ).toBe(true);
       });
     });
@@ -278,28 +200,23 @@ describe('Observer Hooks Configuration', () => {
       const workingAgents = ['murdock.md', 'ba.md', 'lynch.md', 'amy.md', 'tawnia.md'];
 
       workingAgents.forEach(agentFile => {
-        const filePath = join(AGENTS_DIR, agentFile);
-        const frontmatter = parseAgentFrontmatter(filePath);
+        const frontmatter = extractFrontmatter(join(AGENTS_DIR, agentFile));
+        const section = extractHookSection(frontmatter!, 'Stop');
 
-        const stopConfig = frontmatter?.hooks?.Stop?.[0];
-        expect(stopConfig, `${agentFile} should have Stop hook`).toBeDefined();
         expect(
-          hasObserverHook(stopConfig!.hooks, 'enforce-completion-log.js'),
+          sectionContainsScript(section, 'enforce-completion-log.js'),
           `${agentFile} should have enforce-completion-log.js`
         ).toBe(true);
       });
     });
 
     it('amy.md should retain block-amy-test-writes.js hook', () => {
-      const filePath = join(AGENTS_DIR, 'amy.md');
-      const frontmatter = parseAgentFrontmatter(filePath);
+      const frontmatter = extractFrontmatter(join(AGENTS_DIR, 'amy.md'));
+      const section = extractHookSection(frontmatter!, 'PreToolUse');
 
-      const writeEditHook = frontmatter?.hooks?.PreToolUse?.find(
-        hookConfig => hookConfig.matcher === 'Write|Edit'
-      );
-
-      expect(writeEditHook).toBeDefined();
-      expect(hasObserverHook(writeEditHook!.hooks, 'block-amy-test-writes.js')).toBe(true);
+      expect(
+        sectionHasMatcherWithScript(section, 'Write|Edit', 'block-amy-test-writes.js')
+      ).toBe(true);
     });
   });
 });

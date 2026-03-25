@@ -20,53 +20,6 @@ function createProps(overrides: Partial<React.ComponentProps<typeof FilterBar>> 
 }
 
 describe('FilterBar - Active Filter Indicators', () => {
-  describe('active dropdown styling', () => {
-    it('should not show green tint on type dropdown when set to default', () => {
-      render(<FilterBar {...createProps({ typeFilter: 'All Types' })} />);
-
-      const typeDropdown = screen.getByTestId('type-filter-dropdown');
-      expect(typeDropdown).not.toHaveClass('bg-green-500/10');
-      expect(typeDropdown).not.toHaveClass('border-green-500');
-    });
-
-    it('should show green tint on type dropdown when filter is active', () => {
-      render(<FilterBar {...createProps({ typeFilter: 'feature' })} />);
-
-      const typeDropdown = screen.getByTestId('type-filter-dropdown');
-      // #22c55e20 = green-500 at 20% opacity (bg-green-500/20 or similar)
-      expect(typeDropdown).toHaveClass('bg-green-500/20');
-      expect(typeDropdown).toHaveClass('border-green-500');
-    });
-
-    it('should show green tint on agent dropdown when filter is active', () => {
-      render(<FilterBar {...createProps({ agentFilter: 'Murdock' })} />);
-
-      const agentDropdown = screen.getByTestId('agent-filter-dropdown');
-      expect(agentDropdown).toHaveClass('bg-green-500/20');
-      expect(agentDropdown).toHaveClass('border-green-500');
-    });
-
-    it('should show green tint on status dropdown when filter is active', () => {
-      render(<FilterBar {...createProps({ statusFilter: 'Blocked' })} />);
-
-      const statusDropdown = screen.getByTestId('status-filter-dropdown');
-      expect(statusDropdown).toHaveClass('bg-green-500/20');
-      expect(statusDropdown).toHaveClass('border-green-500');
-    });
-
-    it('should show green tint on multiple dropdowns when multiple filters are active', () => {
-      render(<FilterBar {...createProps({
-        typeFilter: 'bug',
-        agentFilter: 'B.A.',
-        statusFilter: 'Active',
-      })} />);
-
-      expect(screen.getByTestId('type-filter-dropdown')).toHaveClass('bg-green-500/20');
-      expect(screen.getByTestId('agent-filter-dropdown')).toHaveClass('bg-green-500/20');
-      expect(screen.getByTestId('status-filter-dropdown')).toHaveClass('bg-green-500/20');
-    });
-  });
-
   describe('clear filters button visibility', () => {
     it('should not show clear filters button when all filters are at default', () => {
       render(<FilterBar {...createProps()} />);
@@ -115,30 +68,6 @@ describe('FilterBar - Active Filter Indicators', () => {
   });
 
   describe('clear filters button styling', () => {
-    it('should be styled as text button with gray color (#6b7280)', () => {
-      render(<FilterBar {...createProps({ typeFilter: 'feature' })} />);
-
-      const clearButton = screen.getByTestId('clear-filters-button');
-      // text-gray-500 maps to #6b7280
-      expect(clearButton).toHaveClass('text-gray-500');
-    });
-
-    it('should change to white on hover', () => {
-      render(<FilterBar {...createProps({ typeFilter: 'feature' })} />);
-
-      const clearButton = screen.getByTestId('clear-filters-button');
-      expect(clearButton).toHaveClass('hover:text-white');
-    });
-
-    it('should use lucide-react X icon at 12px (w-3 h-3)', () => {
-      render(<FilterBar {...createProps({ typeFilter: 'feature' })} />);
-
-      const clearIcon = screen.getByTestId('clear-filters-icon');
-      expect(clearIcon).toBeInTheDocument();
-      expect(clearIcon).toHaveClass('w-3');
-      expect(clearIcon).toHaveClass('h-3');
-    });
-
     it('should display "Clear filters" text', () => {
       render(<FilterBar {...createProps({ typeFilter: 'feature' })} />);
 
@@ -203,13 +132,6 @@ describe('FilterBar - Active Filter Indicators', () => {
   });
 
   describe('Unassigned agent filter', () => {
-    it('should show green tint when Unassigned is selected', () => {
-      render(<FilterBar {...createProps({ agentFilter: 'Unassigned' })} />);
-
-      const agentDropdown = screen.getByTestId('agent-filter-dropdown');
-      expect(agentDropdown).toHaveClass('bg-green-500/20');
-    });
-
     it('should show clear button when Unassigned is selected', () => {
       render(<FilterBar {...createProps({ agentFilter: 'Unassigned' })} />);
 

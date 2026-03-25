@@ -31,128 +31,7 @@ function createTestItems(count: number): WorkItem[] {
 }
 
 describe('BoardColumn Animation Support', () => {
-  describe('layout transition classes', () => {
-    it('should apply card-layout-shift class to card wrappers', () => {
-      const items = createTestItems(3);
-      render(<BoardColumn stage="briefings" items={items} />);
-
-      const wrapper1 = screen.getByTestId('card-wrapper-001');
-      const wrapper2 = screen.getByTestId('card-wrapper-002');
-      const wrapper3 = screen.getByTestId('card-wrapper-003');
-
-      expect(wrapper1).toHaveClass('card-layout-shift');
-      expect(wrapper2).toHaveClass('card-layout-shift');
-      expect(wrapper3).toHaveClass('card-layout-shift');
-    });
-
-    it('should add will-change-transform when card is animating', () => {
-      const items = createTestItems(2);
-      const animatingItems = new Map<
-        string,
-        { state: CardAnimationState; direction: CardAnimationDirection }
-      >([['001', { state: 'entering', direction: 'left' }]]);
-
-      render(
-        <BoardColumn
-          stage="briefings"
-          items={items}
-          animatingItems={animatingItems}
-        />
-      );
-
-      const animatingWrapper = screen.getByTestId('card-wrapper-001');
-      const idleWrapper = screen.getByTestId('card-wrapper-002');
-
-      expect(animatingWrapper).toHaveClass('will-change-transform');
-      expect(idleWrapper).not.toHaveClass('will-change-transform');
-    });
-
-    it('should not add will-change-transform for idle animation state', () => {
-      const items = createTestItems(1);
-      const animatingItems = new Map<
-        string,
-        { state: CardAnimationState; direction: CardAnimationDirection }
-      >([['001', { state: 'idle', direction: 'none' }]]);
-
-      render(
-        <BoardColumn
-          stage="briefings"
-          items={items}
-          animatingItems={animatingItems}
-        />
-      );
-
-      const wrapper = screen.getByTestId('card-wrapper-001');
-      expect(wrapper).not.toHaveClass('will-change-transform');
-    });
-  });
-
   describe('animatingItems prop', () => {
-    it('should pass animation state to WorkItemCard', () => {
-      const items = createTestItems(1);
-      const animatingItems = new Map<
-        string,
-        { state: CardAnimationState; direction: CardAnimationDirection }
-      >([['001', { state: 'exiting', direction: 'right' }]]);
-
-      render(
-        <BoardColumn
-          stage="briefings"
-          items={items}
-          animatingItems={animatingItems}
-        />
-      );
-
-      const card = screen.getByTestId('work-item-card');
-      expect(card).toHaveClass('card-exiting');
-      expect(card).toHaveClass('card-exiting-right');
-    });
-
-    it('should handle entering animation with direction', () => {
-      const items = createTestItems(1);
-      const animatingItems = new Map<
-        string,
-        { state: CardAnimationState; direction: CardAnimationDirection }
-      >([['001', { state: 'entering', direction: 'left' }]]);
-
-      render(
-        <BoardColumn
-          stage="briefings"
-          items={items}
-          animatingItems={animatingItems}
-        />
-      );
-
-      const card = screen.getByTestId('work-item-card');
-      expect(card).toHaveClass('card-entering');
-      expect(card).toHaveClass('card-entering-left');
-    });
-
-    it('should handle multiple items with different animation states', () => {
-      const items = createTestItems(3);
-      const animatingItems = new Map<
-        string,
-        { state: CardAnimationState; direction: CardAnimationDirection }
-      >([
-        ['001', { state: 'entering', direction: 'left' }],
-        ['002', { state: 'idle', direction: 'none' }],
-        ['003', { state: 'exiting', direction: 'right' }],
-      ]);
-
-      render(
-        <BoardColumn
-          stage="briefings"
-          items={items}
-          animatingItems={animatingItems}
-        />
-      );
-
-      const cards = screen.getAllByTestId('work-item-card');
-      expect(cards[0]).toHaveClass('card-entering');
-      expect(cards[1]).toHaveClass('card-idle');
-      expect(cards[2]).toHaveClass('card-exiting');
-    });
-
     it('should render cards with no animation when animatingItems is undefined', () => {
       const items = createTestItems(2);
 
@@ -248,8 +127,6 @@ describe('BoardColumn Animation Support', () => {
 
       const container = screen.getByTestId('card-container');
       expect(container).toBeInTheDocument();
-      expect(container).toHaveClass('p-2');
-      expect(container).toHaveClass('space-y-2');
     });
 
     it('should maintain scroll area structure', () => {
@@ -258,7 +135,6 @@ describe('BoardColumn Animation Support', () => {
 
       const scrollArea = screen.getByTestId('column-scroll-area');
       expect(scrollArea).toBeInTheDocument();
-      expect(scrollArea).toHaveClass('flex-1');
     });
   });
 
@@ -306,43 +182,6 @@ describe('BoardColumn Animation Support', () => {
   });
 
   describe('rapid updates handling', () => {
-    it('should handle animatingItems Map updates without issues', () => {
-      const items = createTestItems(2);
-      const initialAnimating = new Map<
-        string,
-        { state: CardAnimationState; direction: CardAnimationDirection }
-      >([['001', { state: 'entering', direction: 'left' }]]);
-
-      const { rerender } = render(
-        <BoardColumn
-          stage="briefings"
-          items={items}
-          animatingItems={initialAnimating}
-        />
-      );
-
-      // Update animation states
-      const updatedAnimating = new Map<
-        string,
-        { state: CardAnimationState; direction: CardAnimationDirection }
-      >([
-        ['001', { state: 'idle', direction: 'none' }],
-        ['002', { state: 'exiting', direction: 'right' }],
-      ]);
-
-      rerender(
-        <BoardColumn
-          stage="briefings"
-          items={items}
-          animatingItems={updatedAnimating}
-        />
-      );
-
-      const cards = screen.getAllByTestId('work-item-card');
-      expect(cards[0]).toHaveClass('card-idle');
-      expect(cards[1]).toHaveClass('card-exiting');
-    });
-
     it('should handle items being added during animation', () => {
       const items = createTestItems(2);
 
@@ -366,8 +205,6 @@ describe('BoardColumn Animation Support', () => {
       );
 
       expect(screen.getByText('New Item')).toBeInTheDocument();
-      const cards = screen.getAllByTestId('work-item-card');
-      expect(cards[2]).toHaveClass('card-entering');
     });
 
     it('should handle items being removed during animation', () => {

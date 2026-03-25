@@ -127,9 +127,8 @@ describe('Item Tools', () => {
         } as any);
 
         expect(result.isError).toBe(true);
-        if ('message' in result) {
-          expect(result.message).toContain('Required');
-        }
+        expect(result).toHaveProperty('message');
+        expect((result as any).message).toContain('Required');
       });
 
       it('should reject invalid dependency ID format', async () => {
@@ -144,10 +143,9 @@ describe('Item Tools', () => {
         });
 
         expect(result.isError).toBe(true);
-        if ('message' in result) {
-          expect(result.message).toContain('Invalid dependency ID');
-          expect(result.message).toContain('WI-XXX');
-        }
+        expect(result).toHaveProperty('message');
+        expect((result as any).message).toContain('Invalid dependency ID');
+        expect((result as any).message).toContain('WI-XXX');
       });
 
       it('should accept valid dependency ID format WI-001', async () => {
@@ -201,9 +199,8 @@ describe('Item Tools', () => {
         });
 
         expect(result.isError).toBe(true);
-        if ('message' in result) {
-          expect(result.message).toContain('Invalid');
-        }
+        expect(result).toHaveProperty('message');
+        expect((result as any).message).toContain('Invalid');
       });
     });
   });
@@ -282,9 +279,8 @@ describe('Item Tools', () => {
         } as any);
 
         expect(result.isError).toBe(true);
-        if ('message' in result) {
-          expect(result.message).toContain('Required');
-        }
+        expect(result).toHaveProperty('message');
+        expect((result as any).message).toContain('Required');
       });
 
       it('should reject invalid dependency ID format in update', async () => {
@@ -296,9 +292,8 @@ describe('Item Tools', () => {
         });
 
         expect(result.isError).toBe(true);
-        if ('message' in result) {
-          expect(result.message).toContain('Invalid dependency ID');
-        }
+        expect(result).toHaveProperty('message');
+        expect((result as any).message).toContain('Invalid dependency ID');
       });
     });
 
@@ -319,9 +314,8 @@ describe('Item Tools', () => {
         });
 
         expect(result.isError).toBe(true);
-        if ('message' in result) {
-          expect(result.message).toContain('not found');
-        }
+        expect(result).toHaveProperty('message');
+        expect((result as any).message).toContain('not found');
       });
     });
   });
@@ -369,9 +363,8 @@ describe('Item Tools', () => {
         const result = await itemGet({ id: 'WI-999' });
 
         expect(result.isError).toBe(true);
-        if ('message' in result) {
-          expect(result.message).toContain('not found');
-        }
+        expect(result).toHaveProperty('message');
+        expect((result as any).message).toContain('not found');
       });
     });
   });
@@ -595,9 +588,8 @@ describe('Item Tools', () => {
         });
 
         expect(result.isError).toBe(true);
-        if ('message' in result) {
-          expect(result.message).toContain('not found');
-        }
+        expect(result).toHaveProperty('message');
+        expect((result as any).message).toContain('not found');
       });
     });
   });
@@ -648,9 +640,8 @@ Implement JWT-based authentication for the API.`,
         const result = await itemRender({ id: 'WI-999' });
 
         expect(result.isError).toBe(true);
-        if ('message' in result) {
-          expect(result.message).toContain('not found');
-        }
+        expect(result).toHaveProperty('message');
+        expect((result as any).message).toContain('not found');
       });
     });
   });

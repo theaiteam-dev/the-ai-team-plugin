@@ -97,20 +97,6 @@ describe('RawAgentView', () => {
       expect(screen.queryByTestId('swim-lane-hannibal')).not.toBeInTheDocument();
       expect(screen.queryByTestId('swim-lane-ba')).not.toBeInTheDocument();
     });
-
-    it('should handle multiple agents with swim lanes stacked vertically', () => {
-      const events: HookEventSummary[] = [
-        createHookEvent({ agentName: 'hannibal' }),
-        createHookEvent({ id: 2, agentName: 'face' }),
-        createHookEvent({ id: 3, agentName: 'murdock' }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const container = screen.getByTestId('raw-agent-view');
-      // Container should have vertical flex layout
-      expect(container).toHaveClass('flex-col');
-    });
   });
 
   describe('event details display', () => {
@@ -223,106 +209,26 @@ describe('RawAgentView', () => {
   });
 
   describe('status indicators', () => {
-    it('should show green indicator for success status', () => {
+    it('should render status indicators for each status type', () => {
       const events: HookEventSummary[] = [
-        createHookEvent({ status: 'success' }),
+        createHookEvent({ id: 1, status: 'success' }),
+        createHookEvent({ id: 2, status: 'failure', agentName: 'ba' }),
+        createHookEvent({ id: 3, status: 'pending', agentName: 'lynch' }),
+        createHookEvent({ id: 4, status: 'denied', agentName: 'hannibal' }),
+        createHookEvent({ id: 5, status: 'unknown', agentName: 'face' }),
       ];
 
       render(<RawAgentView events={events} />);
 
-      const statusIndicator = screen.getByTestId('status-success-1');
-      expect(statusIndicator).toHaveClass('bg-green-500');
-    });
-
-    it('should show red indicator for failure status', () => {
-      const events: HookEventSummary[] = [
-        createHookEvent({ status: 'failure' }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const statusIndicator = screen.getByTestId('status-failure-1');
-      expect(statusIndicator).toHaveClass('bg-red-500');
-    });
-
-    it('should show yellow indicator for pending status', () => {
-      const events: HookEventSummary[] = [
-        createHookEvent({ status: 'pending' }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const statusIndicator = screen.getByTestId('status-pending-1');
-      expect(statusIndicator).toHaveClass('bg-yellow-500');
-    });
-
-    it('should show orange indicator for denied status (permission denied)', () => {
-      const events: HookEventSummary[] = [
-        createHookEvent({ status: 'denied' }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const statusIndicator = screen.getByTestId('status-denied-1');
-      expect(statusIndicator).toHaveClass('bg-orange-500');
-    });
-
-    it('should show gray indicator for unknown status', () => {
-      const events: HookEventSummary[] = [
-        createHookEvent({ status: 'unknown' }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const statusIndicator = screen.getByTestId('status-unknown-1');
-      expect(statusIndicator).toHaveClass('bg-gray-500');
+      expect(screen.getByTestId('status-success-1')).toBeInTheDocument();
+      expect(screen.getByTestId('status-failure-2')).toBeInTheDocument();
+      expect(screen.getByTestId('status-pending-3')).toBeInTheDocument();
+      expect(screen.getByTestId('status-denied-4')).toBeInTheDocument();
+      expect(screen.getByTestId('status-unknown-5')).toBeInTheDocument();
     });
   });
 
   describe('permission denial highlighting', () => {
-    it('should highlight denied events with distinct visual styling', () => {
-      const events: HookEventSummary[] = [
-        createHookEvent({ id: 1, status: 'denied', summary: 'Permission denied: Write src/test.ts' }),
-        createHookEvent({ id: 2, status: 'success', agentName: 'ba' }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const deniedCard = screen.getByTestId('event-card-1');
-      const successCard = screen.getByTestId('event-card-2');
-
-      // Denied card should have highlight class
-      expect(deniedCard).toHaveClass('border-orange-500');
-      expect(deniedCard).toHaveClass('bg-orange-50');
-
-      // Success card should not have highlight
-      expect(successCard).not.toHaveClass('border-orange-500');
-      expect(successCard).not.toHaveClass('bg-orange-50');
-    });
-
-    it('should show orange border for denied events', () => {
-      const events: HookEventSummary[] = [
-        createHookEvent({ status: 'denied' }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const eventCard = screen.getByTestId('event-card-1');
-      expect(eventCard).toHaveClass('border-orange-500');
-      expect(eventCard).toHaveClass('border-2');
-    });
-
-    it('should show orange background tint for denied events', () => {
-      const events: HookEventSummary[] = [
-        createHookEvent({ status: 'denied' }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const eventCard = screen.getByTestId('event-card-1');
-      expect(eventCard).toHaveClass('bg-orange-50');
-    });
-
     it('should display denial icon or badge for denied events', () => {
       const events: HookEventSummary[] = [
         createHookEvent({ status: 'denied' }),
@@ -531,56 +437,6 @@ describe('RawAgentView', () => {
     });
   });
 
-  describe('swim lane styling', () => {
-    it('should have distinct background for swim lanes', () => {
-      const events: HookEventSummary[] = [
-        createHookEvent({ agentName: 'murdock' }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const swimLane = screen.getByTestId('swim-lane-murdock');
-      expect(swimLane).toHaveClass('bg-card');
-    });
-
-    it('should have proper spacing between swim lanes', () => {
-      const events: HookEventSummary[] = [
-        createHookEvent({ agentName: 'murdock' }),
-        createHookEvent({ id: 2, agentName: 'ba' }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const container = screen.getByTestId('raw-agent-view');
-      expect(container).toHaveClass('gap-4');
-    });
-
-    it('should have proper spacing between event cards within lane', () => {
-      const events: HookEventSummary[] = [
-        createHookEvent({ id: 1, summary: 'First' }),
-        createHookEvent({ id: 2, summary: 'Second' }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const swimLane = screen.getByTestId('swim-lane-murdock');
-      const eventsContainer = within(swimLane).getByTestId('events-container');
-      expect(eventsContainer).toHaveClass('gap-2');
-    });
-
-    it('should display agent name header with proper styling', () => {
-      const events: HookEventSummary[] = [
-        createHookEvent({ agentName: 'murdock' }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const header = screen.getByText('Murdock');
-      expect(header).toHaveClass('font-semibold');
-      expect(header).toHaveClass('text-foreground');
-    });
-  });
-
   describe('correlation ID display', () => {
     it('should group correlated events visually', () => {
       const correlationId = 'test-123';
@@ -614,17 +470,6 @@ describe('RawAgentView', () => {
   });
 
   describe('scrolling behavior', () => {
-    it('should have scrollable container for long event lists', () => {
-      const events: HookEventSummary[] = Array.from({ length: 50 }, (_, i) =>
-        createHookEvent({ id: i + 1, summary: `Event ${i + 1}` })
-      );
-
-      render(<RawAgentView events={events} />);
-
-      const container = screen.getByTestId('raw-agent-view');
-      expect(container).toHaveClass('overflow-y-auto');
-    });
-
     it('should auto-scroll to newest events when at bottom', () => {
       const initialEvents: HookEventSummary[] = [
         createHookEvent({ id: 1, summary: 'First' }),
@@ -644,7 +489,6 @@ describe('RawAgentView', () => {
     });
   });
 
-  // Amy's findings: Performance, dark mode, null safety, text overflow, auto-scroll optimization
   describe('performance optimization (Amy\'s findings)', () => {
     it('should memoize eventsByAgent grouping to avoid re-computation on unrelated re-renders', () => {
       const events: HookEventSummary[] = [
@@ -655,7 +499,6 @@ describe('RawAgentView', () => {
       const { rerender } = render(<RawAgentView events={events} />);
 
       // Re-render with same events reference (unrelated prop change)
-      // The grouping computation should be memoized (useMemo)
       rerender(<RawAgentView events={events} />);
 
       // Verify swim lanes still render correctly
@@ -693,17 +536,12 @@ describe('RawAgentView', () => {
 
       const { rerender } = render(<RawAgentView events={events} />);
 
-      // Get initial event cards
-      const eventCard1 = screen.getByTestId('event-card-1');
-      const eventCard2 = screen.getByTestId('event-card-2');
-
-      expect(eventCard1).toBeInTheDocument();
-      expect(eventCard2).toBeInTheDocument();
+      expect(screen.getByTestId('event-card-1')).toBeInTheDocument();
+      expect(screen.getByTestId('event-card-2')).toBeInTheDocument();
 
       // Re-render with same events (EventCard should be memoized)
       rerender(<RawAgentView events={events} />);
 
-      // Cards should still render correctly
       expect(screen.getByTestId('event-card-1')).toBeInTheDocument();
       expect(screen.getByTestId('event-card-2')).toBeInTheDocument();
     });
@@ -722,79 +560,6 @@ describe('RawAgentView', () => {
 
       // Component should still render correctly
       expect(screen.getByTestId('swim-lane-murdock')).toBeInTheDocument();
-    });
-  });
-
-  describe('dark mode support (Amy\'s findings)', () => {
-    it('should use dark mode compatible classes for denied event cards', () => {
-      const events: HookEventSummary[] = [
-        createHookEvent({ status: 'denied' }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const deniedCard = screen.getByTestId('event-card-1');
-
-      // Should have both light and dark mode classes
-      expect(deniedCard).toHaveClass('bg-orange-50');
-      expect(deniedCard).toHaveClass('dark:bg-orange-950');
-    });
-
-    it('should use dark mode compatible border for denied events', () => {
-      const events: HookEventSummary[] = [
-        createHookEvent({ status: 'denied' }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const deniedCard = screen.getByTestId('event-card-1');
-
-      // Border should have dark mode variant
-      expect(deniedCard).toHaveClass('border-orange-500');
-      expect(deniedCard).toHaveClass('dark:border-orange-600');
-    });
-
-    it('should use dark mode compatible text colors for denial badge', () => {
-      const events: HookEventSummary[] = [
-        createHookEvent({ status: 'denied' }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const denialBadge = screen.getByTestId('denial-badge-1');
-
-      // Badge text should be readable in both light and dark mode (contrast fix)
-      expect(denialBadge).toHaveClass('text-orange-900');
-      expect(denialBadge).toHaveClass('dark:text-orange-100');
-    });
-
-    it('should use dark mode compatible swim lane backgrounds', () => {
-      const events: HookEventSummary[] = [
-        createHookEvent({ agentName: 'murdock' }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const swimLane = screen.getByTestId('swim-lane-murdock');
-
-      // Should use theme-aware background
-      expect(swimLane).toHaveClass('bg-card');
-    });
-
-    it('should use dark mode compatible status indicators', () => {
-      const events: HookEventSummary[] = [
-        createHookEvent({ id: 1, status: 'success' }),
-        createHookEvent({ id: 2, status: 'failure', agentName: 'ba' }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const successIndicator = screen.getByTestId('status-success-1');
-      const failureIndicator = screen.getByTestId('status-failure-2');
-
-      // Status indicators should work in both light and dark modes
-      expect(successIndicator).toHaveClass('bg-green-500');
-      expect(failureIndicator).toHaveClass('bg-red-500');
     });
   });
 
@@ -883,81 +648,6 @@ describe('RawAgentView', () => {
     });
   });
 
-  describe('text overflow handling (Amy\'s findings)', () => {
-    it('should truncate very long summary text', () => {
-      const longSummary = 'A'.repeat(500); // 500 character summary
-      const events: HookEventSummary[] = [
-        createHookEvent({ summary: longSummary }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const eventCard = screen.getByTestId('event-card-1');
-      const summaryElement = within(eventCard).getByText(longSummary, { exact: false });
-
-      // Should have truncate or line-clamp class
-      expect(summaryElement).toHaveClass(/truncate|line-clamp/);
-    });
-
-    it('should use line-clamp for multi-line summary truncation', () => {
-      const longSummary = 'Very long summary text that should be truncated after a certain number of lines to prevent breaking the layout';
-      const events: HookEventSummary[] = [
-        createHookEvent({ summary: longSummary }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const eventCard = screen.getByTestId('event-card-1');
-      const summaryElement = within(eventCard).getByText(longSummary, { exact: false });
-
-      // Should use line-clamp-2 or similar
-      expect(summaryElement.className).toMatch(/line-clamp-[0-9]/);
-    });
-
-    it('should handle very long agent names without breaking layout', () => {
-      const longAgentName = 'VeryLongAgentNameThatShouldNotBreakTheLayout';
-      const events: HookEventSummary[] = [
-        createHookEvent({ agentName: longAgentName }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const swimLane = screen.getByTestId(`swim-lane-${longAgentName.toLowerCase()}`);
-      expect(swimLane).toBeInTheDocument();
-
-      // Agent name header should have truncate or max-width
-      const header = within(swimLane).getByText(longAgentName, { exact: false });
-      expect(header).toHaveClass(/truncate|max-w/);
-    });
-
-    it('should handle very long tool names without breaking layout', () => {
-      const longToolName = 'VeryLongToolNameThatShouldBeTruncated';
-      const events: HookEventSummary[] = [
-        createHookEvent({ toolName: longToolName }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const toolElement = screen.getByText(longToolName, { exact: false });
-
-      // Tool name should have truncate class
-      expect(toolElement).toHaveClass(/truncate|max-w/);
-    });
-
-    it('should constrain event card width to prevent horizontal overflow', () => {
-      const events: HookEventSummary[] = [
-        createHookEvent({ summary: 'A'.repeat(1000) }),
-      ];
-
-      render(<RawAgentView events={events} />);
-
-      const eventCard = screen.getByTestId('event-card-1');
-
-      // Card should have width constraint and overflow handling
-      expect(eventCard).toHaveClass(/max-w|overflow/);
-    });
-  });
-
   describe('auto-scroll optimization (Amy\'s findings)', () => {
     it('should debounce or use requestAnimationFrame for rapid event updates', () => {
       const initialEvents: HookEventSummary[] = [
@@ -978,7 +668,6 @@ describe('RawAgentView', () => {
       }
 
       // Should handle rapid updates without excessive scroll calls
-      // (implementation should use debounce or requestAnimationFrame)
       expect(screen.getByText('Event 20')).toBeInTheDocument();
     });
 

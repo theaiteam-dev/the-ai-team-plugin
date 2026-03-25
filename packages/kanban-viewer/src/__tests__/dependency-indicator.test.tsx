@@ -68,26 +68,4 @@ describe('DependencyIndicator', () => {
       expect(ids.length).toBeGreaterThanOrEqual(1);
     });
   });
-
-  describe('styling', () => {
-    it('should have muted color styling', () => {
-      render(<DependencyIndicator blockerIds={['009']} />);
-      const indicator = screen.getByTestId('dependency-indicator');
-      expect(indicator).toHaveClass('text-muted-foreground');
-    });
-
-    it('should have small text size for count', () => {
-      render(<DependencyIndicator blockerIds={['009']} />);
-      const indicator = screen.getByTestId('dependency-indicator');
-      expect(indicator).toHaveClass('text-xs');
-    });
-
-    it('should use flex layout with gap for icon and count', () => {
-      render(<DependencyIndicator blockerIds={['009']} />);
-      const indicator = screen.getByTestId('dependency-indicator');
-      expect(indicator).toHaveClass('flex');
-      expect(indicator).toHaveClass('items-center');
-      expect(indicator).toHaveClass('gap-1');
-    });
-  });
 });

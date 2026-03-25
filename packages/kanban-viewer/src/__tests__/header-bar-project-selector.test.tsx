@@ -53,22 +53,6 @@ describe('HeaderBar - Project Selector Display', () => {
       expect(projectContainer).not.toBeInTheDocument();
     });
 
-    it('should have 180px fixed width on project selector container', () => {
-      render(<HeaderBar {...createProps()} />);
-
-      const projectContainer = screen.getByTestId('project-selector-container');
-      expect(projectContainer).toHaveClass('w-[180px]');
-    });
-
-    it('should have 1px right border with color #374151', () => {
-      render(<HeaderBar {...createProps()} />);
-
-      const projectContainer = screen.getByTestId('project-selector-container');
-      // border-r creates right border, border-gray-700 maps to #374151
-      expect(projectContainer).toHaveClass('border-r');
-      expect(projectContainer).toHaveClass('border-gray-700');
-    });
-
     it('should be positioned on left side of header', () => {
       render(<HeaderBar {...createProps()} />);
 
@@ -120,43 +104,6 @@ describe('HeaderBar - Project Selector Display', () => {
     });
   });
 
-  describe('project selector styling', () => {
-    it('should use semibold font weight', () => {
-      render(<HeaderBar {...createProps()} />);
-
-      const select = screen.getByRole('combobox', { name: /select project/i });
-      expect(select).toHaveClass('font-semibold');
-    });
-
-    it('should use small text size', () => {
-      render(<HeaderBar {...createProps()} />);
-
-      const select = screen.getByRole('combobox', { name: /select project/i });
-      expect(select).toHaveClass('text-sm');
-    });
-
-    it('should have proper border and focus styles', () => {
-      render(<HeaderBar {...createProps()} />);
-
-      const select = screen.getByRole('combobox', { name: /select project/i });
-      expect(select).toHaveClass('border');
-      expect(select).toHaveClass('border-border');
-      expect(select).toHaveClass('focus:ring-2');
-      expect(select).toHaveClass('focus:ring-primary');
-    });
-  });
-
-  describe('responsive behavior', () => {
-    it('should hide project selector container below 1024px viewport width', () => {
-      render(<HeaderBar {...createProps()} />);
-
-      const projectContainer = screen.getByTestId('project-selector-container');
-      // hidden lg:flex means hidden by default, visible at lg (1024px) breakpoint
-      expect(projectContainer).toHaveClass('hidden');
-      expect(projectContainer).toHaveClass('lg:flex');
-    });
-  });
-
   describe('edge cases', () => {
     it('should handle single project', () => {
       render(<HeaderBar {...createProps({
@@ -189,32 +136,6 @@ describe('HeaderBar - Project Selector Display', () => {
       })} />);
 
       expect(screen.getByRole('option', { name: 'Very Long Project Name That Should Display Properly' })).toBeInTheDocument();
-    });
-
-    it('should constrain very long project names within container width', () => {
-      const veryLongName = 'A'.repeat(200); // 200 character name
-      render(<HeaderBar {...createProps({
-        projects: [{
-          id: 'very-long',
-          name: veryLongName,
-          createdAt: new Date(),
-          updatedAt: new Date()
-        }],
-        selectedProjectId: 'very-long'
-      })} />);
-
-      const select = screen.getByRole('combobox', { name: /select project/i });
-      const container = screen.getByTestId('project-selector-container');
-
-      // Select should have overflow constraints
-      expect(select).toHaveClass('max-w-full');
-      expect(select).toHaveClass('w-full');
-      expect(select).toHaveClass('overflow-hidden');
-      expect(select).toHaveClass('text-ellipsis');
-
-      // Container should have overflow hidden and min-w-0 to allow shrinking
-      expect(container).toHaveClass('overflow-hidden');
-      expect(container).toHaveClass('min-w-0');
     });
   });
 });

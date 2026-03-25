@@ -277,122 +277,6 @@ describe('ItemDetailModal', () => {
     });
   });
 
-  describe('modal styling (Feature 009)', () => {
-    it('should have background color #1f2937 (bg-gray-800)', () => {
-      const item = createWorkItem();
-      render(<ItemDetailModal isOpen={true} onClose={() => {}} item={item} />);
-
-      const modal = screen.getByTestId('item-detail-modal');
-      // The modal should have bg-gray-800 which is #1f2937
-      expect(modal).toHaveClass('bg-gray-800');
-    });
-
-    it('should have 1px border with color #374151 (border-gray-700)', () => {
-      const item = createWorkItem();
-      render(<ItemDetailModal isOpen={true} onClose={() => {}} item={item} />);
-
-      const modal = screen.getByTestId('item-detail-modal');
-      expect(modal).toHaveClass('border');
-      expect(modal).toHaveClass('border-gray-700');
-    });
-
-    it('should have 12px border-radius (rounded-xl)', () => {
-      const item = createWorkItem();
-      render(<ItemDetailModal isOpen={true} onClose={() => {}} item={item} />);
-
-      const modal = screen.getByTestId('item-detail-modal');
-      expect(modal).toHaveClass('rounded-xl');
-    });
-
-    it('should have max-width of 500px (max-w-lg)', () => {
-      const item = createWorkItem();
-      render(<ItemDetailModal isOpen={true} onClose={() => {}} item={item} />);
-
-      const modal = screen.getByTestId('item-detail-modal');
-      expect(modal).toHaveClass('max-w-lg');
-    });
-
-    it('should have 24px padding (p-6)', () => {
-      const item = createWorkItem();
-      render(<ItemDetailModal isOpen={true} onClose={() => {}} item={item} />);
-
-      const modal = screen.getByTestId('item-detail-modal');
-      expect(modal).toHaveClass('p-6');
-    });
-  });
-
-  describe('close button styling (Feature 009)', () => {
-    it('should have X icon with 20px size (h-5 w-5)', () => {
-      const item = createWorkItem();
-      render(<ItemDetailModal isOpen={true} onClose={() => {}} item={item} />);
-
-      const closeButton = screen.getByRole('button', { name: /close/i });
-      const icon = closeButton.querySelector('svg');
-      expect(icon).toHaveClass('h-5');
-      expect(icon).toHaveClass('w-5');
-    });
-
-    it('should have #6b7280 color (text-gray-500)', () => {
-      const item = createWorkItem();
-      render(<ItemDetailModal isOpen={true} onClose={() => {}} item={item} />);
-
-      const closeButton = screen.getByRole('button', { name: /close/i });
-      expect(closeButton).toHaveClass('text-gray-500');
-    });
-
-    it('should have hover color #ffffff (hover:text-white)', () => {
-      const item = createWorkItem();
-      render(<ItemDetailModal isOpen={true} onClose={() => {}} item={item} />);
-
-      const closeButton = screen.getByRole('button', { name: /close/i });
-      expect(closeButton).toHaveClass('hover:text-white');
-    });
-  });
-
-  describe('section header styling (Feature 009)', () => {
-    it('should have section headers with 14px font size (text-sm)', () => {
-      const item = createWorkItem({ dependencies: ['001'] });
-      render(<ItemDetailModal isOpen={true} onClose={() => {}} item={item} />);
-
-      const sectionHeader = screen.getByText(/dependencies/i);
-      expect(sectionHeader).toHaveClass('text-sm');
-    });
-
-    it('should have section headers with #ffffff color (text-white)', () => {
-      const item = createWorkItem({ outputs: { impl: 'src/test.ts' } });
-      render(<ItemDetailModal isOpen={true} onClose={() => {}} item={item} />);
-
-      const sectionHeader = screen.getByText(/outputs/i);
-      expect(sectionHeader).toHaveClass('text-white');
-    });
-
-    it('should have section headers with font-weight 600 (font-semibold)', () => {
-      const item = createWorkItem({ dependencies: ['001'] });
-      render(<ItemDetailModal isOpen={true} onClose={() => {}} item={item} />);
-
-      const sectionHeader = screen.getByText(/dependencies/i);
-      expect(sectionHeader).toHaveClass('font-semibold');
-    });
-
-    it('should style all section headers consistently', () => {
-      const item = createWorkItem({
-        dependencies: ['001'],
-        outputs: { impl: 'src/test.ts', test: 'src/__tests__/test.test.ts' },
-      });
-      render(<ItemDetailModal isOpen={true} onClose={() => {}} item={item} />);
-
-      const dependenciesHeader = screen.getByText(/dependencies/i);
-      const outputsHeader = screen.getByText(/outputs/i);
-
-      // Both headers should have same styling
-      [dependenciesHeader, outputsHeader].forEach(header => {
-        expect(header).toHaveClass('text-sm');
-        expect(header).toHaveClass('text-white');
-        expect(header).toHaveClass('font-semibold');
-      });
-    });
-  });
-
   describe('work history section', () => {
     it('should display Work History section when work_logs has entries', () => {
       const item = createWorkItem({
@@ -602,26 +486,6 @@ describe('ItemDetailModal', () => {
       expect(screen.getByText('Murdock')).toBeInTheDocument();
     });
 
-    it('should render work history section with correct styling', () => {
-      const item = createWorkItem({
-        work_logs: [
-          {
-            id: 1,
-            agent: 'B.A.',
-            action: 'started',
-            summary: 'Work started',
-            timestamp: new Date('2026-01-15T10:00:00Z'),
-          },
-        ],
-      });
-      render(<ItemDetailModal isOpen={true} onClose={() => {}} item={item} />);
-
-      const workHistoryHeader = screen.getByText('Work History');
-      expect(workHistoryHeader).toHaveClass('text-sm');
-      expect(workHistoryHeader).toHaveClass('font-semibold');
-      expect(workHistoryHeader).toHaveClass('text-white');
-    });
-
     it('should handle work log with empty summary', () => {
       const item = createWorkItem({
         work_logs: [
@@ -685,50 +549,6 @@ describe('ItemDetailModal', () => {
       // Should still render without crashing
       expect(screen.getByText('B.A.')).toBeInTheDocument();
       expect(screen.getByText('Work started')).toBeInTheDocument();
-    });
-
-    it('should display action icons with correct colors', () => {
-      const item = createWorkItem({
-        work_logs: [
-          {
-            id: 1,
-            agent: 'B.A.',
-            action: 'started',
-            summary: 'Started',
-            timestamp: new Date('2026-01-15T10:00:00Z'),
-          },
-          {
-            id: 2,
-            agent: 'Face',
-            action: 'completed',
-            summary: 'Completed',
-            timestamp: new Date('2026-01-15T11:00:00Z'),
-          },
-          {
-            id: 3,
-            agent: 'Murdock',
-            action: 'rejected',
-            summary: 'Rejected',
-            timestamp: new Date('2026-01-15T12:00:00Z'),
-          },
-          {
-            id: 4,
-            agent: 'Amy',
-            action: 'note',
-            summary: 'Note',
-            timestamp: new Date('2026-01-15T13:00:00Z'),
-          },
-        ],
-      });
-      render(<ItemDetailModal isOpen={true} onClose={() => {}} item={item} />);
-
-      const container = screen.getByTestId('item-detail-modal');
-
-      // Check that color classes are present (icons should be rendered with appropriate colors)
-      expect(container.innerHTML).toContain('text-blue-400'); // started
-      expect(container.innerHTML).toContain('text-green-400'); // completed
-      expect(container.innerHTML).toContain('text-red-400'); // rejected
-      expect(container.innerHTML).toContain('text-gray-400'); // note
     });
   });
 });

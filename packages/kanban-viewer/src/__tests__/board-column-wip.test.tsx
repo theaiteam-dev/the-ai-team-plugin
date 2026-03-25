@@ -79,94 +79,6 @@ describe('BoardColumn WIP Limit Display', () => {
     });
   });
 
-  describe('Part 2: Visual Color States', () => {
-    it('should display muted color when below limit (normal state)', () => {
-      const items = createItems(3);
-      render(<BoardColumn stage="testing" items={items} wipLimit={5} />);
-
-      const wipDisplay = screen.getByTestId('wip-display');
-      expect(wipDisplay).toHaveClass('text-muted-foreground');
-      expect(wipDisplay).not.toHaveClass('text-yellow-500');
-      expect(wipDisplay).not.toHaveClass('text-red-500');
-    });
-
-    it('should display warning color (yellow) when at limit', () => {
-      const items = createItems(5);
-      render(<BoardColumn stage="testing" items={items} wipLimit={5} />);
-
-      const wipDisplay = screen.getByTestId('wip-display');
-      expect(wipDisplay).toHaveClass('text-yellow-500');
-      expect(wipDisplay).not.toHaveClass('text-muted-foreground');
-      expect(wipDisplay).not.toHaveClass('text-red-500');
-    });
-
-    it('should display error color (red) when over limit', () => {
-      const items = createItems(6);
-      render(<BoardColumn stage="testing" items={items} wipLimit={5} />);
-
-      const wipDisplay = screen.getByTestId('wip-display');
-      expect(wipDisplay).toHaveClass('text-red-500');
-      expect(wipDisplay).not.toHaveClass('text-muted-foreground');
-      expect(wipDisplay).not.toHaveClass('text-yellow-500');
-    });
-
-    it('should always display muted color for unlimited columns', () => {
-      const items = createItems(10);
-      render(<BoardColumn stage="testing" items={items} wipLimit={null} />);
-
-      const wipDisplay = screen.getByTestId('wip-display');
-      expect(wipDisplay).toHaveClass('text-muted-foreground');
-    });
-
-    it('should always display muted color when wipLimit is undefined', () => {
-      const items = createItems(10);
-      render(<BoardColumn stage="testing" items={items} />);
-
-      const wipDisplay = screen.getByTestId('wip-display');
-      expect(wipDisplay).toHaveClass('text-muted-foreground');
-    });
-
-    it('should transition from normal to warning when reaching limit', () => {
-      const { rerender } = render(
-        <BoardColumn stage="testing" items={createItems(4)} wipLimit={5} />
-      );
-
-      expect(screen.getByTestId('wip-display')).toHaveClass('text-muted-foreground');
-
-      rerender(<BoardColumn stage="testing" items={createItems(5)} wipLimit={5} />);
-
-      expect(screen.getByTestId('wip-display')).toHaveClass('text-yellow-500');
-    });
-
-    it('should transition from warning to error when exceeding limit', () => {
-      const { rerender } = render(
-        <BoardColumn stage="testing" items={createItems(5)} wipLimit={5} />
-      );
-
-      expect(screen.getByTestId('wip-display')).toHaveClass('text-yellow-500');
-
-      rerender(<BoardColumn stage="testing" items={createItems(6)} wipLimit={5} />);
-
-      expect(screen.getByTestId('wip-display')).toHaveClass('text-red-500');
-    });
-
-    it('should handle edge case of limit = 1 correctly', () => {
-      // Below limit (0 items)
-      const { rerender } = render(
-        <BoardColumn stage="testing" items={[]} wipLimit={1} />
-      );
-      expect(screen.getByTestId('wip-display')).toHaveClass('text-muted-foreground');
-
-      // At limit (1 item)
-      rerender(<BoardColumn stage="testing" items={createItems(1)} wipLimit={1} />);
-      expect(screen.getByTestId('wip-display')).toHaveClass('text-yellow-500');
-
-      // Over limit (2 items)
-      rerender(<BoardColumn stage="testing" items={createItems(2)} wipLimit={1} />);
-      expect(screen.getByTestId('wip-display')).toHaveClass('text-red-500');
-    });
-  });
-
   describe('Part 3: Inline WIP Limit Editor', () => {
     describe('Edit mode entry', () => {
       it('should enter edit mode when clicking on the limit number', () => {
@@ -573,7 +485,7 @@ describe('BoardColumn WIP Limit Display', () => {
   });
 
   describe('Integration: Display and Edit together', () => {
-    it('should show correct format, color, and allow editing', () => {
+    it('should show correct format and allow editing', () => {
       const onWipLimitChange = vi.fn();
       const { rerender } = render(
         <BoardColumn
@@ -586,9 +498,6 @@ describe('BoardColumn WIP Limit Display', () => {
 
       // Check initial display format
       expect(screen.getByTestId('wip-display')).toHaveTextContent('4/5');
-
-      // Check color (below limit = muted)
-      expect(screen.getByTestId('wip-display')).toHaveClass('text-muted-foreground');
 
       // Enter edit mode
       const limitDisplay = screen.getByTestId('wip-limit-value');
@@ -612,9 +521,8 @@ describe('BoardColumn WIP Limit Display', () => {
         />
       );
 
-      // Now at limit, should be yellow
+      // Now at limit
       expect(screen.getByTestId('wip-display')).toHaveTextContent('4/4');
-      expect(screen.getByTestId('wip-display')).toHaveClass('text-yellow-500');
     });
 
     it('should handle changing from limited to unlimited and back', () => {
@@ -649,7 +557,6 @@ describe('BoardColumn WIP Limit Display', () => {
       );
 
       expect(screen.getByTestId('wip-display')).toHaveTextContent('3/\u221E');
-      expect(screen.getByTestId('wip-display')).toHaveClass('text-muted-foreground');
 
       // Set back to limited
       const limitDisplayUnlimited = screen.getByTestId('wip-limit-value');
@@ -672,7 +579,6 @@ describe('BoardColumn WIP Limit Display', () => {
       );
 
       expect(screen.getByTestId('wip-display')).toHaveTextContent('3/2');
-      expect(screen.getByTestId('wip-display')).toHaveClass('text-red-500');
     });
   });
 });

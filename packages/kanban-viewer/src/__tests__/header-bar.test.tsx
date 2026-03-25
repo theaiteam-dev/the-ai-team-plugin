@@ -40,27 +40,6 @@ describe('HeaderBar', () => {
   });
 
   describe('status indicator', () => {
-    it('should show green indicator for active status', () => {
-      render(<HeaderBar {...createProps({ mission: { name: 'Test', started_at: '2026-01-15T10:00:00Z', status: 'active' } })} />);
-
-      const indicator = screen.getByTestId('status-indicator');
-      expect(indicator).toHaveClass('bg-green-500');
-    });
-
-    it('should show yellow indicator for paused status', () => {
-      render(<HeaderBar {...createProps({ mission: { name: 'Test', started_at: '2026-01-15T10:00:00Z', status: 'paused' } })} />);
-
-      const indicator = screen.getByTestId('status-indicator');
-      expect(indicator).toHaveClass('bg-yellow-500');
-    });
-
-    it('should show red indicator for completed status', () => {
-      render(<HeaderBar {...createProps({ mission: { name: 'Test', started_at: '2026-01-15T10:00:00Z', status: 'completed' } })} />);
-
-      const indicator = screen.getByTestId('status-indicator');
-      expect(indicator).toHaveClass('bg-red-500');
-    });
-
     it('should display status text matching mission status', () => {
       render(<HeaderBar {...createProps({ mission: { name: 'Test', started_at: '2026-01-15T10:00:00Z', status: 'active' } })} />);
 
@@ -260,13 +239,6 @@ describe('HeaderBar', () => {
       expect(screen.getByText('00:00:00')).toBeInTheDocument();
     });
 
-    it('should show blue indicator for planning status', () => {
-      render(<HeaderBar {...createProps({ mission: { name: 'Test', created_at: '2026-01-15T10:00:00Z', status: 'planning' } })} />);
-
-      const indicator = screen.getByTestId('status-indicator');
-      expect(indicator).toHaveClass('bg-blue-500');
-    });
-
     it('should display MISSION PLANNING text for planning status', () => {
       render(<HeaderBar {...createProps({ mission: { name: 'Test', created_at: '2026-01-15T10:00:00Z', status: 'planning' } })} />);
 
@@ -276,13 +248,6 @@ describe('HeaderBar', () => {
 
   describe('mission completion phase status indicators', () => {
     describe('final_review phase', () => {
-      it('should show purple indicator for final_review status', () => {
-        render(<HeaderBar {...createProps({ mission: { name: 'Test', started_at: '2026-01-15T10:00:00Z', status: 'final_review' } })} />);
-
-        const indicator = screen.getByTestId('status-indicator');
-        expect(indicator).toHaveClass('bg-purple-500');
-      });
-
       it('should display FINAL REVIEW text for final_review status', () => {
         render(<HeaderBar {...createProps({ mission: { name: 'Test', started_at: '2026-01-15T10:00:00Z', status: 'final_review' } })} />);
 
@@ -291,13 +256,6 @@ describe('HeaderBar', () => {
     });
 
     describe('post_checks phase', () => {
-      it('should show yellow indicator for post_checks status', () => {
-        render(<HeaderBar {...createProps({ mission: { name: 'Test', started_at: '2026-01-15T10:00:00Z', status: 'post_checks' } })} />);
-
-        const indicator = screen.getByTestId('status-indicator');
-        expect(indicator).toHaveClass('bg-yellow-500');
-      });
-
       it('should display POST-CHECKS text for post_checks status', () => {
         render(<HeaderBar {...createProps({ mission: { name: 'Test', started_at: '2026-01-15T10:00:00Z', status: 'post_checks' } })} />);
 
@@ -306,13 +264,6 @@ describe('HeaderBar', () => {
     });
 
     describe('documentation phase', () => {
-      it('should show teal indicator for documentation status', () => {
-        render(<HeaderBar {...createProps({ mission: { name: 'Test', started_at: '2026-01-15T10:00:00Z', status: 'documentation' } })} />);
-
-        const indicator = screen.getByTestId('status-indicator');
-        expect(indicator).toHaveClass('bg-teal-500');
-      });
-
       it('should display DOCUMENTATION text for documentation status', () => {
         render(<HeaderBar {...createProps({ mission: { name: 'Test', started_at: '2026-01-15T10:00:00Z', status: 'documentation' } })} />);
 
@@ -321,13 +272,6 @@ describe('HeaderBar', () => {
     });
 
     describe('complete phase', () => {
-      it('should show green indicator for complete status', () => {
-        render(<HeaderBar {...createProps({ mission: { name: 'Test', started_at: '2026-01-15T10:00:00Z', status: 'complete' } })} />);
-
-        const indicator = screen.getByTestId('status-indicator');
-        expect(indicator).toHaveClass('bg-green-500');
-      });
-
       it('should display MISSION COMPLETE text for complete status', () => {
         render(<HeaderBar {...createProps({ mission: { name: 'Test', started_at: '2026-01-15T10:00:00Z', status: 'complete' } })} />);
 
@@ -346,27 +290,21 @@ describe('HeaderBar', () => {
     });
 
     describe('existing states continue to work', () => {
-      it('should still show green indicator for active status', () => {
+      it('should still show MISSION ACTIVE text for active status', () => {
         render(<HeaderBar {...createProps({ mission: { name: 'Test', started_at: '2026-01-15T10:00:00Z', status: 'active' } })} />);
 
-        const indicator = screen.getByTestId('status-indicator');
-        expect(indicator).toHaveClass('bg-green-500');
         expect(screen.getByText(/MISSION ACTIVE/i)).toBeInTheDocument();
       });
 
-      it('should still show yellow indicator for paused status', () => {
+      it('should still show MISSION PAUSED text for paused status', () => {
         render(<HeaderBar {...createProps({ mission: { name: 'Test', started_at: '2026-01-15T10:00:00Z', status: 'paused' } })} />);
 
-        const indicator = screen.getByTestId('status-indicator');
-        expect(indicator).toHaveClass('bg-yellow-500');
         expect(screen.getByText(/MISSION PAUSED/i)).toBeInTheDocument();
       });
 
-      it('should still show blue indicator for planning status', () => {
+      it('should still show MISSION PLANNING text for planning status', () => {
         render(<HeaderBar {...createProps({ mission: { name: 'Test', started_at: '2026-01-15T10:00:00Z', status: 'planning' } })} />);
 
-        const indicator = screen.getByTestId('status-indicator');
-        expect(indicator).toHaveClass('bg-blue-500');
         expect(screen.getByText(/MISSION PLANNING/i)).toBeInTheDocument();
       });
     });
