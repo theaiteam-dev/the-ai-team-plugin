@@ -4,6 +4,16 @@
   "plugins": [
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
+    ["@semantic-release/exec", {
+      "prepareCmd": "./scripts/bump-plugin-version.sh ${nextRelease.version}"
+    }],
+    ["@semantic-release/git", {
+      "assets": [
+        ".claude-plugin/plugin.json",
+        ".claude-plugin/marketplace.json"
+      ],
+      "message": "chore(release): bump plugin version to ${nextRelease.version} [skip ci]"
+    }],
     "@semantic-release/github"
   ]
 }
