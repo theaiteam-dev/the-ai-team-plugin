@@ -2,15 +2,13 @@ import { NextRequest } from 'next/server';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { POST } from '@/app/api/hooks/events/route';
 import { prisma } from '@/lib/db';
-import type { HookEventSummary } from '@/types/hook-event';
 
 /**
- * Smoke tests for token usage fields on HookEvent (WI-272)
+ * Integration tests for token usage fields on HookEvent (WI-272)
  *
  * Verifies:
  * 1. API endpoint accepts and stores token fields
  * 2. Existing events without token fields are unaffected (backward compatibility)
- * 3. SSE HookEventSummary type includes token fields that pass through when present
  */
 
 describe('HookEvent token usage fields', () => {
@@ -97,48 +95,5 @@ describe('HookEvent token usage fields', () => {
     // Core fields still work
     expect(dbEvent?.agentName).toBe('ba');
     expect(dbEvent?.eventType).toBe('pre_tool_use');
-  });
-
-  it('should include token fields in HookEventSummary type when present', () => {
-    // Type-level smoke test: if this compiles, HookEventSummary has token fields
-    const summaryWithTokens: HookEventSummary = {
-      id: 1,
-      eventType: 'post_tool_use',
-      agentName: 'lynch',
-      toolName: 'Read',
-      status: 'success',
-      durationMs: 100,
-      summary: 'Read file during review',
-      timestamp: new Date(),
-      inputTokens: 2048,
-      outputTokens: 256,
-      cacheCreationTokens: 0,
-      cacheReadTokens: 1500,
-      model: 'claude-opus-4-6',
-    };
-
-    // Token fields are included and accessible
-    expect(summaryWithTokens.inputTokens).toBe(2048);
-    expect(summaryWithTokens.outputTokens).toBe(256);
-    expect(summaryWithTokens.cacheCreationTokens).toBe(0);
-    expect(summaryWithTokens.cacheReadTokens).toBe(1500);
-    expect(summaryWithTokens.model).toBe('claude-opus-4-6');
-
-    // Verify they can also be omitted (optional fields)
-    const summaryWithoutTokens: HookEventSummary = {
-      id: 2,
-      eventType: 'stop',
-      agentName: 'hannibal',
-      status: 'success',
-      summary: 'Mission complete',
-      timestamp: new Date(),
-      // No token fields
-    };
-
-    expect(summaryWithoutTokens.inputTokens).toBeUndefined();
-    expect(summaryWithoutTokens.outputTokens).toBeUndefined();
-    expect(summaryWithoutTokens.cacheCreationTokens).toBeUndefined();
-    expect(summaryWithoutTokens.cacheReadTokens).toBeUndefined();
-    expect(summaryWithoutTokens.model).toBeUndefined();
   });
 });

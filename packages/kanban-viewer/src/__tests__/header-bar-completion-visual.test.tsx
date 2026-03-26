@@ -77,22 +77,6 @@ describe('HeaderBar - Mission Completion Visual Indicators', () => {
     });
   });
 
-  describe('status indicator color when mission is complete', () => {
-    it('should have red background (bg-red-500) when mission is complete', () => {
-      render(<HeaderBar {...createCompletedMissionProps()} />);
-
-      const indicator = screen.getByTestId('status-indicator');
-      expect(indicator).toHaveClass('bg-red-500');
-    });
-
-    it('should have green background when mission is active', () => {
-      render(<HeaderBar {...createProps()} />);
-
-      const indicator = screen.getByTestId('status-indicator');
-      expect(indicator).toHaveClass('bg-green-500');
-    });
-  });
-
   describe('timer checkmark icon when mission is complete', () => {
     it('should display checkmark icon in timer area when mission is complete', () => {
       render(<HeaderBar {...createCompletedMissionProps()} />);
@@ -124,37 +108,17 @@ describe('HeaderBar - Mission Completion Visual Indicators', () => {
     });
   });
 
-  describe('timer text styling when frozen', () => {
-    it('should have muted styling (text-muted-foreground) on timer text when mission is complete', () => {
-      render(<HeaderBar {...createCompletedMissionProps()} />);
-
-      const timerDisplay = screen.getByTestId('timer-display');
-      expect(timerDisplay).toHaveClass('text-muted-foreground');
-    });
-
-    it('should have normal foreground styling on timer text when mission is active', () => {
-      render(<HeaderBar {...createProps()} />);
-
-      const timerDisplay = screen.getByTestId('timer-display');
-      expect(timerDisplay).toHaveClass('text-foreground');
-    });
-  });
-
   describe('visual distinction between running and frozen timer states', () => {
     it('should have clear visual difference between active and completed timer areas', () => {
       const { rerender } = render(<HeaderBar {...createProps()} />);
 
-      // Active state - no checkmark, normal text color
-      let timerDisplay = screen.getByTestId('timer-display');
-      expect(timerDisplay).toHaveClass('text-foreground');
+      // Active state - no checkmark
       expect(screen.queryByTestId('timer-complete-icon')).not.toBeInTheDocument();
 
       // Rerender with completed mission
       rerender(<HeaderBar {...createCompletedMissionProps()} />);
 
-      // Completed state - has checkmark, muted text color
-      timerDisplay = screen.getByTestId('timer-display');
-      expect(timerDisplay).toHaveClass('text-muted-foreground');
+      // Completed state - has checkmark
       expect(screen.getByTestId('timer-complete-icon')).toBeInTheDocument();
     });
   });

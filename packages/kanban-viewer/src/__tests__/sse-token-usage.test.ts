@@ -8,10 +8,8 @@ import type { BoardEvent } from '@/types';
  * Tests for SSE token usage integration (WI-283).
  *
  * Covers:
- * 1. MissionTokenUsageData interface compiles with expected fields
- * 2. useBoardEvents onMissionTokenUsage callback fires with correct data
- * 3. SSE deduplication: event fires once per mission, not every poll cycle
- * 4. Failure isolation: token aggregation errors do not block other SSE events
+ * 1. useBoardEvents onMissionTokenUsage callback fires with correct data
+ * 2. Failure isolation: token aggregation errors do not block other SSE events
  */
 
 // ---------------------------------------------------------------------------
@@ -62,51 +60,11 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// 1. Type smoke test: MissionTokenUsageData interface
-// ---------------------------------------------------------------------------
-
-describe('MissionTokenUsageData type', () => {
-  it('should compile with all expected token and cost fields', () => {
-    // Type-level test: if this compiles, the interface has the right shape.
-    // B.A. must add MissionTokenUsageData to @/types for this to pass.
-    type MissionTokenUsageData = {
-      agentName: string;
-      model: string;
-      inputTokens: number;
-      outputTokens: number;
-      cacheCreationTokens: number;
-      cacheReadTokens: number;
-      estimatedCostUsd: number;
-    };
-
-    const row: MissionTokenUsageData = {
-      agentName: 'murdock',
-      model: 'claude-sonnet-4-6',
-      inputTokens: 1500,
-      outputTokens: 300,
-      cacheCreationTokens: 500,
-      cacheReadTokens: 1000,
-      estimatedCostUsd: 0.0042,
-    };
-
-    expect(row).toHaveProperty('agentName', 'murdock');
-    expect(row).toHaveProperty('model', 'claude-sonnet-4-6');
-    expect(row).toHaveProperty('inputTokens', 1500);
-    expect(row).toHaveProperty('outputTokens', 300);
-    expect(row).toHaveProperty('cacheCreationTokens', 500);
-    expect(row).toHaveProperty('cacheReadTokens', 1000);
-    expect(row).toHaveProperty('estimatedCostUsd', 0.0042);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 2. useBoardEvents: onMissionTokenUsage callback
+// 1. useBoardEvents: onMissionTokenUsage callback
 // ---------------------------------------------------------------------------
 
 describe('useBoardEvents onMissionTokenUsage callback', () => {
   it('should invoke onMissionTokenUsage with correct data shape when mission-token-usage event is received', () => {
-    // Verify that useBoardEvents forwards the mission-token-usage SSE event to
-    // its callback. The callback signature must accept the per-agent payload.
     const onMissionTokenUsage = vi.fn();
 
     renderHook(() =>
@@ -178,7 +136,6 @@ describe('useBoardEvents onMissionTokenUsage callback', () => {
   });
 
   it('should not invoke onMissionTokenUsage when callback is not provided', () => {
-    // Other callbacks should work normally when onMissionTokenUsage is absent.
     const onMissionCompleted = vi.fn();
 
     renderHook(() =>
@@ -210,44 +167,11 @@ describe('useBoardEvents onMissionTokenUsage callback', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. SSE deduplication: emitted once per mission completion
+// 2. SSE deduplication: emitted once per mission completion
 // ---------------------------------------------------------------------------
 
 describe('SSE mission-token-usage deduplication', () => {
-  it('should fire once when mission completes, not on every subsequent poll cycle', () => {
-    // The SSE endpoint tracks emitted missions to prevent re-emission.
-    // This test documents the expected behavior: a Set (or equivalent) of
-    // already-emitted mission IDs prevents duplicate events.
-
-    const emittedMissions = new Set<string>();
-
-    const shouldEmitTokenUsage = (missionId: string, alreadyEmitted: Set<string>): boolean => {
-      if (alreadyEmitted.has(missionId)) {
-        return false; // Already emitted for this mission
-      }
-      alreadyEmitted.add(missionId);
-      return true;
-    };
-
-    const MISSION_ID = 'M-20260227-dedup-test';
-
-    // First time the mission completes — should emit
-    expect(shouldEmitTokenUsage(MISSION_ID, emittedMissions)).toBe(true);
-
-    // Subsequent poll cycles for the same completed mission — should NOT re-emit
-    expect(shouldEmitTokenUsage(MISSION_ID, emittedMissions)).toBe(false);
-    expect(shouldEmitTokenUsage(MISSION_ID, emittedMissions)).toBe(false);
-
-    // A different mission completing later — should emit once
-    const ANOTHER_MISSION = 'M-20260227-second-mission';
-    expect(shouldEmitTokenUsage(ANOTHER_MISSION, emittedMissions)).toBe(true);
-    expect(shouldEmitTokenUsage(ANOTHER_MISSION, emittedMissions)).toBe(false);
-  });
-
   it('should emit mission-token-usage exactly once in the SSE event stream per mission', () => {
-    // Simulate what the SSE endpoint produces: multiple poll cycles after
-    // mission completion. The token usage event should appear in the stream
-    // only on the first cycle where the mission is detected as completed.
     const onMissionTokenUsage = vi.fn();
 
     renderHook(() =>
@@ -286,18 +210,11 @@ describe('SSE mission-token-usage deduplication', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Failure isolation: token aggregation errors must not block other events
+// 3. Failure isolation: token aggregation errors must not block other events
 // ---------------------------------------------------------------------------
 
 describe('SSE failure isolation', () => {
   it('should continue delivering other SSE events even when token aggregation would fail', () => {
-    // The SSE poll function uses try/catch around token aggregation so that
-    // a DB error or aggregation failure does not prevent mission-completed or
-    // other events from being flushed in the same poll cycle.
-    //
-    // This test simulates the expected contract: if the endpoint encounters
-    // an error in the token usage code path, the other callbacks still fire.
-
     const onMissionCompleted = vi.fn();
     const onMissionTokenUsage = vi.fn();
 
@@ -339,8 +256,6 @@ describe('SSE failure isolation', () => {
   });
 
   it('should deliver mission-token-usage independently of mission-completed ordering', () => {
-    // When aggregation succeeds, both events can be emitted in the same poll
-    // cycle or in different cycles — the hook must handle both orders.
     const onMissionCompleted = vi.fn();
     const onMissionTokenUsage = vi.fn();
 

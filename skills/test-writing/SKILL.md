@@ -1,90 +1,244 @@
+---
+name: test-writing
+description: Comprehensive test quality guardrails for AI testing agents. Banned anti-patterns with code examples, the litmus test, and positive guidance for writing tests that actually verify production behavior.
+---
+
 # Test Writing Skill
 
-Universal test quality rules for AI testing agents. Every test must exercise real application code and assert on an observable outcome. If it does not call real code, it is not a test.
+Every test must exercise real application code and assert on an observable outcome. If it does not call real code, it is not a test.
 
-## Five Banned Categories
+---
 
-### 1. Don't Test Styling or CSS in Unit Tests
+## Banned Anti-Patterns
 
-- `querySelector` for CSS/Tailwind class names
-- `className` checks on rendered elements
-- Responsive breakpoint class assertions (`lg:grid-cols-2`, `md:sticky`)
-- Design token compliance blocks (regex-checking innerHTML for color classes)
+### 1. Type-Shape Tests (BANNED)
 
-**Why it's worthless:** JSDOM doesn't compute CSS. These tests verify that a developer typed a class name string. They pass on broken layouts and fail on harmless refactors.
+Tests that import types and assert object literals equal themselves. TypeScript already validates shapes at compile time. These tests pass even if every production function is deleted.
 
-**Write instead:** Test behavior (click, toggle, show/hide), content (rendered text, ARIA attributes), or state changes. Use Playwright for actual visual verification.
+```typescript
+// BAD: Tests nothing - TypeScript already enforces this
+import { User } from '../types';
+it('has correct shape', () => {
+  const user: User = { id: '1', name: 'Alice', email: 'a@b.com' };
+  expect(user.id).toBe('1');
+  expect(user.name).toBe('Alice');
+});
 
-### 2. Don't Grep Source Code
+// GOOD: Test a function that produces or consumes the type
+import { createUser } from '../services/user';
+it('creates a user with generated ID', () => {
+  const user = createUser({ name: 'Alice', email: 'a@b.com' });
+  expect(user.id).toMatch(/^usr_/);
+  expect(user.name).toBe('Alice');
+});
+```
 
-- `fn.toString()` followed by `toContain('keyword')`
-- `readFileSync('Component.tsx')` followed by string matching
-- Importing a module and checking `typeof X === 'function'` or `X.toBeDefined()`
-- Reading CSS files as strings and matching selectors
+### 2. Mocking Your Own Subject (BANNED)
 
-**Why it's worthless:** Source code strings change on rename, are minified in production, and can match in comments or dead branches. A no-op stub with the right name passes; a working rename fails.
+Tests that `vi.mock()` the module under test, then call the mock. You are testing the mock framework, not your code.
 
-**Write instead:** Call the function and assert on its return value or side effects. If the import works, the export exists.
+```typescript
+// BAD: Mocks the module it is supposed to test
+vi.mock('../services/order', () => ({
+  calculateTotal: vi.fn().mockReturnValue(42),
+}));
+import { calculateTotal } from '../services/order';
+it('calculates total', () => {
+  expect(calculateTotal([{ price: 10, qty: 2 }])).toBe(42); // tests the mock
+});
 
-### 3. Don't Test Your Own Fixtures
+// GOOD: Import the real module, mock only its dependencies
+import { calculateTotal } from '../services/order';
+it('calculates total with tax', () => {
+  const items = [{ price: 10, qty: 2 }, { price: 5, qty: 1 }];
+  expect(calculateTotal(items, { taxRate: 0.1 })).toBe(27.5);
+});
+```
 
-- Define mock object, then assert its own properties match the values just hardcoded
-- Define a fake component inside the test file, then test that fake component
-- Configure a mock to return X, then assert the mock returns X
-- Configure a mock to return a value, call a function, assert the mock was called (`toHaveBeenCalledWith`) — this only proves the mock works, not the function under test
+### 3. Tailwind CSS Class Assertions (BANNED)
 
-**Why it's worthless:** No application code is executed. These tests always pass and can never fail unless someone edits the mock in the same file. Call-argument assertions on pre-configured mocks are tautological — the mock returns the value regardless, so asserting it was called adds nothing.
+`toHaveClass` with Tailwind utilities tests styling strings, not behavior. JSDOM does not compute CSS. These pass on broken layouts and fail on harmless refactors.
 
-**Write instead:** Pass mock data to the real component/function and assert on rendered output or return values. The result assertion is the real test; drop the call assertion.
+```typescript
+// BAD: Tests a class name string, not behavior
+render(<StatusBadge status="active" />);
+const badge = screen.getByText('Active');
+expect(badge).toHaveClass('bg-green-500 rounded-full text-white');
 
-### 4. Don't Write Placeholder Tests
+// GOOD: Test behavior and accessibility
+render(<StatusBadge status="active" />);
+expect(screen.getByText('Active')).toBeInTheDocument();
+expect(screen.getByRole('status')).toHaveAccessibleName('Active');
+```
 
-- `expect(true).toBe(true)`
-- Empty test bodies with TODO comments
-- Tests that call setup functions then assert a tautology
-- `expect(fs.existsSync('package.json')).toBe(true)` (file existence checks)
+### 4. Source File Regex Matching (BANNED)
 
-**Why it's worthless:** Always passes, zero coverage, inflates test count, actively misleading when the `describe` title describes real behavior that was never tested.
+Using `readFileSync` to read production code as strings and regex-match. Tests must render or execute code, not pattern-match source text.
 
-**Write instead:** Either write the real test or don't write a test at all. Placeholder tests are worse than no tests.
+```typescript
+// BAD: Reads source code as a string
+const src = readFileSync('src/services/auth.ts', 'utf-8');
+expect(src).toMatch(/async function authenticate/);
+expect(src).toContain('bcrypt.compare');
 
-### 5. Don't Duplicate What the Compiler or Build Already Checks
+// GOOD: Call the function and observe behavior
+import { authenticate } from '../services/auth';
+it('rejects invalid credentials', async () => {
+  await expect(authenticate('user', 'wrong')).rejects.toThrow('Invalid credentials');
+});
+```
 
-- Runtime type assertions (`expectTypeOf`, `typeof result === 'string'`)
-- Export count assertions (`Object.keys(module).length === 5`)
-- File existence checks for committed files (`existsSync('.eslintrc')`)
-- Duplicate tests verifying identical behavior under different describe blocks
+### 5. Local Reimplementations (BANNED)
 
-**Why it's worthless:** TypeScript catches type errors at compile time. Git tracks file existence. The build system validates imports. These are redundant by definition.
+Defining the function-under-test inside the test file. Always import from production code. A locally defined copy can drift from the real implementation silently.
 
-**Write instead:** Nothing. Run `typecheck` in CI. Use the imported function in a real test.
+```typescript
+// BAD: Reimplements the function in the test
+function slugify(s: string) { return s.toLowerCase().replace(/\s+/g, '-'); }
+it('slugifies a string', () => {
+  expect(slugify('Hello World')).toBe('hello-world');
+});
 
-## Self-Check Before Submitting Tests
+// GOOD: Import the real function
+import { slugify } from '../utils/string';
+it('slugifies a string', () => {
+  expect(slugify('Hello World')).toBe('hello-world');
+});
+```
 
-For every test you wrote, answer these questions:
+### 6. Tautological Mock Assertions (BANNED)
 
-1. **Does this test call real application code?** If no, delete it.
-2. **Can this test fail when the application breaks?** If no, delete it.
-3. **Does this test assert on an observable outcome?** (Rendered content, return value, side effect, thrown error.) If no, delete it.
-4. **Is there already another test covering the same behavior?** If yes, delete the duplicate.
-5. **Would a lint rule or the compiler catch this instead?** If yes, delete it.
-6. **Does my assertion use `??` or `||` to accept multiple possible values?** If so, pin the single correct value.
-7. **Does my test have an `if/else` branch where the `else` path passes silently?** If so, assert existence unconditionally first.
-8. **Am I asserting `toHaveBeenCalledWith` on a mock I pre-configured to return a value?** If so, drop the call assertion and keep only the result assertion.
+Mocking a function to return X, calling it, then asserting it was called. The result assertion is the test; the call assertion is noise that tests the mock framework.
 
-If you can describe your test as any of these, delete it:
-- "Checks that a CSS class name string exists in HTML"
-- "Checks that a source file exists on disk"
-- "Checks that an imported function is defined"
-- "Checks that a mock object has the property I gave it"
-- "Checks that a source code string contains a keyword"
-- "Checks that a type exists at runtime"
-- "Always passes regardless of application state"
-- "Tests a component defined inside the test file, not the real one"
-- "Asserts the mock was called, not what the code did with the result"
-- "Has a fallback else-branch where failure silently becomes a passing alternative"
-- "Uses OR-pattern matching where only one specific value is correct"
+```typescript
+// BAD: Asserts the mock was called (tautological)
+const fetchUser = vi.fn().mockResolvedValue({ id: '1', name: 'Alice' });
+const result = await fetchUser('1');
+expect(fetchUser).toHaveBeenCalledWith('1'); // proves nothing
+expect(result.name).toBe('Alice');           // also proves nothing - mock returns this regardless
 
-See `references/testing-anti-patterns.md` for detailed examples of each banned pattern with code samples.
+// GOOD: Mock the dependency, test the real consumer
+vi.mock('../api/client');
+import { getUserProfile } from '../services/profile';
+it('returns formatted profile', async () => {
+  apiClient.get.mockResolvedValue({ id: '1', name: 'Alice', joined: '2024-01-01' });
+  const profile = await getUserProfile('1');
+  expect(profile.displayName).toBe('Alice');
+  expect(profile.memberSince).toBe('January 2024');
+});
+```
 
-See `references/testing-good-patterns.md` for positive examples — behavior-focused assertions, fixture helpers, boundary testing, full contract verification, and more.
+### 7. Conditional Fallback Paths (BANNED)
+
+`if/else` inside tests where the else branch silently passes. This hides failures by letting the test take an alternate path that always succeeds.
+
+```typescript
+// BAD: Silent fallback if element is missing
+const button = screen.queryByRole('button', { name: 'Submit' });
+if (button) {
+  expect(button).toBeEnabled();
+} else {
+  expect(true).toBe(true); // silently passes when button is missing
+}
+
+// GOOD: Assert existence unconditionally, then test behavior
+const button = screen.getByRole('button', { name: 'Submit' });
+expect(button).toBeEnabled();
+```
+
+### 8. OR-Pattern Assertions (BANNED)
+
+Using `??`, `||`, or `oneOf` to accept any of several values. Pin the single expected value. If the value can legitimately vary, parameterize the test.
+
+```typescript
+// BAD: Accepts multiple values - masks bugs
+const status = getOrderStatus(order);
+expect(['pending', 'processing', 'shipped']).toContain(status);
+
+// also BAD:
+const label = getLabel() ?? 'fallback';
+expect(label).toBe('fallback'); // hides the fact that getLabel() returned undefined
+
+// GOOD: Pin the exact expected value
+const status = getOrderStatus(completedOrder);
+expect(status).toBe('shipped');
+```
+
+### 9. No-Op Assertions (BANNED)
+
+Assertions that can never fail regardless of application state. These inflate test counts and mislead.
+
+```typescript
+// BAD: Always passes
+expect(true).toBe(true);
+expect(items.length).toBeGreaterThanOrEqual(0); // arrays always have length >= 0
+expect(result).toBeDefined(); // passes for any non-undefined value including wrong ones
+
+// GOOD: Assert specific expected outcomes
+expect(items).toHaveLength(3);
+expect(result).toEqual({ id: '1', status: 'active' });
+```
+
+### 10. Hardcoded Counts (FRAGILE)
+
+`toHaveLength(22)` breaks when features are added. Test structural properties or derive the count from the source of truth.
+
+```typescript
+// BAD: Breaks every time a route is added
+expect(Object.keys(routes)).toHaveLength(22);
+
+// GOOD: Test structural properties
+expect(routes).toHaveProperty('/api/users');
+expect(routes['/api/users'].methods).toContain('GET');
+
+// ALSO GOOD: Derive count from source of truth
+import { FEATURE_FLAGS } from '../config';
+expect(Object.keys(routes)).toHaveLength(Object.keys(FEATURE_FLAGS).length);
+```
+
+---
+
+## What Makes a Good Test
+
+A valid test:
+
+- **Imports and calls real production code** -- no local reimplementations, no mocked subjects
+- **Tests behavior, not implementation** -- asserts on outputs, side effects, rendered content
+- **Would fail if the code under test were broken** -- deleting the production function causes a red test
+- **Would NOT fail on a safe refactor** -- renaming internals or reordering code does not break it
+- **Has clear arrange-act-assert structure** -- setup, one action, focused assertions
+- **Covers a real scenario** -- a bug, an edge case, a business rule, or a user interaction
+
+---
+
+## The Litmus Test
+
+For every test, ask:
+
+> "If I deleted the production function this test covers, would this test fail?"
+
+If the answer is **no**, the test is invalid. Delete it.
+
+A secondary check:
+
+> "If I introduced a bug in the production function (wrong return value, missing validation, swapped arguments), would this test catch it?"
+
+If the answer is **no**, the test is not useful. Rewrite it to assert on real behavior.
+
+---
+
+## Self-Check Before Submitting
+
+For every test file, verify:
+
+1. Every `it()` block calls at least one function imported from production code.
+2. Every `expect()` asserts on a value produced by that production code.
+3. No `vi.mock()` targets the module being tested.
+4. No `if/else` branches exist inside test bodies.
+5. No assertion uses `??`, `||`, or accepts multiple possible values.
+6. No assertion is trivially true (`toBeDefined()` on a known value, `>= 0` on a length).
+7. No source files are read as strings for regex matching.
+8. No functions are redefined locally instead of imported.
+
+See `references/testing-anti-patterns.md` for extended examples of each banned pattern.
+See `references/testing-good-patterns.md` for positive examples of behavior-focused testing.

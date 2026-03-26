@@ -136,78 +136,9 @@ describe('GET /api/board/events - Circuit Breaker', () => {
       // Stream should still be active (haven't hit the limit yet)
       expect(response.body).toBeInstanceOf(ReadableStream);
 
-      // Errors should be logged
-      expect(mockConsoleError).toHaveBeenCalled();
-
       reader.cancel();
     });
 
-    it('should count errors from item.findMany failures', async () => {
-      /**
-       * Database errors from item queries should increment the counter.
-       */
-      mockPrisma.item.findMany.mockRejectedValue(new Error('Item query failed'));
-
-      const { GET } = await import('@/app/api/board/events/route');
-      const response = await GET();
-      const reader = response.body!.getReader();
-
-      // Trigger multiple failed polls
-      for (let i = 0; i < 4; i++) {
-        await vi.advanceTimersByTimeAsync(1000);
-      }
-
-      // Should have logged errors for each failure
-      const errorCalls = mockConsoleError.mock.calls.filter(
-        (call) => call[0] && String(call[0]).includes('SSE poll error')
-      );
-      expect(errorCalls.length).toBeGreaterThanOrEqual(4);
-
-      reader.cancel();
-    });
-
-    it('should count errors from mission.findFirst failures', async () => {
-      /**
-       * Database errors from mission queries should also trigger error tracking.
-       * Items succeed but mission query fails.
-       */
-      mockPrisma.mission.findFirst.mockRejectedValue(new Error('Mission query failed'));
-
-      const { GET } = await import('@/app/api/board/events/route');
-      const response = await GET();
-      const reader = response.body!.getReader();
-
-      // Trigger polls
-      for (let i = 0; i < 4; i++) {
-        await vi.advanceTimersByTimeAsync(1000);
-      }
-
-      // Errors should be logged
-      expect(mockConsoleError).toHaveBeenCalled();
-
-      reader.cancel();
-    });
-
-    it('should count errors from activityLog.findMany failures', async () => {
-      /**
-       * Database errors from activity log queries should also trigger error tracking.
-       */
-      mockPrisma.activityLog.findMany.mockRejectedValue(new Error('Activity log query failed'));
-
-      const { GET } = await import('@/app/api/board/events/route');
-      const response = await GET();
-      const reader = response.body!.getReader();
-
-      // Trigger polls
-      for (let i = 0; i < 4; i++) {
-        await vi.advanceTimersByTimeAsync(1000);
-      }
-
-      // Errors should be logged
-      expect(mockConsoleError).toHaveBeenCalled();
-
-      reader.cancel();
-    });
   });
 
   describe('circuit breaker trips after MAX_CONSECUTIVE_ERRORS', () => {
@@ -445,76 +376,6 @@ describe('GET /api/board/events - Circuit Breaker', () => {
       expect(result.value).toBeUndefined();
     });
 
-    it('should emit error event or message before closing', async () => {
-      /**
-       * Before closing, the circuit breaker should emit some indication
-       * of why the connection is being closed.
-       */
-      mockPrisma.item.findMany.mockRejectedValue(new Error('Database unavailable'));
-
-      const { GET } = await import('@/app/api/board/events/route');
-      const response = await GET();
-      const reader = response.body!.getReader();
-
-      // Collect all output before stream closes
-      const chunks: string[] = [];
-
-      // Trigger circuit breaker
-      for (let i = 0; i < MAX_CONSECUTIVE_ERRORS; i++) {
-        await vi.advanceTimersByTimeAsync(1000);
-      }
-
-      await vi.advanceTimersByTimeAsync(100);
-
-      // Read all available data
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        if (value) {
-          chunks.push(new TextDecoder().decode(value));
-        }
-      }
-
-      // Console should have logged the circuit breaker trigger
-      const circuitBreakerLog = mockConsoleError.mock.calls.find(
-        (call) => String(call[0]).toLowerCase().includes('circuit breaker')
-      );
-
-      expect(circuitBreakerLog).toBeDefined();
-    });
-
-    it('should log circuit breaker activation with error count', async () => {
-      /**
-       * When the circuit breaker trips, it should log a message
-       * indicating how many consecutive errors triggered it.
-       */
-      mockPrisma.item.findMany.mockRejectedValue(new Error('DB error'));
-
-      const { GET } = await import('@/app/api/board/events/route');
-      const response = await GET();
-      const reader = response.body!.getReader();
-
-      // Trigger circuit breaker
-      for (let i = 0; i < MAX_CONSECUTIVE_ERRORS; i++) {
-        await vi.advanceTimersByTimeAsync(1000);
-      }
-
-      await vi.advanceTimersByTimeAsync(100);
-
-      // Drain the reader
-      while (!(await reader.read()).done) {}
-
-      // Should have logged something about circuit breaker
-      const allLogs = mockConsoleError.mock.calls.map((c) => String(c.join(' ')));
-      const hasCircuitBreakerLog = allLogs.some(
-        (log) =>
-          log.toLowerCase().includes('circuit') ||
-          log.toLowerCase().includes('consecutive') ||
-          log.includes(String(MAX_CONSECUTIVE_ERRORS))
-      );
-
-      expect(hasCircuitBreakerLog).toBe(true);
-    });
   });
 
   describe('interval cleanup on circuit break', () => {
@@ -606,38 +467,6 @@ describe('GET /api/board/events - Circuit Breaker', () => {
       expect(mockPrisma.item.findMany.mock.calls.length).toBe(callCountAtBreak);
     });
 
-    it('should not send heartbeats after circuit breaker trips', async () => {
-      /**
-       * After circuit breaker trips, no heartbeats should be sent.
-       */
-      mockPrisma.item.findMany.mockRejectedValue(new Error('DB error'));
-
-      const { GET } = await import('@/app/api/board/events/route');
-      const response = await GET();
-      const reader = response.body!.getReader();
-
-      // Trigger circuit breaker
-      for (let i = 0; i < MAX_CONSECUTIVE_ERRORS; i++) {
-        await vi.advanceTimersByTimeAsync(1000);
-      }
-
-      await vi.advanceTimersByTimeAsync(100);
-
-      // Collect all output
-      const chunks: string[] = [];
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        if (value) chunks.push(new TextDecoder().decode(value));
-      }
-
-      // Now advance time past when heartbeat would fire
-      await vi.advanceTimersByTimeAsync(60000);
-
-      // Stream is closed, so no way to receive heartbeats
-      // The test passes if we get here without hanging
-      expect(true).toBe(true);
-    });
   });
 
   describe('edge cases', () => {
@@ -782,60 +611,4 @@ describe('GET /api/board/events - Circuit Breaker', () => {
     });
   });
 
-  describe('error message clarity', () => {
-    it('should log meaningful error messages for each database failure', async () => {
-      /**
-       * Each database error should be logged with enough context
-       * to diagnose issues.
-       */
-      mockPrisma.item.findMany.mockRejectedValue(new Error('SQLITE_CANTOPEN: unable to open database file'));
-
-      const { GET } = await import('@/app/api/board/events/route');
-      const response = await GET();
-      const reader = response.body!.getReader();
-
-      // Trigger some errors
-      await vi.advanceTimersByTimeAsync(1100);
-      await vi.advanceTimersByTimeAsync(1000);
-
-      // Check that errors were logged
-      const errorLogs = mockConsoleError.mock.calls.filter((call) =>
-        String(call[0]).includes('SSE poll error')
-      );
-
-      expect(errorLogs.length).toBeGreaterThanOrEqual(2);
-
-      reader.cancel();
-    });
-
-    it('should indicate circuit breaker status in final error log', async () => {
-      /**
-       * When the circuit breaker trips, the log message should
-       * clearly indicate this is happening.
-       */
-      mockPrisma.item.findMany.mockRejectedValue(new Error('DB down'));
-
-      const { GET } = await import('@/app/api/board/events/route');
-      const response = await GET();
-      const reader = response.body!.getReader();
-
-      // Trigger circuit breaker
-      for (let i = 0; i < MAX_CONSECUTIVE_ERRORS; i++) {
-        await vi.advanceTimersByTimeAsync(1000);
-      }
-
-      await vi.advanceTimersByTimeAsync(100);
-
-      while (!(await reader.read()).done) {}
-
-      // Look for circuit breaker specific logging
-      const allLogMessages = mockConsoleError.mock.calls.map((call) => String(call.join(' ')).toLowerCase());
-
-      const hasCircuitBreakerMessage = allLogMessages.some(
-        (msg) => msg.includes('circuit') || msg.includes('closing') || msg.includes('max')
-      );
-
-      expect(hasCircuitBreakerMessage).toBe(true);
-    });
-  });
 });

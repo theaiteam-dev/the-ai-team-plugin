@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Test quality guardrails for agents:** Murdock now has 5 explicitly banned anti-patterns (type-shape tests, mocking own subject, Tailwind CSS assertions, source regex matching, local reimplementations) with BAD/GOOD code examples in his agent instructions.
+- **`test-writing` skill:** Created the comprehensive reference document that Murdock already referenced but didn't exist. Covers 10 banned patterns with examples, good test criteria, and a self-check checklist.
+- **Lynch review checklist additions:** Added type-shape tests, Tailwind CSS assertions, and source regex/local reimplementations to Lynch's Priority 1 review criteria across all 4 review sections.
+- **`lint-test-quality.js` hook:** PreToolUse hook registered on Murdock and B.A. that blocks no-op assertions (`expect(true).toBe(true)`) and `readFileSync` usage in test files before they get written.
+- **`TEST-REPORT.md`:** Full audit report from reviewing all 178 test files across 6 domains.
+
+### Removed
+
+- **36 invalid test files deleted** (13,945 lines): type-shape tests, self-mocking route tests, source regex matchers, local reimplementation tests, no-op assertion tests, and pure Tailwind class assertion tests. See TEST-REPORT.md for the full list.
+- **3 additional files deleted during rework:** `agent-constants.test.ts`, `card-animation-styles.test.ts`, `prisma/projectId-required.test.ts` (duplicates or entirely invalid after cleanup).
+
+### Fixed
+
+- **Stripped Tailwind CSS class assertions** from 21 UI component test files. Removed `toHaveClass` checks on utility classes (`bg-green-500`, `rounded-full`, `w-8`, etc.) while preserving all behavioral assertions.
+- **Replaced Prisma query-shape assertions** in 5 API route test files with HTTP response-level assertions. Tests now verify status codes and response bodies instead of internal ORM call shapes.
+- **Fixed conditional assertions in MCP server tests** (`tools/items.test.ts`, `tools/missions.test.ts`). Replaced `if ('message' in result)` guards with unconditional assertions that will actually fail when error handling breaks.
+- **Fixed stale stage names** in `integration/api.test.ts` — replaced `backlog`/`in_progress` with canonical `briefings`/`implementing`.
+- **Removed tautological test sections** from `stage-consistency.test.ts`, `project-isolation.test.ts`, `lib/db.test.ts`, `shared-imports.test.ts`, `filter-state-types.test.ts`, `sse-token-usage.test.ts`, `hook-event-tokens.test.ts`, `dashboard-api.test.ts`, `theme-types.test.ts`.
+- **Fixed `resume-recovery.test.js`** to import `TRANSITION_MATRIX` from `@ai-team/shared` instead of hardcoding a stale copy.
+- **Replaced hand-rolled YAML parser** in `observer-hooks-config.test.ts` with simpler string-based extraction that doesn't depend on exact indentation levels.
+- **Fixed `events-circuit-breaker.test.ts`** — removed `expect(true).toBe(true)` no-op and fragile `console.error` substring assertions.
+
+### Changed
+
+- Test suite reduced from 178 to 139 files. All remaining tests import and execute real production code.
+
 ## [1.1.1] — 2026-03-24
 
 ### Fixed

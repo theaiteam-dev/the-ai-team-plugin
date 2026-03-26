@@ -15,6 +15,8 @@ hooks:
       hooks:
         - type: command
           command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/block-ba-test-writes.js"
+        - type: command
+          command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/lint-test-quality.js"
     - matcher: "mcp__plugin_ai-team_ateam__board_move"
       hooks:
         - type: command

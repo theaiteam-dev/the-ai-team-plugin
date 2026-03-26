@@ -134,6 +134,44 @@ expect(screen.getByText(/invalid csv format/i)).toBeInTheDocument()
 ```
 Same pattern applies to value matching: `find(r => r.action === "increase_bid" || r.action === "expand")` — both can't be correct. Pin the single expected value.
 
+*Type-shape tests* — test file imports only types (not functions), constructs object literals matching TypeScript interfaces, then asserts properties equal themselves. Zero production code executed. TypeScript already validates type shapes at compile time; these tests add no value.
+```ts
+// BAD: type-shape test — TypeScript already validates this
+const item: WorkItem = { id: 'WI-001', title: 'Test', type: 'feature' };
+expect(item.id).toBe('WI-001');     // ← tautological
+expect(item.type).toBe('feature');  // ← tautological
+
+// GOOD: test the function that produces/transforms the data
+const result = transformApiItem(apiResponse);
+expect(result.id).toBe('WI-001');
+```
+
+*Tailwind CSS class assertions* — using `toHaveClass` with Tailwind utility classes (`bg-*`, `text-*`, `w-*`, `rounded-*`, `flex`, `items-*`). Any design change breaks them without any bug being present. Tests should verify behavior and accessibility, not styling.
+```ts
+// BAD: coupled to Tailwind utility classes
+expect(badge).toHaveClass('bg-green-500');
+expect(badge).toHaveClass('rounded-full', 'w-8', 'h-8');
+
+// GOOD: test behavior and accessibility, not styling
+expect(badge).toHaveAttribute('aria-label', 'Agent active');
+expect(screen.getByRole('status')).toHaveTextContent('Connected');
+```
+
+*Source file regex matching or local reimplementations* — test file uses `readFileSync` on production source and regex-matches it, or defines the function-under-test locally instead of importing it. Neither approach exercises real production code.
+```ts
+// BAD: regex on source code — not a test
+const source = fs.readFileSync('src/app/layout.tsx', 'utf-8');
+expect(source).toMatch(/import.*Inter.*from.*next\/font/);
+
+// BAD: local reimplementation — tests the test, not production code
+function filterEvents(events, filter) { /* reimplemented locally */ }
+expect(filterEvents(data, f)).toEqual(expected);  // ← not testing real code
+
+// GOOD: import and test the actual function
+import { filterEvents } from '@/lib/events';
+expect(filterEvents(data, f)).toEqual(expected);
+```
+
 *Incomplete documented contract assertions* — if a function is documented to throw with both `.status` and `.body`, verify both. Testing only `.status` leaves half the contract unchecked.
 
 **Mocking — is it realistic?**
@@ -185,6 +223,9 @@ Same pattern applies to value matching: `find(r => r.action === "increase_bid" |
 - Test file so over-mocked it exercises no real logic at all — every dependency stubbed, nothing real runs
 - Tests that only assert implementation details — no behavioral coverage whatsoever, would all break on any internal refactor
 - OR-pattern assertion chains (`??` or `||`) where any of N messages satisfies the check, hiding regressions to generic error states
+- Type-shape tests — test file imports only types, constructs object literals, and asserts they equal themselves. Zero production code executed. These must be rejected or flagged for deletion.
+- Tailwind CSS class assertions — `toHaveClass` with utility classes (`bg-*`, `text-*`, `w-*`, `rounded-*`, `flex`, `items-*`) tests styling, not behavior. Flag all instances.
+- Source regex matching or local reimplementations — test file uses `readFileSync` on production code, or defines the function-under-test locally instead of importing it. Neither exercises real code.
 
 **Priority 2 - Readability & Testability (SHOULD FIX):**
 - Confusing or misleading variable/function names
@@ -229,6 +270,9 @@ Same pattern applies to value matching: `find(r => r.action === "increase_bid" |
 - [ ] No tautological mock-call assertions (`toHaveBeenCalledWith` when mock is pre-configured to return a value)
 - [ ] No conditional fallback paths (`if (el) { test } else { fallback }`)
 - [ ] No OR-pattern assertions (`??` chains or `||` value matching where only one answer is correct)
+- [ ] No type-shape tests (imports only types, constructs literals, asserts properties equal themselves — zero function calls)
+- [ ] No Tailwind CSS class assertions (`toHaveClass` with utility classes like `bg-*`, `text-*`, `rounded-*`)
+- [ ] No source regex matching (`readFileSync` + regex on production code) or local reimplementations of the function-under-test
 
 ### Implementation
 - [ ] All tests pass
@@ -313,6 +357,9 @@ Required fixes:
 - Tautological mock-call assertions are present — testing mock setup, not behavior
 - Conditional fallback paths exist where a missing element silently reroutes through a passing branch
 - OR-pattern assertion chains (`??` or `||`) where any of N messages satisfies the check, hiding regressions to generic error states
+- Type-shape tests — test file imports only types, constructs object literals, asserts properties equal themselves, and calls zero production functions
+- Tailwind CSS class assertions — `toHaveClass` with utility classes tests styling, not behavior; any design change breaks them without a bug
+- Source regex matching or local reimplementations — `readFileSync` on production source with regex, or function-under-test defined in the test file instead of imported
 
 **Remember:** Move fast. If it works and meets the spec, approve it.
 

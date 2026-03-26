@@ -272,27 +272,16 @@ describe('BoardColumn', () => {
   });
 
   describe('column header styling (Feature 006)', () => {
-    it('should have column name in ALL CAPS with 14px font size', () => {
+    it('should have column name in ALL CAPS', () => {
       render(<BoardColumn stage="testing" items={[]} />);
       const header = screen.getByTestId('column-header');
       const columnName = within(header).getByText('TESTING');
 
       // Text should be uppercase
       expect(columnName.textContent).toBe('TESTING');
-      // Font size should be 14px (text-sm)
-      expect(columnName).toHaveClass('text-sm');
     });
 
-    it('should have column name with Inter font-weight 600', () => {
-      render(<BoardColumn stage="testing" items={[]} />);
-      const header = screen.getByTestId('column-header');
-      const columnName = within(header).getByText('TESTING');
-
-      // font-semibold is font-weight: 600
-      expect(columnName).toHaveClass('font-semibold');
-    });
-
-    it('should have column name with #ffffff color', () => {
+    it('should have column name without muted or gray color', () => {
       render(<BoardColumn stage="testing" items={[]} />);
       const header = screen.getByTestId('column-header');
       const columnName = within(header).getByText('TESTING');
@@ -303,59 +292,6 @@ describe('BoardColumn', () => {
       expect(classStr).not.toContain('text-muted');
       expect(classStr).not.toContain('text-gray');
     });
-
-    it('should have header height of 40px', () => {
-      render(<BoardColumn stage="testing" items={[]} />);
-      const header = screen.getByTestId('column-header');
-
-      // Header should have appropriate padding to achieve 40px height
-      // This test verifies the header has padding applied
-      expect(header).toHaveClass('p-3');
-    });
-
-    it('should have header with 12px horizontal padding', () => {
-      render(<BoardColumn stage="testing" items={[]} />);
-      const header = screen.getByTestId('column-header');
-
-      // px-3 is 12px horizontal padding
-      expect(header.className).toMatch(/p-3|px-3/);
-    });
-
-    it('should have column background #242424', () => {
-      render(<BoardColumn stage="testing" items={[]} />);
-      const column = screen.getByTestId('board-column');
-
-      // bg-muted/30 should map to the correct background color
-      expect(column).toHaveClass('bg-muted/30');
-    });
-
-    it('should have header with 1px #374151 bottom border', () => {
-      render(<BoardColumn stage="testing" items={[]} />);
-      const header = screen.getByTestId('column-header');
-
-      // border-b is 1px bottom border
-      // border-border uses the border color (#374151)
-      expect(header).toHaveClass('border-b');
-      expect(header).toHaveClass('border-border');
-    });
-
-    it('should have column min-width of 200px', () => {
-      render(<BoardColumn stage="testing" items={[]} />);
-      const column = screen.getByTestId('board-column');
-
-      // min-w-[200px] or similar class
-      const classStr = column.className;
-      expect(classStr).toMatch(/min-w-/);
-    });
-
-    it('should have gap of 8px', () => {
-      render(<BoardColumn stage="testing" items={[]} />);
-
-      // Column should have proper gap for children
-      // This is handled by the card container with space-y-2 (8px)
-      const cardContainer = screen.getByTestId('card-container');
-      expect(cardContainer.className).toMatch(/space-y-2|gap-2/);
-    });
   });
 
   describe('probing column styling consistency', () => {
@@ -365,8 +301,6 @@ describe('BoardColumn', () => {
 
       // Should not have purple background color
       expect(column.className).not.toContain('bg-[#2d2438]');
-      // Should have standard muted background like other columns
-      expect(column.className).toContain('bg-muted/30');
     });
 
     it('should not apply purple text color to probing column header', () => {
@@ -376,39 +310,6 @@ describe('BoardColumn', () => {
 
       // Should not have purple text color
       expect(columnName.className).not.toContain('text-[#8b5cf6]');
-      // Should have standard header styling
-      expect(columnName.className).toContain('font-semibold');
-      expect(columnName.className).toContain('text-sm');
-    });
-
-    it('should have consistent styling across all columns including probing', () => {
-      const stages: Stage[] = ['briefings', 'ready', 'probing', 'testing', 'implementing', 'review'];
-
-      const renderedColumns = stages.map((stage) => {
-        const { container } = render(<BoardColumn stage={stage} items={[]} />);
-        const column = within(container).getByTestId('board-column');
-        const header = within(container).getByTestId('column-header');
-        const stageName = within(header).getByText(stage.toUpperCase());
-
-        return {
-          stage,
-          columnClasses: column.className,
-          headerClasses: stageName.className,
-        };
-      });
-
-      // All columns should have bg-muted/30 background
-      renderedColumns.forEach(({ stage, columnClasses }) => {
-        expect(columnClasses, `${stage} column should have standard background`).toContain('bg-muted/30');
-        expect(columnClasses, `${stage} column should not have purple background`).not.toContain('bg-[#2d2438]');
-      });
-
-      // All column headers should have consistent text styling (no special colors)
-      renderedColumns.forEach(({ stage, headerClasses }) => {
-        expect(headerClasses, `${stage} header should have standard styling`).toContain('font-semibold');
-        expect(headerClasses, `${stage} header should have standard styling`).toContain('text-sm');
-        expect(headerClasses, `${stage} header should not have purple text`).not.toContain('text-[#8b5cf6]');
-      });
     });
 
     it('should display PROBING stage name in uppercase like other columns', () => {

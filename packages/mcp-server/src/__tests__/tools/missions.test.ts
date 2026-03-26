@@ -150,9 +150,8 @@ describe('Mission Tools', () => {
         });
 
         expect(result.isError).toBe(true);
-        if ('message' in result) {
-          expect(result.message).toContain('exists');
-        }
+        expect(result).toHaveProperty('message');
+        expect((result as any).message).toContain('exists');
       });
 
       it('should handle invalid PRD path error', async () => {
@@ -171,9 +170,8 @@ describe('Mission Tools', () => {
         });
 
         expect(result.isError).toBe(true);
-        if ('message' in result) {
-          expect(result.message).toContain('not found');
-        }
+        expect(result).toHaveProperty('message');
+        expect((result as any).message).toContain('not found');
       });
     });
   });
@@ -289,9 +287,8 @@ describe('Mission Tools', () => {
         const result = await missionCurrent({});
 
         expect(result.isError).toBe(true);
-        if ('message' in result) {
-          expect(result.message).toContain('No active mission');
-        }
+        expect(result).toHaveProperty('message');
+        expect((result as any).message).toContain('No active mission');
       });
     });
   });
@@ -574,9 +571,8 @@ describe('Mission Tools', () => {
         const result = await missionPostcheck({ passed: true });
 
         expect(result.isError).toBe(true);
-        if ('message' in result) {
-          expect(result.message).toContain('No active mission');
-        }
+        expect(result).toHaveProperty('message');
+        expect((result as any).message).toContain('No active mission');
       });
     });
   });
@@ -703,9 +699,8 @@ describe('Mission Tools', () => {
         const result = await missionArchive({});
 
         expect(result.isError).toBe(true);
-        if ('message' in result) {
-          expect(result.message).toContain('No active mission');
-        }
+        expect(result).toHaveProperty('message');
+        expect((result as any).message).toContain('No active mission');
       });
 
       it('should handle item not found error', async () => {
@@ -723,9 +718,8 @@ describe('Mission Tools', () => {
         });
 
         expect(result.isError).toBe(true);
-        if ('message' in result) {
-          expect(result.message).toContain('not found');
-        }
+        expect(result).toHaveProperty('message');
+        expect((result as any).message).toContain('not found');
       });
     });
   });

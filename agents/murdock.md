@@ -16,6 +16,8 @@ hooks:
       hooks:
         - type: command
           command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/block-murdock-impl-writes.js"
+        - type: command
+          command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/lint-test-quality.js"
     - matcher: "mcp__plugin_ai-team_ateam__board_move"
       hooks:
         - type: command
@@ -98,7 +100,96 @@ Write ONLY tests and type definitions. **Do NOT write implementation code** - th
 
 ## What NOT to Test
 
-The **test-writing** skill (preloaded at startup) contains the complete list of banned anti-patterns with code examples. Key principle: every test must execute real application code and assert on an observable outcome. If it does not call real code, it is not a test.
+**Hard rule: every test must import and execute real production code (functions, classes, hooks, or components) and assert on an observable outcome. If a test file makes zero calls to production code, it is invalid and must be rewritten or deleted.**
+
+The **test-writing** skill (preloaded at startup) contains additional guidance and examples. The following five anti-patterns are **banned** -- do not write tests that match any of them.
+
+### Ban 1: Type-Shape Tests
+
+Tests that construct an object matching a TypeScript interface and assert the properties equal what was just set. TypeScript already validates this at compile time. These tests pass even if every function in the codebase is deleted.
+
+```ts
+// BAD: TypeScript already validates this at compile time
+const item: WorkItem = { id: 'WI-001', title: 'Test', type: 'feature' };
+expect(item.id).toBe('WI-001');  // tautological
+expect(item.type).toBe('feature');  // tautological
+```
+
+```ts
+// GOOD: Test the function that creates/transforms work items
+const result = transformApiItem(apiResponse);
+expect(result.id).toBe('WI-001');
+expect(result.type).toBe('feature');
+```
+
+**Rule:** If a test file imports only types (not functions, hooks, or classes) and makes no function calls to production code, it is invalid. Delete it.
+
+### Ban 2: Mocking Your Own Subject
+
+Tests that `vi.mock()` the module they claim to test, then call the mock and assert it returns what the mock was configured to return.
+
+```ts
+// BAD: mocks the route handler, then tests the mock
+vi.mock('@/app/api/items/route', () => ({
+  POST: vi.fn().mockResolvedValue(NextResponse.json({ success: true }))
+}));
+const { POST: mockPOST } = await import('@/app/api/items/route');
+const response = await mockPOST(request);
+expect(response.status).toBe(200);  // tests the mock, not the route
+```
+
+```ts
+// GOOD: import the real handler, mock only the database layer
+vi.mock('@/lib/db', () => ({ prisma: mockPrisma }));
+const { POST } = await import('@/app/api/items/route');
+const response = await POST(request);
+expect(response.status).toBe(200);  // tests the real route handler
+```
+
+### Ban 3: Tailwind CSS Class Assertions
+
+Tests that assert specific Tailwind utility classes. Any visual refactor, Tailwind upgrade, or design system change breaks these without any actual bug.
+
+```ts
+// BAD: coupled to exact Tailwind classes
+expect(badge).toHaveClass('bg-green-500');
+expect(badge).toHaveClass('rounded-full');
+expect(badge).toHaveClass('w-8', 'h-8');
+```
+
+```ts
+// GOOD: test behavior and accessibility
+expect(badge).toHaveAttribute('aria-label', 'Agent active');
+expect(screen.getByRole('status')).toHaveTextContent('Connected');
+```
+
+**Rule:** Never use `toHaveClass` with Tailwind utility classes in tests. Test behavior, not styling.
+
+### Ban 4: Source File Regex Matching
+
+Tests that `readFileSync` production source code and regex-match for strings instead of rendering or executing code.
+
+```ts
+// BAD: reads source code as string and regex-matches
+const source = fs.readFileSync('src/app/layout.tsx', 'utf-8');
+expect(source).toMatch(/import.*Inter.*from.*next\/font/);
+```
+
+**Rule:** Tests must render components or call functions. Never read source files as strings.
+
+### Ban 5: Local Reimplementations
+
+Tests that define the function-under-test inside the test file rather than importing from production code.
+
+```ts
+// BAD: reimplements the function locally instead of importing
+function filterHookEvents(events, filter) {
+  return events.filter(e => e.agent === filter.agent);
+}
+// then tests this local copy, not the real code
+```
+
+**Rule:** Always import the function under test from production code. If the production function does not exist yet, mark the test as `.todo` and leave a comment indicating which module will export it.
 
 ## Handling NO_TEST_NEEDED Items
 

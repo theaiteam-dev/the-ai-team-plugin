@@ -12,6 +12,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import { TRANSITION_MATRIX } from '../../packages/shared/src/stages.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,19 +20,10 @@ const __dirname = path.dirname(__filename);
 const RESUME_MD_PATH = path.resolve(__dirname, '..', 'resume.md');
 
 /**
- * VALID_TRANSITIONS from mcp-server/src/tools/board.ts (source of truth).
- * These define which stage moves the board_move MCP tool will accept.
+ * VALID_TRANSITIONS imported from the shared package (source of truth).
+ * These define which stage moves the board_move tool will accept.
  */
-const VALID_TRANSITIONS = {
-  briefings: ['ready', 'blocked'],
-  ready: ['testing', 'implementing', 'probing', 'blocked', 'briefings'],
-  testing: ['review', 'blocked'],
-  implementing: ['review', 'blocked'],
-  probing: ['ready', 'done', 'blocked'],
-  review: ['done', 'testing', 'implementing', 'probing', 'blocked'],
-  done: [],
-  blocked: ['ready'],
-};
+const VALID_TRANSITIONS = TRANSITION_MATRIX;
 
 /**
  * All active pipeline stages that could be interrupted mid-work.

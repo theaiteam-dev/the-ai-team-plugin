@@ -30,25 +30,6 @@ describe('AgentStatusBar AGENTS label', () => {
     });
   });
 
-  describe('label styling', () => {
-    it('should have muted text color', () => {
-      render(<AgentStatusBar agents={createAgentsStatus()} />);
-
-      const label = screen.getByTestId('agents-label');
-      expect(label).toHaveClass('text-muted-foreground');
-    });
-
-    it('should have uppercase or tracking styling', () => {
-      render(<AgentStatusBar agents={createAgentsStatus()} />);
-
-      const label = screen.getByTestId('agents-label');
-      // Label should have either uppercase class or tracking-wider for visual styling
-      const hasUppercase = label.classList.contains('uppercase');
-      const hasTracking = label.classList.contains('tracking-wider') || label.classList.contains('tracking-wide');
-      expect(hasUppercase || hasTracking).toBe(true);
-    });
-  });
-
   describe('label positioning', () => {
     it('should be positioned on the left side of the status bar', () => {
       render(<AgentStatusBar agents={createAgentsStatus()} />);

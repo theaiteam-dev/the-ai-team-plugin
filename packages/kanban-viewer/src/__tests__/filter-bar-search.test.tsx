@@ -34,20 +34,6 @@ describe('FilterBar - Search Input', () => {
       const searchInput = screen.getByTestId('search-input');
       expect(searchInput).toBeInTheDocument();
     });
-
-    it('should be positioned on the right side with margin-left: auto', () => {
-      render(<FilterBar {...createProps()} />);
-
-      const searchContainer = screen.getByTestId('search-container');
-      expect(searchContainer).toHaveClass('ml-auto');
-    });
-
-    it('should have 200px width', () => {
-      render(<FilterBar {...createProps()} />);
-
-      const searchContainer = screen.getByTestId('search-container');
-      expect(searchContainer).toHaveClass('w-[200px]');
-    });
   });
 
   describe('search icon', () => {
@@ -57,15 +43,6 @@ describe('FilterBar - Search Input', () => {
       const searchIcon = screen.getByTestId('search-icon');
       expect(searchIcon).toBeInTheDocument();
     });
-
-    it('should position search icon on left side of input', () => {
-      render(<FilterBar {...createProps()} />);
-
-      // Icon should be positioned absolutely on the left
-      const searchIcon = screen.getByTestId('search-icon');
-      expect(searchIcon).toHaveClass('absolute');
-      expect(searchIcon).toHaveClass('left-2');
-    });
   });
 
   describe('placeholder', () => {
@@ -74,38 +51,6 @@ describe('FilterBar - Search Input', () => {
 
       const searchInput = screen.getByTestId('search-input');
       expect(searchInput).toHaveAttribute('placeholder', 'Search...');
-    });
-
-    it('should have placeholder color #6b7280 (gray-500)', () => {
-      render(<FilterBar {...createProps()} />);
-
-      const searchInput = screen.getByTestId('search-input');
-      // placeholder:text-gray-500 for placeholder color
-      expect(searchInput).toHaveClass('placeholder:text-gray-500');
-    });
-  });
-
-  describe('input styling', () => {
-    it('should have background color #374151 (gray-700)', () => {
-      render(<FilterBar {...createProps()} />);
-
-      const searchInput = screen.getByTestId('search-input');
-      expect(searchInput).toHaveClass('bg-gray-700');
-    });
-
-    it('should have 6px border-radius (rounded-md)', () => {
-      render(<FilterBar {...createProps()} />);
-
-      const searchInput = screen.getByTestId('search-input');
-      expect(searchInput).toHaveClass('rounded-md');
-    });
-
-    it('should have 32px left padding for icon space', () => {
-      render(<FilterBar {...createProps()} />);
-
-      const searchInput = screen.getByTestId('search-input');
-      // pl-8 = 32px left padding
-      expect(searchInput).toHaveClass('pl-8');
     });
   });
 

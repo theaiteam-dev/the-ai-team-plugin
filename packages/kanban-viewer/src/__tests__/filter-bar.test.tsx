@@ -27,22 +27,6 @@ describe('FilterBar', () => {
       expect(filterBar).toBeInTheDocument();
     });
 
-    it('should have correct height (48px)', () => {
-      render(<FilterBar {...createProps()} />);
-
-      const filterBar = screen.getByTestId('filter-bar');
-      // Check for h-12 class (which is 48px in Tailwind)
-      expect(filterBar).toHaveClass('h-12');
-    });
-
-    it('should have correct background color (#1f2937)', () => {
-      render(<FilterBar {...createProps()} />);
-
-      const filterBar = screen.getByTestId('filter-bar');
-      // This maps to bg-gray-800 in Tailwind
-      expect(filterBar).toHaveClass('bg-gray-800');
-    });
-
     it('should display "Filter by:" label', () => {
       render(<FilterBar {...createProps()} />);
 
@@ -213,30 +197,6 @@ describe('FilterBar', () => {
     });
   });
 
-  describe('dropdown styling', () => {
-    it('should have correct dropdown background styling', () => {
-      render(<FilterBar {...createProps()} />);
-
-      const typeDropdown = screen.getByTestId('type-filter-dropdown');
-      // bg-gray-700 maps to #374151
-      expect(typeDropdown).toHaveClass('bg-gray-700');
-    });
-
-    it('should have rounded borders on dropdowns', () => {
-      render(<FilterBar {...createProps()} />);
-
-      const typeDropdown = screen.getByTestId('type-filter-dropdown');
-      expect(typeDropdown).toHaveClass('rounded-md');
-    });
-
-    it('should have minimum width on dropdowns', () => {
-      render(<FilterBar {...createProps()} />);
-
-      const typeDropdown = screen.getByTestId('type-filter-dropdown');
-      expect(typeDropdown).toHaveClass('min-w-[120px]');
-    });
-  });
-
   describe('selected option styling', () => {
     it('should show checkmark on selected option', () => {
       render(<FilterBar {...createProps({ typeFilter: 'feature' })} />);
@@ -247,63 +207,6 @@ describe('FilterBar', () => {
       const featureOption = screen.getByRole('option', { name: 'feature' });
       const checkIcon = featureOption.querySelector('[data-testid="check-icon"]');
       expect(checkIcon).toBeInTheDocument();
-    });
-
-    it('should apply green text color to selected option', () => {
-      render(<FilterBar {...createProps({ typeFilter: 'feature' })} />);
-
-      const typeDropdown = screen.getByTestId('type-filter-dropdown');
-      fireEvent.click(typeDropdown);
-
-      const featureOption = screen.getByRole('option', { name: 'feature' });
-      // text-green-500 maps to #22c55e
-      expect(featureOption).toHaveClass('text-green-500');
-    });
-  });
-
-  describe('dropdown hover state', () => {
-    it('should change background on hover', () => {
-      render(<FilterBar {...createProps()} />);
-
-      const typeDropdown = screen.getByTestId('type-filter-dropdown');
-      // hover:bg-gray-600 maps to #4b5563
-      expect(typeDropdown).toHaveClass('hover:bg-gray-600');
-    });
-  });
-
-  describe('filter label styling', () => {
-    it('should have correct text styling for filter label', () => {
-      render(<FilterBar {...createProps()} />);
-
-      const label = screen.getByText('Filter by:');
-      // Font size 12px = text-xs, medium weight = font-medium, #6b7280 = text-gray-500
-      expect(label).toHaveClass('text-xs');
-      expect(label).toHaveClass('font-medium');
-      expect(label).toHaveClass('text-gray-500');
-    });
-  });
-
-  describe('layout', () => {
-    it('should use flexbox for horizontal layout', () => {
-      render(<FilterBar {...createProps()} />);
-
-      const filterBar = screen.getByTestId('filter-bar');
-      expect(filterBar).toHaveClass('flex');
-      expect(filterBar).toHaveClass('items-center');
-    });
-
-    it('should have gap between elements', () => {
-      render(<FilterBar {...createProps()} />);
-
-      const filterBar = screen.getByTestId('filter-bar');
-      expect(filterBar).toHaveClass('gap-4');
-    });
-
-    it('should have horizontal padding', () => {
-      render(<FilterBar {...createProps()} />);
-
-      const filterBar = screen.getByTestId('filter-bar');
-      expect(filterBar).toHaveClass('px-4');
     });
   });
 

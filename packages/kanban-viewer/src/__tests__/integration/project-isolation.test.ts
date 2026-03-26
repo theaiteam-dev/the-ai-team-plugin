@@ -742,23 +742,3 @@ describe('Multi-Project Isolation - Cross-Entity', () => {
     });
   });
 });
-
-// ============ Project Isolation Summary ============
-
-describe('Multi-Project Isolation - Summary', () => {
-  it('should maintain complete isolation between projects', () => {
-    // This test documents the isolation requirements
-    const isolationRules = [
-      'Items created in project A are not visible in project B',
-      'Missions are scoped to their project',
-      'Activity logs are scoped to their project',
-      'Dependencies must be within the same project',
-      'Board state is filtered by project',
-    ];
-
-    expect(isolationRules).toHaveLength(5);
-    expect(isolationRules[0]).toContain('Items');
-    expect(isolationRules[1]).toContain('Missions');
-    expect(isolationRules[2]).toContain('Activity logs');
-  });
-});

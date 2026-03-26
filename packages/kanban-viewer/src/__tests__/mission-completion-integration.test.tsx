@@ -168,20 +168,6 @@ describe('Mission Completion Integration: Agent Status Bar', () => {
       expect(AGENT_NAMES).toContain('Stockwell');
     });
 
-    it('should display Tawnia with teal color when active', () => {
-      render(<AgentStatusBar agents={createAgentsStatus({ Tawnia: 'active' })} />);
-
-      const badge = screen.getByTestId('agent-badge-Tawnia');
-      expect(badge).toHaveClass('bg-teal-500');
-    });
-
-    it('should display Lynch with blue color when active', () => {
-      render(<AgentStatusBar agents={createAgentsStatus({ Lynch: 'active' })} />);
-
-      const badge = screen.getByTestId('agent-badge-Lynch');
-      expect(badge).toHaveClass('bg-blue-500');
-    });
-
     it('should display all agents in correct order', () => {
       render(<AgentStatusBar agents={createAgentsStatus()} />);
 
@@ -220,8 +206,6 @@ describe('Mission Completion Integration: Agent Status Bar', () => {
       );
 
       expect(screen.getByTestId('agent-status-Lynch')).toHaveTextContent('ACTIVE');
-      expect(screen.getByTestId('agent-dot-Lynch')).toHaveClass('bg-green-500');
-      expect(screen.getByTestId('agent-dot-Lynch')).toHaveClass('animate-pulse');
     });
 
     it('should show Tawnia active during documentation phase', () => {
@@ -235,8 +219,6 @@ describe('Mission Completion Integration: Agent Status Bar', () => {
       );
 
       expect(screen.getByTestId('agent-status-Tawnia')).toHaveTextContent('ACTIVE');
-      expect(screen.getByTestId('agent-dot-Tawnia')).toHaveClass('bg-green-500');
-      expect(screen.getByTestId('agent-dot-Tawnia')).toHaveClass('animate-pulse');
     });
   });
 });
@@ -256,19 +238,6 @@ describe('Mission Completion Integration: Header Bar Phase Indicators', () => {
   });
 
   describe('completion phase indicators', () => {
-    it('should show purple indicator for final_review status', () => {
-      render(
-        <HeaderBar
-          {...createHeaderProps({
-            mission: createMission({ status: 'final_review' }),
-          })}
-        />
-      );
-
-      const indicator = screen.getByTestId('status-indicator');
-      expect(indicator).toHaveClass('bg-purple-500');
-    });
-
     it('should display FINAL REVIEW text for final_review status', () => {
       render(
         <HeaderBar
@@ -279,19 +248,6 @@ describe('Mission Completion Integration: Header Bar Phase Indicators', () => {
       );
 
       expect(screen.getByText(/FINAL REVIEW/i)).toBeInTheDocument();
-    });
-
-    it('should show yellow indicator for post_checks status', () => {
-      render(
-        <HeaderBar
-          {...createHeaderProps({
-            mission: createMission({ status: 'post_checks' }),
-          })}
-        />
-      );
-
-      const indicator = screen.getByTestId('status-indicator');
-      expect(indicator).toHaveClass('bg-yellow-500');
     });
 
     it('should display POST-CHECKS text for post_checks status', () => {
@@ -306,19 +262,6 @@ describe('Mission Completion Integration: Header Bar Phase Indicators', () => {
       expect(screen.getByText(/POST-CHECKS/i)).toBeInTheDocument();
     });
 
-    it('should show teal indicator for documentation status', () => {
-      render(
-        <HeaderBar
-          {...createHeaderProps({
-            mission: createMission({ status: 'documentation' }),
-          })}
-        />
-      );
-
-      const indicator = screen.getByTestId('status-indicator');
-      expect(indicator).toHaveClass('bg-teal-500');
-    });
-
     it('should display DOCUMENTATION text for documentation status', () => {
       render(
         <HeaderBar
@@ -329,19 +272,6 @@ describe('Mission Completion Integration: Header Bar Phase Indicators', () => {
       );
 
       expect(screen.getByText(/DOCUMENTATION/i)).toBeInTheDocument();
-    });
-
-    it('should show green indicator for complete status', () => {
-      render(
-        <HeaderBar
-          {...createHeaderProps({
-            mission: createMission({ status: 'complete' }),
-          })}
-        />
-      );
-
-      const indicator = screen.getByTestId('status-indicator');
-      expect(indicator).toHaveClass('bg-green-500');
     });
 
     it('should display MISSION COMPLETE text for complete status', () => {
@@ -769,67 +699,6 @@ describe('Mission Completion Integration: Completion Panel', () => {
 // ============================================================================
 
 describe('Mission Completion Integration: Activity Log COMMITTED Highlights', () => {
-  describe('COMMITTED message highlighting', () => {
-    it('should highlight COMMITTED messages in teal', () => {
-      const entries = [
-        createLogEntry({
-          agent: 'Tawnia',
-          message: 'COMMITTED abc123f - feat: add user authentication',
-        }),
-      ];
-      render(
-        <LiveFeedPanel
-          entries={entries}
-          activeTab="live-feed"
-          onTabChange={vi.fn()}
-        />
-      );
-
-      const messageElement = screen.getByText(/COMMITTED abc123f/);
-      expect(messageElement).toHaveClass('text-teal-500');
-    });
-
-    it('should display Tawnia with teal color in live feed', () => {
-      const entries = [
-        createLogEntry({
-          agent: 'Tawnia',
-          message: 'Writing documentation',
-        }),
-      ];
-      render(
-        <LiveFeedPanel
-          entries={entries}
-          activeTab="live-feed"
-          onTabChange={vi.fn()}
-        />
-      );
-
-      const agentElement = screen.getByTestId('agent-name-Tawnia');
-      expect(agentElement).toHaveClass('text-teal-500');
-    });
-
-    it('should not highlight regular messages from Tawnia', () => {
-      const entries = [
-        createLogEntry({
-          agent: 'Tawnia',
-          message: 'Preparing documentation structure',
-        }),
-      ];
-      render(
-        <LiveFeedPanel
-          entries={entries}
-          activeTab="live-feed"
-          onTabChange={vi.fn()}
-        />
-      );
-
-      const messageElement = screen.getByText(/Preparing documentation/);
-      expect(messageElement).not.toHaveClass('text-teal-500');
-      expect(messageElement).not.toHaveClass('text-green-500');
-      expect(messageElement).not.toHaveClass('text-red-500');
-    });
-  });
-
   describe('activity log parser', () => {
     it('should parse COMMITTED entries with highlightType', () => {
       const line = '2026-01-15T10:45:00Z [Tawnia] COMMITTED abc123f - feat: add user authentication';
@@ -894,7 +763,6 @@ describe('Mission Completion Integration: Graceful Degradation', () => {
         finalReview: undefined,
       });
 
-      // Simulate rendering panel with missing data
       expect(() =>
         render(
           <MissionCompletionPanel
@@ -906,7 +774,6 @@ describe('Mission Completion Integration: Graceful Degradation', () => {
         )
       ).not.toThrow();
 
-      // Phase should show as pending
       expect(screen.getByTestId('phase-final-review')).toHaveAttribute('data-status', 'pending');
     });
 
@@ -927,7 +794,6 @@ describe('Mission Completion Integration: Graceful Degradation', () => {
         )
       ).not.toThrow();
 
-      // Phase should show as pending
       expect(screen.getByTestId('phase-post-checks')).toHaveAttribute('data-status', 'pending');
     });
 
@@ -948,7 +814,6 @@ describe('Mission Completion Integration: Graceful Degradation', () => {
         )
       ).not.toThrow();
 
-      // Phase should show as pending
       expect(screen.getByTestId('phase-documentation')).toHaveAttribute('data-status', 'pending');
     });
 
@@ -973,7 +838,6 @@ describe('Mission Completion Integration: Graceful Degradation', () => {
         )
       ).not.toThrow();
 
-      // All phases should show as pending
       expect(screen.getByTestId('phase-final-review')).toHaveAttribute('data-status', 'pending');
       expect(screen.getByTestId('phase-post-checks')).toHaveAttribute('data-status', 'pending');
       expect(screen.getByTestId('phase-documentation')).toHaveAttribute('data-status', 'pending');
@@ -1040,125 +904,6 @@ describe('Mission Completion Integration: Graceful Degradation', () => {
 
       expect(screen.getByTestId('check-lint')).toHaveAttribute('data-status', 'passed');
       expect(screen.getByTestId('check-typecheck')).toHaveAttribute('data-status', 'pending');
-    });
-  });
-});
-
-// ============================================================================
-// Color Consistency Tests
-// ============================================================================
-
-describe('Mission Completion Integration: Visual Color Consistency', () => {
-  describe('agent color consistency across components', () => {
-    it('should use teal-500 for Tawnia in agent status bar', () => {
-      render(<AgentStatusBar agents={createAgentsStatus({ Tawnia: 'active' })} />);
-
-      expect(screen.getByTestId('agent-badge-Tawnia')).toHaveClass('bg-teal-500');
-    });
-
-    it('should use teal-500 for Tawnia in completion panel', () => {
-      render(
-        <MissionCompletionPanel
-          mission={createMission({ status: 'documentation' })}
-          documentation={createDocumentationStatus({ agent: 'Tawnia' })}
-          activeTab="completion"
-          onTabChange={vi.fn()}
-        />
-      );
-
-      const agentIndicator = screen.getByTestId('agent-indicator-Tawnia');
-      expect(agentIndicator).toHaveClass(/teal/);
-    });
-
-    it('should use teal-500 for Tawnia in live feed', () => {
-      render(
-        <LiveFeedPanel
-          entries={[createLogEntry({ agent: 'Tawnia' })]}
-          activeTab="live-feed"
-          onTabChange={vi.fn()}
-        />
-      );
-
-      expect(screen.getByTestId('agent-name-Tawnia')).toHaveClass('text-teal-500');
-    });
-
-    it('should use purple for Lynch in completion panel', () => {
-      render(
-        <MissionCompletionPanel
-          mission={createMission({ status: 'final_review' })}
-          finalReview={createFinalReviewStatus({ agent: 'Lynch' })}
-          activeTab="completion"
-          onTabChange={vi.fn()}
-        />
-      );
-
-      const agentIndicator = screen.getByTestId('agent-indicator-Lynch');
-      expect(agentIndicator).toHaveClass(/purple/);
-    });
-  });
-
-  describe('phase status colors', () => {
-    it('should use green for complete phase status', () => {
-      render(
-        <MissionCompletionPanel
-          mission={createMission({ status: 'post_checks' })}
-          finalReview={createFinalReviewStatus({
-            passed: true,
-            completed_at: '2026-01-15T14:25:03Z',
-          })}
-          activeTab="completion"
-          onTabChange={vi.fn()}
-        />
-      );
-
-      expect(screen.getByTestId('phase-final-review')).toHaveClass(/green/);
-    });
-
-    it('should use red for failed phase status', () => {
-      render(
-        <MissionCompletionPanel
-          mission={createMission({ status: 'post_checks' })}
-          postChecks={createPostChecksStatus({
-            passed: false,
-            completed_at: '2026-01-15T14:26:45Z',
-            results: {
-              lint: createCheckResult({ status: 'failed' }),
-              typecheck: createCheckResult({ status: 'pending' }),
-              test: createCheckResult({ status: 'pending' }),
-              build: createCheckResult({ status: 'pending' }),
-            },
-          })}
-          activeTab="completion"
-          onTabChange={vi.fn()}
-        />
-      );
-
-      expect(screen.getByTestId('phase-post-checks')).toHaveClass(/red/);
-    });
-
-    it('should use yellow for active phase status', () => {
-      render(
-        <MissionCompletionPanel
-          mission={createMission({ status: 'final_review' })}
-          finalReview={createFinalReviewStatus()}
-          activeTab="completion"
-          onTabChange={vi.fn()}
-        />
-      );
-
-      expect(screen.getByTestId('phase-final-review')).toHaveClass(/yellow/);
-    });
-
-    it('should use gray for pending phase status', () => {
-      render(
-        <MissionCompletionPanel
-          mission={createMission({ status: 'final_review' })}
-          activeTab="completion"
-          onTabChange={vi.fn()}
-        />
-      );
-
-      expect(screen.getByTestId('phase-post-checks')).toHaveClass(/gray/);
     });
   });
 });

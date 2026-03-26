@@ -7,6 +7,7 @@ export const VALID_AGENTS = [
     'face',
     'sosa',
     'tawnia',
+    'stockwell',
 ];
 export const AGENT_DISPLAY_NAMES = {
     murdock: 'Murdock',
@@ -17,6 +18,7 @@ export const AGENT_DISPLAY_NAMES = {
     face: 'Face',
     sosa: 'Sosa',
     tawnia: 'Tawnia',
+    stockwell: 'Stockwell',
 };
 export function normalizeAgentName(raw) {
     return raw.toLowerCase().replace(/\./g, '');

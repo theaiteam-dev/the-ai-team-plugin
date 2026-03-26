@@ -110,36 +110,6 @@ describe('GET /api/board/events - Memory Management', () => {
   });
 
   describe('query filtering for archived items', () => {
-    it('should query database with filter to exclude archived items', async () => {
-      /**
-       * The implementation should filter out archived items at the database
-       * query level to prevent them from being returned and tracked.
-       *
-       * Expected query: prisma.item.findMany({ where: { archivedAt: null }, ... })
-       */
-      const activeItems = [createMockItem('WI-001', 'ready')];
-      mockPrisma.item.findMany.mockResolvedValue(activeItems);
-
-      const { GET } = await import('@/app/api/board/events/route');
-      const response = await GET();
-      const reader = response.body!.getReader();
-
-      // Trigger a poll
-      await vi.advanceTimersByTimeAsync(1100);
-
-      // Verify the query was called with appropriate filtering
-      expect(mockPrisma.item.findMany).toHaveBeenCalled();
-
-      // Check that the query includes a where clause for archived items
-      // The implementation SHOULD filter: where: { archivedAt: null }
-      const callArgs = mockPrisma.item.findMany.mock.calls[0]?.[0];
-      expect(callArgs).toBeDefined();
-      expect(callArgs?.where).toBeDefined();
-      expect(callArgs?.where?.archivedAt).toBe(null);
-
-      reader.cancel();
-    });
-
     it('should not include archived items in tracking even if returned by database', async () => {
       /**
        * If for some reason an archived item is returned by the query,
