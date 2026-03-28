@@ -220,7 +220,10 @@ This claims the item AND records `assigned_agent` on the work item so the kanban
 
 ### Step 2: Reconnaissance
 
-- **Read the feature item**: Understand the objective and acceptance criteria
+- **Read the feature item** via `ateam items renderItem --id <id>`: The rendered markdown includes structured fields:
+  - **Objective** — the one-sentence outcome; this is your happy path test
+  - **Acceptance Criteria** — each criterion maps to at least one test case. These are your primary test specifications.
+  - **Context** — integration points tell you what to mock vs. what's real. If it says "called by OrderController at src/controllers/order.ts", you know the function signature contract.
 - **Identify what needs testing**: The specific feature, adjacent functionality that could be affected, integration points
 - **Review existing code patterns**: Match the project's testing style, assertion library, naming conventions
 - **Find existing tests**: Check for tests that cover similar functionality to understand patterns

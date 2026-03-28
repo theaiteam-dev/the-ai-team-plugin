@@ -66,10 +66,15 @@ Review them as a cohesive unit, not separately.
 ## Review Process
 
 ### Step 1: Understand the Requirements
-- Read the work item thoroughly - note the objective and acceptance criteria
+- Read the work item via `ateam items renderItem --id <id>` — it includes structured fields:
+  - **Objective** — the one-sentence outcome this feature delivers
+  - **Acceptance Criteria** — the measurable criteria that define "done." Each criterion should be covered by BOTH tests AND implementation. Use these as your review checklist.
+  - **Context** — integration points and constraints. Verify the implementation actually wires into the locations mentioned here.
 - Identify the core functional requirements
 - Note any edge cases or error handling expectations mentioned
 - If requirements are unclear, note this in your review
+
+**When rejecting, reference specific unmet acceptance criteria by text** (e.g., "AC 'Returns 401 on invalid password' is not covered by any test"). This gives Murdock/B.A. precise guidance on what to fix.
 
 ### Step 2: Read ALL Output Files Together
 - Test file

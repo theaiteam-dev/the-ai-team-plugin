@@ -88,6 +88,12 @@ title: "Feature name"
 type: "feature"        # feature | task | bug | enhancement
 status: "pending"
 stage: "briefings"     # briefings | ready | testing | implementing | review | probing | done | blocked
+objective: "Users can create orders with line items and see real-time totals"  # One behavioral sentence
+acceptance:                                  # Measurable criteria (JSON array in DB)
+  - "POST /api/orders with valid items returns 201 with order ID"
+  - "Order total reflects sum of item prices × quantities"
+  - "POST /api/orders with empty items array returns 400"
+context: "Integrates with existing ProductService (src/services/product.ts). Called from checkout page via useCreateOrder hook."
 outputs:
   test: "src/__tests__/feature.test.ts"    # REQUIRED
   impl: "src/services/feature.ts"          # REQUIRED
@@ -104,6 +110,11 @@ work_log:                                   # Populated by agentStop
 ```
 
 The `outputs` field is critical - without it, Murdock and B.A. don't know where to create files.
+
+**Structured fields** guide downstream agents:
+- **`objective`**: One behavioral sentence — Murdock tests it, B.A. implements it, Tawnia documents it
+- **`acceptance`**: Measurable criteria — Murdock maps each to a test, Lynch checks coverage, Stockwell verifies
+- **`context`**: Integration points — B.A. knows where to wire code, Amy knows where to probe for boundary bugs
 
 ## Critical Requirements
 
@@ -233,7 +244,7 @@ Usage: `ateam <resource> <command> [flags]`
 | Move item | `ateam board-move moveItem --itemId <id> --toStage <stage>` |
 | Claim item | `ateam board-claim claimItem --itemId <id> --agent <name>` |
 | Release item | `ateam board-release releaseItem --itemId <id>` |
-| Create item | `ateam items createItem --title "..." --type feature ...` |
+| Create item | `ateam items createItem --title "..." --type feature --objective "..." --acceptance "criterion 1" --acceptance "criterion 2" --context "..." ...` |
 | Get item | `ateam items getItem --id <id>` |
 | List items | `ateam items listItems --json` |
 | Update item | `ateam items updateItem --id <id> [flags]` |

@@ -82,12 +82,13 @@ At this point, all the code is complete, reviewed, and verified. Your job is to 
 
 2. **Read the mission context**
    - Run `ateam board getBoard --json` to get board state (mission name, completed items)
-   - Run `ateam items listItems --json` to get completed items
+   - Run `ateam items listItems --json` to get completed items — each item has an `objective` field with a one-sentence summary of what it delivers. Use these as the basis for changelog entries and feature summaries.
    - Read the implementation files to understand what was built
 
 3. **Update CHANGELOG.md**
    - Follow Keep a Changelog format
    - Group changes by type: Added, Changed, Fixed, Removed
+   - Use each item's `objective` field as the starting point for each entry
    - Reference work item IDs where helpful
    - Include version and date
 

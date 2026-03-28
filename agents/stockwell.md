@@ -88,8 +88,9 @@ Consult these references when reviewing the corresponding concern:
 Do NOT read the entire codebase. Focus on:
 
 1. **PRD requirements** — is each one addressed in the diff?
-2. **The mission's commits** — correct, consistent, secure?
-3. **Integration** — do changes wire into the existing codebase?
+2. **Acceptance criteria** — run `ateam items listItems --json` to get all work items. Each item has structured `objective`, `acceptance`, and `context` fields. Verify every acceptance criterion across all items is satisfied by the implementation.
+3. **The mission's commits** — correct, consistent, secure?
+4. **Integration** — check `context` fields for cross-cutting integration points. Verify changes actually wire into the locations specified.
 
 ## Final Review Checklist
 

@@ -81,9 +81,10 @@ You receive a feature item that has already been through the testing stage:
 
    This claims the item AND records `assigned_agent` on the work item so the kanban UI shows you're working on it.
 
-2. **Read the feature item**
-   - Understand the objective
-   - Note acceptance criteria
+2. **Read the feature item** via `ateam items renderItem --id <id>`
+   - **Objective** — the one-liner for what the code should do
+   - **Acceptance Criteria** — your done criteria alongside the tests
+   - **Context** — integration points (which existing files import/call this), patterns to follow, constraints. This tells you WHERE the code fits into the project, not just WHAT it does.
 
 3. **Read the test file** (outputs.test)
    - These are your acceptance criteria

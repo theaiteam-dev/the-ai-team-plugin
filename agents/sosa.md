@@ -92,9 +92,29 @@ Verify Face selected the appropriate `type` for each work item:
 - Title contains "setup", "configure", "create types" → likely should be `task`
 - All acceptance criteria are about file existence, not behavior → likely should be `task`
 
-### 2. Clarity & Completeness
-- Is the objective unambiguous?
-- Are acceptance criteria specific, measurable, and testable?
+### 2. Structured Fields Quality (CRITICAL)
+
+Work items now have three structured fields (`objective`, `acceptance`, `context`) that downstream agents depend on. Validate their quality:
+
+**Objective:**
+- Must be one behavioral sentence describing an observable outcome
+- Flag if missing, vague ("Handle authentication"), or describes implementation ("Create auth service")
+- GOOD: "Users can log in with email/password and receive a session token"
+
+**Acceptance Criteria:**
+- Each criterion must describe an observable, measurable outcome
+- Each `feature` must have at least 1 happy-path and 1 error-path criterion
+- Flag criteria that describe implementation details ("Uses bcrypt") instead of behavior ("Passwords are not stored in plaintext")
+- Flag unmeasurable criteria ("Error handling works", "Performance is good")
+- Murdock maps these directly to test cases — if a criterion is vague, the test will be vague
+
+**Context:**
+- Should include integration points (which files will import/call this)
+- Flag if missing on items that modify or integrate with existing code
+- Flag placeholder text ("Any information the agents need")
+- B.A. uses this to understand WHERE the code fits, not just WHAT it does
+
+### 3. Clarity & Completeness
 - Is the scope precisely bounded (what's IN vs OUT)?
 - Are inputs, outputs, and side effects documented?
 - **Would two different developers interpret this the same way?**
@@ -191,11 +211,14 @@ Cross-reference the PRD against the work items to verify nothing was dropped. Re
 ## Issue Classification
 
 **CRITICAL** - Blocks implementation entirely:
+- Missing or vague `objective` (must be one behavioral sentence)
+- Missing `acceptance` criteria on features (Murdock can't write tests without them)
+- Unmeasurable acceptance criteria ("works correctly", "handles errors")
+- Missing `context` on items that integrate with existing code
 - Missing outputs field or paths
 - Circular dependencies
 - Fundamentally ambiguous requirements
 - Contradictory specifications
-- Missing essential acceptance criteria
 - Over-splitting (too many items for the scope)
 - Wrong type selection (scaffolding marked as `feature`)
 - Missing project infrastructure (no test runner, no TypeScript, etc.) without a scaffolding item
