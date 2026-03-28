@@ -63,7 +63,7 @@ Each feature flows through stages sequentially. Different features can be at dif
 
 Use `ateam deps-check checkDeps --json` to see which items are ready. Within a wave, items flow independently through stages.
 
-**True Individual Item Tracking:** Items advance immediately when their agent completes - no waiting for batch completion. In legacy mode, Hannibal polls TaskOutput for each background agent individually. In native teams mode, agents send completion messages via SendMessage. In both modes, agents signal completion via `ateam agents-stop agentStop`.
+**True Individual Item Tracking:** Items advance immediately when their agent completes - no waiting for batch completion. In legacy mode, Hannibal polls TaskOutput for each background agent individually. In native teams mode, pipeline agents (Murdock → B.A. → Lynch → Amy) hand off directly to each other via START messages — Hannibal receives only FYI (handoff succeeded) or ALERT (handoff failed/timed out) messages and intervenes only on ALERT. In both modes, agents signal completion via `ateam agents-stop agentStop`.
 
 When ALL features reach `done`, Lynch performs a **Final Mission Review** of the entire codebase, checking for cross-cutting issues (consistency, race conditions, security, code quality).
 
@@ -127,22 +127,20 @@ The `outputs` field is critical - without it, Murdock and B.A. don't know where 
 - The `ateam` CLI binary handles all communication with the A(i)-Team system - no need to explore plugin internals
 
 ### Agent Boundaries
-- **Hannibal**: Orchestrates ONLY. NEVER uses Write/Edit on `src/**` or test files. Delegates ALL coding to subagents. If pipeline is stuck, reports status and waits for human intervention - never codes a workaround.
+- **Hannibal**: Orchestrates ONLY. NEVER uses Write/Edit on `src/**` or test files. Delegates ALL coding to subagents. If pipeline is stuck, reports status and waits for human intervention - never codes a workaround. In native teams mode, Hannibal dispatches only the first agent per item (Murdock); subsequent handoffs are peer-to-peer. Hannibal intervenes only on ALERT messages.
 - **Face**: Creates and updates work items via `ateam` CLI. Does NOT write tests or implementation. On second pass, uses `ateam` CLI ONLY (no Glob/Grep).
 - **Sosa**: Reviews and critiques work items. Does NOT modify items directly - provides recommendations for Face.
-- **Murdock**: Writes ONLY tests and types. Does NOT write implementation code.
-- **B.A.**: Writes ONLY implementation. Tests already exist from Murdock.
-- **Lynch / Stockwell**: Reviews only. Does NOT write code.
-- **Amy**: Investigates only. Does NOT write production code or tests. Reports findings with proof.
+- **Murdock**: Writes ONLY tests and types. Does NOT write implementation code. In native teams mode, sends a START message directly to B.A. after `agentStop --advance`, then sends FYI/ALERT to Hannibal.
+- **B.A.**: Writes ONLY implementation. Tests already exist from Murdock. In native teams mode, ACKs Murdock's START, then sends a START to Lynch after `agentStop --advance`.
+- **Lynch / Stockwell**: Reviews only. Does NOT write code. In native teams mode, Lynch sends START to Amy (approved) or peer rejection to Murdock/B.A. (rejected), then FYI/ALERT to Hannibal.
+- **Amy**: Investigates only. Does NOT write production code or tests. Reports findings with proof. In native teams mode, sends FYI/ALERT to Hannibal only (no downstream peer handoff).
 - **Tawnia**: Writes documentation only (CHANGELOG, README, docs/). Does NOT modify source code or tests. Makes the final commit.
 
 ### Stage Transitions
 
-Use `ateam board-move moveItem` for all stage transitions. The command:
-- Validates the transition is allowed
-- Enforces WIP limits
-- Logs the transition to the activity feed
-- Returns success/error status
+**Legacy mode / Hannibal:** Use `ateam board-move moveItem` for all stage transitions. The command validates the transition, enforces WIP limits, logs the activity, and returns success/error.
+
+**Native teams mode (pipeline workers):** Call `ateam agents-stop agentStop --advance` (default `true`) — this advances the item to the next stage atomically. If the target stage is at WIP capacity, the API returns `WIP_LIMIT_EXCEEDED` (409); use `--advance=false` to release the claim without advancing, then send an ALERT to Hannibal to handle re-dispatch when capacity opens.
 
 ## Key Conventions
 
@@ -251,7 +249,8 @@ Usage: `ateam <resource> <command> [flags]`
 | Reject item | `ateam items rejectItem --id <id>` |
 | Render item | `ateam items renderItem --id <id>` |
 | Agent start | `ateam agents-start agentStart --itemId <id> --agent <name>` |
-| Agent stop | `ateam agents-stop agentStop --itemId <id> --agent <name> --status success --summary "..."` |
+| Agent stop | `ateam agents-stop agentStop --itemId <id> --agent <name> --outcome completed --summary "..."` |
+| Agent stop (no advance) | `ateam agents-stop agentStop --itemId <id> --agent <name> --outcome completed --summary "..." --advance=false` |
 | Create mission | `ateam missions createMission [flags]` |
 | Current mission | `ateam missions-current getCurrentMission --json` |
 | Pre-check | `ateam missions-precheck missionPrecheck --json` |
@@ -277,14 +276,14 @@ ateam agents-start agentStart --itemId "WI-007" --agent "murdock"
 ```bash
 ateam agents-stop agentStop \
   --itemId "WI-007" \
-  --agent "murdock" \
-  --status success \
-  --summary "Created 5 test cases" \
-  --filesCreated "src/__tests__/feature.test.ts"
+  --agent "Murdock" \
+  --outcome completed \
+  --summary "Created 5 test cases"
 ```
 - Marks completion in the database
 - Clears `assigned_agent` from the item
 - Appends work summary to `work_log` array
+- In native teams mode, advances item to the next stage (default `--advance=true`). Use `--advance=false` to release the claim without advancing (e.g., when WIP_LIMIT_EXCEEDED).
 
 ### Observability: Hook Events & Token Usage
 

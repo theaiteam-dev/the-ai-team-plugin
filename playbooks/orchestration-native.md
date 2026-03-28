@@ -171,44 +171,89 @@ active_teammates = {}  # item_id → teammate_name
 LOOP CONTINUOUSLY:
 
     # ═══════════════════════════════════════════════════════════
-    # PHASE 1: PROCESS INCOMING MESSAGES - ADVANCE ON COMPLETION
+    # PHASE 1: PROCESS INCOMING MESSAGES
     # ═══════════════════════════════════════════════════════════
     # Messages from teammates are AUTO-DELIVERED to you.
-    # When a teammate completes work, they call `ateam agents-stop agentStop` and
-    # then SendMessage to you. The message arrives as a new
-    # conversation turn - you do NOT need to poll.
+    # In peer-to-peer handoff mode, completing agents call agentStop --advance
+    # (which moves the item and claims it for the next agent) and then send
+    # FYI or ALERT messages to you. You are NOT in the happy-path loop.
     #
-    # When you receive a completion message from a teammate:
+    # Message types:
+    #   FYI  → peer handoff succeeded (or Amy/Lynch reporting verdict)
+    #   ALERT → peer handoff failed (timeout or WIP exceeded) — you must intervene
+    #   DONE  → used for blocked items or non-peer-handoff scenarios (fallback)
 
-    on message from teammate about item completion:
+    on FYI message (e.g. "FYI: WI-001 - Tests handed off to B.A. ACK received."):
         item_id = extract item_id from message
-        del active_teammates[item_id]
 
-        if item was in testing:
+        if "VERIFIED" in message:
+            # Amy's probing complete — advance to done
+            Bash("ateam board-move moveItem --itemId {item_id} --toStage done")
+            del active_teammates[item_id]
+            # board-move response may include finalReviewReady: true — dispatch Stockwell if so
+
+        elif "FLAG" in message:
+            # Amy found bugs — reject and re-queue
+            Bash("ateam items rejectItem --id {item_id}")
+            del active_teammates[item_id]
+
+        elif "REJECTED" in message:
+            # Lynch rejected — peer already notified B.A./Murdock directly
+            Bash("ateam items rejectItem --id {item_id}")
+            del active_teammates[item_id]
+
+        else:
+            # Happy-path handoff: testing→implementing, implementing→review, or review→probing
+            # The completing agent already ran agentStop --advance, which moved and claimed the item
+            del active_teammates[item_id]
+            # Schedule backup verification: if assigned_agent is still null after 2 min,
+            # the next agent didn't receive the handoff — fall back to manual dispatch
+            backup_verify(item_id, delay=2min)
+
+    on ALERT message (e.g. "ALERT: WI-001 - No ACK from B.A. after 20 seconds."):
+        item_id = extract item_id from message
+
+        if "No ACK from B.A." in message:
+            # Murdock's handoff to B.A. timed out — manually dispatch
             Bash("ateam board-move moveItem --itemId {item_id} --toStage implementing --agent B.A.")
             spawn or message B.A. with new work
             active_teammates[item_id] = "ba"
-            # Don't wait for other testing items!
 
-        elif item was in implementing:
+        elif "No ACK from Lynch" in message:
+            # B.A.'s handoff to Lynch timed out — manually dispatch
             Bash("ateam board-move moveItem --itemId {item_id} --toStage review --agent Lynch")
             spawn or message Lynch with new work
             active_teammates[item_id] = "lynch"
 
-        elif item was in review:
-            if APPROVED:
-                # ═══ MANDATORY: Amy probes EVERY approved feature ═══
-                Bash("ateam board-move moveItem --itemId {item_id} --toStage probing --agent Amy")
-                spawn or message Amy with new work
-                active_teammates[item_id] = "amy"
-                # DO NOT skip probing! DO NOT move directly to done!
-            if REJECTED: Bash("ateam items rejectItem --id {item_id}")
+        elif "No ACK from Amy" in message:
+            # Lynch's handoff to Amy timed out — manually dispatch
+            # ═══ MANDATORY: Amy probes EVERY approved feature ═══
+            Bash("ateam board-move moveItem --itemId {item_id} --toStage probing --agent Amy")
+            spawn or message Amy with new work
+            active_teammates[item_id] = "amy"
 
-        elif item was in probing:
-            # Amy has completed investigation
-            if VERIFIED: Bash("ateam board-move moveItem --itemId {item_id} --toStage done")
-            if FLAG: Bash("ateam items rejectItem --id {item_id}")
-            # Moving to done may unlock Wave 2 items!
+        elif "WIP" in message or "capacity" in message:
+            # agentStop --advance was blocked by WIP limit; item was released with --advance=false
+            # Queue item for dispatch when WIP opens up (handle in Phase 3 next cycle)
+            wip_queue.add(item_id)
+
+    # backup_verify fires 2 min after a FYI happy-path handoff:
+    def backup_verify(item_id):
+        item = Bash("ateam items getItem --id {item_id} --json")
+        if item.assignedAgent is null:
+            # Next agent never claimed it — fall back to manual dispatch
+            current_stage = item.stageId
+            if current_stage == "implementing":
+                spawn or message B.A. with new work; active_teammates[item_id] = "ba"
+            elif current_stage == "review":
+                spawn or message Lynch with new work; active_teammates[item_id] = "lynch"
+            elif current_stage == "probing":
+                spawn or message Amy with new work; active_teammates[item_id] = "amy"
+
+    on DONE message (fallback for blocked items / non-peer-handoff scenarios):
+        item_id = extract item_id from message
+        del active_teammates[item_id]
+        # Handle as appropriate (re-queue, log, etc.)
 
     # ═══════════════════════════════════════════════════════════
     # PHASE 2: CHECK DEPENDENCY GATES - UNLOCK NEXT WAVE ITEMS
@@ -257,19 +302,39 @@ In native teams mode, completion works differently from legacy polling:
 
 ### What Teammate Messages Look Like
 
-Teammates send messages like:
+In peer-to-peer handoff mode, teammates send:
+
+**Happy-path FYI (handoff succeeded — no action needed):**
 ```
-"DONE: WI-001 - Created 4 test cases covering happy path and edge cases"
-"DONE: WI-003 - APPROVED - All tests pass, implementation matches spec"
-"DONE: WI-002 - VERIFIED - All probes pass, wiring confirmed"
-"DONE: WI-005 - FLAG - Race condition found in concurrent access"
-"BLOCKED: WI-004 - Cannot write tests, missing type definitions"
+"FYI: WI-001 - Tests handed off to B.A. directly. ACK received."
+"FYI: WI-003 - Implementation handed off to Lynch directly. ACK received."
+"FYI: WI-002 - APPROVED. Handed off to Amy directly. ACK received."
+```
+
+**Terminal FYI (Hannibal must act):**
+```
+"FYI: WI-002 - Probing complete. VERIFIED. All wiring confirmed, user-visible behavior correct."
+"FYI: WI-005 - Probing complete. FLAG. Race condition found in concurrent access."
+"FYI: WI-004 - REJECTED. Sent rejection directly to B.A. Missing error handling."
+```
+
+**ALERT (handoff failed — Hannibal must dispatch manually):**
+```
+"ALERT: WI-001 - No ACK from B.A. after 20 seconds. Manual dispatch may be needed."
+"ALERT: WI-003 - No ACK from Lynch after 20 seconds. Manual dispatch may be needed."
+"ALERT: WI-002 - APPROVED but no ACK from Amy after 20 seconds. Manual dispatch may be needed."
+```
+
+**DONE (fallback for blocked items, non-peer scenarios):**
+```
+"DONE: WI-004 - BLOCKED - Cannot write tests, missing type definitions"
 ```
 
 Parse the message to determine:
+- **Message type** (FYI/ALERT/DONE/BLOCKED)
 - **Item ID** (WI-XXX)
-- **Status** (DONE/BLOCKED)
-- **Verdict** (for Lynch: APPROVED/REJECTED; for Amy: VERIFIED/FLAG)
+- **Verdict** (VERIFIED/FLAG for Amy; APPROVED/REJECTED for Lynch; in FYI text)
+- **Reason** (for ALERT: which agent timed out; for REJECTED: what to fix)
 
 ## Idle State Handling
 
@@ -554,42 +619,40 @@ T=0s    ateam deps-check checkDeps --json → readyItems: [001, 002], 003/004 bl
 
         # Wait for messages...
 
-T=30s   MESSAGE from murdock: "DONE: WI-001 - Created 3 test cases"
-        → IMMEDIATELY: ateam board-move moveItem --itemId 001 --toStage implementing --agent B.A.
-        Task(team_name: "mission-M1", name: "ba", subagent_type: "ai-team:ba", ...)
-        active_teammates = {001: "ba", 002: "murdock"}
-        # 002 still in testing - that's fine!
+T=30s   FYI from murdock: "FYI: WI-001 - Tests handed off to B.A. directly. ACK received."
+        → del active_teammates[001]; schedule backup_verify(001, 2min)
+        active_teammates = {002: "murdock"}
+        # B.A. already claimed WI-001 via agentStop --advance — no board-move needed
 
-T=45s   MESSAGE from murdock: "DONE: WI-002 - Created 4 test cases"
-        → IMMEDIATELY: ateam board-move moveItem --itemId 002 --toStage implementing --agent B.A.
-        SendMessage(type: "message", recipient: "ba",
-          content: "New work: WI-002...", summary: "Implement WI-002")
-        active_teammates = {001: "ba", 002: "ba"}
+T=45s   FYI from murdock: "FYI: WI-002 - Tests handed off to B.A. directly. ACK received."
+        → del active_teammates[002]; schedule backup_verify(002, 2min)
+        active_teammates = {}
 
-T=60s   MESSAGE from ba: "DONE: WI-001 - All tests passing"
-        → IMMEDIATELY: ateam board-move moveItem --itemId 001 --toStage review --agent Lynch
-        Task(team_name: "mission-M1", name: "lynch", subagent_type: "ai-team:lynch", ...)
-        active_teammates = {001: "lynch", 002: "ba"}
+T=60s   FYI from ba: "FYI: WI-001 - Implementation handed off to Lynch directly. ACK received."
+        → del active_teammates[001]; schedule backup_verify(001, 2min)
+        active_teammates = {}
+        # Lynch already claimed WI-001 — no board-move needed
 
-T=90s   MESSAGE from lynch: "DONE: WI-001 - APPROVED"
-        → ateam board-move moveItem --itemId 001 --toStage probing --agent Amy
-        Task(team_name: "mission-M1", name: "amy", subagent_type: "ai-team:amy", ...)
-        active_teammates = {001: "amy", 002: "ba"}
+T=62s   backup_verify(001) fires (WI-002 B.A. handoff)
+        → item.assignedAgent = "Lynch" — handoff confirmed ✓
 
-T=100s  MESSAGE from amy: "DONE: WI-001 - VERIFIED"
+T=90s   FYI from lynch: "FYI: WI-001 - APPROVED. Handed off to Amy directly. ACK received."
+        → del active_teammates[001]; schedule backup_verify(001, 2min)
+        active_teammates = {}
+
+T=100s  FYI from amy: "FYI: WI-001 - Probing complete. VERIFIED. All wiring confirmed."
         → ateam board-move moveItem --itemId 001 --toStage done
+        del active_teammates[001]
         ateam deps-check checkDeps --json → readyItems: [003]  ← 003's dep (001) satisfied!
         ateam board-move moveItem --itemId 003 --toStage ready
         ateam board-move moveItem --itemId 003 --toStage testing --agent Murdock
         SendMessage(type: "message", recipient: "murdock",
           content: "New work: WI-003...", summary: "Test work for WI-003")
-        active_teammates = {002: "ba", 003: "murdock"}
+        active_teammates = {003: "murdock"}
 
-T=105s  MESSAGE from ba: "DONE: WI-002 - All tests passing"
-        → ateam board-move moveItem --itemId 002 --toStage review --agent Lynch
-        SendMessage(type: "message", recipient: "lynch",
-          content: "Review WI-002...", summary: "Review WI-002")
-        active_teammates = {002: "lynch", 003: "murdock"}
+T=105s  FYI from ba: "FYI: WI-002 - Implementation handed off to Lynch directly. ACK received."
+        → del active_teammates[002]; schedule backup_verify(002, 2min)
+        active_teammates = {003: "murdock"}
 
         ... and so on until all items reach done ...
 ```

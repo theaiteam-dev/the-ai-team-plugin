@@ -14,6 +14,7 @@ import {
   createValidationError,
   createItemNotFoundError,
   createDatabaseError,
+  createWipLimitExceededError,
 } from '@/lib/errors';
 import { getAndValidateProjectId } from '@/lib/project-utils';
 import type { AgentStopRequest, AgentStopResponse, ApiError } from '@/types/api';
@@ -145,6 +146,21 @@ export async function POST(
     }
     const action: WorkLogAction = outcome === 'blocked' ? 'note' : 'completed';
 
+    // When advance=true (default), check WIP limits on the target stage before moving
+    const advance = body.advance !== false;
+    if (advance) {
+      const targetStage = await prisma.stage?.findUnique({ where: { id: nextStage } });
+      if (targetStage != null && targetStage.wipLimit != null) {
+        const currentCount = await prisma.item.count({ where: { stageId: nextStage, projectId } });
+        if (currentCount >= targetStage.wipLimit) {
+          return NextResponse.json(
+            createWipLimitExceededError(nextStage, targetStage.wipLimit, currentCount).toResponse(),
+            { status: 409 }
+          );
+        }
+      }
+    }
+
     // Delete the agent claim (by itemId, which is unique)
     await prisma.agentClaim.delete({
       where: { itemId: body.itemId },
@@ -160,11 +176,11 @@ export async function POST(
       },
     });
 
-    // Update item: clear assignedAgent and move to next stage
+    // Update item: clear assignedAgent, and move to next stage only when advancing
     await prisma.item.update({
       where: { id: body.itemId },
       data: {
-        stageId: nextStage,
+        ...(advance ? { stageId: nextStage } : {}),
         assignedAgent: null,
       },
     });

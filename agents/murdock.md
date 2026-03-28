@@ -399,13 +399,45 @@ Log at key milestones:
 
 When running in native teams mode (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), you are a teammate in an A(i)-Team mission with direct messaging capabilities.
 
-### Notify Hannibal on Completion
-After calling `ateam agents-stop agentStop`, message Hannibal:
+### Peer-to-Peer Handoff
+
+After `ateam agents-stop agentStop --advance` completes, hand off directly to B.A. — no need to wait for Hannibal to dispatch:
+
+**1. Send START to B.A.:**
 ```javascript
 SendMessage({
-  type: "message",
-  recipient: "hannibal",
-  content: "DONE: {itemId} - {brief summary of work completed}",
+  to: "ba",
+  message: "START: {itemId} - Tests ready at {outputs.test}. {one-line summary of what to implement}",
+  summary: "START {itemId}"
+})
+```
+
+**2. Wait up to 20 seconds** for B.A. to reply with `ACK: {itemId}`.
+
+**3a. On ACK received — send FYI to Hannibal:**
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "FYI: {itemId} - Tests handed off to B.A. directly. ACK received.",
+  summary: "Handoff complete for {itemId}"
+})
+```
+
+**3b. On timeout (no ACK after 20s) — send ALERT to Hannibal:**
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "ALERT: {itemId} - No ACK from B.A. after 20 seconds. Manual dispatch may be needed.",
+  summary: "Handoff timeout for {itemId}"
+})
+```
+
+### Notify Hannibal on Completion
+For blocked items or non-advance stops (use instead of the peer handoff above):
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "DONE: {itemId} - {brief summary of work completed}",
   summary: "Tests complete for {itemId}"
 })
 ```

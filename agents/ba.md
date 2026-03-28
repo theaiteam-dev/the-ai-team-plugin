@@ -325,13 +325,57 @@ Report back to Hannibal with the file created.
 
 When running in native teams mode (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), you are a teammate in an A(i)-Team mission with direct messaging capabilities.
 
-### Notify Hannibal on Completion
-After calling `ateam agents-stop agentStop`, message Hannibal:
+### Peer-to-Peer Handoff
+
+After `ateam agents-stop agentStop --advance` completes, hand off directly to Lynch — no need to wait for Hannibal to dispatch:
+
+**1. Send START to Lynch:**
 ```javascript
 SendMessage({
-  type: "message",
-  recipient: "hannibal",
-  content: "DONE: {itemId} - {brief summary of work completed}",
+  to: "lynch",
+  message: "START: {itemId} - Implementation ready at {outputs.impl}. Tests at {outputs.test}. {one-line summary of what was implemented}",
+  summary: "START {itemId}"
+})
+```
+
+**2. Wait up to 20 seconds** for Lynch to reply with `ACK: {itemId}`.
+
+**3a. On ACK received — send FYI to Hannibal:**
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "FYI: {itemId} - Implementation handed off to Lynch directly. ACK received.",
+  summary: "Handoff complete for {itemId}"
+})
+```
+
+**3b. On timeout (no ACK after 20s) — send ALERT to Hannibal:**
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "ALERT: {itemId} - No ACK from Lynch after 20 seconds. Manual dispatch may be needed.",
+  summary: "Handoff timeout for {itemId}"
+})
+```
+
+### Handling Incoming START Messages
+
+When Murdock sends `START: {itemId}` after completing tests, immediately reply with ACK so Murdock can proceed:
+```javascript
+SendMessage({
+  to: "murdock",
+  message: "ACK: {itemId}",
+  summary: "ACK {itemId}"
+})
+```
+Then begin implementation work on that item.
+
+### Notify Hannibal on Completion
+For blocked items or non-advance stops (use instead of the peer handoff above):
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "DONE: {itemId} - {brief summary of work completed}",
   summary: "Implementation complete for {itemId}"
 })
 ```

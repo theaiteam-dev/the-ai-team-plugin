@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Peer-to-peer agent handoffs:** Native teams mode (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`) now uses direct agent-to-agent handoffs instead of polling through Hannibal. Murdock → B.A. → Lynch → Amy form a direct pipeline; Hannibal intervenes only on ALERT messages (WIP limit exceeded, handoff timeout). Reduces orchestration latency and enables true parallel pipeline execution (#021-029).
+- **WIP limit enforcement on agent handoffs:** `agentStop` API now validates target stage WIP capacity with `--advance` flag. Returns 409 WIP_LIMIT_EXCEEDED when full. Agents use `--advance=false` to release claim without advancing, signaling Hannibal via ALERT to handle re-dispatch (#021, #022).
+- **Handoff latency instrumentation:** Observer hooks now capture peer-to-peer handoff latency (time from one agent's `agentStop` to next agent's `agentStart`) to monitor pipeline throughput (#028).
 - **Test quality guardrails for agents:** Murdock now has 5 explicitly banned anti-patterns (type-shape tests, mocking own subject, Tailwind CSS assertions, source regex matching, local reimplementations) with BAD/GOOD code examples in his agent instructions.
 - **`test-writing` skill:** Created the comprehensive reference document that Murdock already referenced but didn't exist. Covers 10 banned patterns with examples, good test criteria, and a self-check checklist.
 - **Lynch review checklist additions:** Added type-shape tests, Tailwind CSS assertions, and source regex/local reimplementations to Lynch's Priority 1 review criteria across all 4 review sections.

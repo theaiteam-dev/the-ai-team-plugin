@@ -331,7 +331,7 @@ ateam board getBoard --json
 
 ## Handling Rejections
 
-When Lynch rejects, use the `ateam items rejectItem` command:
+**In native teams mode:** Lynch sends the rejection message directly to B.A. or Murdock (peer-to-peer) and sends Hannibal a FYI. Hannibal still calls `ateam items rejectItem` to update board state:
 
 ```bash
 ateam items rejectItem --id "WI-001" --agent "Lynch" --reason "Missing error handling tests"
@@ -357,7 +357,7 @@ The command automatically:
 
 If `escalate: true`, announce to the user that human intervention is needed.
 
-**Native teams mode:** On rejection, immediately re-dispatch from Phase 1 — don't defer to Phase 3. Use the `dispatch_to` liveness check (see `playbooks/orchestration-native.md` "Teammate Liveness Detection") to determine whether to SendMessage or spawn fresh. A teammate's session may have silently expired between their last work and the rejection.
+**After rejectItem in native teams mode:** Lynch already notified B.A./Murdock directly. Immediately re-dispatch the responsible agent from Phase 1 — don't defer to Phase 3. The peer rejection message tells them what to fix; your dispatch prompt should include the same rejection reason for context. A teammate's session may have silently expired between their rejection notification and your dispatch — use liveness check (see playbook) to determine whether to SendMessage or spawn fresh.
 
 ## Re-dispatching B.A. After Rejection
 
@@ -451,16 +451,28 @@ Include both the rejection reason and diagnosis in the `## Prior Rejection` sect
 
 ## Handling Approvals
 
-When Lynch approves, move the item to **probing** (NOT done) for Amy's mandatory investigation:
+**In native teams mode:** Lynch sends `agentStop --advance` (which moves the item to probing and claims it for Amy) and then sends a START message directly to Amy. Lynch sends Hannibal a FYI message on success or ALERT on timeout. **Hannibal does not board-move on the happy path.**
+
+- **On FYI (Lynch APPROVED):** Log it, schedule a 2-min backup verification that Amy's `assignedAgent` is set.
+- **On ALERT (Amy didn't ACK):** Fall back to manual dispatch:
 
 ```bash
-# Move to probing (auto-releases Lynch's claim)
+# Fallback only — move to probing AND claim for Amy
 ateam board-move moveItem --itemId "WI-001" --toStage "probing" --agent "Amy"
 ```
 
 Then dispatch Amy to probe the feature (see the loaded orchestration playbook for dispatch details).
 
-When Amy completes and verifies the feature, advance the item to the done stage. The orchestration loop (Phase 1, probing handler) shows the exact flow. Check the response for `finalReviewReady: true` -- when present, immediately dispatch Lynch for the Final Mission Review.
+**In legacy mode** (or as ALERT fallback):
+```bash
+ateam board-move moveItem --itemId "WI-001" --toStage "probing" --agent "Amy"
+```
+
+When Amy completes and verifies the feature, she sends `FYI: {itemId} - Probing complete. VERIFIED.` — Hannibal then advances the item to done:
+```bash
+ateam board-move moveItem --itemId "WI-001" --toStage "done"
+```
+Check the board-move response for `finalReviewReady: true` — when present, immediately dispatch Stockwell for the Final Mission Review.
 
 ## Reading Board State
 

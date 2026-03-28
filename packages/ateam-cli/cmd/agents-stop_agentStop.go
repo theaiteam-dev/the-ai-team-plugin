@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"github.com/spf13/cobra"
 	"ateam/internal/client"
 	"ateam/internal/output"
@@ -14,6 +15,7 @@ var (
 	agentsStopAgentStopCmdBody string
 	agentsStopAgentStopCmdBodyFile string
 	agentsStopAgentStopCmd_agent string
+	agentsStopAgentStopCmd_advance bool
 	agentsStopAgentStopCmd_itemId string
 	agentsStopAgentStopCmd_outcome string
 	agentsStopAgentStopCmd_summary string
@@ -64,11 +66,15 @@ var agentsStopAgentStopCmd = &cobra.Command{
 		}
 		bodyMap := map[string]interface{}{}
 		bodyMap["agent"] = agentsStopAgentStopCmd_agent
+		bodyMap["advance"] = agentsStopAgentStopCmd_advance
 		bodyMap["itemId"] = agentsStopAgentStopCmd_itemId
 		bodyMap["outcome"] = agentsStopAgentStopCmd_outcome
 		bodyMap["summary"] = agentsStopAgentStopCmd_summary
 		resp, err := c.Do("POST", "/api/agents/stop", pathParams, queryParams, bodyMap)
 		if err != nil {
+			if strings.Contains(err.Error(), "WIP_LIMIT_EXCEEDED") {
+				return fmt.Errorf("WIP_LIMIT_EXCEEDED: target stage is at WIP capacity. Use --advance=false to release the claim and log work without moving to the next stage")
+			}
 			return err
 		}
 		jsonMode, _ := cmd.Root().PersistentFlags().GetBool("json")
@@ -89,6 +95,7 @@ func init() {
 	agentsStopAgentStopCmd.Flags().StringVar(&agentsStopAgentStopCmdBody, "body", "", "Raw JSON body (overrides individual flags)")
 	agentsStopAgentStopCmd.Flags().StringVar(&agentsStopAgentStopCmdBodyFile, "body-file", "", "Path to JSON file to use as request body")
 	agentsStopAgentStopCmd.Flags().StringVar(&agentsStopAgentStopCmd_agent, "agent", "", "(Hannibal|Face|Murdock|B.A.|Amy|Lynch|Stockwell|Sosa|Tawnia)")
+	agentsStopAgentStopCmd.Flags().BoolVar(&agentsStopAgentStopCmd_advance, "advance", true, "When true (default), advance item to next stage with WIP limit check. When false, skip stage transition — only release claim and log work.")
 	agentsStopAgentStopCmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}, cobra.ShellCompDirectiveNoFileComp
 	})

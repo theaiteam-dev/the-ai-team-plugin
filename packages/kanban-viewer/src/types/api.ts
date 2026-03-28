@@ -187,6 +187,7 @@ export interface AgentStopRequest {
   agent: AgentName;
   summary: string;
   outcome?: 'completed' | 'blocked';
+  advance?: boolean;
 }
 
 /**

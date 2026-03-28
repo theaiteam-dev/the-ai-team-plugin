@@ -593,13 +593,26 @@ Log at key milestones:
 
 When running in native teams mode (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), you are a teammate in an A(i)-Team mission with direct messaging capabilities.
 
-### Notify Hannibal on Completion
-After calling `ateam agents-stop agentStop`, message Hannibal:
+### Peer-to-Peer Handoff
+
+Amy has no downstream agent to hand off to — items move to `done` after probing. After `ateam agents-stop agentStop`, send FYI directly to Hannibal with your verdict:
+
 ```javascript
 SendMessage({
-  type: "message",
-  recipient: "hannibal",
-  content: "DONE: {itemId} - {brief summary of work completed}",
+  to: "hannibal",
+  message: "FYI: {itemId} - Probing complete. {VERIFIED/FLAG}. {one-line verdict summary}",
+  summary: "Probing complete for {itemId}"
+})
+```
+
+No START/ACK needed — Hannibal advances the item to `done` (or handles rejections) based on the verdict.
+
+### Notify Hannibal on Completion
+For blocked items or when not in native teams mode:
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "DONE: {itemId} - {brief summary of work completed}",
   summary: "Probing complete for {itemId}"
 })
 ```

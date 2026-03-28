@@ -39,11 +39,11 @@ try {
   // Check for ateam board-move CLI calls via Bash
   if (toolName === 'Bash' && command.includes('ateam') && command.includes('board-move')) {
     try {
-      sendDeniedEvent({ agentName: agent, toolName, reason: 'BLOCKED: Working agents cannot call ateam board-move. Stage transitions are Hannibal\'s responsibility.' });
+      sendDeniedEvent({ agentName: agent, toolName, reason: 'BLOCKED: Working agents cannot call ateam board-move. Use ateam agents-stop agentStop to complete work; the --advance=false flag skips the stage transition if needed.' });
     } finally {
       process.stderr.write('BLOCKED: Working agents cannot call ateam board-move.\n');
-      process.stderr.write('Stage transitions are Hannibal\'s responsibility.\n');
-      process.stderr.write('Use ateam agents-stop to signal completion, then Hannibal will advance the item.\n');
+      process.stderr.write('Use ateam agents-stop agentStop to complete work.\n');
+      process.stderr.write('If the next stage is at WIP capacity, use --advance=false to release the claim without moving stages.\n');
       process.exit(2);
     }
   }

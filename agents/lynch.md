@@ -411,13 +411,99 @@ VERDICT: APPROVED/REJECTED
 
 When running in native teams mode (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), you are a teammate in an A(i)-Team mission with direct messaging capabilities.
 
-### Notify Hannibal on Completion
-After calling `ateam agents-stop agentStop`, message Hannibal:
+### Peer-to-Peer Handoff — APPROVED Path
+
+When verdict is APPROVED, call `ateam agents-stop agentStop --advance` then hand off directly to Amy:
+
+**1. Call agentStop with --advance:**
+```bash
+ateam agents-stop agentStop --itemId "XXX" --agent "lynch" --advance --outcome completed --summary "APPROVED - ..."
+```
+
+**2. Send START to Amy:**
 ```javascript
 SendMessage({
-  type: "message",
-  recipient: "hannibal",
-  content: "DONE: {itemId} - {brief summary of work completed}",
+  to: "amy",
+  message: "START: {itemId} - Review approved. {one-line summary of what was reviewed and any areas to probe}",
+  summary: "START {itemId}"
+})
+```
+
+**3. Wait up to 20 seconds** for Amy to reply with `ACK: {itemId}`.
+
+**4a. On ACK received — send FYI to Hannibal:**
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "FYI: {itemId} - APPROVED. Handed off to Amy directly. ACK received.",
+  summary: "Handoff complete for {itemId}"
+})
+```
+
+**4b. On timeout (no ACK after 20s) — send ALERT to Hannibal:**
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "ALERT: {itemId} - APPROVED but no ACK from Amy after 20 seconds. Manual dispatch may be needed.",
+  summary: "Handoff timeout for {itemId}"
+})
+```
+
+### Peer-to-Peer Rejection — REJECTED Path
+
+When verdict is REJECTED, call agentStop **without** --advance (item stays in review stage), then notify the responsible agent directly:
+
+**1. Call agentStop without --advance:**
+```bash
+ateam agents-stop agentStop --itemId "XXX" --agent "lynch" --outcome completed --summary "REJECTED - ..."
+```
+
+**2. Send rejection directly to the responsible agent** (Murdock for test issues, B.A. for implementation issues):
+```javascript
+// To Murdock (test issues):
+SendMessage({
+  to: "murdock",
+  message: "REJECTED: {itemId} - {specific issues}. Required fixes: {fix list}",
+  summary: "REJECTED {itemId}"
+})
+
+// To B.A. (implementation issues):
+SendMessage({
+  to: "ba",
+  message: "REJECTED: {itemId} - {specific issues}. Required fixes: {fix list}",
+  summary: "REJECTED {itemId}"
+})
+```
+
+**3. Wait up to 20 seconds** for ACK from the responsible agent.
+
+**4. Send FYI to Hannibal** (regardless of ACK):
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "FYI: {itemId} - REJECTED. Sent rejection directly to {Murdock/B.A.}. {ACK received / no ACK after 20s}.",
+  summary: "Rejection sent for {itemId}"
+})
+```
+
+### Handling Incoming START Messages
+
+When B.A. sends `START: {itemId}` after completing implementation, immediately reply with ACK:
+```javascript
+SendMessage({
+  to: "ba",
+  message: "ACK: {itemId}",
+  summary: "ACK {itemId}"
+})
+```
+Then begin the review for that item.
+
+### Notify Hannibal on Completion
+For blocked items or when not in native teams mode:
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "DONE: {itemId} - {brief summary of work completed}",
   summary: "Review complete for {itemId}"
 })
 ```
@@ -425,26 +511,10 @@ SendMessage({
 ### Request Help or Clarification
 ```javascript
 SendMessage({
-  type: "message",
-  recipient: "hannibal",
-  content: "BLOCKED: {itemId} - {description of issue}",
+  to: "hannibal",
+  message: "BLOCKED: {itemId} - {description of issue}",
   summary: "Blocked on {itemId}"
 })
-```
-
-### Coordinate with Teammates
-```javascript
-SendMessage({
-  type: "message",
-  recipient: "{teammate_name}",
-  content: "{coordination message}",
-  summary: "Coordination with {teammate_name}"
-})
-```
-
-Example - Report review findings to Hannibal:
-```javascript
-SendMessage({ type: "message", recipient: "hannibal", content: "REVIEW WI-003: Found 2 issues - missing error handling in OrderService.process(), test assertions too loose. Recommending rejection.", summary: "Review findings for WI-003" })
 ```
 
 ### Shutdown
@@ -483,17 +553,17 @@ Log at key milestones:
 
 **IMPORTANT:** After completing your review, signal completion so Hannibal can advance this item immediately. This also leaves a work summary note in the work item.
 
-If approved, run:
+If approved (use `--advance` to move item to probing stage):
 ```bash
-ateam agents-stop agentStop --itemId "XXX" --agent "lynch" --status success --summary "APPROVED - All tests pass, implementation matches spec"
+ateam agents-stop agentStop --itemId "XXX" --agent "lynch" --advance --outcome completed --summary "APPROVED - All tests pass, implementation matches spec"
 ```
 
-If rejected, run:
+If rejected (omit `--advance` — item stays in review, will be sent back):
 ```bash
-ateam agents-stop agentStop --itemId "XXX" --agent "lynch" --status success --summary "REJECTED - Issue description and required fixes"
+ateam agents-stop agentStop --itemId "XXX" --agent "lynch" --outcome completed --summary "REJECTED - Issue description and required fixes"
 ```
 
-Note: Use `status: "success"` even for rejections - the status refers to whether you completed the review, not the verdict. Include APPROVED/REJECTED at the start of the summary.
+Note: Use `outcome: "completed"` even for rejections — the outcome refers to whether you completed the review, not the verdict. Include APPROVED/REJECTED at the start of the summary. After agentStop, follow the peer-to-peer handoff instructions above.
 
 ## Mindset
 
