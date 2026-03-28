@@ -115,6 +115,20 @@ components:
           maxLength: 200
         description:
           type: string
+        objective:
+          type: string
+          description: One-sentence description of what this item delivers
+          nullable: true
+        acceptance:
+          type: array
+          items:
+            type: string
+          description: Measurable acceptance criteria
+          nullable: true
+        context:
+          type: string
+          description: Integration points and existing code references for agents
+          nullable: true
         type:
           $ref: '#/components/schemas/ItemType'
         priority:
@@ -758,6 +772,17 @@ paths:
                   $ref: '#/components/schemas/ItemPriority'
                 description:
                   type: string
+                objective:
+                  type: string
+                  description: One-sentence description of what this item delivers
+                acceptance:
+                  type: array
+                  items:
+                    type: string
+                  description: Measurable acceptance criteria
+                context:
+                  type: string
+                  description: Integration points and existing code references for agents
                 dependencies:
                   type: array
                   items:
@@ -848,6 +873,17 @@ paths:
                   maxLength: 200
                 description:
                   type: string
+                objective:
+                  type: string
+                  description: One-sentence description of what this item delivers
+                acceptance:
+                  type: array
+                  items:
+                    type: string
+                  description: Measurable acceptance criteria
+                context:
+                  type: string
+                  description: Integration points and existing code references for agents
                 type:
                   $ref: '#/components/schemas/ItemType'
                 priority:

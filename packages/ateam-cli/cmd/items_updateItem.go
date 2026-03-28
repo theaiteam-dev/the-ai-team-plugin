@@ -14,8 +14,11 @@ import (
 var (
 	itemsUpdateItemCmdBody string
 	itemsUpdateItemCmdBodyFile string
+	itemsUpdateItemCmd_acceptance []string
+	itemsUpdateItemCmd_context string
 	itemsUpdateItemCmd_dependencies []string
 	itemsUpdateItemCmd_description string
+	itemsUpdateItemCmd_objective string
 	itemsUpdateItemCmd_outputsTypes string
 	itemsUpdateItemCmd_outputsImpl string
 	itemsUpdateItemCmd_outputsTest string
@@ -68,11 +71,20 @@ var itemsUpdateItemCmd = &cobra.Command{
 			return nil
 		}
 		bodyMap := map[string]interface{}{}
+		if cmd.Flags().Changed("acceptance") {
+			bodyMap["acceptance"] = itemsUpdateItemCmd_acceptance
+		}
+		if cmd.Flags().Changed("context") {
+			bodyMap["context"] = itemsUpdateItemCmd_context
+		}
 		if cmd.Flags().Changed("dependencies") {
 			bodyMap["dependencies"] = itemsUpdateItemCmd_dependencies
 		}
 		if cmd.Flags().Changed("description") {
 			bodyMap["description"] = itemsUpdateItemCmd_description
+		}
+		if cmd.Flags().Changed("objective") {
+			bodyMap["objective"] = itemsUpdateItemCmd_objective
 		}
 		if cmd.Flags().Changed("outputs.types") {
 			_parts := strings.Split("outputs.types", ".")
@@ -140,8 +152,11 @@ func init() {
 	itemsCmd.AddCommand(itemsUpdateItemCmd)
 	itemsUpdateItemCmd.Flags().StringVar(&itemsUpdateItemCmdBody, "body", "", "Raw JSON body (overrides individual flags)")
 	itemsUpdateItemCmd.Flags().StringVar(&itemsUpdateItemCmdBodyFile, "body-file", "", "Path to JSON file to use as request body")
+	itemsUpdateItemCmd.Flags().StringArrayVar(&itemsUpdateItemCmd_acceptance, "acceptance", nil, "Measurable acceptance criteria (repeatable)")
+	itemsUpdateItemCmd.Flags().StringVar(&itemsUpdateItemCmd_context, "context", "", "Integration points and code references for agents")
 	itemsUpdateItemCmd.Flags().StringArrayVar(&itemsUpdateItemCmd_dependencies, "dependencies", nil, "")
 	itemsUpdateItemCmd.Flags().StringVar(&itemsUpdateItemCmd_description, "description", "", "")
+	itemsUpdateItemCmd.Flags().StringVar(&itemsUpdateItemCmd_objective, "objective", "", "One-sentence description of what this item delivers")
 	itemsUpdateItemCmd.Flags().StringVar(&itemsUpdateItemCmd_outputsTypes, "outputs.types", "", "")
 	itemsUpdateItemCmd.Flags().StringVar(&itemsUpdateItemCmd_outputsImpl, "outputs.impl", "", "")
 	itemsUpdateItemCmd.Flags().StringVar(&itemsUpdateItemCmd_outputsTest, "outputs.test", "", "")

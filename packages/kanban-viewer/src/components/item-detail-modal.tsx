@@ -424,6 +424,37 @@ export function ItemDetailModal({
           </div>
         )}
 
+        {/* Objective */}
+        {item.objective && (
+          <div className="border-t border-border pt-4">
+            <h3 className="text-sm font-semibold text-white mb-2">Objective</h3>
+            <p className="text-sm text-muted-foreground">{item.objective}</p>
+          </div>
+        )}
+
+        {/* Acceptance Criteria */}
+        {item.acceptance && item.acceptance.length > 0 && (
+          <div className="border-t border-border pt-4">
+            <h3 className="text-sm font-semibold text-white mb-2">Acceptance Criteria</h3>
+            <ul className="space-y-1.5">
+              {item.acceptance.map((criterion, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm">
+                  <CheckCircle className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+                  <span className="text-muted-foreground">{criterion}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Context */}
+        {item.context && (
+          <div className="border-t border-border pt-4">
+            <h3 className="text-sm font-semibold text-white mb-2">Context</h3>
+            <p className="text-sm text-muted-foreground whitespace-pre-wrap">{item.context}</p>
+          </div>
+        )}
+
         {/* Work History section */}
         {hasWorkLogs && <WorkHistorySection workLogs={item.work_logs!} />}
 

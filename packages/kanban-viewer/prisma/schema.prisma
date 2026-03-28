@@ -49,6 +49,11 @@ model Item {
   completedAt    DateTime?
   archivedAt     DateTime?                // For soft delete support
 
+  // Structured specification fields
+  objective      String?                  // One-sentence description of what this item delivers
+  acceptance     String?                  // JSON array of measurable acceptance criteria
+  context        String?                  // Integration points and existing code references
+
   // Output file paths for work item breakdown
   outputTest     String?                  // Path to test file output
   outputImpl     String?                  // Path to implementation file output

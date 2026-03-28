@@ -202,6 +202,9 @@ export async function PATCH(
     const updateData: {
       title?: string;
       description?: string;
+      objective?: string | null;
+      acceptance?: string | null;
+      context?: string | null;
       type?: string;
       priority?: string;
       outputTest?: string | null;
@@ -217,6 +220,15 @@ export async function PATCH(
     }
     if (body.description !== undefined) {
       updateData.description = body.description;
+    }
+    if (body.objective !== undefined) {
+      updateData.objective = body.objective || null;
+    }
+    if (body.acceptance !== undefined) {
+      updateData.acceptance = body.acceptance ? JSON.stringify(body.acceptance) : null;
+    }
+    if (body.context !== undefined) {
+      updateData.context = body.context || null;
     }
     if (body.type !== undefined) {
       updateData.type = body.type;

@@ -14,8 +14,11 @@ import (
 var (
 	itemsCreateItemCmdBody string
 	itemsCreateItemCmdBodyFile string
+	itemsCreateItemCmd_acceptance []string
+	itemsCreateItemCmd_context string
 	itemsCreateItemCmd_dependencies []string
 	itemsCreateItemCmd_description string
+	itemsCreateItemCmd_objective string
 	itemsCreateItemCmd_outputsImpl string
 	itemsCreateItemCmd_outputsTest string
 	itemsCreateItemCmd_outputsTypes string
@@ -68,8 +71,17 @@ var itemsCreateItemCmd = &cobra.Command{
 			return nil
 		}
 		bodyMap := map[string]interface{}{}
+		if len(itemsCreateItemCmd_acceptance) > 0 {
+			bodyMap["acceptance"] = itemsCreateItemCmd_acceptance
+		}
+		if itemsCreateItemCmd_context != "" {
+			bodyMap["context"] = itemsCreateItemCmd_context
+		}
 		bodyMap["dependencies"] = itemsCreateItemCmd_dependencies
 		bodyMap["description"] = itemsCreateItemCmd_description
+		if itemsCreateItemCmd_objective != "" {
+			bodyMap["objective"] = itemsCreateItemCmd_objective
+		}
 		{
 			_parts := strings.Split("outputs.impl", ".")
 			_cur := bodyMap
@@ -127,8 +139,11 @@ func init() {
 	itemsCmd.AddCommand(itemsCreateItemCmd)
 	itemsCreateItemCmd.Flags().StringVar(&itemsCreateItemCmdBody, "body", "", "Raw JSON body (overrides individual flags)")
 	itemsCreateItemCmd.Flags().StringVar(&itemsCreateItemCmdBodyFile, "body-file", "", "Path to JSON file to use as request body")
+	itemsCreateItemCmd.Flags().StringArrayVar(&itemsCreateItemCmd_acceptance, "acceptance", nil, "Measurable acceptance criteria (repeatable)")
+	itemsCreateItemCmd.Flags().StringVar(&itemsCreateItemCmd_context, "context", "", "Integration points and code references for agents")
 	itemsCreateItemCmd.Flags().StringArrayVar(&itemsCreateItemCmd_dependencies, "dependencies", nil, "")
 	itemsCreateItemCmd.Flags().StringVar(&itemsCreateItemCmd_description, "description", "", "")
+	itemsCreateItemCmd.Flags().StringVar(&itemsCreateItemCmd_objective, "objective", "", "One-sentence description of what this item delivers")
 	itemsCreateItemCmd.Flags().StringVar(&itemsCreateItemCmd_outputsImpl, "outputs.impl", "", "")
 	itemsCreateItemCmd.Flags().StringVar(&itemsCreateItemCmd_outputsTest, "outputs.test", "", "")
 	itemsCreateItemCmd.Flags().StringVar(&itemsCreateItemCmd_outputsTypes, "outputs.types", "", "")
