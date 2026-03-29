@@ -86,9 +86,9 @@ export interface ReleaseItemResponse {
 export interface CreateItemRequest {
   title: string;
   description: string;
-  objective?: string;
-  acceptance?: string[];
-  context?: string;
+  objective: string;
+  acceptance: string[];
+  context: string;
   type: ItemType;
   priority: ItemPriority;
   dependencies?: string[];

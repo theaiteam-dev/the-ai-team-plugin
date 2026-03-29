@@ -23,7 +23,23 @@ hooks:                         # Runtime enforcement (see below)
 
 Hannibal also has `tools:` listing available tools. Model selection (`opus`/`sonnet`/`haiku`) is declared in YAML frontmatter via the `model:` key — Claude Code reads this natively at dispatch time. Do NOT pass `model:` at dispatch time; the frontmatter is the single source of truth.
 
-The `skills:` key is optional and lists skill files (from `skills/`) to load when the agent is dispatched. For example, Murdock includes `test-writing` and `tdd-workflow` to pull in detailed testing guidance without bloating the base agent prompt.
+The `skills:` key is optional and lists skill files (from `skills/`) to load when the agent is dispatched. Skills provide detailed guidance without bloating the base agent prompt.
+
+### Current Skill Wiring
+
+| Agent | Skills |
+|-------|--------|
+| **Murdock** | `test-writing` |
+| **B.A.** | `defensive-coding`, `security-input` |
+| **Lynch** | `test-writing`, `defensive-coding`, `security-input`, `code-patterns` |
+| **Amy** | `defensive-coding` |
+| **Stockwell** | `test-writing`, `defensive-coding`, `security-input`, `code-patterns` |
+
+Skills live in `skills/<name>/SKILL.md`. The available skills are:
+- **`test-writing`** — banned anti-patterns, the litmus test, and quality checklist for writing tests
+- **`defensive-coding`** — guard patterns, null checks, async error recovery, resource cleanup
+- **`security-input`** — input validation, SQL/XSS injection prevention, URL encoding rules
+- **`code-patterns`** — naming, function design, type safety, async patterns, N+1 queries, API shapes
 
 ## Agent Boundaries
 

@@ -2,6 +2,11 @@
 name: lynch
 model: sonnet
 description: Reviewer - reviews tests and implementation together
+skills:
+  - test-writing
+  - defensive-coding
+  - security-input
+  - code-patterns
 hooks:
   PreToolUse:
     - matcher: "Bash"
@@ -106,78 +111,18 @@ This is a full code review of the test file, not just a green-light check. Ask y
 
 **Known Anti-Patterns (flag immediately):**
 
-*Tautological mock-call assertions* — mocking a function to return X, calling it, then asserting it was called, proves the mock works, not the function under test. The result assertion is the real test; the call assertion is noise.
-```ts
-// BAD: toHaveBeenCalledWith only proves the mock ran
-global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => data })
-expect(fetch).toHaveBeenCalledWith("/api/test")  // ← tautological
-expect(result).toEqual(data)                     // ← this is the real test
+The **test-writing** skill is preloaded at startup and contains full examples for each banned pattern. The patterns to flag are:
 
-// GOOD: only assert the observable result
-expect(result).toEqual(data)
-```
+- *Tautological mock-call assertions* — asserting `toHaveBeenCalledWith` on a pre-configured mock proves nothing about the real result
+- *Conditional fallback test paths* — `if/else` inside a test where the fallback silently passes when the expected element is missing
+- *OR-pattern assertions* — `??` or `||` chains accepting any of several values, hiding regressions to generic error states
+- *Type-shape tests* — imports only types, constructs object literals, asserts properties equal themselves; zero production code executed
+- *Tailwind CSS class assertions* — `toHaveClass` with utility classes (`bg-*`, `text-*`, `rounded-*`, etc.) tests styling, not behavior
+- *Source file regex matching or local reimplementations* — `readFileSync` on production code with regex, or function-under-test defined locally instead of imported
+- *Incomplete documented contract assertions* — testing only `.status` when both `.status` and `.body` are part of the documented contract
+- *Weak assertions on critical computed values* — `toBeTruthy()` or `toBeDefined()` on a total, ID, or transformed value where the exact value is knowable
 
-*Conditional fallback test paths* — an `if/else` inside a test that silently reroutes through a passing fallback when the expected element is missing. The test can never fail.
-```ts
-// BAD: if input is missing, fallback always passes
-if (fileInput) { await user.upload(fileInput, file) }
-else { fireEvent.drop(dropzone, {...}) }  // ← silent green
-
-// GOOD: assert existence first so failure is obvious
-expect(fileInput).not.toBeNull()
-await user.upload(fileInput!, file)
-```
-
-*OR-pattern assertions* — chaining `??` or `||` to accept any of several messages or values hides regressions to generic error states.
-```ts
-// BAD: accepts any of four messages; generic "Error" toast still passes
-const el = screen.queryByText(/invalid csv/i) ?? screen.queryByText(/upload failed/i) ?? screen.queryByText(/error/i)
-expect(el).not.toBeNull()
-
-// GOOD: assert the specific expected message
-expect(screen.getByText(/invalid csv format/i)).toBeInTheDocument()
-```
-Same pattern applies to value matching: `find(r => r.action === "increase_bid" || r.action === "expand")` — both can't be correct. Pin the single expected value.
-
-*Type-shape tests* — test file imports only types (not functions), constructs object literals matching TypeScript interfaces, then asserts properties equal themselves. Zero production code executed. TypeScript already validates type shapes at compile time; these tests add no value.
-```ts
-// BAD: type-shape test — TypeScript already validates this
-const item: WorkItem = { id: 'WI-001', title: 'Test', type: 'feature' };
-expect(item.id).toBe('WI-001');     // ← tautological
-expect(item.type).toBe('feature');  // ← tautological
-
-// GOOD: test the function that produces/transforms the data
-const result = transformApiItem(apiResponse);
-expect(result.id).toBe('WI-001');
-```
-
-*Tailwind CSS class assertions* — using `toHaveClass` with Tailwind utility classes (`bg-*`, `text-*`, `w-*`, `rounded-*`, `flex`, `items-*`). Any design change breaks them without any bug being present. Tests should verify behavior and accessibility, not styling.
-```ts
-// BAD: coupled to Tailwind utility classes
-expect(badge).toHaveClass('bg-green-500');
-expect(badge).toHaveClass('rounded-full', 'w-8', 'h-8');
-
-// GOOD: test behavior and accessibility, not styling
-expect(badge).toHaveAttribute('aria-label', 'Agent active');
-expect(screen.getByRole('status')).toHaveTextContent('Connected');
-```
-
-*Source file regex matching or local reimplementations* — test file uses `readFileSync` on production source and regex-matches it, or defines the function-under-test locally instead of importing it. Neither approach exercises real production code.
-```ts
-// BAD: regex on source code — not a test
-const source = fs.readFileSync('src/app/layout.tsx', 'utf-8');
-expect(source).toMatch(/import.*Inter.*from.*next\/font/);
-
-// BAD: local reimplementation — tests the test, not production code
-function filterEvents(events, filter) { /* reimplemented locally */ }
-expect(filterEvents(data, f)).toEqual(expected);  // ← not testing real code
-
-// GOOD: import and test the actual function
-import { filterEvents } from '@/lib/events';
-expect(filterEvents(data, f)).toEqual(expected);
-```
-
-*Incomplete documented contract assertions* — if a function is documented to throw with both `.status` and `.body`, verify both. Testing only `.status` leaves half the contract unchecked.
+Consult the test-writing skill for code examples of each pattern.
 
 **Mocking — is it realistic?**
 - Flag over-mocked tests where every dependency is stubbed and there's no real logic being exercised
@@ -198,18 +143,30 @@ expect(filterEvents(data, f)).toEqual(expected);
 - If you could delete a test and the coverage would tell you nothing changed, it's a bad test
 - Tests that only verify happy-path mocks return the mock value are effectively no-ops
 
-### Step 4: Check for Existing Solutions
+### Step 4: Adversarial Implementation Review
+
+After evaluating test quality, switch perspective: become an attacker trying to break the implementation. For each function in the diff, ask:
+
+1. **What input would break this function?** — null, empty string, zero, negative number, extremely large value, unicode, whitespace-only
+2. **Lookup guards** — is every db/map/array access that can return null/undefined guarded before use? Missing guards cause TypeErrors in production that tests rarely catch.
+3. **Async error recovery** — do async operations handle failure explicitly, or does the error silently swallow and leave the UI in a loading state?
+4. **Validation consistency** — if client-side validation rejects empty strings, does the server-side handler also reject them? Inconsistent rules are an exploitable gap.
+5. **URL encoding** — are dynamic values embedded in URLs encoded with the right encoder for their context? Raw strings in path segments or query strings are both a correctness and security issue.
+
+Flag any function where the answer to #1 reveals a path the tests do not cover and the code does not guard against.
+
+### Step 6: Check for Existing Solutions
 - Before flagging any new abstractions or utilities, search the existing codebase
 - Look for existing patterns, utilities, or modules that accomplish similar goals
 - Check if there are established patterns in the codebase that should be followed
 - Flag any code that appears to reinvent existing functionality
 
-### Step 5: Verify Coherence
+### Step 7: Verify Coherence
 - Tests actually test the implementation
 - Types are used correctly
 - Files work together as a unit
 
-### Step 6: Render Verdict
+### Step 8: Render Verdict
 
 ## Priority Framework
 

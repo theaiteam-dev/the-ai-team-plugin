@@ -2,6 +2,11 @@
 name: stockwell
 model: opus
 description: Reviewer - Final Mission Review (holistic codebase review)
+skills:
+  - test-writing
+  - defensive-coding
+  - security-input
+  - code-patterns
 hooks:
   PreToolUse:
     - matcher: "Bash"
@@ -61,15 +66,16 @@ opus
 - Use Playwright browser tools -- **enforced by hook**
 - Modify work items directly -- surface issues via the verdict only
 
-## Reference Library
+## Skill Reference
 
-Consult these references when reviewing the corresponding concern:
+Four skills are preloaded at startup — consult them when reviewing the corresponding concern:
 
-- **Security**: `agents/references/security.md`
-- **Type safety & async**: `agents/references/type-safety.md`
-- **Testing quality**: `agents/references/testing.md`
-- **Database & API patterns**: `agents/references/api-and-data.md`
-- **Code quality & naming**: `agents/references/code-quality.md`
+- **Security & URL encoding**: `security-input` skill
+- **Type safety, async patterns & error handling**: `code-patterns` skill
+- **Database & API patterns**: `code-patterns` skill
+- **Code quality & naming**: `code-patterns` skill
+- **Testing quality & anti-patterns**: `test-writing` skill
+- **Defensive coding (guards, cleanup, validation parity)**: `defensive-coding` skill
 
 ## Process
 
@@ -95,38 +101,47 @@ Do NOT read the entire codebase. Focus on:
 ## Final Review Checklist
 
 ### Readability & Consistency
-*(consult `agents/references/code-quality.md`)*
+*(consult `code-patterns` skill)*
 - [ ] Consistent naming conventions across all files
 - [ ] Similar patterns used for similar problems
 - [ ] Clear code structure and organization
 
 ### Testability
-*(consult `agents/references/testing.md`)*
+*(consult `test-writing` skill)*
 - [ ] Tests are isolated and independent
 - [ ] No test interdependencies
 - [ ] Test coverage for critical paths
+- [ ] No banned anti-patterns (tautological mocks, OR-pattern assertions, type-shape tests, Tailwind class assertions, weak assertions on critical values)
 
 ### Race Conditions & Async
-*(consult `agents/references/type-safety.md`)*
+*(consult `code-patterns` skill)*
 - [ ] Proper async/await usage
 - [ ] No unhandled promises
 - [ ] Concurrent access is handled safely
 
 ### Security
-*(consult `agents/references/security.md`)*
+*(consult `security-input` skill)*
 - [ ] No SQL/NoSQL injection vulnerabilities
 - [ ] No XSS vulnerabilities
 - [ ] Input validation at system boundaries
 - [ ] No hardcoded secrets or credentials
+- [ ] Dynamic URL values encoded with the correct encoder
+
+### Defensive Coding
+*(consult `defensive-coding` skill)*
+- [ ] Lookup guards present before accessing nullable results
+- [ ] Async error recovery explicit — no silent swallowing
+- [ ] Input validation consistent between client and server boundaries
+- [ ] Resources acquired are released in finally blocks or equivalent
 
 ### Database & API Patterns
-*(consult `agents/references/api-and-data.md`)*
+*(consult `code-patterns` skill)*
 - [ ] Consistent error handling in API routes
 - [ ] Proper transaction usage for multi-step writes
 - [ ] No N+1 query patterns
 
 ### Code Quality
-*(consult `agents/references/code-quality.md`)*
+*(consult `code-patterns` skill)*
 - [ ] No obvious DRY violations (apply Rule of Three)
 - [ ] Appropriate separation of concerns
 - [ ] No circular dependencies

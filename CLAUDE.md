@@ -111,7 +111,8 @@ work_log:                                   # Populated by agentStop
 
 The `outputs` field is critical - without it, Murdock and B.A. don't know where to create files.
 
-**Structured fields** guide downstream agents:
+**All four text fields are required** when creating work items via `ateam items createItem`:
+- **`description`**: Human-readable executive summary — synthesizes objective + context into 1-3 sentences a PM could skim on the kanban board. Not a dump of structured data; a prose narrative of the work item.
 - **`objective`**: One behavioral sentence — Murdock tests it, B.A. implements it, Tawnia documents it
 - **`acceptance`**: Measurable criteria — Murdock maps each to a test, Lynch checks coverage, Stockwell verifies
 - **`context`**: Integration points — B.A. knows where to wire code, Amy knows where to probe for boundary bugs
@@ -242,7 +243,7 @@ Usage: `ateam <resource> <command> [flags]`
 | Move item | `ateam board-move moveItem --itemId <id> --toStage <stage>` |
 | Claim item | `ateam board-claim claimItem --itemId <id> --agent <name>` |
 | Release item | `ateam board-release releaseItem --itemId <id>` |
-| Create item | `ateam items createItem --title "..." --type feature --objective "..." --acceptance "criterion 1" --acceptance "criterion 2" --context "..." ...` |
+| Create item | `ateam items createItem --title "..." --type feature --description "..." --objective "..." --acceptance "criterion 1" --acceptance "criterion 2" --context "..." ...` |
 | Get item | `ateam items getItem --id <id>` |
 | List items | `ateam items listItems --json` |
 | Update item | `ateam items updateItem --id <id> [flags]` |

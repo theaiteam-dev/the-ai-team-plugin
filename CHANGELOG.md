@@ -9,14 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Peer-to-peer agent handoffs:** Native teams mode (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`) now uses direct agent-to-agent handoffs instead of polling through Hannibal. Murdock → B.A. → Lynch → Amy form a direct pipeline; Hannibal intervenes only on ALERT messages (WIP limit exceeded, handoff timeout). Reduces orchestration latency and enables true parallel pipeline execution (#021-029).
-- **WIP limit enforcement on agent handoffs:** `agentStop` API now validates target stage WIP capacity with `--advance` flag. Returns 409 WIP_LIMIT_EXCEEDED when full. Agents use `--advance=false` to release claim without advancing, signaling Hannibal via ALERT to handle re-dispatch (#021, #022).
-- **Handoff latency instrumentation:** Observer hooks now capture peer-to-peer handoff latency (time from one agent's `agentStop` to next agent's `agentStart`) to monitor pipeline throughput (#028).
-- **Test quality guardrails for agents:** Murdock now has 5 explicitly banned anti-patterns (type-shape tests, mocking own subject, Tailwind CSS assertions, source regex matching, local reimplementations) with BAD/GOOD code examples in his agent instructions.
-- **`test-writing` skill:** Created the comprehensive reference document that Murdock already referenced but didn't exist. Covers 10 banned patterns with examples, good test criteria, and a self-check checklist.
-- **Lynch review checklist additions:** Added type-shape tests, Tailwind CSS assertions, and source regex/local reimplementations to Lynch's Priority 1 review criteria across all 4 review sections.
-- **`lint-test-quality.js` hook:** PreToolUse hook registered on Murdock and B.A. that blocks no-op assertions (`expect(true).toBe(true)`) and `readFileSync` usage in test files before they get written.
-- **`TEST-REPORT.md`:** Full audit report from reviewing all 178 test files across 6 domains.
+- **Agent quality skill ecosystem:** Consolidated defensive coding, security input validation, and code pattern references into three reusable skills: `skills/defensive-coding/SKILL.md`, `skills/security-input/SKILL.md` (migrated from agents/references), and `skills/code-patterns/SKILL.md` (consolidated from 3 prior references). Agents now reference these by skill name instead of inline examples.
+- **Enhanced agent prompts with quality skills:** Updated 6 agent instructions (B.A., Lynch, Murdock, Amy, Stockwell, Face/Tawnia) to include quality skill references, expanded defensive-coding checklists, adversarial review steps, and integration test requirements.
+- **Mission retrospective system:** Complete retro reporting for missions with Prisma schema migration, API endpoints (`POST/GET /api/missions/{id}/retro`), Go CLI commands (`ateam missions-retro writeRetro/getRetro`), React UI component (`RetroReport.tsx`), and slash command (`/retro`).
+- **Agents/references deprecation:** Removed 5 agent reference files (`agents/references/{api-and-data, code-quality, security, testing, type-safety}.md`) — functionality migrated to reusable skills.
+
+### Changed
+
+- **Agents/AGENTS.md:** Updated to reflect skill-based quality pattern distribution (no more inline references).
+- **Agent prompts restructured:** Consolidated checklists in B.A. (expanded defensive-coding section), added 4-skill review matrix in Lynch, integration test requirements in Murdock, logic edge-case sweeps in Amy, and unified skillset in Stockwell.
 
 ### Removed
 

@@ -87,7 +87,7 @@ Example:
 ateam items createItem \
   --title "Set up Vitest test infrastructure" \
   --type task \
-  --description "Install vitest and configure for the project." \
+  --description "Bootstrap the test runner so Murdock can write tests. No existing test infrastructure — this is a Wave 0 blocker for all testable items." \
   --objective "The project has a working test runner that Murdock can use" \
   --acceptance "Running 'pnpm test' executes vitest with zero tests passing" \
   --acceptance "vitest.config.ts exists and resolves src/ paths" \
@@ -240,7 +240,12 @@ parallel_group: "component-name"                # Prevents conflicting concurren
 
 ### Structured Fields
 
-These three fields are **first-class database fields**, not part of description. Use the corresponding CLI flags: `--objective`, `--acceptance` (repeatable), `--context`.
+These three fields are **first-class database fields** and are **required** by the API. Use the corresponding CLI flags: `--objective`, `--acceptance` (repeatable), `--context`.
+
+**`description`** — A human-readable executive summary that synthesizes objective + context into a short narrative. This is what people see when scanning the kanban board. Write it as 1-3 sentences that tell the story of the work item — not a dump of structured data, but a prose summary a PM could skim and understand.
+- BAD: Pasting the objective/acceptance/context into description as markdown headers (redundant)
+- BAD: "See objective and acceptance criteria above" (empty)
+- GOOD: "Add a validated todo creation form that calls the API client from WI-002, enforcing non-empty titles with inline error feedback. Integrates into the App shell wired in WI-007."
 
 **`objective`** — One sentence describing the observable outcome this item delivers. Not an implementation detail, not a task description.
 - BAD: "Create the auth service" (describes implementation, not outcome)
@@ -279,6 +284,26 @@ During the Project Readiness Audit, **note the target project's directory conven
 
 If the project has no existing convention, default to `src/__tests__/` for tests and `src/` for implementation.
 
+### When NOT to create a separate types file
+
+Do not set `outputs.types` for a work item that needs only a small, local interface (2–5 fields). Colocate it with the implementation unless the type is shared across multiple modules.
+
+- **Skip `outputs.types`** when: the interface is only used by one module, has ≤5 fields, or is a simple input/output shape for a single function
+- **Set `outputs.types`** when: the type is imported by two or more different source files, or it represents a domain entity used across the codebase
+
+```yaml
+# BAD: separate type file for a 3-field interface used only by one service
+outputs:
+  types: "src/types/create-order-input.ts"   # overkill — only used in order.service.ts
+  test: "src/__tests__/order.test.ts"
+  impl: "src/services/order.ts"
+
+# GOOD: colocate the type with the implementation
+outputs:
+  test: "src/__tests__/order.test.ts"
+  impl: "src/services/order.ts"              # define CreateOrderInput here
+```
+
 ## Non-Code Work Items
 
 Some work items involve no executable code -- documentation updates, config changes, markdown fixes, file deletions. These items produce nothing that can be meaningfully unit tested.
@@ -295,7 +320,10 @@ Example:
 ateam items createItem \
   --title "Update README with new API endpoints" \
   --type task \
-  --description "Add documentation for the /orders and /refunds endpoints.\n\nNO_TEST_NEEDED\nThis is a documentation-only change." \
+  --description "Document the new /orders and /refunds endpoints in the README so developers can discover and use them. NO_TEST_NEEDED." \
+  --objective "Developers can find API documentation for /orders and /refunds in the README" \
+  --acceptance "README contains usage examples for GET /api/orders and POST /api/refunds" \
+  --context "Endpoints were added in WI-003 and WI-005. Follow the existing API docs format in README.md." \
   --outputTest "" \
   --outputImpl "README.md" \
   --priority low
@@ -376,7 +404,10 @@ When you encounter work that qualifies:
 ateam items createItem \
   --title "Update CHANGELOG with v2.0 release notes" \
   --type task \
-  --description "Add release notes for v2.0 including:\n- New features shipped\n- Breaking changes\n- Migration guide\n\nNO_TEST_NEEDED\nThis is a documentation-only change." \
+  --description "Add v2.0 release notes covering new features, breaking changes, and migration guide. NO_TEST_NEEDED." \
+  --objective "Users upgrading to v2.0 can find a complete changelog with migration instructions" \
+  --acceptance "CHANGELOG.md contains a v2.0 section with features, breaking changes, and migration steps" \
+  --context "Follow existing CHANGELOG.md format. Reference PRD for feature list." \
   --outputTest "" \
   --outputImpl "CHANGELOG.md" \
   --priority low
@@ -453,6 +484,7 @@ This ensures you have the actual IDs before referencing them as dependencies.
 Use `ateam items createItem` with flags:
 - title: "User authentication service"
 - type: "feature"
+- description: "Email/password auth service that issues JWTs, consumed by the existing auth middleware. Follows the bcrypt pattern already in the codebase."
 - objective: "Users can authenticate with email/password and receive a JWT"
 - acceptance: "Returns 200 with JWT on valid credentials" (repeatable flag)
 - acceptance: "Returns 401 on invalid password"

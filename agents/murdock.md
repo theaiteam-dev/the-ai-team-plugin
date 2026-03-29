@@ -88,6 +88,7 @@ Write ONLY tests and type definitions. **Do NOT write implementation code** - th
 - Key edge cases - empty inputs, boundaries, nulls
 - State changes - confirm data is correctly created, updated, or deleted
 - Error handling - verify the code handles invalid inputs gracefully
+- **Failure UX paths** - for every async operation that is user-facing (form submit, data fetch, mutation), include at least one test that verifies the failure path: error message displayed, loading state cleared, retry possible
 
 **DON'T waste time on:**
 - 100% coverage
@@ -191,6 +192,30 @@ function filterHookEvents(events, filter) {
 
 **Rule:** Always import the function under test from production code. If the production function does not exist yet, mark the test as `.todo` and leave a comment indicating which module will export it.
 
+### Ban 6: Weak Assertions on Critical Computed Values
+
+Using `toBeTruthy()` or `toBeDefined()` to assert the result of a computation that has a specific, knowable expected value. These assertions pass for any non-null, non-zero result — including wrong ones.
+
+```ts
+// BAD: passes for any truthy value — masks bugs in the calculation
+const total = calculateOrderTotal(items);
+expect(total).toBeTruthy();          // passes if total is 0.001
+
+const orderId = createOrder(input).id;
+expect(orderId).toBeDefined();       // passes for any string, including malformed ones
+```
+
+```ts
+// GOOD: assert the specific expected value
+const total = calculateOrderTotal([{ price: 10, qty: 2 }, { price: 5, qty: 1 }]);
+expect(total).toBe(25);
+
+const order = createOrder(input);
+expect(order.id).toMatch(/^ord_[a-z0-9]{8,}$/);
+```
+
+**Rule:** Never use `toBeTruthy()` or `toBeDefined()` to assert a critical computed value — totals, IDs, statuses, transformed data. Use `toBe`, `toEqual`, `toMatch`, or `toStrictEqual` with the precise expected value. `toBeTruthy`/`toBeDefined` are acceptable only for confirming a side-effect occurred (e.g., a spy was called) when the exact value is genuinely unknowable.
+
 ## Handling NO_TEST_NEEDED Items
 
 If you receive a work item with `NO_TEST_NEEDED` in the description and `outputs.test` is empty:
@@ -227,6 +252,8 @@ This claims the item AND records `assigned_agent` on the work item so the kanban
 - **Identify what needs testing**: The specific feature, adjacent functionality that could be affected, integration points
 - **Review existing code patterns**: Match the project's testing style, assertion library, naming conventions
 - **Find existing tests**: Check for tests that cover similar functionality to understand patterns
+
+**Integration test requirement:** If the work item's `context` field references two or more source files (e.g., "integrates with `src/services/product.ts`, called from `src/controllers/order.ts`"), include at least one minimally-mocked integration test that exercises the connection between those modules — not just each module in isolation. Mock only the outermost I/O (database, network); keep the real module wiring intact. If the work item has no `context` field or the context does not mention integration points, this requirement does not apply.
 
 ### Step 3: Create Types (if specified)
 

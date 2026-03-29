@@ -2,6 +2,8 @@
 name: amy
 model: sonnet
 description: Investigator - probes for bugs beyond tests
+skills:
+  - defensive-coding
 hooks:
   PreToolUse:
     - matcher: "Bash"
@@ -355,13 +357,25 @@ Would a real user see this feature working?
 ### 5. Edge Probe
 Hit boundaries - empty inputs, max values, special characters
 
-### 6. Concurrent Poke
+### 6. Logic Edge Case Sweep
+
+The **defensive-coding** skill is preloaded. Use it as a checklist to probe implementation logic beyond what tests cover:
+
+- **Null/undefined guards** — pass null, undefined, or missing properties to every function that accepts objects. Does the code guard before accessing nested fields, or does it crash with a TypeError?
+- **Async error recovery** — interrupt or reject async operations. Does the UI clear loading state? Is the error surfaced or silently swallowed?
+- **Validation consistency** — send payloads that pass client-side validation but violate server rules (or vice versa). Is the same rule enforced at both boundaries?
+- **URL encoding** — pass strings with spaces, slashes, ampersands, or unicode as route parameters or query values. Are they encoded correctly, or do they corrupt the URL or fail routing?
+- **Resource cleanup** — if setup steps (open connection, acquire lock, start timer) fail partway through, are previously-acquired resources released? Check for leaked handles.
+
+Document each probe: what was sent, what was expected, what actually happened.
+
+### 8. Concurrent Poke
 If async, hammer it with parallel requests
 
-### 7. Error Injection
+### 9. Error Injection
 What happens when dependencies fail?
 
-### 8. Regression Sweep
+### 10. Regression Sweep
 Did this break anything that was working?
 
 ---
@@ -427,6 +441,12 @@ console.log('[DEBUG] API response', response);
 - **Race conditions**: Concurrent access issues?
 - **Error handling**: What happens when X fails?
 - **Security surface**: Input validation, injection vectors
+
+### PRD Non-Functional Verification
+If the work item's PRD specifies non-functional requirements, verify them:
+- **Styling**: If the PRD specifies colors, spacing, layout, or component appearance, check the rendered output matches — don't just trust that the component exists
+- **Accessibility**: If the PRD mentions ARIA labels, keyboard navigation, focus management, or screen-reader support, verify these are present and functional in the browser
+- **Design spec compliance**: If the PRD references mockups or design specs, compare the rendered feature against them with a screenshot
 
 ---
 

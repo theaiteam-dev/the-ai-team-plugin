@@ -83,12 +83,13 @@ At this point, all the code is complete, reviewed, and verified. Your job is to 
 2. **Read the mission context**
    - Run `ateam board getBoard --json` to get board state (mission name, completed items)
    - Run `ateam items listItems --json` to get completed items — each item has an `objective` field with a one-sentence summary of what it delivers. Use these as the basis for changelog entries and feature summaries.
-   - Read the implementation files to understand what was built
+   - **Read the implementation files** at `outputs.impl` for each completed item before writing changelog entries. The `objective` field is a starting point, but the actual file may reveal additional changes, renamed APIs, or constraints not captured in the work item description. Changelog entries must reflect what was actually built, not just what was planned.
 
 3. **Update CHANGELOG.md**
    - Follow Keep a Changelog format
    - Group changes by type: Added, Changed, Fixed, Removed
-   - Use each item's `objective` field as the starting point for each entry
+   - Use each item's `objective` field as the starting point, then verify against the implementation file
+   - Correct any entries where the objective description does not match what the implementation actually does
    - Reference work item IDs where helpful
    - Include version and date
 

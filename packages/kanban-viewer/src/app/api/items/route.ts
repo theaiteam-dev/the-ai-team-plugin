@@ -178,6 +178,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json(error.toResponse(), { status: 400 });
     }
 
+    // Validate structured fields (required)
+    if (!body.objective || typeof body.objective !== 'string' || body.objective.trim() === '') {
+      const error = createValidationError('objective is required');
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
+    if (!Array.isArray(body.acceptance) || body.acceptance.length === 0) {
+      const error = createValidationError('acceptance is required (non-empty array of criteria)');
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
+    if (!body.context || typeof body.context !== 'string' || body.context.trim() === '') {
+      const error = createValidationError('context is required');
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
     const dependencies = body.dependencies ?? [];
 
     // Validate that all dependencies exist and belong to the same project
@@ -314,9 +330,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         stageId: 'briefings',
         rejectionCount: 0,
         projectId,
-        objective: body.objective ?? null,
-        acceptance: body.acceptance ? JSON.stringify(body.acceptance) : null,
-        context: body.context ?? null,
+        objective: body.objective,
+        acceptance: JSON.stringify(body.acceptance),
+        context: body.context,
         outputTest: body.outputs?.test ?? null,
         outputImpl: body.outputs?.impl ?? null,
         outputTypes: body.outputs?.types ?? null,

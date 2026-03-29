@@ -156,7 +156,9 @@ func init() {
 	itemsCreateItemCmd.RegisterFlagCompletionFunc("type", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return []string{"feature", "bug", "enhancement", "task"}, cobra.ShellCompDirectiveNoFileComp
 	})
-	itemsCreateItemCmd.MarkFlagRequired("description")
+	itemsCreateItemCmd.MarkFlagRequired("objective")
+	itemsCreateItemCmd.MarkFlagRequired("acceptance")
+	itemsCreateItemCmd.MarkFlagRequired("context")
 	itemsCreateItemCmd.MarkFlagRequired("priority")
 	itemsCreateItemCmd.MarkFlagRequired("title")
 	itemsCreateItemCmd.MarkFlagRequired("type")

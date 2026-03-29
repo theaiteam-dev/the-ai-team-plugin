@@ -3,6 +3,9 @@ name: ba
 model: sonnet
 description: Implementer - writes code to pass tests
 permissionMode: acceptEdits
+skills:
+  - defensive-coding
+  - security-input
 hooks:
   PreToolUse:
     - matcher: "Bash"
@@ -253,6 +256,20 @@ class OrderService {
 }
 ```
 
+## Defensive Coding
+
+The **defensive-coding** skill is preloaded at startup. Apply its patterns to every implementation:
+
+- **Guard before operate** — check preconditions at the top of every function; never let invalid input travel deeper
+- **Async error recovery** — every async call has explicit error handling; no unhandled rejections
+- **Input validation parity** — server-side validation must match client-side rules; never trust only the UI
+- **URL encoding** — dynamic values embedded in URLs use the correct encoder (query params vs path segments)
+- **Resource cleanup** — connections, timers, and subscriptions released in `finally` blocks or equivalent
+- **Transient state clearing** — clear loading flags and error states before each new async operation
+- **Functional state updates** — state changes that depend on prior state use updater functions, not stale closures
+
+Consult the defensive-coding skill for pseudocode examples of each pattern.
+
 ## Error Handling
 
 - Fail fast on invalid inputs
@@ -302,6 +319,18 @@ You MUST verify before marking work complete:
 1. Run `pnpm test` (or project equivalent) — **all tests must pass**
 2. Run `pnpm typecheck` (if available) — **no type errors**
 3. If either fails, **keep working** — do NOT call `ateam agents-stop agentStop` with failing tests
+
+**Defensive coding checklist:**
+- [ ] Lookup guards: every db/map/array lookup that can return null has a null check before use
+- [ ] Async state safety: loading flags and error states cleared before re-triggering async operations
+- [ ] Input validation parity: server-side rules match client-side validation
+- [ ] URL encoding: dynamic values in URLs encoded with the correct encoder for their context
+- [ ] Resource cleanup: acquired resources (connections, timers, subscriptions) released in `finally` or equivalent
+
+**PRD non-functional compliance:**
+- [ ] If the PRD specifies styling requirements (colors, spacing, layout), verify they are applied
+- [ ] If the PRD specifies accessibility requirements (ARIA labels, keyboard nav, focus management), verify they are implemented
+- [ ] If the PRD references design specs or mockups, verify the implementation matches them
 
 ## Boundaries
 

@@ -129,6 +129,7 @@ model Mission {
 
   precheckBlockers String?                   // JSON array of blocker strings
   precheckOutput   String?                   // JSON blob: MissionPrecheckOutput
+  retroReport      String?                   // Markdown retrospective report
 
   items       MissionItem[]
   activities  ActivityLog[]

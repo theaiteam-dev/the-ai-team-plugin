@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useState, useEffect } from "react";
+import { RetroReport } from "@/components/RetroReport";
 
 interface ApiMission {
   id: string;
@@ -80,9 +81,10 @@ function StateBadge({ missionId, state }: { missionId: string; state: string }) 
 
 interface DetailPaneProps {
   mission: ApiMission;
+  retroReport?: string | null;
 }
 
-function DetailPane({ mission }: DetailPaneProps) {
+function DetailPane({ mission, retroReport }: DetailPaneProps) {
   const blockers = mission.precheckBlockers ?? [];
   const duration = formatDuration(mission.startedAt, mission.completedAt);
 
@@ -154,6 +156,15 @@ function DetailPane({ mission }: DetailPaneProps) {
           </pre>
         </div>
       )}
+
+      {retroReport && (
+        <div data-testid="retro-report-section">
+          <span className="text-muted-foreground text-xs block mb-1">Retrospective</span>
+          <div className="prose prose-sm max-w-none text-sm">
+            <RetroReport retroReport={retroReport} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -162,6 +173,35 @@ export function MissionHistoryPanel({ isOpen, onClose, projectId }: MissionHisto
   const [missions, setMissions] = useState<ApiMission[]>([]);
   const [selected, setSelected] = useState<ApiMission | null>(null);
   const [loading, setLoading] = useState(false);
+  const [retroReport, setRetroReport] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!selected) {
+      setRetroReport(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    const missionId = selected.id;
+
+    async function fetchRetro() {
+      try {
+        const r = await fetch(`/api/missions/${missionId}/retro`, {
+          headers: { 'X-Project-ID': projectId },
+          signal: controller.signal,
+        });
+        const data = await r.json();
+        if (!controller.signal.aborted) {
+          setRetroReport(data.success && data.data?.retroReport ? data.data.retroReport : null);
+        }
+      } catch {
+        if (!controller.signal.aborted) setRetroReport(null);
+      }
+    }
+
+    void fetchRetro();
+    return () => controller.abort();
+  }, [selected, projectId]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -251,7 +291,7 @@ export function MissionHistoryPanel({ isOpen, onClose, projectId }: MissionHisto
         {/* Right: detail pane */}
         <div className="flex-1 overflow-y-auto">
           {selected ? (
-            <DetailPane mission={selected} />
+            <DetailPane mission={selected} retroReport={retroReport} />
           ) : (
             <div className="p-6 text-xs text-muted-foreground">
               Select a mission to view details.
