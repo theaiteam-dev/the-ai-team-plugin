@@ -111,6 +111,23 @@ A(i)-Team agents apply fixes and patterns locally without propagating them to an
 - [ ] Should Lynch's consistency findings automatically create new work items for the inconsistent locations, or just be reported in the retro?
 - [ ] Should the test category checklist be configurable per-project (e.g., a project with no UI might permanently disable the accessibility category)?
 
+## Future Consideration: Server-Side Retro Generation
+
+The current `/ai-team:retro` system dispatches an opus agent to gather mission data from the API, analyze patterns, and produce a structured markdown report. In practice, nearly all of this work is deterministic data aggregation:
+
+- Rejection patterns: group work logs by rejection reason — SQL query + count
+- Amy findings: extract agentStop summaries where agent = Amy — data lookup
+- Stockwell verdict: pull one work log entry — lookup
+- Pipeline timing: compute stage durations from activity feed timestamps — arithmetic
+- Token cost: already computed server-side by `POST /api/missions/{id}/token-usage`
+- Skill gap recommendations: map rejection categories to canned recommendations — rule-based
+
+The only LLM-contributed value is free-form prose in "pattern" and "recommendation" fields, which could be templated or left for human input.
+
+**Proposed change:** Replace the retro agent with a server-side `POST /api/missions/{id}/retro` endpoint that runs the queries, applies grouping logic, and renders the markdown report. The `/ai-team:retro` command would call this endpoint and display the result instead of dispatching an agent. This would be faster, cheaper (zero tokens), and more consistent.
+
+**SaaS consideration:** Server-side retro generation is a natural fit for a paid tier of a hosted kanban-viewer. It requires no client-side agent dispatch, runs entirely within the API, and produces analytics that improve with data volume (cross-mission trend analysis, per-team skill gap tracking). A free tier could show the raw mission data; a paid tier generates the structured retro with trend analysis across missions. This should be evaluated as part of any future SaaS packaging of kanban-viewer rather than built as a standalone plugin feature.
+
 ## Appendix: Evidence from Pass-3 vs Pass-4 Comparison
 
 ### Improvements (agent tweaks working)
