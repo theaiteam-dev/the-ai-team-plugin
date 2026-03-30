@@ -194,8 +194,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json(error.toResponse(), { status: 400 });
     }
 
+    if (body.acceptance.length > 50) {
+      const error = createValidationError('acceptance must not exceed 50 criteria');
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
     // Normalize: trim each acceptance criterion
     body.acceptance = body.acceptance.map((item: string) => item.trim());
+
+    if (body.acceptance.some((item: string) => item.length > 500)) {
+      const error = createValidationError('acceptance criteria must not exceed 500 characters each');
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
 
     if (!body.context || typeof body.context !== 'string' || body.context.trim() === '') {
       const error = createValidationError('context is required');

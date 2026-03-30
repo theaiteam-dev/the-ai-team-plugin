@@ -117,6 +117,7 @@ test('mocked foo works', () => {
 `;
     const result = runHook(content);
     // Should not trigger mock-your-own-subject
+    expect(result.exitCode).toBe(0);
     expect(result.stderr).not.toContain('Mock-your-own-subject');
   });
 
@@ -151,6 +152,7 @@ test('uses helper, mocks foo', () => {
 `;
     const result = runHook(content);
     // ./foo is only type-imported, ./utils is real-imported but not mocked — no violation
+    expect(result.exitCode).toBe(0);
     expect(result.stderr).not.toContain('Mock-your-own-subject');
   });
 });

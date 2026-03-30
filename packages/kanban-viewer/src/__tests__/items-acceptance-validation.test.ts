@@ -178,6 +178,98 @@ describe('POST /api/items - acceptance array element validation', () => {
   });
 });
 
+// ============ Fix 1b: POST acceptance bounds validation ============
+
+describe('POST /api/items - acceptance bounds validation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    mockPrisma.project.findUnique.mockResolvedValue({ id: 'test-project', name: 'test-project', createdAt: new Date() });
+    mockPrisma.project.upsert.mockResolvedValue({ id: 'test-project' });
+    mockPrisma.item.findMany.mockResolvedValue([]);
+    mockPrisma.mission.findFirst.mockResolvedValue(null);
+    mockPrisma.$transaction.mockImplementation(async (arg) => {
+      if (Array.isArray(arg)) return Promise.all(arg);
+      return arg(mockPrisma);
+    });
+  });
+
+  it('rejects acceptance array with more than 50 items', async () => {
+    const { POST } = await import('@/app/api/items/route');
+    const tooMany = Array.from({ length: 51 }, (_, i) => `criterion ${i + 1}`);
+    const response = await POST(
+      makePostRequest({ ...BASE_VALID_BODY, acceptance: tooMany })
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.success).toBe(false);
+    expect(JSON.stringify(body.error)).toMatch(/acceptance/i);
+  });
+
+  it('rejects acceptance array where an item exceeds 500 characters', async () => {
+    const { POST } = await import('@/app/api/items/route');
+    const longCriterion = 'a'.repeat(501);
+    const response = await POST(
+      makePostRequest({ ...BASE_VALID_BODY, acceptance: ['valid', longCriterion] })
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.success).toBe(false);
+    expect(JSON.stringify(body.error)).toMatch(/acceptance/i);
+  });
+
+  it('rejects acceptance where item exceeds 500 characters after trimming', async () => {
+    const { POST } = await import('@/app/api/items/route');
+    // 501 non-whitespace chars surrounded by whitespace — still too long after trim
+    const longCriterion = '  ' + 'a'.repeat(501) + '  ';
+    const response = await POST(
+      makePostRequest({ ...BASE_VALID_BODY, acceptance: [longCriterion] })
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.success).toBe(false);
+  });
+
+  it('accepts exactly 50 acceptance criteria', async () => {
+    mockPrisma.item.create.mockResolvedValue({
+      ...existingItem,
+      id: 'WI-002',
+      acceptance: JSON.stringify(Array.from({ length: 50 }, (_, i) => `criterion ${i + 1}`)),
+      dependsOn: [],
+      workLogs: [],
+    });
+
+    const { POST } = await import('@/app/api/items/route');
+    const exactly50 = Array.from({ length: 50 }, (_, i) => `criterion ${i + 1}`);
+    const response = await POST(
+      makePostRequest({ ...BASE_VALID_BODY, acceptance: exactly50 })
+    );
+
+    expect(response.status).toBe(201);
+  });
+
+  it('accepts an acceptance criterion of exactly 500 characters', async () => {
+    const exactly500 = 'a'.repeat(500);
+    mockPrisma.item.create.mockResolvedValue({
+      ...existingItem,
+      id: 'WI-002',
+      acceptance: JSON.stringify([exactly500]),
+      dependsOn: [],
+      workLogs: [],
+    });
+
+    const { POST } = await import('@/app/api/items/route');
+    const response = await POST(
+      makePostRequest({ ...BASE_VALID_BODY, acceptance: [exactly500] })
+    );
+
+    expect(response.status).toBe(201);
+  });
+});
+
 // ============ Fix 2: PATCH structured field validation ============
 
 describe('PATCH /api/items/[id] - structured field validation', () => {
@@ -287,6 +379,53 @@ describe('PATCH /api/items/[id] - structured field validation', () => {
     expect(updateCall).toBeDefined();
     const storedAcceptance = JSON.parse(updateCall.data.acceptance);
     expect(storedAcceptance).toEqual(['trimmed criterion']);
+  });
+
+  it('rejects acceptance array with more than 50 items in PATCH', async () => {
+    const { PATCH } = await import('@/app/api/items/[id]/route');
+    const tooMany = Array.from({ length: 51 }, (_, i) => `criterion ${i + 1}`);
+    const response = await PATCH(
+      makePatchRequest('WI-001', { acceptance: tooMany }),
+      makeContext('WI-001')
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.success).toBe(false);
+    expect(JSON.stringify(body.error)).toMatch(/acceptance/i);
+  });
+
+  it('rejects acceptance where an item exceeds 500 characters in PATCH', async () => {
+    const { PATCH } = await import('@/app/api/items/[id]/route');
+    const longCriterion = 'b'.repeat(501);
+    const response = await PATCH(
+      makePatchRequest('WI-001', { acceptance: ['valid', longCriterion] }),
+      makeContext('WI-001')
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.success).toBe(false);
+    expect(JSON.stringify(body.error)).toMatch(/acceptance/i);
+  });
+
+  it('accepts exactly 50 acceptance criteria in PATCH', async () => {
+    const exactly50 = Array.from({ length: 50 }, (_, i) => `criterion ${i + 1}`);
+    mockPrisma.item.update.mockResolvedValue({
+      ...existingItem,
+      acceptance: JSON.stringify(exactly50),
+      dependsOn: [],
+      workLogs: [],
+    });
+    mockPrisma.itemDependency.deleteMany.mockResolvedValue({ count: 0 });
+
+    const { PATCH } = await import('@/app/api/items/[id]/route');
+    const response = await PATCH(
+      makePatchRequest('WI-001', { acceptance: exactly50 }),
+      makeContext('WI-001')
+    );
+
+    expect(response.status).toBe(200);
   });
 
   it('accepts valid string objective and context in PATCH', async () => {

@@ -763,7 +763,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [title, type, priority, description]
+              required: [title, type, priority, description, objective, acceptance, context]
               properties:
                 title:
                   type: string
@@ -1224,6 +1224,18 @@ paths:
                         description: |
                           The stage the item was moved to. Null when
                           advance=false (no stage transition performed).
+                      wipExceeded:
+                        type: boolean
+                        description: |
+                          True when the target stage hit its WIP limit and
+                          the item was not advanced.
+                      blockedStage:
+                        nullable: true
+                        allOf:
+                          - $ref: '#/components/schemas/StageId'
+                        description: |
+                          The stage that hit its WIP limit, blocking the
+                          advance. Null when wipExceeded is false.
         '400':
           description: VALIDATION_ERROR · NOT_CLAIMED
           content:

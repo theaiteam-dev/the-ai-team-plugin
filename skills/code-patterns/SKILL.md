@@ -34,7 +34,7 @@ function applyTaxToLineItems(lineItems: LineItem[]): LineItem[] {
 }
 ```
 
-**What to flag:** Variable and function names should communicate intent. Avoid single-letter names outside of trivial loop counters. Extract magic numbers into named constants.
+**What to flag:** Variable and function names should communicate intent. Avoid single-letter names outside trivial loop counters. Extract magic numbers into named constants.
 
 ---
 
@@ -59,7 +59,7 @@ function handleUser(user: User, action: string, sendEmail: boolean, isAdmin: boo
 
 ### Good
 ```typescript
-function createUser(input: CreateUserInput): Promise<User> {
+async function createUser(input: CreateUserInput): Promise<User> {
   const user = await userRepository.create(input);
   await eventBus.publish(new UserCreatedEvent(user));
   return user;
