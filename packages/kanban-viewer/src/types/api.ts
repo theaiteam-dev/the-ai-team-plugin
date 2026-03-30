@@ -200,6 +200,8 @@ export interface AgentStopResponse {
     agent: AgentName;
     workLogEntry: WorkLogEntry;
     nextStage: StageId | null;
+    wipExceeded?: boolean;
+    blockedStage?: StageId;
   };
 }
 

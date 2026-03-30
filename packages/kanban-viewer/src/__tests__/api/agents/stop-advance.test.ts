@@ -4,9 +4,10 @@ import { NextRequest } from 'next/server';
 /**
  * Tests for the `advance` flag on POST /api/agents/stop
  *
- * New behavior:
- * - advance=true (default): check WIP limits transactionally before moving to next stage.
- *   Returns WIP_LIMIT_EXCEEDED if target stage is at capacity.
+ * Behavior:
+ * - advance=true (default): release claim and record work log first, then check WIP limits.
+ *   If the target stage is at capacity, returns 200 with wipExceeded=true and blockedStage
+ *   set — the item stays in its current stage but work is always recorded.
  * - advance=false: skip stage transition entirely — only clear claim and log work.
  */
 
@@ -189,7 +190,7 @@ describe('POST /api/agents/stop — advance flag', () => {
       expect(data.data.nextStage).toBe('implementing');
     });
 
-    it('should return WIP_LIMIT_EXCEEDED when target stage is at capacity', async () => {
+    it('should return 200 with wipExceeded when target stage is at capacity', async () => {
       setupMocksForSuccessfulStop();
       mockPrisma.stage.findUnique.mockResolvedValue(createMockStage('implementing', 3));
       mockPrisma.item.count.mockResolvedValue(3); // at limit
@@ -203,10 +204,36 @@ describe('POST /api/agents/stop — advance flag', () => {
       });
 
       const response = await POST(request);
-      expect(response.status).toBe(409);
+      expect(response.status).toBe(200);
       const data = await response.json();
-      expect(data.success).toBe(false);
-      expect(data.error.code).toBe('WIP_LIMIT_EXCEEDED');
+      expect(data.success).toBe(true);
+
+      // Work log must still be created
+      expect(mockPrisma.workLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            agent: 'Murdock',
+            summary: 'Tests written',
+            action: 'completed',
+            itemId: 'WI-001',
+          }),
+        })
+      );
+
+      // Claim must still be released
+      expect(mockPrisma.agentClaim.delete).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { itemId: 'WI-001' } })
+      );
+
+      // Item should NOT advance — stays in current stage
+      const updateCall = mockPrisma.item.update.mock.calls[0];
+      expect(updateCall[0].data.stageId).toBeUndefined();
+      expect(updateCall[0].data.assignedAgent).toBeNull();
+
+      // Response indicates WIP was exceeded and which stage was blocked
+      expect(data.data.wipExceeded).toBe(true);
+      expect(data.data.blockedStage).toBe('implementing');
+      expect(data.data.nextStage).toBe('testing'); // stays at current stage
     });
   });
 });

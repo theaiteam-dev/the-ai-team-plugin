@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"github.com/spf13/cobra"
 	"ateam/internal/client"
 	"ateam/internal/output"
@@ -72,9 +71,6 @@ var agentsStopAgentStopCmd = &cobra.Command{
 		bodyMap["summary"] = agentsStopAgentStopCmd_summary
 		resp, err := c.Do("POST", "/api/agents/stop", pathParams, queryParams, bodyMap)
 		if err != nil {
-			if strings.Contains(err.Error(), "WIP_LIMIT_EXCEEDED") {
-				return fmt.Errorf("WIP_LIMIT_EXCEEDED: target stage is at WIP capacity. Use --advance=false to release the claim and log work without moving to the next stage")
-			}
 			return err
 		}
 		jsonMode, _ := cmd.Root().PersistentFlags().GetBool("json")
@@ -85,6 +81,17 @@ var agentsStopAgentStopCmd = &cobra.Command{
 			if err := output.PrintTable(resp, noColor); err != nil {
 				fmt.Println(string(resp))
 			}
+		}
+		// Surface WIP limit warning so agents know the item didn't advance
+		var parsed struct {
+			Data struct {
+				WipExceeded  bool   `json:"wipExceeded"`
+				BlockedStage string `json:"blockedStage"`
+				NextStage    string `json:"nextStage"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(resp, &parsed) == nil && parsed.Data.WipExceeded {
+			fmt.Fprintf(os.Stderr, "\nWARNING: WIP limit exceeded on '%s' stage. Work logged and claim released, but item remains in '%s'. It will advance when capacity opens.\n", parsed.Data.BlockedStage, parsed.Data.NextStage)
 		}
 		return nil
 	},
