@@ -68,7 +68,7 @@ function parseAcceptance(raw: string | null): string[] | undefined {
   if (!raw) return undefined;
   try {
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : undefined;
+    return Array.isArray(parsed) ? parsed.filter((el): el is string => typeof el === 'string') : undefined;
   } catch {
     return undefined;
   }

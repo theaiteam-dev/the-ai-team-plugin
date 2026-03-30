@@ -65,7 +65,7 @@ function createUser(input: CreateUserInput): Promise<User> {
   return user;
 }
 
-function deleteUser(userId: string, deletedBy: AdminUser): Promise<void> {
+async function deleteUser(userId: string, deletedBy: AdminUser): Promise<void> {
   const user = await userRepository.findByIdOrThrow(userId);
   await userRepository.softDelete(user.id);
   await eventBus.publish(new UserDeletedEvent(user, deletedBy));

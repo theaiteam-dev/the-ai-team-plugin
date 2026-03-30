@@ -21,6 +21,7 @@ if (payload) {
   const transcriptPath = hookInput.transcript_path;
   let tokenFields = {};
   let advanceFields = {};
+  let handoffStopPromise;
   if (transcriptPath) {
     const tokenUsage = parseTranscriptUsage(transcriptPath);
     tokenFields = {
@@ -36,7 +37,7 @@ if (payload) {
 
     const { itemId } = parseAgentStopItemId(transcriptPath);
     if (itemId) {
-      sendObserverEvent({
+      handoffStopPromise = sendObserverEvent({
         eventType: 'handoff-stop',
         agentName,
         itemId,
@@ -45,7 +46,10 @@ if (payload) {
     }
   }
 
-  await sendObserverEvent({ ...payload, ...tokenFields, ...advanceFields }).catch(() => {});
+  await Promise.all([
+    sendObserverEvent({ ...payload, ...tokenFields, ...advanceFields }).catch(() => {}),
+    handoffStopPromise,
+  ]);
 }
 
 process.exit(0);

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"github.com/spf13/cobra"
 	"ateam/internal/client"
 	"ateam/internal/output"
@@ -71,6 +72,9 @@ var agentsStopAgentStopCmd = &cobra.Command{
 		bodyMap["summary"] = agentsStopAgentStopCmd_summary
 		resp, err := c.Do("POST", "/api/agents/stop", pathParams, queryParams, bodyMap)
 		if err != nil {
+			if strings.Contains(err.Error(), "WIP_LIMIT_EXCEEDED") {
+				return fmt.Errorf("WIP_LIMIT_EXCEEDED: the target stage is at WIP capacity. The item claim has NOT been released. Call `agentStop --advance=false` to release the claim, then send ALERT to Hannibal to redispatch when capacity opens")
+			}
 			return err
 		}
 		jsonMode, _ := cmd.Root().PersistentFlags().GetBool("json")
@@ -91,7 +95,7 @@ var agentsStopAgentStopCmd = &cobra.Command{
 			} `json:"data"`
 		}
 		if json.Unmarshal(resp, &parsed) == nil && parsed.Data.WipExceeded {
-			fmt.Fprintf(os.Stderr, "\nWARNING: WIP limit exceeded on '%s' stage. Work logged and claim released, but item remains in '%s'. It will advance when capacity opens.\n", parsed.Data.BlockedStage, parsed.Data.NextStage)
+			fmt.Fprintf(os.Stderr, "\nWARNING: WIP_LIMIT_EXCEEDED on '%s' stage. Work was logged but the item claim has NOT been released. Call `agentStop --advance=false` to release the claim, then send ALERT to Hannibal to redispatch when capacity opens.\n", parsed.Data.BlockedStage)
 		}
 		return nil
 	},

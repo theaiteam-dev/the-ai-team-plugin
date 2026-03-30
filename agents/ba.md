@@ -412,9 +412,8 @@ SendMessage({
 ### Request Help or Clarification
 ```javascript
 SendMessage({
-  type: "message",
-  recipient: "hannibal",
-  content: "BLOCKED: {itemId} - {description of issue}",
+  to: "hannibal",
+  message: "BLOCKED: {itemId} - {description of issue}",
   summary: "Blocked on {itemId}"
 })
 ```
@@ -422,16 +421,15 @@ SendMessage({
 ### Coordinate with Teammates
 ```javascript
 SendMessage({
-  type: "message",
-  recipient: "{teammate_name}",
-  content: "{coordination message}",
+  to: "{teammate_name}",
+  message: "{coordination message}",
   summary: "Coordination with {teammate_name}"
 })
 ```
 
 Example - Ask Murdock about test expectations:
 ```javascript
-SendMessage({ type: "message", recipient: "murdock", content: "WI-003: What's the expected error type for invalid orders?", summary: "Question about WI-003 tests" })
+SendMessage({ to: "murdock", message: "WI-003: What's the expected error type for invalid orders?", summary: "Question about WI-003 tests" })
 ```
 
 ### Shutdown

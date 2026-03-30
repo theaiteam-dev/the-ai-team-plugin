@@ -36,7 +36,7 @@ describe('RetroReport', () => {
   });
 
   it('renders markdown lists as HTML list elements', () => {
-    render(<RetroReport retroReport="## Retro\n\n- Item one\n- Item two\n- Item three" />);
+    render(<RetroReport retroReport={"## Retro\n\n- Item one\n- Item two\n- Item three"} />);
     const items = screen.getAllByRole('listitem');
     expect(items.length).toBeGreaterThanOrEqual(3);
   });
@@ -45,5 +45,13 @@ describe('RetroReport', () => {
     render(<RetroReport retroReport={"## Retro\n\n```\nconst x = 1;\n```"} />);
     const codeBlock = document.querySelector('code');
     expect(codeBlock).not.toBeNull();
+  });
+
+  it('does not convert literal \\n sequences — they should render as-is', () => {
+    // A report that intentionally contains the two-character literal sequence \n
+    // (e.g. an inline code example). The component must NOT replace these with
+    // real newlines; normalizing double-escaping is the storage layer's job.
+    render(<RetroReport retroReport={'Example: \\n means newline'} />);
+    expect(screen.getByText(/\\n means newline/)).toBeDefined();
   });
 });

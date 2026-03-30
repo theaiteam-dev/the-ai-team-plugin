@@ -107,7 +107,7 @@ try {
       );
       if (allTypeImports) {
         // Check if the tests just assert on literal object shapes
-        const hasRealCalls = /\b(await\s+)?\w+\s*\(/.test(content.replace(/expect\s*\(/g, '').replace(/import\s*\(/g, '').replace(/describe\s*\(/g, '').replace(/it\s*\(/g, '').replace(/test\s*\(/g, '').replace(/beforeEach\s*\(/g, '').replace(/afterEach\s*\(/g, '').replace(/beforeAll\s*\(/g, '').replace(/afterAll\s*\(/g, '').replace(/vi\.fn\s*\(/g, ''));
+        const hasRealCalls = /\b(await\s+)?\w+\s*\(/.test(content.replace(/expect\s*\(/g, '').replace(/import\s*\(/g, '').replace(/describe\s*\(/g, '').replace(/it\s*\(/g, '').replace(/test\s*\(/g, '').replace(/beforeEach\s*\(/g, '').replace(/afterEach\s*\(/g, '').replace(/beforeAll\s*\(/g, '').replace(/afterAll\s*\(/g, '').replace(/vi\.fn\s*\(/g, '').replace(/\.to[A-Za-z]+\s*\(/g, '').replace(/\.not\b/g, '').replace(/\.resolves\b/g, '').replace(/\.rejects\b/g, ''));
         if (!hasRealCalls) {
           violations.push(
             'Type-shape test detected: file imports only types and asserts on object literals.\n' +
@@ -122,7 +122,7 @@ try {
   // Pattern 4: Mock-your-own-subject
   // vi.mock('./foo') when the file also imports from './foo' — mocking the thing you're testing.
   const mockPaths = [...content.matchAll(/vi\.mock\s*\(\s*['"]([^'"]+)['"]/g)].map(m => m[1]);
-  const importPaths = [...content.matchAll(/from\s+['"]([^'"]+)['"]/g)].map(m => m[1]);
+  const importPaths = [...content.matchAll(/^(?!\s*import\s+type\b).*from\s+['"]([^'"]+)['"]/gm)].map(m => m[1]);
   if (mockPaths.length > 0 && importPaths.length > 0) {
     for (const mockPath of mockPaths) {
       if (importPaths.includes(mockPath)) {

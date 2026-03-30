@@ -120,13 +120,13 @@ Work items now have three structured fields (`objective`, `acceptance`, `context
 - **Would two different developers interpret this the same way?**
 - Is there enough context for Murdock to write tests?
 
-### 3. Sizing (Individual)
+### 4. Sizing (Individual)
 - Is this the smallest independently-completable unit?
 - Could it be split further without artificial boundaries?
 - Is it too large (>1 day of focused work)?
 - Does it mix concerns that should be separate items?
 
-### 4. Sizing (Mission-Wide) - CRITICAL
+### 5. Sizing (Mission-Wide) - CRITICAL
 
 **Over-splitting is a common failure mode.** Review the total decomposition:
 - **Item count**: 5-15 items is typical. 20+ is a red flag. 30+ is almost certainly over-split.
@@ -147,7 +147,7 @@ Example consolidation instruction:
 - Merge acceptance criteria from all three
 ```
 
-### 5. Dependencies & Ordering
+### 6. Dependencies & Ordering
 - Are all dependencies explicitly declared?
 - Are there hidden/implicit dependencies not listed?
 - Could circular dependencies form?
@@ -155,18 +155,18 @@ Example consolidation instruction:
 - Are dependencies on external systems/APIs noted?
 - Is the dependency direction correct?
 
-### 6. Output Paths (Critical for A(i)-Team)
+### 7. Output Paths (Critical for A(i)-Team)
 - Does the `outputs` field specify test, impl, and types paths?
 - Do `outputs.test` and `outputs.impl` paths make sense?
 - Do paths follow project conventions?
 - Will output paths conflict with existing files?
 - Are paths consistent across related items?
 
-### 7. Parallel Groups
+### 8. Parallel Groups
 - Are items that modify the same files in the same group?
 - Are independent items in separate groups?
 
-### 8. Project Infrastructure (CRITICAL)
+### 9. Project Infrastructure (CRITICAL)
 Verify that the target project has the tooling the mission requires. Face should have run a Project Readiness Audit and created scaffolding items for anything missing. **If Face skipped this, flag it as CRITICAL.**
 
 Check for:
@@ -179,21 +179,21 @@ Check for:
 - Flag as CRITICAL: "No test runner installed but N items specify outputs.test. Face must create a 'Set up test infrastructure' item in Wave 0."
 - Specify what's missing and what the scaffolding item should include.
 
-### 9. Testability
+### 10. Testability
 - Can Murdock write meaningful tests from this specification?
 - Are edge cases and error conditions specified?
 - Are performance/timing requirements testable?
 - Is the expected behavior for invalid inputs defined?
 - Are there implicit requirements that should be explicit?
 
-### 10. Architectural Fit
+### 11. Architectural Fit
 - Does this align with existing codebase patterns?
 - Are there integration points that need clarification?
 - Will this require changes to existing interfaces?
 - Are there existing utilities that should be leveraged?
 - Are there security, performance, or scalability concerns?
 
-### 11. PRD Coverage
+### 12. PRD Coverage
 Cross-reference the PRD against the work items to verify nothing was dropped. Read the PRD section by section and confirm each requirement, design spec, and edge case maps to at least one work item.
 
 - Does every functional requirement have a corresponding work item?

@@ -9,11 +9,9 @@ export function RetroReport({ retroReport }: RetroReportProps) {
     return null;
   }
 
-  const normalized = retroReport.replace(/\\n/g, '\n');
-
   return (
     <section>
-      <ReactMarkdown>{normalized}</ReactMarkdown>
+      <ReactMarkdown>{retroReport}</ReactMarkdown>
     </section>
   );
 }

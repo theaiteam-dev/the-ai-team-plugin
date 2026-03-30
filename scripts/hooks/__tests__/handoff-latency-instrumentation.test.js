@@ -103,8 +103,10 @@ describe('observe-stop — handoff-stop event', () => {
     try {
       runHook(STOP_HOOK, { hook_event_name: 'Stop', session_id: 'sess-1' }, ['Murdock'], transcriptPath);
 
-      // Wait briefly for the async fire-and-forget to complete
-      await new Promise((r) => setTimeout(r, 200));
+      // The hook awaits all HTTP requests before exiting, so the mock server has received
+      // everything by the time execFileSync returns. The brief wait allows the test process's
+      // event loop to drain any remaining async callbacks from the mock server's req.on('end').
+      await new Promise((r) => setTimeout(r, 50));
 
       const handoffStop = capturedEvents.find((e) => e.eventType === 'handoff-stop');
       expect(handoffStop, 'expected a handoff-stop event to be emitted').toBeTruthy();
@@ -120,7 +122,7 @@ describe('observe-stop — handoff-stop event', () => {
     try {
       runHook(STOP_HOOK, { hook_event_name: 'Stop', session_id: 'sess-2' }, ['B.A.'], transcriptPath);
 
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 50));
 
       const handoffStop = capturedEvents.find((e) => e.eventType === 'handoff-stop');
       expect(handoffStop, 'expected a handoff-stop event').toBeTruthy();
@@ -143,7 +145,7 @@ describe('observe-pre-tool-use — handoff-start event', () => {
       agent_type: 'ba',
     });
 
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 200)); // pre-tool-use hook is still fire-and-forget
 
     const handoffStart = capturedEvents.find((e) => e.eventType === 'handoff-start');
     expect(handoffStart, 'expected a handoff-start event to be emitted').toBeTruthy();
@@ -159,7 +161,7 @@ describe('observe-pre-tool-use — handoff-start event', () => {
       agent_type: 'murdock',
     });
 
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 200)); // pre-tool-use hook is still fire-and-forget
 
     const handoffStart = capturedEvents.find((e) => e.eventType === 'handoff-start');
     expect(handoffStart).toBeUndefined();

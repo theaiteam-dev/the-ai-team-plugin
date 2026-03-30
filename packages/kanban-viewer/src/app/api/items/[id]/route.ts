@@ -198,6 +198,30 @@ export async function PATCH(
       }
     }
 
+    // Validate structured fields if provided
+    if (body.objective !== undefined && (typeof body.objective !== 'string' || body.objective === null)) {
+      const error = createValidationError('objective must be a string');
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
+    if (body.context !== undefined && (typeof body.context !== 'string' || body.context === null)) {
+      const error = createValidationError('context must be a string');
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
+    if (body.acceptance !== undefined) {
+      if (!Array.isArray(body.acceptance)) {
+        const error = createValidationError('acceptance must be an array of strings');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+      if (body.acceptance.some((item) => typeof item !== 'string' || item.trim() === '')) {
+        const error = createValidationError('acceptance criteria must be non-empty strings');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+      // Normalize: trim each criterion
+      body.acceptance = body.acceptance.map((item: string) => item.trim());
+    }
+
     // Build update data
     const updateData: {
       title?: string;

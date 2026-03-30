@@ -189,6 +189,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json(error.toResponse(), { status: 400 });
     }
 
+    if (body.acceptance.some((item) => typeof item !== 'string' || item.trim() === '')) {
+      const error = createValidationError('acceptance criteria must be non-empty strings');
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
+    // Normalize: trim each acceptance criterion
+    body.acceptance = body.acceptance.map((item: string) => item.trim());
+
     if (!body.context || typeof body.context !== 'string' || body.context.trim() === '') {
       const error = createValidationError('context is required');
       return NextResponse.json(error.toResponse(), { status: 400 });

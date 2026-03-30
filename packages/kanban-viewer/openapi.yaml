@@ -123,6 +123,8 @@ components:
           type: array
           items:
             type: string
+            maxLength: 500
+          maxItems: 50
           description: Measurable acceptance criteria
           nullable: true
         context:
@@ -779,6 +781,8 @@ paths:
                   type: array
                   items:
                     type: string
+                    maxLength: 500
+                  maxItems: 50
                   description: Measurable acceptance criteria
                 context:
                   type: string
@@ -880,6 +884,8 @@ paths:
                   type: array
                   items:
                     type: string
+                    maxLength: 500
+                  maxItems: 50
                   description: Measurable acceptance criteria
                 context:
                   type: string
