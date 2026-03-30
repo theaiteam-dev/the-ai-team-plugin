@@ -88,7 +88,8 @@ Write ONLY tests and type definitions. **Do NOT write implementation code** - th
 - Key edge cases - empty inputs, boundaries, nulls
 - State changes - confirm data is correctly created, updated, or deleted
 - Error handling - verify the code handles invalid inputs gracefully
-- **Failure UX paths** - for every async operation that is user-facing (form submit, data fetch, mutation), include at least one test that verifies the failure path: error message displayed, loading state cleared, retry possible
+- **Failure UX paths (MANDATORY)** - for every async operation that is user-facing (form submit, data fetch, mutation), include at least one test that verifies the failure path: error message displayed, loading state cleared, optimistic state reverted. If the acceptance criteria list N async operations, you need N failure-path tests — not one generic "API error" test.
+- **Accessibility (MANDATORY for `.tsx` output)** - use `getByRole` with accessible names (`getByRole('checkbox', { name: /todo title/ })`), verify `role="alert"` on error banners, test keyboard interactions if the AC specifies them. If an acceptance criterion mentions a11y (labels, ARIA roles, keyboard nav), write a test for it.
 
 **DON'T waste time on:**
 - 100% coverage
@@ -373,6 +374,8 @@ Before marking work complete, verify:
 - [ ] Happy path is covered
 - [ ] Key error cases are covered
 - [ ] No shared mutable state between tests
+- [ ] **Every async operation in the AC has a failure-path test** (not just the happy path)
+- [ ] **A11y assertions present for `.tsx` outputs** (accessible names on `getByRole`, ARIA roles on dynamic content)
 
 ## Example Output
 

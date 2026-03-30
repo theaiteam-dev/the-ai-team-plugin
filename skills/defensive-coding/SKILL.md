@@ -1,6 +1,6 @@
 ---
 name: defensive-coding
-description: Defensive coding patterns for AI agents. Covers guard-before-operate, async error recovery, input validation consistency, URL encoding, resource cleanup, transient state clearing, and functional state updates — with language-agnostic pseudocode examples.
+description: Defensive coding patterns for AI agents. Covers guard-before-operate, async error recovery, input validation consistency, URL encoding, resource cleanup, transient state clearing, functional state updates, and network request hygiene (AbortController, path encoding, consistent error shapes) — with language-agnostic pseudocode examples.
 ---
 
 # Defensive Coding Skill
@@ -205,6 +205,68 @@ Apply functional updates whenever state changes depend on the existing value, es
 
 ---
 
+## 8. Network Request Hygiene
+
+HTTP requests in UI code require cleanup, deduplication, and encoding discipline. Missing any of these causes resource leaks, race conditions, or broken URLs.
+
+### AbortController Cleanup
+
+Any `fetch` call initiated in a React `useEffect` (or equivalent lifecycle hook) must be aborted when the component unmounts or the effect re-runs. Without this, completed requests update state on unmounted components, causing React warnings and potential crashes.
+
+```
+// BAD: fetch continues after unmount, setState on unmounted component
+useEffect(() => {
+  fetch("/api/data").then(r => r.json()).then(setData)
+}, [])
+
+// GOOD: abort on cleanup
+useEffect(() => {
+  controller = new AbortController()
+  fetch("/api/data", { signal: controller.signal })
+    .then(r => r.json())
+    .then(setData)
+    .catch(e => { if e.name !== "AbortError": throw e })
+  return () => controller.abort()
+}, [])
+```
+
+### Path Parameter Encoding
+
+Dynamic values interpolated into URL path segments must be encoded. User-supplied IDs containing slashes, spaces, or unicode break routing silently.
+
+```
+// BAD: id with special characters breaks the URL
+url = `/api/todos/${id}`              // if id = "foo/bar", route resolves wrong
+
+// GOOD: encode path segments
+url = `/api/todos/${encodeURIComponent(id)}`
+```
+
+### Consistent Error Shape
+
+All API client functions should surface errors in the same shape. If `fetchTodos` throws an `Error` with `.message`, then `createTodo`, `updateTodo`, and `deleteTodo` must also throw an `Error` with `.message` — not silently return `undefined` or throw raw response objects.
+
+```
+// BAD: inconsistent — some throw Error, some return null, some throw Response
+async function fetchTodos():
+  resp = await fetch("/api/todos")
+  if not resp.ok: throw new Error(await resp.text())  // throws Error
+
+async function deleteTodo(id):
+  resp = await fetch(`/api/todos/${id}`, { method: "DELETE" })
+  if not resp.ok: return null                          // returns null — caller can't .catch()
+
+// GOOD: shared error handling, consistent shape
+async function request(url, options):
+  resp = await fetch(url, options)
+  if not resp.ok:
+    body = await resp.json().catch(() => null)
+    throw new Error(body?.message ?? `Request failed: ${resp.status}`)
+  return resp
+```
+
+---
+
 ## Self-Check Before Submitting
 
 For every function or module you write, verify:
@@ -216,3 +278,6 @@ For every function or module you write, verify:
 5. Every acquired resource is released in a `finally` block or equivalent.
 6. Transient UI/operation state is cleared before each new operation begins.
 7. State updates that depend on prior state use the functional (updater) form.
+8. Fetch calls in effects are aborted on cleanup — no setState on unmounted components.
+9. All API client functions throw errors in a consistent shape.
+10. Path parameters are encoded with `encodeURIComponent` before interpolation.

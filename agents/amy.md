@@ -357,7 +357,38 @@ Would a real user see this feature working?
 ### 5. Edge Probe
 Hit boundaries - empty inputs, max values, special characters
 
-### 6. Logic Edge Case Sweep
+### 6. Accessibility Probe (for UI features)
+
+Check that the rendered UI is usable by keyboard-only users and screen readers. This is a safety net — Face should have written a11y acceptance criteria and Murdock should have tested them. Your job is to catch what slipped through.
+
+**Using agent-browser:**
+```bash
+# Check for form inputs without labels
+agent-browser eval "document.querySelectorAll('input:not([aria-label]):not([id])').length"
+
+# Check for missing ARIA roles on dynamic content
+agent-browser eval "document.querySelectorAll('[class*=error],[class*=alert]').length"
+# Then verify those elements have role="alert" or aria-live
+
+# Check keyboard accessibility
+agent-browser snapshot -i     # List interactive elements
+# For each interactive element, verify it's reachable via Tab
+agent-browser eval "document.querySelectorAll('[tabindex=\"-1\"]').length"
+```
+
+**What to check:**
+- **Labeled inputs**: Every `<input>`, `<select>`, `<textarea>` has a visible `<label>` or `aria-label`. Unlabeled form controls are a CRITICAL a11y bug.
+- **Keyboard navigation**: All interactive elements (buttons, links, form controls) are reachable via Tab. Mouse-only interactions (double-click to edit, hover menus) without keyboard alternatives are a WARNING.
+- **ARIA roles on dynamic content**: Error banners should have `role="alert"`. Loading indicators should have `aria-live="polite"` or `role="status"`. Without these, screen readers don't announce changes.
+- **Semantic HTML**: Lists use `<ul>`/`<li>`, not `<div>` chains. Headings use `<h1>`-`<h6>`, not styled `<div>`s. Buttons use `<button>`, not clickable `<div>`s.
+- **Focus management**: After modal open/close, after item deletion, after form submit — does focus land somewhere sensible, or does it get lost?
+
+**Severity:**
+- CRITICAL: Unlabeled form inputs, no keyboard access to primary actions
+- WARNING: Missing ARIA roles on dynamic content, mouse-only secondary interactions
+- INFO: Suboptimal heading hierarchy, missing `aria-live` on non-critical status
+
+### 7. Logic Edge Case Sweep
 
 The **defensive-coding** skill is preloaded. Use it as a checklist to probe implementation logic beyond what tests cover:
 
@@ -441,6 +472,7 @@ console.log('[DEBUG] API response', response);
 - **Race conditions**: Concurrent access issues?
 - **Error handling**: What happens when X fails?
 - **Security surface**: Input validation, injection vectors
+- **Accessibility**: Labeled inputs, keyboard nav, ARIA roles on dynamic content (for UI features)
 
 ### PRD Non-Functional Verification
 If the work item's PRD specifies non-functional requirements, verify them:
@@ -535,9 +567,11 @@ FLAG - [CRITICAL issue]: [brief description with file:line]
 
 ## Severity Levels
 
-- **CRITICAL**: Crashes, data loss, security vulnerabilities - must fix
-- **WARNING**: Edge cases that fail, error handling gaps - should fix
+- **CRITICAL**: Crashes, data loss, security vulnerabilities, **acceptance criterion violations** (if a probe proves an AC is not met, it's CRITICAL regardless of how subtle the failure is) - must fix
+- **WARNING**: Edge cases that fail beyond what the AC specifies, error handling gaps not covered by AC, race conditions on rapid input - should fix
 - **INFO**: Minor issues, potential improvements - optional
+
+**The key distinction:** If your probe demonstrates that a specific acceptance criterion from the work item is violated, that is always CRITICAL — even if the failure only occurs with certain server responses or edge-case inputs. "All ACs met" and "FLAG (WARNING)" in the same summary is a contradiction. If you found a bug that breaks an AC, say so.
 
 ## Boundaries
 

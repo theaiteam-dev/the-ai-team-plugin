@@ -166,7 +166,29 @@ Flag any function where the answer to #1 reveals a path the tests do not cover a
 - Types are used correctly
 - Files work together as a unit
 
-### Step 8: Render Verdict
+### Step 8: AC Coverage Matrix (MANDATORY before verdict)
+
+Before rendering a verdict, enumerate every acceptance criterion from the work item and map each to test coverage AND implementation status. This is not optional — it is the mechanism that prevents approving code with known AC violations.
+
+**Format:**
+```
+AC Coverage Matrix:
+| # | Acceptance Criterion (abbreviated) | Test? | Impl? | Status |
+|---|-------------------------------------|-------|-------|--------|
+| 1 | POST /orders returns 201 with ID    | ✓ order.test.ts:15 | ✓ order.ts:42 | COVERED |
+| 2 | Empty items returns 400             | ✓ order.test.ts:28 | ✓ order.ts:48 | COVERED |
+| 3 | Failed create shows ErrorBanner     | ✗ no test | ✗ no try/catch | NOT COVERED |
+```
+
+**Rules:**
+- Any AC marked NOT COVERED is **automatically Priority 1** — no exceptions, no P2 downgrade
+- If even one AC is NOT COVERED, the verdict MUST be REJECTED
+- "Partially covered" (test exists but doesn't assert the observable outcome) counts as NOT COVERED
+- Include the matrix in your review output between "Requirements Coverage" and "Tests: PASS/FAIL"
+
+**This prevents the exact failure mode where you identify a gap ("mutations lack try/catch") but approve anyway as P2.** If it's in the AC and it's not covered, it's P1. Full stop.
+
+### Step 9: Render Verdict
 
 ## Priority Framework
 
@@ -191,7 +213,7 @@ Flag any function where the answer to #1 reveals a path the tests do not cover a
 
 **Priority 2 - Readability & Testability (SHOULD FIX):**
 - Confusing or misleading variable/function names
-- Missing or inadequate test coverage for critical paths
+- Missing test coverage for paths NOT in acceptance criteria (paths you think should be covered but aren't in the AC — these are suggestions, not rejections)
 - Complex logic without explanatory comments
 - Functions doing too many things (violating single responsibility)
 - Tests that are brittle or test implementation rather than behavior
@@ -347,10 +369,11 @@ Files:
 - Impl: {path}
 - Types: {path} (if present)
 
-Requirements Coverage:
-- [Requirement 1]: MET
-- [Requirement 2]: MET
-- [Requirement 3]: PARTIALLY MET - [explanation]
+AC Coverage Matrix:
+| # | Acceptance Criterion | Test? | Impl? | Status |
+|---|----------------------|-------|-------|--------|
+| 1 | {criterion text}     | ✓/✗   | ✓/✗   | COVERED / NOT COVERED |
+| 2 | ...                  | ...   | ...   | ... |
 
 Tests: PASS (X passing)
 
@@ -362,6 +385,7 @@ Existing Code Opportunities: [list or None]
 VERDICT: APPROVED/REJECTED
 
 [Reasoning - acknowledge what was done well, then issues if any]
+[If REJECTED: reference specific NOT COVERED rows from AC matrix]
 ```
 
 ## Team Communication (Native Teams Mode)

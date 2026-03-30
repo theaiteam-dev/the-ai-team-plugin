@@ -264,6 +264,24 @@ Rules:
 - GOOD: "Returns 401 with `{error: 'invalid_credentials'}` when password is wrong"
 - GOOD: "Passwords are not stored in plaintext; comparing a correct password returns true"
 
+**Error path enumeration (MANDATORY for features with async operations):**
+If a feature has multiple async operations (e.g., create, update, delete, fetch), each operation that can fail MUST have its own error-path acceptance criterion. A single "when an API call fails, show error" criterion is too vague — Murdock cannot map it to specific tests.
+- BAD: "When an API call fails, ErrorBanner displays the error message" (which API call? all of them? Murdock guesses)
+- GOOD: "When createTodo fails, ErrorBanner displays the error message and the input is preserved"
+- GOOD: "When toggleTodo fails, the todo reverts to its previous state and ErrorBanner shows the error"
+- GOOD: "When deleteTodo fails, the todo remains in the list and ErrorBanner shows the error"
+
+**Accessibility criteria (MANDATORY for features with UI output):**
+If a work item has `.tsx` output files, include at least one acceptance criterion covering accessible markup. Murdock writes a11y-aware tests (e.g., `getByRole` with accessible names), and B.A. implements the markup to pass them. This is far cheaper than Amy catching a11y gaps post-implementation.
+- Form inputs must have associated labels (visible or `aria-label`)
+- Interactive elements must be keyboard-accessible (not mouse-only triggers like double-click without keyboard alternative)
+- Dynamic status content (errors, alerts, loading) must use appropriate ARIA roles (`role="alert"`, `aria-live`)
+- Lists of items should use semantic list markup (`<ul>`, `<li>`)
+- BAD: no a11y criteria at all (Murdock writes `getByRole('checkbox')` with no accessible name — passes but unusable by screen readers)
+- GOOD: "Each todo item's checkbox has an accessible label containing the todo title"
+- GOOD: "ErrorBanner uses role='alert' so screen readers announce errors immediately"
+- GOOD: "Inline edit can be triggered via keyboard (Enter or F2), not only double-click"
+
 **`context`** — Integration points and references downstream agents need. This is where Face's codebase research pays off.
 
 Include:
