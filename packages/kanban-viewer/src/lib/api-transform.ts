@@ -71,6 +71,9 @@ function transformApiItemToWorkItem(item: ItemWithRelations): WorkItem {
     })),
     dependencies: item.dependencies,
     outputs,
+    ...(item.objective && { objective: item.objective }),
+    ...(item.acceptance && { acceptance: item.acceptance }),
+    ...(item.context && { context: item.context }),
     created_at: item.createdAt instanceof Date
       ? item.createdAt.toISOString()
       : String(item.createdAt),

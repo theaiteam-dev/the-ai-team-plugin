@@ -92,21 +92,41 @@ Verify Face selected the appropriate `type` for each work item:
 - Title contains "setup", "configure", "create types" → likely should be `task`
 - All acceptance criteria are about file existence, not behavior → likely should be `task`
 
-### 2. Clarity & Completeness
-- Is the objective unambiguous?
-- Are acceptance criteria specific, measurable, and testable?
+### 2. Structured Fields Quality (CRITICAL)
+
+Work items now have three structured fields (`objective`, `acceptance`, `context`) that downstream agents depend on. Validate their quality:
+
+**Objective:**
+- Must be one behavioral sentence describing an observable outcome
+- Flag if missing, vague ("Handle authentication"), or describes implementation ("Create auth service")
+- GOOD: "Users can log in with email/password and receive a session token"
+
+**Acceptance Criteria:**
+- Each criterion must describe an observable, measurable outcome
+- Each `feature` must have at least 1 happy-path and 1 error-path criterion
+- Flag criteria that describe implementation details ("Uses bcrypt") instead of behavior ("Passwords are not stored in plaintext")
+- Flag unmeasurable criteria ("Error handling works", "Performance is good")
+- Murdock maps these directly to test cases — if a criterion is vague, the test will be vague
+
+**Context:**
+- Should include integration points (which files will import/call this)
+- Flag if missing on items that modify or integrate with existing code
+- Flag placeholder text ("Any information the agents need")
+- B.A. uses this to understand WHERE the code fits, not just WHAT it does
+
+### 3. Clarity & Completeness
 - Is the scope precisely bounded (what's IN vs OUT)?
 - Are inputs, outputs, and side effects documented?
 - **Would two different developers interpret this the same way?**
 - Is there enough context for Murdock to write tests?
 
-### 3. Sizing (Individual)
+### 4. Sizing (Individual)
 - Is this the smallest independently-completable unit?
 - Could it be split further without artificial boundaries?
 - Is it too large (>1 day of focused work)?
 - Does it mix concerns that should be separate items?
 
-### 4. Sizing (Mission-Wide) - CRITICAL
+### 5. Sizing (Mission-Wide) - CRITICAL
 
 **Over-splitting is a common failure mode.** Review the total decomposition:
 - **Item count**: 5-15 items is typical. 20+ is a red flag. 30+ is almost certainly over-split.
@@ -127,7 +147,7 @@ Example consolidation instruction:
 - Merge acceptance criteria from all three
 ```
 
-### 5. Dependencies & Ordering
+### 6. Dependencies & Ordering
 - Are all dependencies explicitly declared?
 - Are there hidden/implicit dependencies not listed?
 - Could circular dependencies form?
@@ -135,18 +155,18 @@ Example consolidation instruction:
 - Are dependencies on external systems/APIs noted?
 - Is the dependency direction correct?
 
-### 6. Output Paths (Critical for A(i)-Team)
+### 7. Output Paths (Critical for A(i)-Team)
 - Does the `outputs` field specify test, impl, and types paths?
 - Do `outputs.test` and `outputs.impl` paths make sense?
 - Do paths follow project conventions?
 - Will output paths conflict with existing files?
 - Are paths consistent across related items?
 
-### 7. Parallel Groups
+### 8. Parallel Groups
 - Are items that modify the same files in the same group?
 - Are independent items in separate groups?
 
-### 8. Project Infrastructure (CRITICAL)
+### 9. Project Infrastructure (CRITICAL)
 Verify that the target project has the tooling the mission requires. Face should have run a Project Readiness Audit and created scaffolding items for anything missing. **If Face skipped this, flag it as CRITICAL.**
 
 Check for:
@@ -159,21 +179,21 @@ Check for:
 - Flag as CRITICAL: "No test runner installed but N items specify outputs.test. Face must create a 'Set up test infrastructure' item in Wave 0."
 - Specify what's missing and what the scaffolding item should include.
 
-### 9. Testability
+### 10. Testability
 - Can Murdock write meaningful tests from this specification?
 - Are edge cases and error conditions specified?
 - Are performance/timing requirements testable?
 - Is the expected behavior for invalid inputs defined?
 - Are there implicit requirements that should be explicit?
 
-### 10. Architectural Fit
+### 11. Architectural Fit
 - Does this align with existing codebase patterns?
 - Are there integration points that need clarification?
 - Will this require changes to existing interfaces?
 - Are there existing utilities that should be leveraged?
 - Are there security, performance, or scalability concerns?
 
-### 11. PRD Coverage
+### 12. PRD Coverage
 Cross-reference the PRD against the work items to verify nothing was dropped. Read the PRD section by section and confirm each requirement, design spec, and edge case maps to at least one work item.
 
 - Does every functional requirement have a corresponding work item?
@@ -191,11 +211,14 @@ Cross-reference the PRD against the work items to verify nothing was dropped. Re
 ## Issue Classification
 
 **CRITICAL** - Blocks implementation entirely:
+- Missing or vague `objective` (must be one behavioral sentence)
+- Missing `acceptance` criteria on features (Murdock can't write tests without them)
+- Unmeasurable acceptance criteria ("works correctly", "handles errors")
+- Missing `context` on items that integrate with existing code
 - Missing outputs field or paths
 - Circular dependencies
 - Fundamentally ambiguous requirements
 - Contradictory specifications
-- Missing essential acceptance criteria
 - Over-splitting (too many items for the scope)
 - Wrong type selection (scaffolding marked as `feature`)
 - Missing project infrastructure (no test runner, no TypeScript, etc.) without a scaffolding item

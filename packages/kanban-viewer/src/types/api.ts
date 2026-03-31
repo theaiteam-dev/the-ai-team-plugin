@@ -86,6 +86,9 @@ export interface ReleaseItemResponse {
 export interface CreateItemRequest {
   title: string;
   description: string;
+  objective: string;
+  acceptance: string[];
+  context: string;
   type: ItemType;
   priority: ItemPriority;
   dependencies?: string[];
@@ -106,6 +109,9 @@ export interface CreateItemResponse {
 export interface UpdateItemRequest {
   title?: string;
   description?: string;
+  objective?: string;
+  acceptance?: string[];
+  context?: string;
   type?: ItemType;
   priority?: ItemPriority;
   dependencies?: string[];
@@ -181,6 +187,7 @@ export interface AgentStopRequest {
   agent: AgentName;
   summary: string;
   outcome?: 'completed' | 'blocked';
+  advance?: boolean;
 }
 
 /**
@@ -193,6 +200,8 @@ export interface AgentStopResponse {
     agent: AgentName;
     workLogEntry: WorkLogEntry;
     nextStage: StageId | null;
+    wipExceeded?: boolean;
+    blockedStage?: StageId;
   };
 }
 

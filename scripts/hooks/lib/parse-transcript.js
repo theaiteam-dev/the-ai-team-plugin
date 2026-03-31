@@ -57,3 +57,86 @@ export function parseTranscriptUsage(transcriptPath) {
   // (file was readable, just no usage data found)
   return { inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, model };
 }
+
+/**
+ * Scans a transcript for ateam agents-stop calls and detects --advance=false usage.
+ *
+ * When an agent calls agentStop with --advance=false, they are releasing their
+ * claim without advancing the stage (e.g., because the next stage is at WIP capacity).
+ * Capturing this is useful for observability into pipeline flow and WIP pressure.
+ *
+ * @param {string} transcriptPath - Absolute path to the .jsonl transcript file
+ * @returns {{ advanceFlagUsed: boolean|null }} - false if --advance=false detected, null if not found or unreadable
+ */
+export function parseAdvanceFlagUsage(transcriptPath) {
+  let content;
+  try {
+    content = readFileSync(transcriptPath, 'utf8');
+  } catch {
+    return { advanceFlagUsed: null };
+  }
+
+  const lines = content.split('\n').filter((line) => line.trim().length > 0);
+
+  for (const line of lines) {
+    try {
+      const entry = JSON.parse(line);
+      const contentBlocks = entry?.message?.content;
+      if (!Array.isArray(contentBlocks)) continue;
+      for (const block of contentBlocks) {
+        if (block?.type === 'tool_use' && block?.name === 'Bash') {
+          const command = block?.input?.command || '';
+          if (command.includes('ateam agents-stop') && command.includes('--advance=false')) {
+            return { advanceFlagUsed: false };
+          }
+        }
+      }
+    } catch {
+      // Skip malformed lines
+    }
+  }
+
+  return { advanceFlagUsed: null };
+}
+
+/**
+ * Scans a transcript for ateam agents-stop calls and extracts the --itemId value.
+ *
+ * Used by observe-stop.js to emit a handoff-stop event with the itemId of the
+ * work item the agent just finished. This enables measuring true handoff latency
+ * (delta between handoff-stop and the next agent's first handoff-start on the same itemId).
+ *
+ * @param {string} transcriptPath - Absolute path to the .jsonl transcript file
+ * @returns {{ itemId: string|null }}
+ */
+export function parseAgentStopItemId(transcriptPath) {
+  let content;
+  try {
+    content = readFileSync(transcriptPath, 'utf8');
+  } catch {
+    return { itemId: null };
+  }
+
+  const lines = content.split('\n').filter((line) => line.trim().length > 0);
+
+  for (const line of lines) {
+    try {
+      const entry = JSON.parse(line);
+      const contentBlocks = entry?.message?.content;
+      if (!Array.isArray(contentBlocks)) continue;
+      for (const block of contentBlocks) {
+        if (block?.type === 'tool_use' && block?.name === 'Bash') {
+          const command = block?.input?.command || '';
+          if (command.includes('agents-stop') && command.includes('--itemId')) {
+            const match = command.match(/--itemId\s+["']?([^\s"']+)["']?/);
+            if (match) return { itemId: match[1] };
+          }
+        }
+      }
+    } catch {
+      // Skip malformed lines
+    }
+  }
+
+  return { itemId: null };
+}

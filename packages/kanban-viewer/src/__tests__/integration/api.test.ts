@@ -587,6 +587,9 @@ describe('Item Endpoints Integration', () => {
           description: 'Description',
           type: 'feature',
           priority: 'high',
+          objective: 'Test objective',
+          acceptance: ['criterion 1'],
+          context: 'Test context',
         }),
       });
 
@@ -654,6 +657,9 @@ describe('Item Endpoints Integration', () => {
           description: 'Description',
           type: 'feature',
           priority: 'high',
+          objective: 'Test objective',
+          acceptance: ['criterion 1'],
+          context: 'Test context',
           dependencies: ['WI-999'],
         }),
       });
@@ -1816,6 +1822,9 @@ describe('Transaction Rollback on Errors', () => {
           description: 'Description',
           type: 'feature',
           priority: 'high',
+          objective: 'Test objective',
+          acceptance: ['criterion 1'],
+          context: 'Test context',
           dependencies: ['WI-000'],
         }),
       });

@@ -115,6 +115,22 @@ components:
           maxLength: 200
         description:
           type: string
+        objective:
+          type: string
+          description: One-sentence description of what this item delivers
+          nullable: true
+        acceptance:
+          type: array
+          items:
+            type: string
+            maxLength: 500
+          maxItems: 50
+          description: Measurable acceptance criteria
+          nullable: true
+        context:
+          type: string
+          description: Integration points and existing code references for agents
+          nullable: true
         type:
           $ref: '#/components/schemas/ItemType'
         priority:
@@ -747,7 +763,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [title, type, priority, description]
+              required: [title, type, priority, description, objective, acceptance, context]
               properties:
                 title:
                   type: string
@@ -758,6 +774,19 @@ paths:
                   $ref: '#/components/schemas/ItemPriority'
                 description:
                   type: string
+                objective:
+                  type: string
+                  description: One-sentence description of what this item delivers
+                acceptance:
+                  type: array
+                  items:
+                    type: string
+                    maxLength: 500
+                  maxItems: 50
+                  description: Measurable acceptance criteria
+                context:
+                  type: string
+                  description: Integration points and existing code references for agents
                 dependencies:
                   type: array
                   items:
@@ -848,6 +877,19 @@ paths:
                   maxLength: 200
                 description:
                   type: string
+                objective:
+                  type: string
+                  description: One-sentence description of what this item delivers
+                acceptance:
+                  type: array
+                  items:
+                    type: string
+                    maxLength: 500
+                  maxItems: 50
+                  description: Measurable acceptance criteria
+                context:
+                  type: string
+                  description: Integration points and existing code references for agents
                 type:
                   $ref: '#/components/schemas/ItemType'
                 priority:
@@ -1113,8 +1155,15 @@ paths:
       operationId: agentStop
       summary: Agent completes work on an item
       description: |
-        Releases the claim, appends a WorkLog entry, and advances the item
-        to the next pipeline stage (or blocked if outcome=blocked).
+        Releases the claim, appends a WorkLog entry, and optionally advances
+        the item to the next pipeline stage (or blocked if outcome=blocked).
+
+        When `advance=true` (default), WIP limits on the target stage are
+        checked before moving. If the target stage is at capacity, the request
+        fails with `WIP_LIMIT_EXCEEDED` and no state is changed.
+
+        When `advance=false`, the stage transition is skipped entirely — only
+        the claim is released and the work log entry is created.
       tags: [agents]
       parameters:
         - $ref: '#/components/parameters/ProjectId'
@@ -1136,6 +1185,16 @@ paths:
                   type: string
                   enum: [completed, blocked]
                   default: completed
+                advance:
+                  type: boolean
+                  default: true
+                  description: |
+                    When true (default), advance the item to the next pipeline
+                    stage after releasing the claim. WIP limits are checked
+                    before moving; returns WIP_LIMIT_EXCEEDED if the target
+                    stage is at capacity.
+                    When false, skip the stage transition — only release the
+                    claim and log work.
       responses:
         '200':
           description: Work completed
@@ -1159,7 +1218,24 @@ paths:
                       workLogEntry:
                         $ref: '#/components/schemas/WorkLogEntry'
                       nextStage:
-                        $ref: '#/components/schemas/StageId'
+                        nullable: true
+                        allOf:
+                          - $ref: '#/components/schemas/StageId'
+                        description: |
+                          The stage the item was moved to. Null when
+                          advance=false (no stage transition performed).
+                      wipExceeded:
+                        type: boolean
+                        description: |
+                          True when the target stage hit its WIP limit and
+                          the item was not advanced.
+                      blockedStage:
+                        nullable: true
+                        allOf:
+                          - $ref: '#/components/schemas/StageId'
+                        description: |
+                          The stage that hit its WIP limit, blocking the
+                          advance. Null when wipExceeded is false.
         '400':
           description: VALIDATION_ERROR · NOT_CLAIMED
           content:
@@ -1174,6 +1250,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
           description: ITEM_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: WIP_LIMIT_EXCEEDED — target stage is at capacity
           content:
             application/json:
               schema:

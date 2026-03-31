@@ -23,6 +23,9 @@ export interface Item {
   id: string;
   title: string;
   description: string;
+  objective?: string;
+  acceptance?: string[];
+  context?: string;
   type: ItemType;
   priority: ItemPriority;
   stageId: StageId;

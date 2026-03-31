@@ -69,13 +69,18 @@ function createMockDbItem(overrides: Record<string, unknown> = {}) {
 }
 
 function createPostRequest(body: CreateItemRequest | Record<string, unknown>): NextRequest {
+  const defaults = {
+    objective: 'Test objective',
+    acceptance: ['Test criterion'],
+    context: 'Test context',
+  };
   return new NextRequest('http://localhost:3000/api/items', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Project-ID': 'kanban-viewer'
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...defaults, ...body }),
   });
 }
 

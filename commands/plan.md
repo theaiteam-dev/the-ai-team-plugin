@@ -76,11 +76,67 @@ if not exists(prd-file):
     exit
 ```
 
+### 1.5. Pre-Flight: Environment Check
+
+Verify the A(i)-Team environment is configured before attempting any API calls.
+
+```bash
+# Check CLI works
+${CLAUDE_PLUGIN_ROOT}/bin/ateam --version
+```
+
+```text
+if the command fails:
+    Output to user:
+    "⚠ ateam CLI failed to initialize. Run /ai-team:setup first."
+    STOP.
+```
+
+```bash
+# Check ATEAM_PROJECT_ID is set
+echo $ATEAM_PROJECT_ID
+```
+
+```text
+if empty or "default":
+    Output to user:
+    "⚠ ATEAM_PROJECT_ID is not configured. The API requires a project ID
+    to isolate your mission data.
+
+    Run /ai-team:setup to configure your project, then restart Claude Code."
+    STOP.
+```
+
+```bash
+# Check API is reachable
+${CLAUDE_PLUGIN_ROOT}/bin/ateam board getBoard --json 2>&1 | head -5
+```
+
+```text
+if connection refused or timeout:
+    Output to user:
+    "⚠ Cannot reach the A(i)-Team API at ${ATEAM_API_URL:-http://localhost:3000}.
+
+    Make sure the kanban-viewer is running, or run /ai-team:setup to configure."
+    STOP.
+```
+
+If all checks pass, continue silently.
+
 ### 2. Initialize mission
 
-Run `ateam missions createMission` with parameters:
-- `name`: Project name extracted from PRD (first H1 header or filename)
-- `force`: Set to `true` to archive existing mission
+Run `ateam missions createMission` with ALL required parameters:
+
+```bash
+ateam missions createMission --name "Project Name" --prdPath "prd/drafts/my-feature.md" --force --json
+```
+
+- `--name`: Project name extracted from PRD (first H1 header or filename)
+- `--prdPath`: Path to the PRD file (the same file passed as argument to `/ai-team:plan`)
+- `--force`: Archive existing mission if any
+- `--json`: Get structured response
+
+**All three flags (`--name`, `--prdPath`, `--force`) must be included on the first call.** Do not omit `--prdPath`.
 
 This command:
 - Archives existing mission data (if any) in the database
@@ -230,7 +286,7 @@ With skip refinement:
 
 | Command | Purpose |
 |---------|---------|
-| `ateam missions createMission` | Archive existing mission, create fresh state |
+| `ateam missions createMission --name <name> --prdPath <path> --force` | Archive existing mission, create fresh state |
 | `ateam items createItem` | Create work items (Face first pass) |
 | `ateam items updateItem --id <id>` | Update work items (Face second pass) |
 | `ateam items listItems --json` | List items by stage (Sosa review) |

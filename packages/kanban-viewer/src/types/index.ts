@@ -134,6 +134,9 @@ export interface WorkItem {
     impl?: string;
     types?: string;
   };
+  objective?: string;
+  acceptance?: string[];
+  context?: string;
   created_at: string;
   updated_at: string;
   stage: Stage;

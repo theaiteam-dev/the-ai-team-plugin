@@ -46,10 +46,14 @@ function renderItemAsMarkdown(
     id: string;
     title: string;
     description: string;
+    objective: string | null;
+    acceptance: string[];
+    context: string | null;
     type: string;
     priority: string;
     stageId: string;
     dependencies: string[];
+    outputs: { test?: string; impl?: string; types?: string };
     workLogs: WorkLogEntry[];
   },
   includeWorkLog: boolean
@@ -64,11 +68,33 @@ function renderItemAsMarkdown(
 **Priority:** ${item.priority}
 **Stage:** ${item.stageId}
 **Dependencies:** ${dependenciesDisplay}
-
-## Description
-
-${item.description}
 `;
+
+  if (item.objective) {
+    markdown += `\n## Objective\n\n${item.objective}\n`;
+  }
+
+  if (item.acceptance.length > 0) {
+    markdown += '\n## Acceptance Criteria\n\n';
+    for (const criterion of item.acceptance) {
+      markdown += `- ${criterion}\n`;
+    }
+  }
+
+  if (item.context) {
+    markdown += `\n## Context\n\n${item.context}\n`;
+  }
+
+  markdown += `\n## Description\n\n${item.description}\n`;
+
+  // Outputs section
+  const outputEntries = Object.entries(item.outputs).filter(([, v]) => v);
+  if (outputEntries.length > 0) {
+    markdown += '\n## Outputs\n\n';
+    for (const [key, value] of outputEntries) {
+      markdown += `- **${key}:** \`${value}\`\n`;
+    }
+  }
 
   if (includeWorkLog) {
     markdown += '\n## Work Log\n\n';
@@ -141,15 +167,34 @@ export async function GET(
       return NextResponse.json(error.toResponse(), { status: 404 });
     }
 
+    // Parse acceptance from JSON string
+    let acceptance: string[] = [];
+    if (item.acceptance) {
+      try {
+        const parsed = JSON.parse(item.acceptance);
+        if (Array.isArray(parsed)) acceptance = parsed;
+      } catch { /* ignore invalid JSON */ }
+    }
+
+    // Build outputs object
+    const outputs: { test?: string; impl?: string; types?: string } = {};
+    if (item.outputTest) outputs.test = item.outputTest;
+    if (item.outputImpl) outputs.impl = item.outputImpl;
+    if (item.outputTypes) outputs.types = item.outputTypes;
+
     // Transform to render format
     const renderData = {
       id: item.id,
       title: item.title,
       description: item.description,
+      objective: item.objective,
+      acceptance,
+      context: item.context,
       type: item.type as ItemType,
       priority: item.priority as ItemPriority,
       stageId: item.stageId as StageId,
       dependencies: (item.dependsOn ?? []).map((d) => d.dependsOnId),
+      outputs,
       workLogs: (item.workLogs ?? []).map((log): WorkLogEntry => ({
         id: log.id,
         agent: log.agent,

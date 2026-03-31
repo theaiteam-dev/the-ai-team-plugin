@@ -14,6 +14,9 @@ export interface DbItem {
   id: string;
   title: string;
   description: string;
+  objective: string | null;
+  acceptance: string | null;
+  context: string | null;
   type: string;
   priority: string;
   stageId: string;
@@ -58,11 +61,27 @@ function buildOutputs(item: DbItem): ItemOutputs {
  *
  * Use this for endpoints that return items without relations.
  */
+/**
+ * Parse acceptance JSON string from database to string array.
+ */
+function parseAcceptance(raw: string | null): string[] | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((el): el is string => typeof el === 'string') : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function transformItemToResponse(item: DbItem): Item {
   return {
     id: item.id,
     title: item.title,
     description: item.description,
+    ...(item.objective && { objective: item.objective }),
+    ...(item.acceptance && { acceptance: parseAcceptance(item.acceptance) }),
+    ...(item.context && { context: item.context }),
     type: item.type as ItemType,
     priority: item.priority as ItemPriority,
     stageId: item.stageId as StageId,
@@ -87,6 +106,9 @@ export function transformItemWithRelationsToResponse(
     id: item.id,
     title: item.title,
     description: item.description,
+    ...(item.objective && { objective: item.objective }),
+    ...(item.acceptance && { acceptance: parseAcceptance(item.acceptance) }),
+    ...(item.context && { context: item.context }),
     type: item.type as ItemType,
     priority: item.priority as ItemPriority,
     stageId: item.stageId as StageId,

@@ -88,6 +88,8 @@ Write ONLY tests and type definitions. **Do NOT write implementation code** - th
 - Key edge cases - empty inputs, boundaries, nulls
 - State changes - confirm data is correctly created, updated, or deleted
 - Error handling - verify the code handles invalid inputs gracefully
+- **Failure UX paths (MANDATORY)** - for every async operation that is user-facing (form submit, data fetch, mutation), include at least one test that verifies the failure path: error message displayed, loading state cleared, optimistic state reverted. If the acceptance criteria list N async operations, you need N failure-path tests — not one generic "API error" test.
+- **Accessibility (MANDATORY for `.tsx` output)** - use `getByRole` with accessible names (`getByRole('checkbox', { name: /todo title/ })`), verify `role="alert"` on error banners, test keyboard interactions if the AC specifies them. If an acceptance criterion mentions a11y (labels, ARIA roles, keyboard nav), write a test for it.
 
 **DON'T waste time on:**
 - 100% coverage
@@ -191,6 +193,30 @@ function filterHookEvents(events, filter) {
 
 **Rule:** Always import the function under test from production code. If the production function does not exist yet, mark the test as `.todo` and leave a comment indicating which module will export it.
 
+### Ban 6: Weak Assertions on Critical Computed Values
+
+Using `toBeTruthy()` or `toBeDefined()` to assert the result of a computation that has a specific, knowable expected value. These assertions pass for any non-null, non-zero result — including wrong ones.
+
+```ts
+// BAD: passes for any truthy value — masks bugs in the calculation
+const total = calculateOrderTotal(items);
+expect(total).toBeTruthy();          // passes if total is 0.001
+
+const orderId = createOrder(input).id;
+expect(orderId).toBeDefined();       // passes for any string, including malformed ones
+```
+
+```ts
+// GOOD: assert the specific expected value
+const total = calculateOrderTotal([{ price: 10, qty: 2 }, { price: 5, qty: 1 }]);
+expect(total).toBe(25);
+
+const order = createOrder(input);
+expect(order.id).toMatch(/^ord_[a-z0-9]{8,}$/);
+```
+
+**Rule:** Never use `toBeTruthy()` or `toBeDefined()` to assert a critical computed value — totals, IDs, statuses, transformed data. Use `toBe`, `toEqual`, `toMatch`, or `toStrictEqual` with the precise expected value. `toBeTruthy`/`toBeDefined` are acceptable only for confirming a side-effect occurred (e.g., a spy was called) when the exact value is genuinely unknowable.
+
 ## Handling NO_TEST_NEEDED Items
 
 If you receive a work item with `NO_TEST_NEEDED` in the description and `outputs.test` is empty:
@@ -220,10 +246,15 @@ This claims the item AND records `assigned_agent` on the work item so the kanban
 
 ### Step 2: Reconnaissance
 
-- **Read the feature item**: Understand the objective and acceptance criteria
+- **Read the feature item** via `ateam items renderItem --id <id>`: The rendered markdown includes structured fields:
+  - **Objective** — the one-sentence outcome; this is your happy path test
+  - **Acceptance Criteria** — each criterion maps to at least one test case. These are your primary test specifications.
+  - **Context** — integration points tell you what to mock vs. what's real. If it says "called by OrderController at src/controllers/order.ts", you know the function signature contract.
 - **Identify what needs testing**: The specific feature, adjacent functionality that could be affected, integration points
 - **Review existing code patterns**: Match the project's testing style, assertion library, naming conventions
 - **Find existing tests**: Check for tests that cover similar functionality to understand patterns
+
+**Integration test requirement:** If the work item's `context` field references two or more source files (e.g., "integrates with `src/services/product.ts`, called from `src/controllers/order.ts`"), include at least one minimally-mocked integration test that exercises the connection between those modules — not just each module in isolation. Mock only the outermost I/O (database, network); keep the real module wiring intact. If the work item has no `context` field or the context does not mention integration points, this requirement does not apply.
 
 ### Step 3: Create Types (if specified)
 
@@ -343,6 +374,8 @@ Before marking work complete, verify:
 - [ ] Happy path is covered
 - [ ] Key error cases are covered
 - [ ] No shared mutable state between tests
+- [ ] **Every async operation in the AC has a failure-path test** (not just the happy path)
+- [ ] **A11y assertions present for `.tsx` outputs** (accessible names on `getByRole`, ARIA roles on dynamic content)
 
 ## Example Output
 
@@ -396,13 +429,45 @@ Log at key milestones:
 
 When running in native teams mode (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), you are a teammate in an A(i)-Team mission with direct messaging capabilities.
 
-### Notify Hannibal on Completion
-After calling `ateam agents-stop agentStop`, message Hannibal:
+### Peer-to-Peer Handoff
+
+After `ateam agents-stop agentStop --advance` completes, hand off directly to B.A. — no need to wait for Hannibal to dispatch:
+
+**1. Send START to B.A.:**
 ```javascript
 SendMessage({
-  type: "message",
-  recipient: "hannibal",
-  content: "DONE: {itemId} - {brief summary of work completed}",
+  to: "ba",
+  message: "START: {itemId} - Tests ready at {outputs.test}. {one-line summary of what to implement}",
+  summary: "START {itemId}"
+})
+```
+
+**2. Wait up to 20 seconds** for B.A. to reply with `ACK: {itemId}`.
+
+**3a. On ACK received — send FYI to Hannibal:**
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "FYI: {itemId} - Tests handed off to B.A. directly. ACK received.",
+  summary: "Handoff complete for {itemId}"
+})
+```
+
+**3b. On timeout (no ACK after 20s) — send ALERT to Hannibal:**
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "ALERT: {itemId} - No ACK from B.A. after 20 seconds. Manual dispatch may be needed.",
+  summary: "Handoff timeout for {itemId}"
+})
+```
+
+### Notify Hannibal on Completion
+For blocked items or non-advance stops (use instead of the peer handoff above):
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "DONE: {itemId} - {brief summary of work completed}",
   summary: "Tests complete for {itemId}"
 })
 ```

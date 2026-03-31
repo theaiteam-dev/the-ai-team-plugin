@@ -35,6 +35,41 @@ if the command fails:
 
 If the version check passes, continue silently — no output needed.
 
+## Pre-Flight: Environment Check
+
+Verify the A(i)-Team environment is configured before attempting any API calls.
+
+```bash
+# Check ATEAM_PROJECT_ID is set
+echo $ATEAM_PROJECT_ID
+```
+
+```text
+if empty or "default":
+    Output to user:
+    "⚠ ATEAM_PROJECT_ID is not configured. The API requires a project ID
+    to isolate your mission data.
+
+    Run /ai-team:setup to configure your project, then restart Claude Code."
+    STOP.
+```
+
+```bash
+# Check API is reachable
+${CLAUDE_PLUGIN_ROOT}/bin/ateam board getBoard --json 2>&1 | head -5
+```
+
+```text
+if connection refused or timeout:
+    Output to user:
+    "⚠ Cannot reach the A(i)-Team API at ${ATEAM_API_URL:-http://localhost:3000}.
+
+    Make sure the kanban-viewer is running, or run /ai-team:setup to configure."
+    STOP.
+```
+
+If all checks pass, continue silently.
+
 ## Pre-Flight: Model Check
 
 Before doing anything else, check your current model. Your system prompt contains your model ID (e.g., "You are powered by the model named Opus 4.6").

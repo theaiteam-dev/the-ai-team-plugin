@@ -198,10 +198,45 @@ export async function PATCH(
       }
     }
 
+    // Validate structured fields if provided
+    if (body.objective !== undefined && (typeof body.objective !== 'string' || body.objective === null)) {
+      const error = createValidationError('objective must be a string');
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
+    if (body.context !== undefined && (typeof body.context !== 'string' || body.context === null)) {
+      const error = createValidationError('context must be a string');
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
+    if (body.acceptance !== undefined) {
+      if (!Array.isArray(body.acceptance)) {
+        const error = createValidationError('acceptance must be an array of strings');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+      if (body.acceptance.some((item) => typeof item !== 'string' || item.trim() === '')) {
+        const error = createValidationError('acceptance criteria must be non-empty strings');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+      if (body.acceptance.length > 50) {
+        const error = createValidationError('acceptance must not exceed 50 criteria');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+      // Normalize: trim each criterion
+      body.acceptance = body.acceptance.map((item: string) => item.trim());
+      if (body.acceptance.some((item: string) => item.length > 500)) {
+        const error = createValidationError('acceptance criteria must not exceed 500 characters each');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+    }
+
     // Build update data
     const updateData: {
       title?: string;
       description?: string;
+      objective?: string | null;
+      acceptance?: string | null;
+      context?: string | null;
       type?: string;
       priority?: string;
       outputTest?: string | null;
@@ -217,6 +252,15 @@ export async function PATCH(
     }
     if (body.description !== undefined) {
       updateData.description = body.description;
+    }
+    if (body.objective !== undefined) {
+      updateData.objective = body.objective || null;
+    }
+    if (body.acceptance !== undefined) {
+      updateData.acceptance = body.acceptance ? JSON.stringify(body.acceptance) : null;
+    }
+    if (body.context !== undefined) {
+      updateData.context = body.context || null;
     }
     if (body.type !== undefined) {
       updateData.type = body.type;

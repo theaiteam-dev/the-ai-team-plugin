@@ -1,6 +1,11 @@
-# Security Patterns
+---
+name: security-input
+description: Security patterns for AI coding agents. Covers injection prevention, secrets handling, API error responses, URL path encoding, and an OWASP quick reference — with TypeScript examples.
+---
 
-Examples of common security vulnerabilities and their fixes.
+# Security Input Skill
+
+Security failures are almost always preventable. Apply these patterns consistently at every system boundary.
 
 ---
 
@@ -88,6 +93,42 @@ app.use((err, req, res, next) => {
 ```
 
 **What to flag:** Never expose stack traces, SQL, or internal state in production error responses. Include a request ID for traceability without leaking implementation details.
+
+---
+
+## URL Path Encoding
+
+Dynamic values embedded in URL path segments must be encoded with a path-segment encoder, not a query-string encoder. The two encoders have different rules: `/` is safe in query values but breaks routing in path segments.
+
+### Bad
+```typescript
+// Raw value breaks the URL path
+const userId = 'user/with/slashes';
+const url = `/api/users/${userId}/profile`;          // → /api/users/user/with/slashes/profile (wrong routing)
+
+// Query encoder applied to a path segment — %2F may still confuse routers
+const url = `/api/users/${encodeURIComponent(userId)}/profile`;
+
+// Raw search term in query string
+const search = 'hello world & more';
+const url = `/api/search?q=${search}`;               // → /api/search?q=hello world & more
+```
+
+### Good
+```typescript
+// Encode path segments separately; avoid slashes in path parameters by design
+// If IDs may contain slashes, store them differently or base64-encode at the storage layer
+
+// Encode query parameter values with encodeURIComponent
+const search = 'hello world & more';
+const url = `/api/search?q=${encodeURIComponent(search)}`;   // → /api/search?q=hello%20world%20%26%20more
+
+// Build URLs with URLSearchParams for multiple query values — encoding is automatic
+const params = new URLSearchParams({ q: search, page: '2' });
+const url = `/api/search?${params.toString()}`;
+```
+
+**What to flag:** Any string concatenation that places user-supplied data into a URL path or query string without encoding. Prefer `URLSearchParams` for query strings — it handles encoding automatically and prevents parameter injection.
 
 ---
 

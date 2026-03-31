@@ -14,6 +14,7 @@ import {
   createValidationError,
   createItemNotFoundError,
   createDatabaseError,
+  createWipLimitExceededError,
 } from '@/lib/errors';
 import { getAndValidateProjectId } from '@/lib/project-utils';
 import type { AgentStopRequest, AgentStopResponse, ApiError } from '@/types/api';
@@ -145,7 +146,7 @@ export async function POST(
     }
     const action: WorkLogAction = outcome === 'blocked' ? 'note' : 'completed';
 
-    // Delete the agent claim (by itemId, which is unique)
+    // Always release the claim and record work log — the work happened regardless of WIP limits
     await prisma.agentClaim.delete({
       where: { itemId: body.itemId },
     });
@@ -160,11 +161,25 @@ export async function POST(
       },
     });
 
-    // Update item: clear assignedAgent and move to next stage
+    // Check WIP limits on the target stage when advance=true (default)
+    const advance = body.advance !== false;
+    let wipExceeded = false;
+    if (advance) {
+      const targetStage = await prisma.stage?.findUnique({ where: { id: nextStage } });
+      if (targetStage != null && targetStage.wipLimit != null) {
+        const currentCount = await prisma.item.count({ where: { stageId: nextStage, projectId } });
+        if (currentCount >= targetStage.wipLimit) {
+          wipExceeded = true;
+        }
+      }
+    }
+
+    // Update item: clear assignedAgent, advance stage only when not WIP-blocked
+    const shouldAdvance = advance && !wipExceeded;
     await prisma.item.update({
       where: { id: body.itemId },
       data: {
-        stageId: nextStage,
+        ...(shouldAdvance ? { stageId: nextStage } : {}),
         assignedAgent: null,
       },
     });
@@ -178,14 +193,15 @@ export async function POST(
       timestamp: workLog.timestamp,
     };
 
-    // Return success response
+    // Return success response (work log always recorded)
     const response: AgentStopResponse = {
       success: true,
       data: {
         itemId: body.itemId,
         agent: body.agent,
         workLogEntry,
-        nextStage,
+        nextStage: shouldAdvance ? nextStage : (item.stageId as StageId),
+        ...(wipExceeded ? { wipExceeded: true, blockedStage: nextStage } : {}),
       },
     };
 

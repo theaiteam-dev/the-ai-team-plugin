@@ -241,6 +241,9 @@ describe('Multi-Project Isolation - Items', () => {
           description: 'Feature description',
           type: 'feature',
           priority: 'high',
+          objective: 'Test objective',
+          acceptance: ['criterion 1'],
+          context: 'Test context',
         }),
       });
 
@@ -634,6 +637,9 @@ describe('Multi-Project Isolation - Cross-Entity', () => {
           description: 'Description',
           type: 'feature',
           priority: 'medium',
+          objective: 'Test objective',
+          acceptance: ['criterion 1'],
+          context: 'Test context',
           dependencies: ['WI-999'], // This item is in project B
         }),
       });
@@ -679,6 +685,9 @@ describe('Multi-Project Isolation - Cross-Entity', () => {
           description: 'Description',
           type: 'feature',
           priority: 'medium',
+          objective: 'Test objective',
+          acceptance: ['criterion 1'],
+          context: 'Test context',
           dependencies: ['WI-001'],
         }),
       });
