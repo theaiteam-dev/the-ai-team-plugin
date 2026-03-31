@@ -8,7 +8,7 @@ if [ ! -f /app/prisma/data/ateam.db ]; then
   cp /app/prisma/data.init/ateam.db /app/prisma/data/ateam.db
 else
   echo "[ateam] Applying schema updates..."
-  npx prisma db push --skip-generate 2>&1 || {
+  node node_modules/prisma/build/index.js db push --skip-generate 2>&1 || {
     echo "[ateam] WARNING: Schema push failed, starting with existing schema"
   }
 fi
