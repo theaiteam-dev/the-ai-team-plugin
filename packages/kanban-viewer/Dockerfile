@@ -27,6 +27,10 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/shared ./node_modules/@ai-team/shared
 COPY packages/kanban-viewer/ .
 
+# Pin prisma version for both build-time and runtime consistency
+ARG PRISMA_VERSION=7.3.0
+RUN npm install prisma@${PRISMA_VERSION} @prisma/client@${PRISMA_VERSION} --save-exact
+
 # Seed the database into data.init/ — this is the factory-fresh DB baked into
 # the image. At runtime the entrypoint copies it to the volume mount path on
 # first boot so users get stages pre-configured without needing prisma at runtime.
