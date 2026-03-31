@@ -55,11 +55,15 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Install Prisma CLI for runtime schema migrations (db push on startup)
+# Copy full node_modules from build stage (includes prisma CLI for runtime migrations).
+# The standalone output bundles only the modules Next.js needs at runtime, keeping
+# memory usage low. The full node_modules on disk is only used by the entrypoint
+# to run prisma db push for schema migrations before the app starts.
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
+
+# Copy Prisma schema and config for runtime migrations
 COPY --from=builder --chown=nextjs:nodejs /app/prisma/schema.prisma ./prisma/schema.prisma
 COPY --from=builder --chown=nextjs:nodejs /app/prisma/prisma.config.ts ./prisma/prisma.config.ts
-ARG PRISMA_VERSION=7.3.0
-RUN npm install prisma@${PRISMA_VERSION} --no-save
 
 # Copy the seeded factory database (used to initialize empty volume mounts)
 COPY --from=builder --chown=nextjs:nodejs /app/prisma/data.init ./prisma/data.init
