@@ -27,10 +27,6 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/shared ./node_modules/@ai-team/shared
 COPY packages/kanban-viewer/ .
 
-# Pin prisma version for both build-time and runtime consistency
-ARG PRISMA_VERSION=7.3.0
-RUN npm install prisma@${PRISMA_VERSION} @prisma/client@${PRISMA_VERSION} --save-exact
-
 # Seed the database into data.init/ — this is the factory-fresh DB baked into
 # the image. At runtime the entrypoint copies it to the volume mount path on
 # first boot so users get stages pre-configured without needing prisma at runtime.
@@ -54,20 +50,8 @@ ENV DATABASE_URL="file:./prisma/data/ateam.db"
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-# Copy built assets
-COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-# Install Prisma CLI for runtime schema migrations (db push on startup).
-# Installed in /tmp to avoid the standalone package.json which has workspace:* refs,
-# then merged into /app/node_modules so all transitive deps are available.
-ARG PRISMA_VERSION=7.3.0
-RUN cd /tmp && npm init -y && npm install prisma@${PRISMA_VERSION} && \
-    cp -a /tmp/node_modules/. /app/node_modules/ && \
-    rm -rf /tmp/node_modules /tmp/package.json /tmp/package-lock.json
-COPY --from=builder --chown=nextjs:nodejs /app/prisma/schema.prisma ./prisma/schema.prisma
-COPY --from=builder --chown=nextjs:nodejs /app/prisma/prisma.config.ts ./prisma/prisma.config.ts
+# Copy full build output and node_modules (prisma CLI available for runtime migrations)
+COPY --from=builder --chown=nextjs:nodejs /app ./
 
 # Copy the seeded factory database (used to initialize empty volume mounts)
 COPY --from=builder --chown=nextjs:nodejs /app/prisma/data.init ./prisma/data.init
