@@ -58,7 +58,8 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # Install Prisma CLI for runtime schema migrations (db push on startup)
 COPY --from=builder --chown=nextjs:nodejs /app/prisma/schema.prisma ./prisma/schema.prisma
 COPY --from=builder --chown=nextjs:nodejs /app/prisma/prisma.config.ts ./prisma/prisma.config.ts
-RUN npm install prisma@7.3.0 --no-save
+ARG PRISMA_VERSION=7.3.0
+RUN npm install prisma@${PRISMA_VERSION} --no-save
 
 # Copy the seeded factory database (used to initialize empty volume mounts)
 COPY --from=builder --chown=nextjs:nodejs /app/prisma/data.init ./prisma/data.init
