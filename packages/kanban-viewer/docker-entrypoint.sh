@@ -13,4 +13,4 @@ else
   }
 fi
 
-exec npx next start
+exec node server.js

@@ -50,8 +50,20 @@ ENV DATABASE_URL="file:./prisma/data/ateam.db"
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-# Copy full build output and node_modules (prisma CLI available for runtime migrations)
-COPY --from=builder --chown=nextjs:nodejs /app ./
+# Copy standalone server and static assets
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+# Copy full node_modules from build stage (includes prisma CLI for runtime migrations).
+# The standalone output bundles only the modules Next.js needs at runtime, keeping
+# memory usage low. The full node_modules on disk is only used by the entrypoint
+# to run prisma db push for schema migrations before the app starts.
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
+
+# Copy Prisma schema and config for runtime migrations
+COPY --from=builder --chown=nextjs:nodejs /app/prisma/schema.prisma ./prisma/schema.prisma
+COPY --from=builder --chown=nextjs:nodejs /app/prisma/prisma.config.ts ./prisma/prisma.config.ts
 
 # Copy the seeded factory database (used to initialize empty volume mounts)
 COPY --from=builder --chown=nextjs:nodejs /app/prisma/data.init ./prisma/data.init
