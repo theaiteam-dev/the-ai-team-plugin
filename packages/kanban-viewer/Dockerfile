@@ -46,6 +46,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV DATABASE_URL="file:./prisma/data/ateam.db"
 
+# Install OpenSSL (required by Prisma engine)
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+
 # Create non-root user
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
