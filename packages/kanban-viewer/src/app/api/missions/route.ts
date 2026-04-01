@@ -5,6 +5,7 @@ import { getAndValidateProjectId, ensureProject } from '@/lib/project-utils';
 import { safeJsonParse } from '@/lib/json-utils';
 import type { CreateMissionRequest, CreateMissionResponse, ApiError } from '@/types/api';
 import type { Mission, MissionState, MissionPrecheckOutput } from '@/types/mission';
+import type { ScalingRationale } from '@/types/mission-scaling';
 
 /**
  * GET /api/missions
@@ -62,6 +63,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       archivedAt: m.archivedAt,
       precheckBlockers: safeJsonParse<string[]>(m.precheckBlockers),
       precheckOutput: safeJsonParse<MissionPrecheckOutput>(m.precheckOutput),
+      scalingRationale: safeJsonParse<ScalingRationale>(m.scalingRationale),
     }));
 
     return NextResponse.json({
@@ -226,6 +228,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         projectId,
         state: 'initializing',
         startedAt: new Date(),
+        ...(body.scalingRationale != null
+          ? { scalingRationale: JSON.stringify(body.scalingRationale) }
+          : {}),
       },
     });
 

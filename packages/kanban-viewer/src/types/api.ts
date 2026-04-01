@@ -9,6 +9,7 @@ import type { BoardState, StageId, WipStatus } from './board';
 import type { Item, ItemType, ItemPriority, ItemWithRelations, WorkLogEntry, ItemOutputs } from './item';
 import type { AgentName, AgentClaim } from './agent';
 import type { Mission, PrecheckResult, PostcheckResult } from './mission';
+import type { ScalingRationale } from './mission-scaling';
 
 // ============ Board Endpoints ============
 
@@ -214,6 +215,7 @@ export interface CreateMissionRequest {
   name: string;
   prdPath: string;
   force?: boolean;
+  scalingRationale?: ScalingRationale | null;
 }
 
 /**

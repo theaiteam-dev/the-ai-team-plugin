@@ -31,7 +31,16 @@ export function resolveAgent(hookInput) {
   if (!raw) return null;
 
   // Strip the ai-team: prefix if present, then normalize to lowercase
-  return raw.replace(/^ai-team:/, '').toLowerCase();
+  const normalized = raw.replace(/^ai-team:/, '').toLowerCase();
+
+  // Strip trailing dash-digit suffix (e.g. -1, -12) only when the base name is a known agent.
+  // Unknown agents (e.g. explore-1) keep their suffix intact.
+  const suffixMatch = normalized.match(/^(.+)-\d+$/);
+  if (suffixMatch && KNOWN_AGENTS.includes(suffixMatch[1])) {
+    return suffixMatch[1];
+  }
+
+  return normalized;
 }
 
 /**

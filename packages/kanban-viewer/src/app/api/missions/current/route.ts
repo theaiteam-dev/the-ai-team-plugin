@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getAndValidateProjectId } from '@/lib/project-utils';
+import { safeJsonParse } from '@/lib/json-utils';
 import type { GetCurrentMissionResponse, ApiError } from '@/types/api';
 import type { Mission } from '@/types/mission';
+import type { ScalingRationale } from '@/types/mission-scaling';
 
 /**
  * GET /api/missions/current
@@ -30,9 +32,22 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       },
     });
 
+    const data = mission
+      ? {
+          id: mission.id,
+          name: mission.name,
+          state: mission.state,
+          prdPath: mission.prdPath,
+          startedAt: mission.startedAt,
+          completedAt: mission.completedAt,
+          archivedAt: mission.archivedAt,
+          scalingRationale: safeJsonParse<ScalingRationale>(mission.scalingRationale),
+        }
+      : null;
+
     const response: GetCurrentMissionResponse = {
       success: true,
-      data: mission as Mission | null,
+      data: data as Mission | null,
     };
 
     return NextResponse.json(response);

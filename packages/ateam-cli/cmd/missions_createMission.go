@@ -15,6 +15,7 @@ var (
 	missionsCreateMissionCmd_force bool
 	missionsCreateMissionCmd_name string
 	missionsCreateMissionCmd_prdPath string
+	missionsCreateMissionCmd_concurrency int
 )
 
 var missionsCreateMissionCmd = &cobra.Command{
@@ -58,10 +59,24 @@ var missionsCreateMissionCmd = &cobra.Command{
 			}
 			return nil
 		}
+		// Capture and immediately reset concurrency state so that cobra command
+		// reuse across test executions doesn't leak stale Changed() status.
+		concurrencyFlag := cmd.Flags().Lookup("concurrency")
+		concurrencySet := concurrencyFlag.Changed
+		concurrencyValue := missionsCreateMissionCmd_concurrency
+		concurrencyFlag.Changed = false
+		missionsCreateMissionCmd_concurrency = 0
+
+		if concurrencySet && concurrencyValue < 1 {
+			return fmt.Errorf("--concurrency must be >= 1 when provided, got %d", concurrencyValue)
+		}
 		bodyMap := map[string]interface{}{}
 		bodyMap["force"] = missionsCreateMissionCmd_force
 		bodyMap["name"] = missionsCreateMissionCmd_name
 		bodyMap["prdPath"] = missionsCreateMissionCmd_prdPath
+		if concurrencySet {
+			bodyMap["concurrencyOverride"] = concurrencyValue
+		}
 		resp, err := c.Do("POST", "/api/missions", pathParams, queryParams, bodyMap)
 		if err != nil {
 			return err
@@ -86,6 +101,7 @@ func init() {
 	missionsCreateMissionCmd.Flags().BoolVar(&missionsCreateMissionCmd_force, "force", false, "")
 	missionsCreateMissionCmd.Flags().StringVar(&missionsCreateMissionCmd_name, "name", "", "")
 	missionsCreateMissionCmd.Flags().StringVar(&missionsCreateMissionCmd_prdPath, "prdPath", "", "")
+	missionsCreateMissionCmd.Flags().IntVar(&missionsCreateMissionCmd_concurrency, "concurrency", 0, "Override adaptive scaling with a fixed instance count (must be >= 1)")
 	missionsCreateMissionCmd.MarkFlagRequired("name")
 	missionsCreateMissionCmd.MarkFlagRequired("prdPath")
 }

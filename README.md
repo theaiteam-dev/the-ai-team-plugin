@@ -229,6 +229,19 @@ Use `--skip-refinement` to bypass Sosa for simple PRDs.
 **Before starting execution:**
 - **Pre-Mission Checks**: Runs `ateam missions-precheck missionPrecheck` to verify lint and tests pass (establishes baseline)
 
+**Concurrency control:**
+The system automatically calculates the optimal number of parallel agent instances based on:
+- **Dependency graph parallelism** — maximum items that can be tested/implemented simultaneously without dependency violations
+- **Memory budget** — WIP limits imposed by available context window
+
+Override automatic scaling with `--concurrency N` (at planning time or on retry):
+```bash
+/ai-team:plan ./docs/my-prd.md --concurrency 4
+# or on a retry after adjusting concurrency needs
+```
+
+The scaling decision (instance count, binding constraint, rationale) is visible in the Kanban UI scaling modal.
+
 Each feature flows through stages sequentially:
 
 ```
@@ -278,6 +291,21 @@ Feature 003:                   [testing]      ─→ ...
 ```
 
 WIP limit controls how many features are in-flight (not in briefings, ready, or done stages).
+
+### Multi-Instance Agent Pools
+
+When `--concurrency N` is set or adaptive scaling calculates multiple instances, the system spawns a pool of agents:
+
+```
+Murdock Pool:          B.A. Pool:
+- murdock-1    ─┐      - ba-1    ─┐
+- murdock-2    ─┼──→   - ba-2    ├──→ Lynch
+- murdock-3    ─┤      - ba-3    ├─┐
+                │      - ba-4    ─┘ ▼
+            (work items dispatched to available pool members)
+```
+
+Each pool member can work on a different feature simultaneously. Dispatch logic hands off work items to the next available instance in the pool, enabling true parallel development constrained only by dependency ordering and memory budget.
 
 ### True Individual Item Tracking
 
