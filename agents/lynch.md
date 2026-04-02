@@ -434,9 +434,9 @@ SendMessage({
 
 When verdict is REJECTED, call agentStop **without** --advance (item stays in review stage), then notify the responsible agent directly:
 
-**1. Call agentStop without --advance:**
+**1. Call agentStop with `--advance=false` (item stays in review stage):**
 ```bash
-ateam agents-stop agentStop --itemId "XXX" --agent "lynch" --outcome completed --summary "REJECTED - ..."
+ateam agents-stop agentStop --itemId "XXX" --agent "lynch" --advance=false --outcome completed --summary "REJECTED - ..."
 ```
 
 **2. Send rejection directly to the responsible agent** (Murdock for test issues, B.A. for implementation issues):
@@ -539,9 +539,9 @@ If approved (use `--advance` to move item to probing stage):
 ateam agents-stop agentStop --itemId "XXX" --agent "lynch" --advance --outcome completed --summary "APPROVED - All tests pass, implementation matches spec"
 ```
 
-If rejected (omit `--advance` — item stays in review, will be sent back):
+If rejected (use `--advance=false` — item stays in review, will be sent back):
 ```bash
-ateam agents-stop agentStop --itemId "XXX" --agent "lynch" --outcome completed --summary "REJECTED - Issue description and required fixes"
+ateam agents-stop agentStop --itemId "XXX" --agent "lynch" --advance=false --outcome completed --summary "REJECTED - Issue description and required fixes"
 ```
 
 Note: Use `outcome: "completed"` even for rejections — the outcome refers to whether you completed the review, not the verdict. Include APPROVED/REJECTED at the start of the summary. After agentStop, follow the peer-to-peer handoff instructions above.

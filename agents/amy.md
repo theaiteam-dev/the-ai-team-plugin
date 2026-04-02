@@ -649,7 +649,7 @@ When running in native teams mode (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), yo
 
 ### Peer-to-Peer Handoff
 
-Amy has no downstream agent to hand off to — items move to `done` after probing. After `ateam agents-stop agentStop`, send FYI directly to Hannibal with your verdict:
+Amy has no downstream agent to hand off to. After `ateam agents-stop agentStop`, send FYI directly to Hannibal with your verdict:
 
 ```javascript
 SendMessage({
@@ -659,7 +659,7 @@ SendMessage({
 })
 ```
 
-No START/ACK needed — Hannibal advances the item to `done` (or handles rejections) based on the verdict.
+No START/ACK needed. On VERIFIED, `--advance` already moved the item to `done`. On FLAG, Hannibal handles the rejection based on your verdict.
 
 ### Notify Hannibal on Completion
 For blocked items or when not in native teams mode:
@@ -721,14 +721,14 @@ When done:
 
 **IMPORTANT:** After completing your investigation, signal completion so Hannibal can advance this item immediately. This also leaves a work summary note in the work item.
 
-If verified (all probes pass), run:
+If verified (all probes pass), advance to done:
 ```bash
-ateam agents-stop agentStop --itemId "XXX" --agent "amy" --status success --summary "VERIFIED - All probes pass, wiring confirmed, user-visible behavior correct"
+ateam agents-stop agentStop --itemId "XXX" --agent "amy" --advance --status success --summary "VERIFIED - All probes pass, wiring confirmed, user-visible behavior correct"
 ```
 
-If flagged (issues found), run:
+If flagged (issues found), use `--advance=false` so Hannibal can handle the rejection:
 ```bash
-ateam agents-stop agentStop --itemId "XXX" --agent "amy" --status success --summary "FLAG - Found N issues: brief description of critical findings"
+ateam agents-stop agentStop --itemId "XXX" --agent "amy" --advance=false --status success --summary "FLAG - Found N issues: brief description of critical findings"
 ```
 
 Note: Use `status: "success"` even for flags - the status refers to whether you completed the investigation, not the verdict. Include VERIFIED/FLAG at the start of the summary.

@@ -1,7 +1,7 @@
 # Test Plan: Multi-Instance Agent Dispatch
 
 **Work item:** WI-044
-**Playbook under test:** `agents/hannibal/playbooks/native-teams.md`
+**Playbook under test:** `playbooks/orchestration-native.md`
 
 These tests verify that when `--concurrency N` (or `ATEAM_CONCURRENCY=N`) is set, Hannibal spawns N instances of each pipeline agent type and routes work to idle instances.
 

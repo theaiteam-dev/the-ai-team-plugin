@@ -1,7 +1,7 @@
 # Test Plan: File-Based Pool Handoffs Between Agent Instances
 
 **Work item:** WI-045
-**Playbook under test:** `agents/hannibal/playbooks/native-teams.md`
+**Playbook under test:** `playbooks/orchestration-native.md`
 **Related plan:** `dispatch.test.md` (WI-044 — covers intra-type dispatch and instance naming)
 
 These tests verify that when multi-instance mode is active, completed pipeline agents hand off to **any available instance** of the next agent type via the file-based pool directory — without routing through Hannibal.
