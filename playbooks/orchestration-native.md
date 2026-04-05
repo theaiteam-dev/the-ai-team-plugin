@@ -2,7 +2,7 @@
 
 > **You are in NATIVE TEAMS mode.** Use `TeamCreate`, `Task` with `team_name`/`name` params, and `SendMessage` for coordination.
 
-This playbook EXTENDS the base native teams orchestration with **multi-instance agent dispatch**. When `ATEAM_CONCURRENCY` (env) or `--concurrency` (flag) is set to N > 1, Hannibal spawns N instances of each pipeline agent type and routes work to idle instances. When absent or 0, falls back to single-instance behaviour (identical to the base playbook).
+This playbook EXTENDS the base native teams orchestration with **stage concurrency**: up to N items can be processed within the same stage simultaneously, each by its own agent instance. N is determined by `ateam scaling compute` (dep graph width × memory budget). When N=1, behaviour is identical to the base playbook (single instance per agent type, no suffixes).
 
 Read `docs/ORCHESTRATION.md` for environment setup, permissions, and dispatch reference.
 
@@ -108,8 +108,8 @@ if N < 1: N = 1
 **Do NOT default to N=1 just because the scaling command failed.** Use the fallback computation above.
 
 After getting the result:
-- If N == 1 → use single-instance mode (names: murdock, ba, lynch, amy — no suffix)
-- If N > 1  → use multi-instance mode (names: murdock-1..N, ba-1..N, etc.)
+- If N == 1 → single-instance mode (names: murdock, ba, lynch, amy — no suffix)
+- If N > 1  → stage concurrency mode (names: murdock-1..N, ba-1..N, etc.) — up to N items processed per stage simultaneously
 - Persist the scaling rationale via: `PATCH /api/missions/{missionId}` with `{scalingRationale: result.data}`
 
 > **Single-instance fallback:** When N=1, all instance names are the base names (`murdock`, `ba`, `lynch`, `amy`). `agentStart`/`agentStop` pass these exact names. The instance pool still tracks state, but there is only one entry per agent type.
@@ -158,23 +158,21 @@ POOL_DIR="/tmp/.ateam-pool/${MISSION_ID}"
 ```
 
 **Lifecycle:**
-- **Mission start:** Hannibal creates the directory and all `.idle` files after pre-warming instances.
-- **Agent gets work (agentStart):** Agent deletes its own `.idle` file (mark busy).
-- **Agent finishes work (agentStop):** Agent recreates its `.idle` file (mark idle) AFTER completing the handoff to the next stage.
-- **Claiming a target:** Sending agent atomically `mv`s a target's `.idle` file to `.busy`. On same-filesystem `mv`, only one of two racing agents will succeed — the loser gets ENOENT and retries the next idle file.
-- **Mission end:** Hannibal removes the entire pool directory.
+- **Mission start:** Hannibal creates the directory upfront, then creates `.idle` files for each lane only after receiving READY messages from all 4 agents in that lane (see Agent Pre-Warming).
+- **Agent gets work (agentStart):** Agent `mv`s its own `.idle` → `.busy` (marks itself busy).
+- **Agent finishes work (agentStop):** Agent `mv`s its own `.busy` → `.idle` AFTER completing the handoff to the next stage. Do NOT `touch` a new `.idle` — always `mv` the existing `.busy` back, so both files never coexist.
+- **Claiming a target:** Sending agent atomically `mv`s a target's `.idle` → `.busy`. On same-filesystem `mv`, only one of two racing agents will succeed — the loser gets ENOENT and retries the next idle file.
+- **Mission end:** Tawnia removes the entire pool directory after the final commit (not Hannibal — Tawnia's subagent dispatch guarantees this runs even if Hannibal's session ends early).
 
-**Initialization (Hannibal, at mission start after pre-warming):**
+**Directory creation (Hannibal, before pre-warming):**
 ```bash
 POOL_DIR="/tmp/.ateam-pool/${MISSION_ID}"
 mkdir -p "${POOL_DIR}"
-
-for instance in instance_pool:
-    touch "${POOL_DIR}/${instance.name}.idle"
+# .idle files are created per-lane after READY confirmation — see Agent Pre-Warming
 ```
 
 > **CRITICAL: Hannibal MUST NOT touch pool files after initialization.**
-> After creating the `.idle` files at mission start, Hannibal does not `touch`, `mv`, `rm`, or modify any file in `POOL_DIR`. Only the pipeline agents (Murdock, B.A., Lynch, Amy) manage their own `.idle`/`.busy` state. Hannibal manipulating pool files will contaminate the state and break peer-to-peer handoffs.
+> After creating `.idle` files for a lane, Hannibal does not `touch`, `mv`, `rm`, or modify any file in `POOL_DIR`. Only the pipeline agents (Murdock, B.A., Lynch, Amy) manage their own `.idle`/`.busy` state. Hannibal manipulating pool files will contaminate the state and break peer-to-peer handoffs.
 >
 > **Exception — ALERT recovery only:** If an agent sends an ALERT because the pool is in a bad state (e.g. orphaned `.busy` files from a crashed agent), Hannibal may `ls` the pool directory to diagnose the issue and fix it. This is reactive only — never preemptive. Query first (`ls`), fix only what's broken, then respond to the agent.
 
@@ -188,47 +186,75 @@ TeamCreate(team_name: "mission-{missionId}", description: "A(i)-Team mission: {m
 
 ## Agent Pre-Warming
 
-Spawn ALL instances immediately after team creation, before dispatching any work. This caches their prompts so subsequent `SendMessage` calls are cheap (cached prefix).
+Spawn instances **one lane at a time**. Each lane is the complete pipeline quartet for a single concurrency slot: `murdock-N`, `ba-N`, `lynch-N`, `amy-N`. Spawning 4 at once keeps the tmux pane count per window at exactly 4 — the tmux `after-split-window` hook breaks any 5th pane into a new window, so each lane lands in its own tmux window automatically.
+
+**Wait for all 4 agents in a lane to register as `.idle` before spawning the next lane.** This prevents pane creation bursts and ensures the pool directory reflects reality before the next batch starts.
 
 ```
-for instance in instance_pool:
-    subagent_type = agentTypeToSubagent(instance.agentType)
-    # agentType → subagent_type map:
-    #   murdock → "ai-team:murdock"
-    #   ba      → "ai-team:ba"
-    #   lynch   → "ai-team:lynch"
-    #   amy     → "ai-team:amy"
+# agentType → subagent_type map:
+#   murdock → "ai-team:murdock"
+#   ba      → "ai-team:ba"
+#   lynch   → "ai-team:lynch"
+#   amy     → "ai-team:amy"
 
-    Task(
-        team_name:    "mission-{missionId}",
-        name:         instance.name,
-        subagent_type: subagent_type,
-        description:  "{instance.name}: standby",
-        prompt:       "You are {instance.name} ({instance.agentType} instance {instanceNumber}).
-                       Await work item assignments from Hannibal via SendMessage.
-                       When receiving work, use exactly '--agent \"{instance.name}\"' in all
-                       ateam agents-start and ateam agents-stop commands.
-                       After completing work, include your instance name in completion
-                       messages: 'DONE: WI-XXX - summary ({instance.name})'."
-    )
+for lane_number in 1..N:
+    lane_instances = instance_pool filtered to lane_number
+    # lane_instances = [murdock-N, ba-N, lynch-N, amy-N]
+
+    for instance in lane_instances:
+        Task(
+            team_name:    "mission-{missionId}",
+            name:         instance.name,
+            subagent_type: agentTypeToSubagent(instance.agentType),
+            description:  "{instance.name}: standby",
+            prompt:       "You are {instance.name} ({instance.agentType} instance {lane_number}).
+                           Your FIRST action on startup is to send Hannibal a ready signal:
+                             SendMessage(to: 'hannibal', content: 'READY: {instance.name}')
+                           Then await work item assignments from Hannibal via SendMessage.
+                           When receiving work, use exactly '--agent \"{instance.name}\"' in all
+                           ateam agents-start and ateam agents-stop commands.
+                           After completing work, include your instance name in completion
+                           messages: 'DONE: WI-XXX - summary ({instance.name})'."
+        )
+
+    # Wait for READY messages from all 4 agents in this lane before continuing.
+    # Hannibal then creates their .idle files and proceeds to spawn the next lane.
+    wait_for_lane_ready(lane_number)
+
+    # Create .idle files for this lane now that agents are confirmed alive
+    for instance in lane_instances:
+        touch "${POOL_DIR}/${instance.name}.idle"
+```
+
+**`wait_for_lane_ready(lane_number)`**: Block on incoming `SendMessage` until all 4 expected READY messages arrive:
+
+```
+lane_agents = {"murdock-{N}", "ba-{N}", "lynch-{N}", "amy-{N}"}
+ready = set()
+
+while ready != lane_agents:
+    msg = receive next SendMessage
+    if msg.content starts with "READY:" and msg.sender in lane_agents:
+        ready.add(msg.sender)
 ```
 
 **Example with N=2:**
 ```
-Task(team_name: "mission-M1", name: "murdock-1", subagent_type: "ai-team:murdock",
-     description: "murdock-1: standby",
-     prompt: "You are murdock-1. Await work from Hannibal. Use '--agent \"murdock-1\"' in agentStart/agentStop.")
+# Lane 1 — spawn 4 together, wait for all 4 READY messages, create .idle files
+Task(team_name: "mission-M1", name: "murdock-1", subagent_type: "ai-team:murdock", ...)
+Task(team_name: "mission-M1", name: "ba-1",      subagent_type: "ai-team:ba",      ...)
+Task(team_name: "mission-M1", name: "lynch-1",   subagent_type: "ai-team:lynch",   ...)
+Task(team_name: "mission-M1", name: "amy-1",     subagent_type: "ai-team:amy",     ...)
+# → receive READY from murdock-1, ba-1, lynch-1, amy-1
+# → touch murdock-1.idle, ba-1.idle, lynch-1.idle, amy-1.idle
 
-Task(team_name: "mission-M1", name: "murdock-2", subagent_type: "ai-team:murdock",
-     description: "murdock-2: standby",
-     prompt: "You are murdock-2. Await work from Hannibal. Use '--agent \"murdock-2\"' in agentStart/agentStop.")
-
-Task(team_name: "mission-M1", name: "ba-1", subagent_type: "ai-team:ba", ...)
-Task(team_name: "mission-M1", name: "ba-2", subagent_type: "ai-team:ba", ...)
-Task(team_name: "mission-M1", name: "lynch-1", subagent_type: "ai-team:lynch", ...)
-Task(team_name: "mission-M1", name: "lynch-2", subagent_type: "ai-team:lynch", ...)
-Task(team_name: "mission-M1", name: "amy-1", subagent_type: "ai-team:amy", ...)
-Task(team_name: "mission-M1", name: "amy-2", subagent_type: "ai-team:amy", ...)
+# Lane 2 — spawned only after lane 1 is confirmed alive
+Task(team_name: "mission-M1", name: "murdock-2", subagent_type: "ai-team:murdock", ...)
+Task(team_name: "mission-M1", name: "ba-2",      subagent_type: "ai-team:ba",      ...)
+Task(team_name: "mission-M1", name: "lynch-2",   subagent_type: "ai-team:lynch",   ...)
+Task(team_name: "mission-M1", name: "amy-2",     subagent_type: "ai-team:amy",     ...)
+# → receive READY from murdock-2, ba-2, lynch-2, amy-2
+# → touch murdock-2.idle, ba-2.idle, lynch-2.idle, amy-2.idle
 ```
 
 Tawnia and Stockwell are NOT pre-warmed (each runs once at mission end — caching won't help).
@@ -339,9 +365,7 @@ LOOP CONTINUOUSLY:
         claimed = claimInstance(alert.target_agent_type)
         if claimed:
             pending_alerts.remove(alert)
-            next_stage = {ba: "implementing", lynch: "review", amy: "probing"}[alert.target_agent_type]
-            agent_label = {ba: "B.A.", lynch: "Lynch", amy: "Amy"}[alert.target_agent_type]
-            Bash("ateam board-move moveItem --itemId {alert.item_id} --toStage {next_stage} --agent {agent_label}")
+            Bash("ateam agents-start agentStart --itemId {alert.item_id} --agent {claimed}")
             dispatch(claimed, alert.item_id)
             active_instances[alert.item_id] = claimed
 
@@ -367,7 +391,7 @@ LOOP CONTINUOUSLY:
         if claimed is null: break  # all Murdock instances busy
 
         item_id = pick next item from ready stage
-        result = Bash("ateam board-move moveItem --itemId {item_id} --toStage testing --agent Murdock")
+        result = Bash("ateam agents-start agentStart --itemId {item_id} --agent {claimed}")
         if result is WIP error:
             # Release the claim — put .idle file back
             mv "${POOL_DIR}/${claimed}.busy" "${POOL_DIR}/${claimed}.idle"
@@ -410,9 +434,9 @@ function dispatch(instance, item_id):
 ### Dispatching Murdock (testing stage)
 
 ```
-# Claim an idle Murdock instance via pool directory, then move to testing
+# Claim an idle Murdock instance via pool directory, then register claim
 claimed = claimInstance("murdock")   # e.g. returns "murdock-2"
-ateam board-move moveItem --itemId 001 --toStage testing --agent Murdock
+ateam agents-start agentStart --itemId 001 --agent murdock-2
 active_instances[001] = "murdock-2"
 ```
 
@@ -427,6 +451,9 @@ Task(
 
   Feature Item:
   [Full content of the work item]
+
+  First, register your claim:
+  `ateam agents-start agentStart --itemId {itemId} --agent \"murdock-2\"`
 
   Create the test file at: {outputs.test}
   If outputs.types is specified, also create: {outputs.types}
@@ -443,7 +470,7 @@ Task(
 SendMessage(
   type: "message",
   recipient: "murdock-2",
-  content: "New work: WI-005 - {title}\nTest file: {outputs.test}\nTypes file: {outputs.types}\nFetch full details with `ateam items renderItem --id WI-005`.\nUse '--agent \"murdock-2\"' in agentStart/agentStop.",
+  content: "New work: WI-005 - {title}\nTest file: {outputs.test}\nTypes file: {outputs.types}\nFetch full details with `ateam items renderItem --id WI-005`.\nFirst run: `ateam agents-start agentStart --itemId WI-005 --agent \"murdock-2\"`",
   summary: "New test work for WI-005"
 )
 ```
@@ -454,7 +481,7 @@ Note: In normal pipeline flow, B.A. dispatch happens via peer-to-peer handoff fr
 
 ```
 claimed = claimInstance("ba")   # e.g. returns "ba-1"
-ateam board-move moveItem --itemId 001 --toStage implementing --agent B.A.
+ateam agents-start agentStart --itemId 001 --agent ba-1
 active_instances[001] = "ba-1"
 ```
 
@@ -469,6 +496,9 @@ Task(
 
   Feature Item:
   [Full content of the work item]
+
+  First, register your claim:
+  `ateam agents-start agentStart --itemId {itemId} --agent \"ba-1\"`
 
   Test file is at: {outputs.test}
   Create the implementation at: {outputs.impl}
@@ -486,7 +516,7 @@ Note: In normal pipeline flow, Lynch dispatch happens via peer-to-peer handoff f
 
 ```
 claimed = claimInstance("lynch")   # e.g. returns "lynch-1"
-ateam board-move moveItem --itemId 001 --toStage review --agent Lynch
+ateam agents-start agentStart --itemId 001 --agent lynch-1
 active_instances[001] = "lynch-1"
 ```
 
@@ -501,6 +531,9 @@ Task(
 
   Feature Item:
   [Full content of the work item]
+
+  First, register your claim:
+  `ateam agents-start agentStart --itemId {itemId} --agent \"lynch-1\"`
 
   Review ALL these files together:
   - Test: {outputs.test}
@@ -518,7 +551,7 @@ Note: In normal pipeline flow, Amy dispatch happens via peer-to-peer handoff fro
 
 ```
 claimed = claimInstance("amy")   # e.g. returns "amy-2"
-ateam board-move moveItem --itemId 001 --toStage probing --agent Amy
+ateam agents-start agentStart --itemId 001 --agent amy-2
 active_instances[001] = "amy-2"
 ```
 
@@ -533,6 +566,9 @@ Task(
 
   Feature Item:
   [Full content of the work item]
+
+  First, register your claim:
+  `ateam agents-start agentStart --itemId {itemId} --agent \"amy-2\"`
 
   Files to probe:
   - Test: {outputs.test}
@@ -655,8 +691,9 @@ Every pipeline agent (except Amy, who has no downstream handoff) executes this f
 POOL_DIR="/tmp/.ateam-pool/${MISSION_ID}"
 NEXT_TYPE="ba"   # murdock→ba, ba→lynch, lynch→amy
 
-# Step 1: Recreate own .idle file (mark self as available for new work)
-touch "${POOL_DIR}/${MY_INSTANCE_NAME}.idle"
+# Step 1: Return own .busy file to .idle (mark self as available for new work)
+# MUST use mv — do NOT touch a new .idle file. Both files coexisting = corrupted pool state.
+mv "${POOL_DIR}/${MY_INSTANCE_NAME}.busy" "${POOL_DIR}/${MY_INSTANCE_NAME}.idle"
 
 # Step 2: Attempt to claim an idle instance of the next agent type
 MAX_RETRIES=3
@@ -682,7 +719,7 @@ if [ -n "$CLAIMED" ]; then
     SendMessage(
         type: "message",
         recipient: "${CLAIMED}",
-        content: "START: WI-005 - {title}\nTest file: {outputs.test}\nImpl file: {outputs.impl}\nFetch details: ateam items renderItem --id WI-005\nUse '--agent \"${CLAIMED}\"' in agentStart/agentStop.",
+        content: "START: WI-005 - {title}\nTest file: {outputs.test}\nImpl file: {outputs.impl}\nFetch details: ateam items renderItem --id WI-005\nFirst run: ateam agents-start agentStart --itemId WI-005 --agent \"${CLAIMED}\"",
         summary: "Handoff WI-005 to ${CLAIMED}"
     )
 
@@ -784,9 +821,13 @@ Setup:
 
 ```
 T=0s    HANNIBAL:
-        Pre-warm: spawn murdock-1, murdock-2, ba-1, ba-2, lynch-1, lynch-2, amy-1, amy-2
-        Create pool dir: mkdir -p /tmp/.ateam-pool/M1/
-        Create .idle files: murdock-1.idle, murdock-2.idle, ba-1.idle, ba-2.idle, ...
+        mkdir -p /tmp/.ateam-pool/M1/
+
+        Pre-warm lane 1: spawn murdock-1, ba-1, lynch-1, amy-1
+        Wait for READY from all 4 → create murdock-1.idle, ba-1.idle, lynch-1.idle, amy-1.idle
+
+        Pre-warm lane 2: spawn murdock-2, ba-2, lynch-2, amy-2
+        Wait for READY from all 4 → create murdock-2.idle, ba-2.idle, lynch-2.idle, amy-2.idle
 
         deps-check → readyItems: [001, 002, 003]
         board-move 001 → ready, board-move 002 → ready, board-move 003 → ready
@@ -803,7 +844,7 @@ T=0s    HANNIBAL:
 
 T=30s   MURDOCK-1 finishes WI-001:
         agentStop --advance (WI-001 → implementing)
-        touch murdock-1.idle                           # mark self idle
+        mv murdock-1.busy → murdock-1.idle             # mark self idle (mv, NOT touch)
         ls ba-*.idle → ba-1.idle                       # find idle ba
         mv ba-1.idle → ba-1.busy                       # claim ba-1 (atomic)
         SendMessage(to: "ba-1", "START: WI-001...")    # direct peer handoff
@@ -818,7 +859,7 @@ T=30s   MURDOCK-1 finishes WI-001:
 
 T=40s   MURDOCK-2 finishes WI-002:
         agentStop --advance (WI-002 → implementing)
-        touch murdock-2.idle
+        mv murdock-2.busy → murdock-2.idle
         ls ba-*.idle → ba-2.idle
         mv ba-2.idle → ba-2.busy
         SendMessage(to: "ba-2", "START: WI-002...")
@@ -826,7 +867,7 @@ T=40s   MURDOCK-2 finishes WI-002:
 
 T=60s   BA-1 finishes WI-001:
         agentStop --advance (WI-001 → review)
-        touch ba-1.idle
+        mv ba-1.busy → ba-1.idle
         ls lynch-*.idle → lynch-1.idle
         mv lynch-1.idle → lynch-1.busy
         SendMessage(to: "lynch-1", "START: WI-001...")
@@ -834,7 +875,7 @@ T=60s   BA-1 finishes WI-001:
 
 T=65s   MURDOCK-1 finishes WI-003:
         agentStop --advance (WI-003 → implementing)
-        touch murdock-1.idle
+        mv murdock-1.busy → murdock-1.idle
         ls ba-*.idle → ba-1.idle (ba-1 just freed at T=60s)
         mv ba-1.idle → ba-1.busy
         SendMessage(to: "ba-1", "START: WI-003...")

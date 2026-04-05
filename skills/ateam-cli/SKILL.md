@@ -1,3 +1,8 @@
+---
+name: ateam-cli
+description: ateam CLI reference for all A(i)-Team API interactions. Consult this skill when running any ateam command, piping ateam output to python/jq/shell, reading item or mission data programmatically, or unsure which flag or subcommand to use.
+---
+
 # ateam CLI Skill
 
 The `ateam` binary is a Go CLI generated from the A(i)-Team OpenAPI spec. It provides direct access to every API endpoint without needing `curl` or raw HTTP.
@@ -27,6 +32,22 @@ ateam --base-url http://localhost:3000 board getBoard
 ateam --json board getBoard
 ateam --json items listItems | jq '.[] | .title'
 ```
+
+## The --json Rule
+
+**Always use `--json` when piping or parsing ateam output programmatically.** Without it, the CLI outputs a human-readable table that cannot be parsed as JSON.
+
+```bash
+# WRONG — json.load() / jq will fail, table output is not JSON
+ateam items getItem --id WI-109 | python3 -c "import json,sys; d=json.load(sys.stdin)..."
+ateam board getBoard | jq '.data'
+
+# CORRECT — always add --json when consuming output in code
+ateam items getItem --id WI-109 --json | python3 -c "import json,sys; d=json.load(sys.stdin)..."
+ateam board getBoard --json | jq '.data'
+```
+
+**Rule:** If your next step after `ateam` is a pipe (`|`) or variable capture (`$()`), you need `--json`. No exceptions.
 
 ## The --help Rule
 
@@ -160,12 +181,50 @@ Agents use `ateam` via `Bash` for all API operations. Here is the complete mappi
 | Signal agent completion | `ateam agents-stop agentStop --itemId <id> --agent <name> --status success --summary "..."` |
 | Initialize mission | `ateam missions createMission [flags]` |
 | Get active mission | `ateam missions-current getCurrentMission --json` |
-| Submit precheck results | `ateam missions-precheck missionPrecheck --passed true/false [flags]` |
+| Submit precheck results | see missionPrecheck rules below |
 | Submit postcheck | `ateam missions-postcheck missionPostcheck --json` |
 | Archive mission | `ateam missions-archive archiveMission --json` |
 | Check dep readiness | `ateam deps-check checkDeps --json` |
 | Log activity message | `ateam activity createActivityEntry --agent <name> --message "..." --level info` |
 | View activity log | `ateam activity listActivity --json` |
+
+## missionPrecheck — Flag Rules
+
+`--passed` is a **boolean flag**, not a string argument. Common mistakes:
+
+```bash
+# WRONG — "true" is parsed as an unknown subcommand
+ateam missions-precheck missionPrecheck --passed true
+
+# CORRECT — bare flag = true
+ateam missions-precheck missionPrecheck --passed
+
+# CORRECT — explicit false
+ateam missions-precheck missionPrecheck --passed=false
+```
+
+`--output` expects a **JSON string that parses to an object**:
+
+```bash
+# WRONG — raw JSON object passed directly
+ateam missions-precheck missionPrecheck --passed --output {"unit":"7 tests passed"}
+
+# CORRECT — JSON string
+ateam missions-precheck missionPrecheck --passed --output '{"unit":"7 tests passed","stderr":""}'
+```
+
+`--blockers` must be **omitted entirely when empty** — do not pass `--blockers '[]'`:
+
+```bash
+# WRONG — empty array causes validation error
+ateam missions-precheck missionPrecheck --passed --blockers '[]'
+
+# CORRECT — omit --blockers when there are none
+ateam missions-precheck missionPrecheck --passed --output '{"unit":"7 tests passed"}'
+
+# CORRECT — only include --blockers when there are actual blockers
+ateam missions-precheck missionPrecheck --passed=false --blockers "lint failed" --blockers "type errors"
+```
 
 **Note on `plugin_root`:** This was an MCP tool that returned the plugin directory path. It is no longer needed — use `${CLAUDE_PLUGIN_ROOT}` directly in Bash commands instead.
 
