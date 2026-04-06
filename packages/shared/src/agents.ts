@@ -25,7 +25,7 @@ export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 };
 
 export function normalizeAgentName(raw: string): string {
-  return raw.toLowerCase().replace(/\./g, '');
+  return raw.toLowerCase().replace(/\./g, '').replace(/-\d+$/, '');
 }
 
 export function isValidAgent(name: string): name is AgentId {

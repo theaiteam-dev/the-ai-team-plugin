@@ -13,7 +13,9 @@ export interface ScalingRationale {
   depGraphMaxPerStage: number;
   /** WIP ceiling imposed by available memory. */
   memoryBudgetCeiling: number;
-  /** Which constraint is the binding factor (e.g. 'memory', 'dep-graph', 'wip'). */
+  /** Per-stage WIP limit from the board configuration. */
+  wipLimit: number;
+  /** Which constraint is the binding factor (e.g. 'memory', 'dep_graph', 'wip'). */
   bindingConstraint: string;
   /** Manual --concurrency override, or null when adaptive scaling applies. */
   concurrencyOverride: number | null;

@@ -7,9 +7,11 @@ export interface AdaptiveScalingInput {
   depGraphMax: number;
   /** Memory budget ceiling (max instances memory can support). */
   memoryCeiling: number;
+  /** Per-stage WIP limit from the board configuration. */
+  wipLimit: number;
   /** Optional manual --concurrency override. */
   concurrencyOverride?: number;
 }
 
 /** The constraint that determined the final instance count. */
-export type BindingConstraint = 'dep_graph' | 'memory' | 'override';
+export type BindingConstraint = 'dep_graph' | 'memory' | 'wip' | 'override';

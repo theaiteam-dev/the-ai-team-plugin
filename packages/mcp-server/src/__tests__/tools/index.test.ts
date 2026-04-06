@@ -24,13 +24,13 @@ describe('Tool Registration (tools/index)', () => {
 
 
   describe('Tool Count and Registration', () => {
-    it('should register exactly 22 tools', async () => {
+    it('should register exactly 21 tools', async () => {
       const { registerAllTools, getAllToolDefinitions } = await import('../../tools/index.js');
 
       registerAllTools(mockServer as never);
 
       const toolDefinitions = getAllToolDefinitions();
-      expect(toolDefinitions).toHaveLength(22);
+      expect(toolDefinitions).toHaveLength(21);
     });
 
     it('should register all board tools (4)', async () => {
@@ -58,7 +58,6 @@ describe('Tool Registration (tools/index)', () => {
         'item_update',
         'item_get',
         'item_list',
-        'item_reject',
         'item_render',
       ];
 
@@ -132,18 +131,18 @@ describe('Tool Registration (tools/index)', () => {
 
 
   describe('tools/list Handler', () => {
-    it('should register all 22 tools via server.tool() API', async () => {
+    it('should register all 21 tools via server.tool() API', async () => {
       const { registerAllTools } = await import('../../tools/index.js');
 
       registerAllTools(mockServer as never);
 
       // With the high-level server.tool() API, the MCP SDK handles tools/list internally.
-      // We verify all 22 tools were registered via server.tool() calls.
-      expect(mockTool.mock.calls.length).toBe(22);
+      // We verify all 21 tools were registered via server.tool() calls.
+      expect(mockTool.mock.calls.length).toBe(21);
 
       // Verify the tool names registered match the expected set
       const registeredNames = mockTool.mock.calls.map((call: unknown[]) => call[0]).sort();
-      expect(registeredNames).toHaveLength(22);
+      expect(registeredNames).toHaveLength(21);
     });
 
     it('registered tool names should match getAllToolDefinitions', async () => {

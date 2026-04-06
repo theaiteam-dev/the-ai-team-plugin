@@ -17,25 +17,32 @@ import type { AdaptiveScalingInput } from './adaptive-scaling-types.js';
  * @returns ScalingRationale with instanceCount and binding constraint
  */
 export function computeAdaptiveScaling(input: AdaptiveScalingInput): ScalingRationale {
-  const { depGraphMax, memoryCeiling, concurrencyOverride } = input;
+  const { depGraphMax, memoryCeiling, wipLimit, concurrencyOverride } = input;
 
   if (concurrencyOverride !== undefined) {
     return {
       instanceCount: concurrencyOverride,
       depGraphMaxPerStage: depGraphMax,
       memoryBudgetCeiling: memoryCeiling,
+      wipLimit,
       bindingConstraint: 'override',
       concurrencyOverride,
     };
   }
 
-  const instanceCount = Math.min(depGraphMax, memoryCeiling);
-  const bindingConstraint = depGraphMax <= memoryCeiling ? 'dep_graph' : 'memory';
+  const instanceCount = Math.min(depGraphMax, memoryCeiling, wipLimit);
+  const bindingConstraint =
+    instanceCount === wipLimit && wipLimit <= depGraphMax && wipLimit <= memoryCeiling
+      ? 'wip'
+      : depGraphMax <= memoryCeiling
+        ? 'dep_graph'
+        : 'memory';
 
   return {
     instanceCount,
     depGraphMaxPerStage: depGraphMax,
     memoryBudgetCeiling: memoryCeiling,
+    wipLimit,
     bindingConstraint,
     concurrencyOverride: null,
   };
