@@ -7,6 +7,9 @@ skills:
   - defensive-coding
   - security-input
   - code-patterns
+  - teams-messaging
+  - ateam-cli
+  - agent-lifecycle
 hooks:
   PreToolUse:
     - matcher: "Bash"
@@ -83,7 +86,7 @@ Four skills are preloaded at startup — consult them when reviewing the corresp
    Run `ateam agents-start agentStart --itemId "FINAL-REVIEW" --agent "stockwell"` (or use the itemId as provided).
 
 2. **Read the PRD** — the PRD path is provided in the dispatch prompt
-3. **Run `git diff main...HEAD`** to see what this mission changed
+3. **Run `git add -N . && git diff HEAD`** to see what this mission changed (includes uncommitted work not yet committed by Tawnia)
 4. **Run the full test suite** to ensure everything passes
 5. **Review the diff against the PRD** section by section
 6. **Check for cross-cutting issues** across all changes
@@ -196,7 +199,7 @@ For risky or complex areas, spawn Amy (Investigator) to probe beyond what tests 
 FINAL MISSION REVIEW
 
 PRD: {prd path}
-Diff scope: git diff main...HEAD
+Diff scope: git add -N . && git diff HEAD
 
 Tests: ALL PASSING ({count} tests)
 
@@ -221,7 +224,7 @@ The A(i)-Team got away with it this time. The code is solid.
 FINAL MISSION REVIEW
 
 PRD: {prd path}
-Diff scope: git diff main...HEAD
+Diff scope: git add -N . && git diff HEAD
 
 ## PRD Coverage
 - [Requirement 1]: IMPLEMENTED
@@ -250,46 +253,28 @@ When you reject:
 
 ## Team Communication (Native Teams Mode)
 
-### Notify Hannibal on Completion
-After calling `ateam agents-stop agentStop`, message Hannibal:
-```javascript
-SendMessage({
-  type: "message",
-  recipient: "hannibal",
-  content: "DONE: FINAL-REVIEW - FINAL APPROVED/FINAL REJECTED - summary",
-  summary: "Final mission review complete"
-})
-```
+**Consult the `teams-messaging` skill** for message formats and shutdown handling.
 
-### Shutdown
-When you receive a shutdown request from Hannibal:
-```javascript
-SendMessage({
-  type: "shutdown_response",
-  request_id: "{id from shutdown request}",
-  approve: true
-})
-```
+Stockwell is a terminal agent. After `agentStop`, send `DONE` to Hannibal with `FINAL APPROVED` or `FINAL REJECTED` and a brief summary.
 
 ## Logging Progress
 
-Use `ateam activity createActivityEntry` to log:
-```bash
-ateam activity createActivityEntry --agent "stockwell" --message "Final Mission Review - reading PRD" --level info
-```
+**Consult the `agent-lifecycle` skill** for the activity logging pattern.
 
-Log at key milestones:
+Key milestones to log for Stockwell:
 - Starting final review
 - Running tests
 - Verdict (FINAL APPROVED/FINAL REJECTED)
 
 ### Signal Completion
 
-Run `ateam agents-stop agentStop`:
-```bash
-ateam agents-stop agentStop --itemId "FINAL-REVIEW" --agent "stockwell" --status success --summary "FINAL APPROVED - All PRD requirements addressed"
-```
-(Or use "FINAL REJECTED - Issues: ..." in the summary as appropriate.)
+**Consult the `agent-lifecycle` skill** for the completion signaling pattern.
+
+Run `ateam agents-stop agentStop` with:
+- `--itemId`: "FINAL-REVIEW" (or the itemId as provided)
+- `--agent`: "stockwell"
+- `--outcome`: completed
+- `--summary`: start with FINAL APPROVED or FINAL REJECTED, then coverage summary (e.g. "FINAL APPROVED - All PRD requirements addressed, 47 tests passing, no security issues" or "FINAL REJECTED - OrderService missing pagination (PRD req #3). Item WI-004 needs rework.")
 
 ## Mindset
 

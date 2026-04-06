@@ -6,6 +6,10 @@ permissionMode: acceptEdits
 skills:
   - test-writing
   - tdd-workflow
+  - pool-handoff
+  - teams-messaging
+  - ateam-cli
+  - agent-lifecycle
 hooks:
   PreToolUse:
     - matcher: "Bash"
@@ -224,7 +228,7 @@ If you receive a work item with `NO_TEST_NEEDED` in the description and `outputs
 **You should not be dispatched for this item at all.** Hannibal should skip the testing stage and move it directly to implementing. If you ARE dispatched for such an item by mistake:
 
 1. Log the situation: `ateam activity createActivityEntry --agent "Murdock" --message "Item {id} is flagged NO_TEST_NEEDED - no tests to write" --level info`
-2. Run `ateam agents-stop agentStop --itemId "{id}" --agent "murdock" --status success --summary "No tests needed - item is a non-code change (documentation/config)"`
+2. Run `ateam agents-stop agentStop --itemId "{id}" --agent "murdock" --outcome completed --summary "No tests needed - item is a non-code change (documentation/config)"`
 3. Do NOT create an empty test file or a placeholder test
 4. Report back to Hannibal that no tests were written
 
@@ -239,6 +243,8 @@ If you receive a work item with `NO_TEST_NEEDED` in the description and `outputs
 ## Process
 
 ### Step 1: Claim the Work Item
+
+**Consult the `pool-handoff` skill** to claim your pool slot (`mv own .idle → .busy`) before proceeding.
 
 Run `ateam agents-start agentStart --itemId "XXX" --agent "murdock"` (replace XXX with actual item ID).
 
@@ -407,126 +413,27 @@ describe('OrderSyncService', () => {
 
 ## Logging Progress
 
-Log your progress to the Live Feed using `ateam activity createActivityEntry`:
+**Consult the `agent-lifecycle` skill** for the activity logging pattern.
 
-```bash
-ateam activity createActivityEntry --agent "Murdock" --message "Writing tests for order sync" --level info
-```
-
-Example messages:
-- "Writing tests for order sync"
-- "Created 4 test cases"
-- "Tests ready - all failing as expected"
-
-**IMPORTANT:** Always use `ateam activity createActivityEntry` for activity logging.
-
-Log at key milestones:
+Key milestones to log for Murdock:
 - Starting work on a feature
 - Creating test/type files
-- Tests complete and verified
+- Tests complete and verified (all failing for the right reason)
 
 ## Team Communication (Native Teams Mode)
 
-When running in native teams mode (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), you are a teammate in an A(i)-Team mission with direct messaging capabilities.
+**Consult the `teams-messaging` skill** for message formats, the wait-and-ACK protocol, and shutdown handling.
 
-### Peer-to-Peer Handoff
-
-After `ateam agents-stop agentStop --advance` completes, hand off directly to B.A. — no need to wait for Hannibal to dispatch:
-
-**1. Send START to B.A.:**
-```javascript
-SendMessage({
-  to: "ba",
-  message: "START: {itemId} - Tests ready at {outputs.test}. {one-line summary of what to implement}",
-  summary: "START {itemId}"
-})
-```
-
-**2. Wait up to 20 seconds** for B.A. to reply with `ACK: {itemId}`.
-
-**3a. On ACK received — send FYI to Hannibal:**
-```javascript
-SendMessage({
-  to: "hannibal",
-  message: "FYI: {itemId} - Tests handed off to B.A. directly. ACK received.",
-  summary: "Handoff complete for {itemId}"
-})
-```
-
-**3b. On timeout (no ACK after 20s) — send ALERT to Hannibal:**
-```javascript
-SendMessage({
-  to: "hannibal",
-  message: "ALERT: {itemId} - No ACK from B.A. after 20 seconds. Manual dispatch may be needed.",
-  summary: "Handoff timeout for {itemId}"
-})
-```
-
-### Notify Hannibal on Completion
-For blocked items or non-advance stops (use instead of the peer handoff above):
-```javascript
-SendMessage({
-  to: "hannibal",
-  message: "DONE: {itemId} - {brief summary of work completed}",
-  summary: "Tests complete for {itemId}"
-})
-```
-
-### Request Help or Clarification
-```javascript
-SendMessage({
-  type: "message",
-  recipient: "hannibal",
-  content: "BLOCKED: {itemId} - {description of issue}",
-  summary: "Blocked on {itemId}"
-})
-```
-
-### Coordinate with Teammates
-```javascript
-SendMessage({
-  type: "message",
-  recipient: "{teammate_name}",
-  content: "{coordination message}",
-  summary: "Coordination with {teammate_name}"
-})
-```
-
-Example - Tell B.A. about test structure:
-```javascript
-SendMessage({ type: "message", recipient: "ba", content: "WI-003: Tests expect OrderService.process() to return Promise<OrderResult>. See src/__tests__/order.test.ts", summary: "Test expectations for WI-003" })
-```
-
-### Shutdown
-When you receive a shutdown request from Hannibal:
-```javascript
-SendMessage({
-  type: "shutdown_response",
-  request_id: "{id from shutdown request}",
-  approve: true
-})
-```
-
-**IMPORTANT:** `ateam` CLI commands are the source of truth for work tracking. SendMessage is for coordination only - always use `ateam agents-start agentStart`, `ateam agents-stop agentStop`, and `ateam activity createActivityEntry` to record your work. Stage transitions (`ateam board-move moveItem`) are Hannibal's responsibility.
+Murdock hands off to B.A. after `agentStop --advance`: send `START` to `ba` with the test file path and a one-line summary of what to implement, then follow the wait-and-ACK protocol from the skill.
 
 ## Completion
 
 ### Signal Completion
 
-**IMPORTANT:** After completing your work, signal completion so Hannibal can advance this item immediately. This also leaves a work summary note in the work item.
+**Consult the `agent-lifecycle` skill** for the completion signaling pattern.
 
 Run `ateam agents-stop agentStop` with:
-- `--itemId "XXX"` (replace with actual item ID from the feature item)
-- `--agent "murdock"`
-- `--status success`
-- `--summary "Created N test cases covering happy path and edge cases"`
-- `--filesCreated "path/to/test.ts"`
-
-Replace:
-- The itemId with the actual item ID from the feature item frontmatter
-- The summary with a brief description of what you did
-- The files_created array with the actual paths
-
-If you encountered errors that prevented completion, use `status`: "failed" and provide an error description in the summary.
-
-Report back to Hannibal with files created.
+- `--itemId`: the item you worked on
+- `--agent`: "murdock"
+- `--outcome`: completed or blocked
+- `--summary`: include test file path(s) and test count (e.g. "Created 5 test cases at src/__tests__/order.test.ts covering happy path, empty input, and auth failure")

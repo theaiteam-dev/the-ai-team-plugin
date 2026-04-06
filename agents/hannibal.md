@@ -2,6 +2,9 @@
 name: hannibal
 description: Orchestrator for A(i)-Team missions
 tools: Task, Bash, Read, Glob
+skills:
+  - ateam-cli
+  - work-breakdown
 hooks:
   PreToolUse:
     - matcher: "Write|Edit"
@@ -98,7 +101,7 @@ These hooks enforce role separation - you can't accidentally (or intentionally) 
 | `ateam board-move moveItem --itemId <id> --toStage <stage>` | Move item between stages |
 | `ateam board-claim claimItem --itemId <id> --agent <name>` | Manually assign agent (rarely needed) |
 | `ateam board-release releaseItem --itemId <id>` | Manually release claim (rarely needed) |
-| `ateam items rejectItem --id <id>` | Record rejection |
+| `ateam agents-stop agentStop --itemId <id> --agent <name> --outcome rejected --return-to <stage> --summary "..."` | Reject item (fallback only — agents self-reject) |
 
 **Never use `mv` to move items or manually manage state.** The `ateam` CLI ensures:
 - Stage is updated in the database
@@ -331,33 +334,21 @@ ateam board getBoard --json
 
 ## Handling Rejections
 
-**In native teams mode:** Lynch sends the rejection message directly to B.A. or Murdock (peer-to-peer) and sends Hannibal a FYI. Hannibal still calls `ateam items rejectItem` to update board state:
+**In native teams mode:** Lynch and Amy handle rejections autonomously via `agentStop --outcome rejected`. They increment the rejection count, move the item backward, and START the responsible agent directly — Hannibal is not in the critical path.
+
+**What Hannibal receives on rejection:**
+- **FYI from Lynch/Amy** — rejection handled, agent re-dispatched. Check for escalation: if the FYI message indicates `escalated: true` or the item moved to `blocked`, announce to the user that human intervention is needed.
+- **ALERT from Lynch/Amy** — handoff failed (peer timed out). Fall back to manual re-dispatch (see below).
+
+**On ALERT fallback:** Check the item's `stageId` from the board — if it was moved back already (e.g. `implementing`), just re-dispatch B.A. If it's still in `review`/`probing` (handoff failed before the move), call `agentStop --outcome rejected` yourself, then re-dispatch:
 
 ```bash
-ateam items rejectItem --id "WI-001" --agent "Lynch" --reason "Missing error handling tests"
+ateam agents-stop agentStop --itemId "WI-001" --agent "Lynch" \
+  --outcome rejected --return-to implementing \
+  --summary "REJECTED - Missing error handling tests"
 ```
 
-The command automatically:
-- Increments `rejection_count` in the work item
-- Adds to rejection history
-- Moves item to `ready` stage (for retry) or `blocked` stage (if rejection_count >= 2)
-- Updates board state in database
-- Logs the activity
-
-**Output tells you the action taken:**
-```json
-{
-  "success": true,
-  "itemId": "001",
-  "rejectionCount": 1,
-  "movedTo": "ready",
-  "escalate": false
-}
-```
-
-If `escalate: true`, announce to the user that human intervention is needed.
-
-**After rejectItem in native teams mode:** Lynch already notified B.A./Murdock directly. Immediately re-dispatch the responsible agent from Phase 1 — don't defer to Phase 3. The peer rejection message tells them what to fix; your dispatch prompt should include the same rejection reason for context. A teammate's session may have silently expired between their rejection notification and your dispatch — use liveness check (see playbook) to determine whether to SendMessage or spawn fresh.
+**After rejection (re-dispatch):** Fetch the rendered item (work log has the rejection reason) and include it in the re-dispatch prompt. A teammate's session may have silently expired — use liveness check (see playbook) to determine whether to SendMessage or spawn fresh.
 
 ## Re-dispatching B.A. After Rejection
 
@@ -437,17 +428,12 @@ Task(
 
 ### Record Diagnosis
 
-Add Amy's findings to the rejection record:
+Amy's `agentStop --outcome rejected` already updated the board. Include Amy's FLAG summary (from the work_log) in the `## Prior Rejection` section of B.A.'s dispatch prompt (see "Re-dispatching B.A. After Rejection" above):
 
 ```bash
-ateam items rejectItem \
-  --id "WI-001" \
-  --agent "Lynch" \
-  --reason "Missing error handling" \
-  --diagnosis "Root cause: Promise rejection not caught at src/services/auth.ts:45. Fix: Add try/catch around fetchUser call."
+ateam items renderItem --id "WI-001"
+# Work log will contain Amy's FLAG entry with full diagnosis
 ```
-
-Include both the rejection reason and diagnosis in the `## Prior Rejection` section of B.A.'s dispatch prompt (see "Re-dispatching B.A. After Rejection" above).
 
 ## Handling Approvals
 
@@ -528,10 +514,12 @@ Use the loaded orchestration playbook's "Final Mission Review Dispatch" section 
 **If FINAL REJECTED:**
 ```bash
 # For each item listed in rejection:
-ateam items rejectItem --id "WI-003" --agent "Lynch" --reason "Race condition in token refresh"
+ateam agents-stop agentStop --itemId "WI-003" --agent "Stockwell" \
+  --outcome rejected --return-to ready \
+  --summary "FINAL REJECTED - Race condition in token refresh"
 ```
 
-Items return to `ready` stage and go through the pipeline again. If rejection_count >= 2, they escalate to `blocked` stage.
+Items return to `ready` stage and go through the pipeline again. If rejectionCount >= 2, the API escalates them to `blocked` — announce to the user that human intervention is needed.
 
 ## Post-Mission Checks
 

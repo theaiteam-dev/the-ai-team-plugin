@@ -7,6 +7,10 @@ skills:
   - defensive-coding
   - security-input
   - code-patterns
+  - pool-handoff
+  - teams-messaging
+  - ateam-cli
+  - agent-lifecycle
 hooks:
   PreToolUse:
     - matcher: "Bash"
@@ -277,6 +281,8 @@ AC Coverage Matrix:
 ## Process
 
 1. **Start work (claim the item)**
+   **Consult the `pool-handoff` skill** to claim your pool slot (`mv own .idle → .busy`) before proceeding.
+
    Run `ateam agents-start agentStart --itemId "XXX" --agent "lynch"` (replace XXX with actual item ID).
 
    This claims the item AND records `assigned_agent` on the work item so the kanban UI shows you're working on it.
@@ -390,161 +396,34 @@ VERDICT: APPROVED/REJECTED
 
 ## Team Communication (Native Teams Mode)
 
-When running in native teams mode (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), you are a teammate in an A(i)-Team mission with direct messaging capabilities.
+**Consult the `teams-messaging` skill** for message formats, the wait-and-ACK protocol, and shutdown handling.
 
-### Peer-to-Peer Handoff — APPROVED Path
+Lynch receives `START` from B.A. (reply immediately with `ACK`) then:
 
-When verdict is APPROVED, call `ateam agents-stop agentStop --advance` then hand off directly to Amy:
-
-**1. Call agentStop with --advance:**
-```bash
-ateam agents-stop agentStop --itemId "XXX" --agent "lynch" --advance --outcome completed --summary "APPROVED - ..."
-```
-
-**2. Send START to Amy:**
-```javascript
-SendMessage({
-  to: "amy",
-  message: "START: {itemId} - Review approved. {one-line summary of what was reviewed and any areas to probe}",
-  summary: "START {itemId}"
-})
-```
-
-**3. Wait up to 20 seconds** for Amy to reply with `ACK: {itemId}`.
-
-**4a. On ACK received — send FYI to Hannibal:**
-```javascript
-SendMessage({
-  to: "hannibal",
-  message: "FYI: {itemId} - APPROVED. Handed off to Amy directly. ACK received.",
-  summary: "Handoff complete for {itemId}"
-})
-```
-
-**4b. On timeout (no ACK after 20s) — send ALERT to Hannibal:**
-```javascript
-SendMessage({
-  to: "hannibal",
-  message: "ALERT: {itemId} - APPROVED but no ACK from Amy after 20 seconds. Manual dispatch may be needed.",
-  summary: "Handoff timeout for {itemId}"
-})
-```
-
-### Peer-to-Peer Rejection — REJECTED Path
-
-When verdict is REJECTED, call agentStop **without** --advance (item stays in review stage), then notify the responsible agent directly:
-
-**1. Call agentStop with `--advance=false` (item stays in review stage):**
-```bash
-ateam agents-stop agentStop --itemId "XXX" --agent "lynch" --advance=false --outcome completed --summary "REJECTED - ..."
-```
-
-**2. Send rejection directly to the responsible agent** (Murdock for test issues, B.A. for implementation issues):
-```javascript
-// To Murdock (test issues):
-SendMessage({
-  to: "murdock",
-  message: "REJECTED: {itemId} - {specific issues}. Required fixes: {fix list}",
-  summary: "REJECTED {itemId}"
-})
-
-// To B.A. (implementation issues):
-SendMessage({
-  to: "ba",
-  message: "REJECTED: {itemId} - {specific issues}. Required fixes: {fix list}",
-  summary: "REJECTED {itemId}"
-})
-```
-
-**3. Wait up to 20 seconds** for ACK from the responsible agent.
-
-**4. Send FYI to Hannibal** (regardless of ACK):
-```javascript
-SendMessage({
-  to: "hannibal",
-  message: "FYI: {itemId} - REJECTED. Sent rejection directly to {Murdock/B.A.}. {ACK received / no ACK after 20s}.",
-  summary: "Rejection sent for {itemId}"
-})
-```
-
-### Handling Incoming START Messages
-
-When B.A. sends `START: {itemId}` after completing implementation, immediately reply with ACK:
-```javascript
-SendMessage({
-  to: "ba",
-  message: "ACK: {itemId}",
-  summary: "ACK {itemId}"
-})
-```
-Then begin the review for that item.
-
-### Notify Hannibal on Completion
-For blocked items or when not in native teams mode:
-```javascript
-SendMessage({
-  to: "hannibal",
-  message: "DONE: {itemId} - {brief summary of work completed}",
-  summary: "Review complete for {itemId}"
-})
-```
-
-### Request Help or Clarification
-```javascript
-SendMessage({
-  to: "hannibal",
-  message: "BLOCKED: {itemId} - {description of issue}",
-  summary: "Blocked on {itemId}"
-})
-```
-
-### Shutdown
-When you receive a shutdown request from Hannibal:
-```javascript
-SendMessage({
-  type: "shutdown_response",
-  request_id: "{id from shutdown request}",
-  approve: true
-})
-```
-
-**IMPORTANT:** `ateam` CLI commands are the source of truth for work tracking. SendMessage is for coordination only - always use `ateam agents-start agentStart`, `ateam agents-stop agentStop`, and `ateam activity createActivityEntry` to record your work. Stage transitions (`ateam board-move moveItem`) are Hannibal's responsibility.
+- **APPROVED**: call `agentStop --outcome completed`, send `START` to `amy` with a one-line summary of what was reviewed and any areas to probe, then follow the wait-and-ACK protocol from the skill.
+- **REJECTED**: call `agentStop --outcome rejected --return-to testing` (Murdock issue) or `--return-to implementing` (B.A. issue), then send `REJECTED` directly to the responsible agent with specific issues and required fixes. Wait up to 20 seconds for ACK, then send FYI to Hannibal regardless of whether ACK was received. See the `teams-messaging` skill for the REJECTED path message templates.
 
 ## Logging Progress
 
-Log your progress to the Live Feed using `ateam activity createActivityEntry`:
+**Consult the `agent-lifecycle` skill** for the activity logging pattern.
 
-```bash
-ateam activity createActivityEntry --agent "Lynch" --message "Reviewing feature 001" --level info
-```
-
-Example messages:
-- "Reviewing feature 001"
-- "Running test suite"
-- "APPROVED - all checks pass"
-
-**IMPORTANT:** Always use `ateam activity createActivityEntry` for activity logging.
-
-Log at key milestones:
+Key milestones to log for Lynch:
 - Starting review
 - Running tests
 - Verdict (APPROVED/REJECTED)
 
 ### Signal Completion
 
-**IMPORTANT:** After completing your review, signal completion so Hannibal can advance this item immediately. This also leaves a work summary note in the work item.
+**Consult the `agent-lifecycle` skill** for the completion signaling pattern.
 
-If approved (use `--advance` to move item to probing stage):
-```bash
-ateam agents-stop agentStop --itemId "XXX" --agent "lynch" --advance --outcome completed --summary "APPROVED - All tests pass, implementation matches spec"
-```
+Run `ateam agents-stop agentStop` with:
+- `--itemId`: the item you reviewed
+- `--agent`: "lynch"
+- `--outcome`: `completed` for APPROVED; `rejected` for REJECTED
+- `--return-to`: (REJECTED only) `testing` if the issue is in the test file; `implementing` if the issue is in the implementation
+- `--summary`: start with APPROVED or REJECTED, then reason (e.g. "APPROVED - All tests pass, implementation matches spec" or "REJECTED - AC 'Returns 401 on invalid token' has no test. Required fixes: add auth failure test")
 
-If rejected (use `--advance=false` — item stays in review, will be sent back):
-```bash
-ateam agents-stop agentStop --itemId "XXX" --agent "lynch" --advance=false --outcome completed --summary "REJECTED - Issue description and required fixes"
-```
-
-Note: Use `outcome: "completed"` even for rejections — the outcome refers to whether you completed the review, not the verdict. Include APPROVED/REJECTED at the start of the summary. After agentStop, follow the peer-to-peer handoff instructions above.
+After agentStop, follow the peer-to-peer handoff instructions above.
 
 ## Mindset
 
