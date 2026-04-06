@@ -154,9 +154,10 @@ var agentsStopAgentStopCmd = &cobra.Command{
 		var resp []byte
 		var apiErr error
 
-		// agentName/outcome used for pool management — resolved from flags or --body
+		// agentName/outcome/advance used for pool management — resolved from flags or --body
 		agentName := agentsStopAgentStopCmd_agent
 		outcome := agentsStopAgentStopCmd_outcome
+		advance := agentsStopAgentStopCmd_advance
 
 		if agentsStopAgentStopCmdBody != "" {
 			if !json.Valid([]byte(agentsStopAgentStopCmdBody)) {
@@ -169,6 +170,9 @@ var agentsStopAgentStopCmd = &cobra.Command{
 				}
 				if v, ok := bodyObj["outcome"].(string); ok && outcome == "" {
 					outcome = v
+				}
+				if v, ok := bodyObj["advance"].(bool); ok {
+					advance = v
 				}
 			}
 			resp, apiErr = c.Do("POST", "/api/agents/stop", pathParams, queryParams, bodyObj)
@@ -192,13 +196,26 @@ var agentsStopAgentStopCmd = &cobra.Command{
 			return apiErr
 		}
 
+		// Check for wipExceeded before pool management to avoid divergence
+		var parsed struct {
+			Data struct {
+				WipExceeded  bool   `json:"wipExceeded"`
+				BlockedStage string `json:"blockedStage"`
+			} `json:"data"`
+		}
+		wipExceeded := json.Unmarshal(resp, &parsed) == nil && parsed.Data.WipExceeded
+
 		// Pool management: self-release + next-agent claim (no-op if ATEAM_MISSION_ID unset)
-		claimedNext, poolAlert := handlePoolManagement(
-			agentName,
-			outcome,
-			agentsStopAgentStopCmd_advance,
-		)
-		resp = injectPoolResult(resp, claimedNext, poolAlert)
+		// Skip when WIP exceeded — item claim was NOT released, so pool state must not change
+		var claimedNext, poolAlert string
+		if !wipExceeded {
+			claimedNext, poolAlert = handlePoolManagement(
+				agentName,
+				outcome,
+				advance,
+			)
+			resp = injectPoolResult(resp, claimedNext, poolAlert)
+		}
 
 		jsonMode, _ := cmd.Root().PersistentFlags().GetBool("json")
 		noColor, _ := cmd.Root().PersistentFlags().GetBool("no-color")
@@ -211,13 +228,7 @@ var agentsStopAgentStopCmd = &cobra.Command{
 		}
 
 		// Surface WIP limit warning
-		var parsed struct {
-			Data struct {
-				WipExceeded  bool   `json:"wipExceeded"`
-				BlockedStage string `json:"blockedStage"`
-			} `json:"data"`
-		}
-		if json.Unmarshal(resp, &parsed) == nil && parsed.Data.WipExceeded {
+		if wipExceeded {
 			fmt.Fprintf(os.Stderr, "\nWARNING: WIP_LIMIT_EXCEEDED on '%s' stage. Work was logged but the item claim has NOT been released. Call `agentStop --advance=false` to release the claim, then send ALERT to Hannibal to redispatch when capacity opens.\n", parsed.Data.BlockedStage)
 		}
 

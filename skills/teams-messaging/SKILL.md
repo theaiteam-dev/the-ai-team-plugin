@@ -9,7 +9,7 @@ Reference for the native teams messaging protocol used by all pipeline agents wh
 
 ## Core Principle
 
-**`ateam` CLI commands are the source of truth for work tracking.** `SendMessage` is for coordination only. Always use `ateam agents-start`, `ateam agents-stop`, and `ateam activity createActivityEntry` to record work. Stage transitions (`ateam board-move moveItem`) are Hannibal's responsibility.
+**`ateam` CLI commands are the source of truth for work tracking.** `SendMessage` is for coordination only. Always use `ateam agents-start`, `ateam agents-stop`, and `ateam activity createActivityEntry` to record work. In native teams mode, pipeline agents advance items atomically via `ateam agents-stop agentStop --advance` (or `--outcome rejected --return-to <stage>` for rejections). Hannibal uses `ateam board-move moveItem` only in legacy mode.
 
 ---
 
@@ -192,7 +192,7 @@ SendMessage({
 })
 ```
 
-No START/ACK needed. On VERIFIED, `--advance` already moved the item to `done`. On FLAG, Amy calls `agentStop --outcome rejected --return-to implementing` to send the item back, then sends START directly to B.A. with the bug details.
+No START/ACK needed. On VERIFIED, `--advance` already moved the item to `done`. On FLAG, Amy calls `agentStop --outcome rejected --return-to ready` to send the item back to ready (per the transition matrix: probing → ready), then sends ALERT to Hannibal with the bug details for re-dispatch.
 
 ### Tawnia → Hannibal (terminal — no downstream)
 
