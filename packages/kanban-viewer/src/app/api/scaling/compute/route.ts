@@ -55,8 +55,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         where: { archivedAt: null, projectId },
         include: { dependsOn: true },
       }),
-      prisma.stage.findFirst({
-        where: { name: 'testing' },
+      prisma.stage.findUnique({
+        where: { id: 'testing' },
       }),
     ]);
 

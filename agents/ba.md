@@ -325,7 +325,20 @@ Before calling this done, verify:
 You MUST verify before marking work complete:
 1. Run `pnpm test` (or project equivalent) — **all tests must pass**
 2. Run `pnpm typecheck` (if available) — **no type errors**
-3. If either fails, **keep working** — do NOT call `ateam agents-stop agentStop` with failing tests
+3. **AC reconciliation** (see below)
+4. If any of the above fail, **keep working** — do NOT call `ateam agents-stop agentStop` with failing tests or uncovered ACs
+
+**AC Reconciliation (MANDATORY):**
+
+Re-read the acceptance criteria from the work item. For each AC, confirm your implementation satisfies it — not just that tests pass, but that the behavior described in each AC is actually implemented. Log the mapping in your agentStop summary.
+
+```
+AC1: "POST /api/orders returns 201" → impl: OrderService.create() returns 201 ✓
+AC2: "Empty items returns 400"      → impl: validation guard in create()       ✓
+AC3: "Total reflects quantities"    → impl: calculateTotal() sums price × qty  ✓
+```
+
+If any AC is not covered by your implementation, fix it before calling agentStop. Murdock's tests cover the ACs — if a test passes but the AC behavior is missing, the test is wrong (message Hannibal).
 
 **Defensive coding checklist:**
 - [ ] Lookup guards: every db/map/array lookup that can return null has a null check before use
@@ -359,9 +372,9 @@ Report back to Hannibal with the file created.
 
 ## Team Communication (Native Teams Mode)
 
-**Consult the `teams-messaging` skill** for message formats, the wait-and-ACK protocol, and shutdown handling.
+**Consult the `teams-messaging` skill** for message formats and shutdown handling.
 
-B.A. receives `START` from Murdock (reply immediately with `ACK`) and hands off to Lynch after `agentStop --advance`: send `START` to `lynch` with the impl and test file paths and a one-line summary of what was implemented, then follow the wait-and-ACK protocol from the skill.
+B.A. receives `START` from Murdock or Hannibal. If from a peer, reply immediately with `ACK`.
 
 ## Logging Progress
 
@@ -377,15 +390,17 @@ ateam activity createActivityEntry --agent "B.A." --message "All N tests passing
 
 Do NOT skip these logs. The `agent-lifecycle` skill has additional guidance on message formatting.
 
-### Signal Completion
+### Signal Completion & Handoff
 
-**Consult the `agent-lifecycle` skill** for the completion signaling pattern.
+**Consult the `pool-handoff` skill** for the exact completion sequence.
 
-Run `ateam agents-stop agentStop` with:
+Run `ateam agents-stop agentStop --json` with:
 - `--itemId`: the item you worked on
-- `--agent`: "ba"
+- `--agent`: your instance name (e.g. "ba-1")
 - `--outcome`: completed or blocked
 - `--summary`: include impl file path and test result (e.g. "Implemented OrderSyncService at src/services/order-sync.ts — all 5 tests passing")
+
+The CLI handles pool release and next-agent claiming automatically. Parse `claimedNext` from the JSON response and follow the `pool-handoff` skill's Step 2 to send START/ALERT.
 
 ## Mindset
 

@@ -385,6 +385,18 @@ Before marking work complete, verify:
 - [ ] **Multi-trigger ACs have tests for every trigger** (not just the easiest path)
 - [ ] **Consumer wiring tested** if context references cross-module integration
 
+### AC Reconciliation (MANDATORY before agentStop)
+
+Re-read the acceptance criteria from the work item. For each AC, confirm you have at least one test that covers it. Log the mapping in your agentStop summary.
+
+```
+AC1: "POST /api/orders returns 201" → test: "should create order successfully" ✓
+AC2: "Empty items returns 400"      → test: "should reject empty items"        ✓
+AC3: "Total reflects quantities"    → test: "should calculate total"           ✓
+```
+
+If any AC has no test, write one before calling agentStop. This is the #1 cause of Lynch rejections.
+
 ## Example Output
 
 ```typescript
@@ -427,20 +439,14 @@ ateam activity createActivityEntry --agent "Murdock" --message "Created N tests 
 
 Do NOT skip these logs. The `agent-lifecycle` skill has additional guidance on message formatting.
 
-## Team Communication (Native Teams Mode)
+## Completion & Handoff
 
-**Consult the `teams-messaging` skill** for message formats, the wait-and-ACK protocol, and shutdown handling.
+**Consult the `pool-handoff` skill** for the exact completion sequence.
 
-Murdock hands off to B.A. after `agentStop --advance`: send `START` to `ba` with the test file path and a one-line summary of what to implement, then follow the wait-and-ACK protocol from the skill.
-
-## Completion
-
-### Signal Completion
-
-**Consult the `agent-lifecycle` skill** for the completion signaling pattern.
-
-Run `ateam agents-stop agentStop` with:
+Run `ateam agents-stop agentStop --json` with:
 - `--itemId`: the item you worked on
-- `--agent`: "murdock"
+- `--agent`: your instance name (e.g. "murdock-1")
 - `--outcome`: completed or blocked
 - `--summary`: include test file path(s) and test count (e.g. "Created 5 test cases at src/__tests__/order.test.ts covering happy path, empty input, and auth failure")
+
+The CLI handles pool release and next-agent claiming automatically. Parse `claimedNext` from the JSON response and follow the `pool-handoff` skill's Step 2 to send START/ALERT.

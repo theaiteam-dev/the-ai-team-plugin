@@ -150,21 +150,15 @@ ateam board-move moveItem --itemId "WI-005" --toStage "implementing" --agent "B.
 
 **In the orchestration loop, this changes Phase 3:**
 ```
-# PHASE 3: FILL PIPELINE FROM READY (respects WIP limit)
-in_flight = count(testing) + count(implementing) + count(review) + count(probing)
-while in_flight < WIP_LIMIT and ready stage not empty:
+# PHASE 3: FILL PIPELINE FROM READY
     pick ONE item from ready stage
 
     if item has NO_TEST_NEEDED and outputs.test is empty:
         # Fast-track: skip testing, go straight to implementing
-        ateam board-move moveItem --itemId=item_id --toStage="implementing" --agent="B.A."
-        new_task = dispatch B.A. in background
+        dispatch B.A. for item
     else:
         # Normal flow: start with testing
-        ateam board-move moveItem --itemId=item_id --toStage="testing" --agent="Murdock"
-        new_task = dispatch Murdock in background
-
-    active_tasks[item_id] = new_task.id
+        dispatch Murdock for item
 ```
 
 **Do NOT fast-track items that have a non-empty `outputs.test`**, even if the type is `task`. If Face set a test path, the item needs testing.
@@ -179,7 +173,28 @@ Feature 002:      [testing]  →  [implementing]  →  [review]  →  done
 Feature 003:            [testing]  →  [implementing]  →  [review]
 ```
 
-WIP limit controls total in-flight features (features not in briefings, ready, or done stages).
+### WIP Limits Are Per-Stage, NOT Global
+
+**CRITICAL:** WIP is enforced **per stage** (per column), not as a global count across the whole pipeline.
+
+- **Native teams mode:** Each stage's capacity = number of agent instances in the pool (e.g., 3 murdock instances = testing WIP of 3). If a Murdock instance is idle, it CAN take a new item even if other stages are full.
+- **Legacy mode:** `ateam board-move` enforces per-column WIP limits configured in the API. Check `ateam scaling compute` for current limits.
+
+**WRONG** (global WIP — do NOT do this):
+```
+in_flight = count(testing) + count(implementing) + count(review) + count(probing)
+if in_flight >= WIP_LIMIT: wait  # ← WRONG: blocks idle agents unnecessarily
+```
+
+**RIGHT** (per-stage WIP):
+```
+# Each stage is independent. If murdock-3 is idle, dispatch to it
+# regardless of how many items are in implementing or review.
+claimed = claimInstance("murdock")
+if claimed: dispatch(claimed, item_id)  # ← RIGHT: stage has capacity
+```
+
+Do NOT hold items in `ready` when an agent instance for the next stage is idle. That wastes pipeline throughput.
 
 ## Dependency Waves vs Stage Batching
 
