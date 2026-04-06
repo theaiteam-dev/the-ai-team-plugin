@@ -211,6 +211,89 @@ A valid test:
 
 ---
 
+## Interaction, Integration, and Accessibility Testing
+
+### Full Interaction Paths
+
+When acceptance criteria specify multiple ways to trigger the same action, test **every** trigger end-to-end. Don't just test that a handler function exists — verify the full path from user action to outcome.
+
+```typescript
+// BAD: Tests the handler exists, not that the trigger works
+it('has a keydown handler', () => {
+  const component = render(<EditableItem {...props} />);
+  expect(component.container.querySelector('[onkeydown]')).toBeTruthy();
+});
+
+// GOOD: Tests the full interaction path for each trigger
+it('activates edit mode on double-click', async () => {
+  render(<EditableItem {...props} />);
+  await user.dblClick(screen.getByText('Item title'));
+  expect(screen.getByRole('textbox')).toHaveValue('Item title');
+});
+
+it('activates edit mode via keyboard shortcut', async () => {
+  render(<EditableItem {...props} />);
+  const title = screen.getByText('Item title');
+  title.focus();
+  await user.keyboard('{Enter}');
+  expect(screen.getByRole('textbox')).toHaveValue('Item title');
+});
+```
+
+If an element must be reachable for an interaction to work (focusable, enabled, visible), assert that precondition — JSDOM and similar test environments are often more permissive than real runtimes.
+
+### Consumer Wiring
+
+When a module's `context` field says it is consumed by another module, include at least one test that imports the **real** dependency and verifies the integration point. Don't just mock everything away.
+
+```typescript
+// BAD: Mocks the dependency this test is supposed to verify wiring for
+vi.mock('../api/orders');
+it('calls createOrder', async () => { /* tests the mock, not the wiring */ });
+
+// GOOD: Uses the real module, mocks only the outermost I/O
+vi.mock('../lib/http-client'); // mock network, keep real module wiring
+import { checkout } from '../services/checkout';
+import { httpClient } from '../lib/http-client';
+it('calls the order API with cart contents', async () => {
+  httpClient.post.mockResolvedValue({ id: 'ord_123' });
+  const result = await checkout(cartWithTwoItems);
+  expect(result.orderId).toBe('ord_123');
+  expect(httpClient.post).toHaveBeenCalledWith('/api/orders', expect.objectContaining({
+    items: expect.arrayContaining([expect.objectContaining({ sku: 'WIDGET' })]),
+  }));
+});
+```
+
+### Accessibility Testing
+
+When acceptance criteria mention user-facing behavior — form inputs, error messages, interactive controls, status indicators — test using semantic queries and roles, not CSS selectors or test IDs.
+
+**Principles (framework-agnostic):**
+- **Query by role, not by class or ID.** Roles (`button`, `textbox`, `alert`, `status`, `checkbox`) reflect what the user (or assistive technology) sees. CSS classes and test IDs don't.
+- **Assert labels exist.** Every interactive control should have a human-readable name. A form input without a label is a test failure, not a style issue.
+- **Test keyboard paths when the AC says so.** If the criteria say "can be activated via keyboard," verify the element is focusable and the keypress produces the expected outcome.
+- **Verify dynamic status announcements.** Error messages, loading indicators, and confirmation banners should have appropriate roles (`alert`, `status`) so they are announced to assistive technology.
+
+```typescript
+// GOOD: Semantic queries that reflect what the user sees
+render(<LoginForm />);
+const emailInput = screen.getByRole('textbox', { name: /email/i });
+const submitButton = screen.getByRole('button', { name: /sign in/i });
+
+// GOOD: Error message uses appropriate role
+await user.click(submitButton); // submit without filling in email
+expect(screen.getByRole('alert')).toHaveTextContent(/email is required/i);
+
+// GOOD: Loading state uses status role
+render(<DataTable loading={true} />);
+expect(screen.getByRole('status')).toBeInTheDocument();
+```
+
+These patterns apply to any framework with a testing library that supports role-based queries (Testing Library, Playwright, Cypress). In non-UI contexts (CLI tools, APIs), the equivalent is testing the user-facing contract: help text, error messages, exit codes.
+
+---
+
 ## The Litmus Test
 
 For every test, ask:

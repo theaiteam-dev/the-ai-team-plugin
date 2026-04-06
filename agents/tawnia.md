@@ -283,13 +283,17 @@ Tawnia is a terminal agent. After `agentStop`, send `DONE` to Hannibal with a br
 
 ## Logging Progress
 
-**Consult the `agent-lifecycle` skill** for the activity logging pattern.
+**You MUST log to ActivityLog at these milestones** (the Live Feed is the team's only window into your work):
 
-Key milestones to log for Tawnia:
-- Starting documentation phase
-- Updating CHANGELOG.md
-- Creating final commit
-- Documentation complete
+```bash
+# When starting
+ateam activity createActivityEntry --agent "Tawnia" --message "Starting documentation phase" --level info
+
+# Final commit
+ateam activity createActivityEntry --agent "Tawnia" --message "Creating final commit" --level info
+```
+
+Do NOT skip these logs. The `agent-lifecycle` skill has additional guidance on message formatting.
 
 ## Boundaries
 

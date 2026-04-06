@@ -629,13 +629,22 @@ Amy is part of the **standard pipeline** - every feature passes through her:
 
 ## Logging Progress
 
-**Consult the `agent-lifecycle` skill** for the activity logging pattern.
+**You MUST log to ActivityLog at these milestones** (the Live Feed is the team's only window into your work):
 
-Key milestones to log for Amy:
-- Starting investigation
-- Each hypothesis as it is being tested
-- Key findings during Raptor Protocol phases
-- Verdict (VERIFIED/FLAG)
+```bash
+# When starting
+ateam activity createActivityEntry --agent "Amy" --message "Probing <item title>" --level info
+
+# Key finding
+ateam activity createActivityEntry --agent "Amy" --message "H1 CONFIRMED — <description>" --level warn
+
+# Verdict
+ateam activity createActivityEntry --agent "Amy" --message "VERIFIED <item id> — no bugs found" --level info
+# or
+ateam activity createActivityEntry --agent "Amy" --message "FLAG <item id> — <summary of bugs>" --level warn
+```
+
+Do NOT skip these logs. The `agent-lifecycle` skill has additional guidance on message formatting.
 
 ## Team Communication (Native Teams Mode)
 

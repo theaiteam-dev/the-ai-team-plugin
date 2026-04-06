@@ -78,7 +78,7 @@ Review them as a cohesive unit, not separately.
 - Read the work item via `ateam items renderItem --id <id>` — it includes structured fields:
   - **Objective** — the one-sentence outcome this feature delivers
   - **Acceptance Criteria** — the measurable criteria that define "done." Each criterion should be covered by BOTH tests AND implementation. Use these as your review checklist.
-  - **Context** — integration points and constraints. Verify the implementation actually wires into the locations mentioned here.
+  - **Context** — integration points and constraints. Verify the implementation actually wires into the locations mentioned here. If context says "consumed by X" or "rendered by Y," check that X or Y actually imports this module — don't just review the module in isolation.
 - Identify the core functional requirements
 - Note any edge cases or error handling expectations mentioned
 - If requirements are unclear, note this in your review
@@ -268,6 +268,7 @@ AC Coverage Matrix:
 - [ ] Handles errors appropriately
 - [ ] Code is readable
 - [ ] Uses existing utilities where appropriate
+- [ ] **Consumer wiring verified** — if the `context` field says this module is consumed by or renders inside another module, verify it is actually imported and used there (not just tested in isolation). A module that passes all tests but is never wired into its consumer is a CRITICAL gap.
 
 ### Types (if present)
 - [ ] Types match usage in tests and implementation
@@ -405,12 +406,19 @@ Lynch receives `START` from B.A. (reply immediately with `ACK`) then:
 
 ## Logging Progress
 
-**Consult the `agent-lifecycle` skill** for the activity logging pattern.
+**You MUST log to ActivityLog at these milestones** (the Live Feed is the team's only window into your work):
 
-Key milestones to log for Lynch:
-- Starting review
-- Running tests
-- Verdict (APPROVED/REJECTED)
+```bash
+# When starting
+ateam activity createActivityEntry --agent "Lynch" --message "Reviewing <item title>" --level info
+
+# Verdict
+ateam activity createActivityEntry --agent "Lynch" --message "APPROVED <item id>" --level info
+# or
+ateam activity createActivityEntry --agent "Lynch" --message "REJECTED <item id> — <reason>" --level warn
+```
+
+Do NOT skip these logs. The `agent-lifecycle` skill has additional guidance on message formatting.
 
 ### Signal Completion
 

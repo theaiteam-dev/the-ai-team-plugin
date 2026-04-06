@@ -259,12 +259,32 @@ Stockwell is a terminal agent. After `agentStop`, send `DONE` to Hannibal with `
 
 ## Logging Progress
 
-**Consult the `agent-lifecycle` skill** for the activity logging pattern.
+**You MUST log to ActivityLog at these milestones** (the Live Feed is the team's only window into your work):
 
-Key milestones to log for Stockwell:
-- Starting final review
-- Running tests
-- Verdict (FINAL APPROVED/FINAL REJECTED)
+```bash
+# When starting
+ateam activity createActivityEntry --agent "Stockwell" --message "Starting final review of mission" --level info
+
+# After running tests
+ateam activity createActivityEntry --agent "Stockwell" --message "Test suite: X passing, Y failing" --level info
+
+# Verdict
+ateam activity createActivityEntry --agent "Stockwell" --message "FINAL APPROVED - all PRD requirements met, N tests passing" --level info
+```
+
+Do NOT skip these logs. The `agent-lifecycle` skill has additional guidance on message formatting.
+
+### Save Full Report
+
+After rendering your verdict, persist the full review report so it survives the session:
+
+```bash
+ateam missions-final-review writeFinalReview \
+  --missionId "<mission-id>" \
+  --report "<your full markdown report>"
+```
+
+Get the mission ID from `ateam missions-current getCurrentMission --json`. This is **mandatory** — without it, your review is lost when the session ends.
 
 ### Signal Completion
 

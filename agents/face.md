@@ -195,8 +195,16 @@ parallel_group: "component-name"                # Prevents conflicting concurren
 **Field reminders (see skill for full rules):**
 - `description`: 1–3 prose sentences for the kanban board — synthesize objective + context, don't dump structured data
 - `objective`: One behavioral sentence (outcome, not implementation)
-- `acceptance`: Measurable criteria mapping to test cases; features need at least 1 happy-path and 1 error-path criterion; UI items need at least 1 a11y criterion
+- `acceptance`: Measurable criteria mapping to test cases; features need at least 1 happy-path and 1 error-path criterion
 - `context`: Integration points — which files import this, patterns to follow, gotchas
+
+**Acceptance criteria rules for common rejection patterns:**
+- **Error/failure paths**: For every operation that can fail (network call, I/O, user-provided callback), include an explicit AC for the failure path (e.g., "When the API returns a non-success status or unparseable response, the error is surfaced to the caller and any optimistic state reverts"). Don't assume B.A. will add error handling if the AC only describes the happy path.
+- **Input validation**: If the feature accepts user input (text fields, file uploads, form submissions), include an AC for invalid/empty input (e.g., "Empty or whitespace-only input is rejected with feedback"). Don't assume B.A. will add validation — if it's not in the AC, it won't be tested or implemented.
+- **Async loading states**: If the feature loads data asynchronously, include an AC for the loading/pending state (e.g., "While data is loading, a loading indicator is shown — the empty state is not shown before data arrives"). Without this, users see misleading empty states on initial load.
+- **Consumer wiring**: When item A produces a module that item B consumes (per the `context` field or dependency graph), add an explicit AC to the **consuming item** that names the dependency: "Imports and uses [module from WI-XXX]" or "Renders [component from WI-XXX] when [condition]." Without this, B.A. implements item B without wiring item A's output, and the gap isn't caught until review or probing.
+- **Shared types**: When multiple items use the same data shape, create a single types item that others depend on. Add an AC to consuming items: "Imports types from [WI-XXX] — does NOT redefine them locally." Local type duplicates drift from the source of truth and are a top review rejection.
+- **Interaction completeness**: If an AC mentions multiple triggers for the same action (e.g., "submit via button click" implies keyboard submission too), list **every** trigger as its own AC line — one per trigger. Do NOT combine them. If the PRD says "users can submit," write separate ACs: "Submits on button activation" AND "Submits on Enter key press in the input field." Partial lists lead to partial implementations that get rejected in review.
 - `outputs.types`: Only set when the type is shared across 2+ source files; otherwise colocate with impl
 
 **Output path conventions:** During the Project Readiness Audit, note the target project's directory structure and match all `outputs` paths to its conventions (`__tests__/` vs `tests/`, `src/` vs `lib/`, etc.).
@@ -334,6 +342,12 @@ If `valid: false`, fix the issues before completing.
 Before completing decomposition:
 - [ ] Each item is the smallest logical unit
 - [ ] Each item has clear acceptance criteria
+- [ ] Every failure-capable operation has an explicit error-path AC
+- [ ] Every user input has a validation AC (empty, whitespace, invalid)
+- [ ] Every async data load has a loading-state AC
+- [ ] Every cross-item dependency has a wiring AC on the consuming item
+- [ ] Shared types have a single source item — consumers import, not redefine
+- [ ] Multi-trigger actions list **every** trigger as a separate AC line
 - [ ] No circular dependencies (verified by `ateam deps-check checkDeps --json`)
 - [ ] Parallel groups prevent file conflicts
 - [ ] Dependencies are minimal and explicit

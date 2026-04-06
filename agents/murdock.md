@@ -92,8 +92,9 @@ Write ONLY tests and type definitions. **Do NOT write implementation code** - th
 - Key edge cases - empty inputs, boundaries, nulls
 - State changes - confirm data is correctly created, updated, or deleted
 - Error handling - verify the code handles invalid inputs gracefully
-- **Failure UX paths (MANDATORY)** - for every async operation that is user-facing (form submit, data fetch, mutation), include at least one test that verifies the failure path: error message displayed, loading state cleared, optimistic state reverted. If the acceptance criteria list N async operations, you need N failure-path tests — not one generic "API error" test.
-- **Accessibility (MANDATORY for `.tsx` output)** - use `getByRole` with accessible names (`getByRole('checkbox', { name: /todo title/ })`), verify `role="alert"` on error banners, test keyboard interactions if the AC specifies them. If an acceptance criterion mentions a11y (labels, ARIA roles, keyboard nav), write a test for it.
+- **Failure paths (MANDATORY)** - for every operation that can fail (async call, I/O, user-provided callback), include at least one test that verifies the failure path: error surfaced, loading/pending state cleared, optimistic state reverted. If the acceptance criteria list N fallible operations, you need N failure-path tests — not one generic "error" test.
+- **Interaction completeness (MANDATORY)** - if an AC specifies multiple triggers for the same action (e.g., "activated via button click or keyboard shortcut"), test **every** trigger, not just the easiest one. Test the full interaction path end-to-end: if the AC says "keyboard shortcut triggers edit mode," verify the element is reachable/focusable, simulate the keypress, and assert the outcome — don't just test that a handler function exists.
+- **Consumer wiring** - if the work item's `context` field says this module is consumed by another module (or the AC explicitly says "imports and uses X"), include at least one test that verifies the integration point — import the real dependency, don't just mock it away.
 
 **DON'T waste time on:**
 - 100% coverage
@@ -380,8 +381,9 @@ Before marking work complete, verify:
 - [ ] Happy path is covered
 - [ ] Key error cases are covered
 - [ ] No shared mutable state between tests
-- [ ] **Every async operation in the AC has a failure-path test** (not just the happy path)
-- [ ] **A11y assertions present for `.tsx` outputs** (accessible names on `getByRole`, ARIA roles on dynamic content)
+- [ ] **Every fallible operation in the AC has a failure-path test** (not just the happy path)
+- [ ] **Multi-trigger ACs have tests for every trigger** (not just the easiest path)
+- [ ] **Consumer wiring tested** if context references cross-module integration
 
 ## Example Output
 
@@ -413,12 +415,17 @@ describe('OrderSyncService', () => {
 
 ## Logging Progress
 
-**Consult the `agent-lifecycle` skill** for the activity logging pattern.
+**You MUST log to ActivityLog at these milestones** (the Live Feed is the team's only window into your work):
 
-Key milestones to log for Murdock:
-- Starting work on a feature
-- Creating test/type files
-- Tests complete and verified (all failing for the right reason)
+```bash
+# When starting
+ateam activity createActivityEntry --agent "Murdock" --message "Writing tests for <item title>" --level info
+
+# Tests created
+ateam activity createActivityEntry --agent "Murdock" --message "Created N tests at <path> — all failing as expected" --level info
+```
+
+Do NOT skip these logs. The `agent-lifecycle` skill has additional guidance on message formatting.
 
 ## Team Communication (Native Teams Mode)
 

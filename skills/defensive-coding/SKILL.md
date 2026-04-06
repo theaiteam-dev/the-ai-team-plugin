@@ -267,6 +267,29 @@ async function request(url, options):
 
 ---
 
+## 9. Import, Don't Redefine
+
+When a type, interface, constant, or utility already exists in the project — whether from a dependency item, a shared module, or a prior implementation — import it. Never redefine it locally. Local copies drift from the source of truth, causing subtle type mismatches, missing fields, and review rejections.
+
+```
+// BAD: redefines a type that already exists in the project
+// file: todoItem.ts
+interface Todo {
+  id: string
+  text: string
+  completed: boolean
+}
+// Missing `createdAt` field that the real type in api.ts has — silent bug
+
+// GOOD: import the canonical type
+// file: todoItem.ts
+import { Todo } from "./api"       // single source of truth
+```
+
+Before defining any type or utility, search the project for existing definitions. If a dependency item's `outputs.types` defines the type you need, import from there.
+
+---
+
 ## Self-Check Before Submitting
 
 For every function or module you write, verify:
@@ -281,3 +304,4 @@ For every function or module you write, verify:
 8. Fetch calls in effects are aborted on cleanup — no setState on unmounted components.
 9. All API client functions throw errors in a consistent shape.
 10. Path parameters are encoded with `encodeURIComponent` before interpolation.
+11. Every type, interface, and utility is imported from its canonical location — no local redefinitions.

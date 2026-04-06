@@ -273,6 +273,7 @@ The **defensive-coding** skill is preloaded at startup. Apply its patterns to ev
 - **Resource cleanup** — connections, timers, and subscriptions released in `finally` blocks or equivalent
 - **Transient state clearing** — clear loading flags and error states before each new async operation
 - **Functional state updates** — state changes that depend on prior state use updater functions, not stale closures
+- **Import, don't redefine** — if a type, interface, or utility already exists in the project, import it; never create a local copy that drifts from the source of truth
 
 Consult the defensive-coding skill for pseudocode examples of each pattern.
 
@@ -364,12 +365,17 @@ B.A. receives `START` from Murdock (reply immediately with `ACK`) and hands off 
 
 ## Logging Progress
 
-**Consult the `agent-lifecycle` skill** for the activity logging pattern.
+**You MUST log to ActivityLog at these milestones** (the Live Feed is the team's only window into your work):
 
-Key milestones to log for B.A.:
-- Starting implementation
-- Tests passing
-- Implementation complete
+```bash
+# When starting
+ateam activity createActivityEntry --agent "B.A." --message "Implementing <item title>" --level info
+
+# Tests passing
+ateam activity createActivityEntry --agent "B.A." --message "All N tests passing for <item title>" --level info
+```
+
+Do NOT skip these logs. The `agent-lifecycle` skill has additional guidance on message formatting.
 
 ### Signal Completion
 

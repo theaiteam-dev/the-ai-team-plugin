@@ -245,6 +245,67 @@ it("should be idempotent when synced twice", async () => {
 
 ---
 
+## Pattern 10: Accessibility and Semantic Queries
+
+Query elements by their role and accessible name, not by CSS class or test ID. This tests what the user (and assistive technology) actually sees.
+
+```ts
+// GOOD — query by role, assert accessible name
+render(<TodoItem todo={todo} onToggle={onToggle} />);
+const checkbox = screen.getByRole('checkbox', { name: /buy groceries/i });
+expect(checkbox).not.toBeChecked();
+await user.click(checkbox);
+expect(onToggle).toHaveBeenCalledWith(todo.id);
+
+// GOOD — error feedback uses appropriate role
+render(<OrderForm />);
+await user.click(screen.getByRole('button', { name: /place order/i }));
+const errorBanner = screen.getByRole('alert');
+expect(errorBanner).toHaveTextContent(/payment method required/i);
+
+// GOOD — status updates use appropriate role
+render(<SearchResults query="widgets" />);
+expect(screen.getByRole('status')).toHaveTextContent(/loading/i);
+await waitFor(() => {
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+});
+expect(screen.getAllByRole('listitem')).toHaveLength(5);
+```
+
+---
+
+## Pattern 11: Full Interaction Path Testing
+
+When multiple triggers produce the same outcome, test each trigger independently. Verify preconditions (focusable, enabled) that test environments may not enforce.
+
+```ts
+// GOOD — each trigger gets its own test
+it('opens edit mode on double-click', async () => {
+  render(<EditableField value="Hello" onSave={onSave} />);
+  await user.dblClick(screen.getByText('Hello'));
+  expect(screen.getByRole('textbox')).toHaveValue('Hello');
+});
+
+it('opens edit mode on Enter key', async () => {
+  render(<EditableField value="Hello" onSave={onSave} />);
+  screen.getByText('Hello').focus();
+  await user.keyboard('{Enter}');
+  expect(screen.getByRole('textbox')).toHaveValue('Hello');
+});
+
+it('saves on Enter and cancels on Escape', async () => {
+  render(<EditableField value="Hello" onSave={onSave} />);
+  await user.dblClick(screen.getByText('Hello'));
+
+  await user.clear(screen.getByRole('textbox'));
+  await user.type(screen.getByRole('textbox'), 'Updated');
+  await user.keyboard('{Enter}');
+  expect(onSave).toHaveBeenCalledWith('Updated');
+});
+```
+
+---
+
 ## Self-Check: Is This a Good Test?
 
 Before submitting, confirm each test can answer YES to all three:
