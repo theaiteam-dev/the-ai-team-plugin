@@ -59,9 +59,17 @@ var missionsPrecheckMissionPrecheckCmd = &cobra.Command{
 			return nil
 		}
 		bodyMap := map[string]interface{}{}
-		bodyMap["blockers"] = missionsPrecheckMissionPrecheckCmd_blockers
-		bodyMap["output"] = missionsPrecheckMissionPrecheckCmd_output
 		bodyMap["passed"] = missionsPrecheckMissionPrecheckCmd_passed
+		if cmd.Flags().Changed("blockers") {
+			bodyMap["blockers"] = missionsPrecheckMissionPrecheckCmd_blockers
+		}
+		if cmd.Flags().Changed("output") {
+			var outputObj interface{}
+			if err := json.Unmarshal([]byte(missionsPrecheckMissionPrecheckCmd_output), &outputObj); err != nil {
+				return fmt.Errorf("--output must be valid JSON: %w", err)
+			}
+			bodyMap["output"] = outputObj
+		}
 		resp, err := c.Do("POST", "/api/missions/precheck", pathParams, queryParams, bodyMap)
 		if err != nil {
 			return err

@@ -27,7 +27,7 @@ var agentsStartAgentStartCmd = &cobra.Command{
 		c := client.NewClient(baseURL, token)
 		pathParams := map[string]string{}
 		queryParams := map[string]string{}
-		if err := validate.Enum("agent", agentsStartAgentStartCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}); err != nil { return err }
+		if err := validate.AgentName("agent", agentsStartAgentStartCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}); err != nil { return err }
 		if agentsStartAgentStartCmdBodyFile != "" {
 			fileData, err := os.ReadFile(agentsStartAgentStartCmdBodyFile)
 			if err != nil {

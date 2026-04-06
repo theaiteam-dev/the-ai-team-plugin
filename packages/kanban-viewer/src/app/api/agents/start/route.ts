@@ -28,12 +28,8 @@ import { getAndValidateProjectId } from '@/lib/project-utils';
 import { transformItemWithRelationsToResponse } from '@/lib/item-transform';
 import type { AgentStartRequest, AgentStartResponse, ApiError } from '@/types/api';
 import type { AgentName } from '@/types/agent';
-import { AGENT_DISPLAY_NAMES, PIPELINE_STAGES, type StageId as SharedStageId } from '@ai-team/shared';
-
-/**
- * Valid agent names for validation.
- */
-const VALID_AGENTS: AgentName[] = Object.values(AGENT_DISPLAY_NAMES) as AgentName[];
+import { AGENT_DISPLAY_NAMES, PIPELINE_STAGES, isValidAgent, normalizeAgentName, type StageId as SharedStageId } from '@ai-team/shared';
+import { logApiError } from '@/lib/api-logger';
 
 /**
  * POST /api/agents/start
@@ -65,6 +61,7 @@ export async function POST(
           message: 'X-Project-ID header is required',
         },
       };
+      logApiError('POST /api/agents/start', 400, errorResponse.error.code, errorResponse.error.message);
       return NextResponse.json(errorResponse, { status: 400 });
     }
     const projectId = projectValidation.projectId;
@@ -74,20 +71,24 @@ export async function POST(
     try {
       body = await request.json();
     } catch {
+      logApiError('POST /api/agents/start', 400, 'VALIDATION_ERROR', 'Invalid JSON body');
       return NextResponse.json(createValidationError('Invalid JSON body').toResponse(), { status: 400 });
     }
 
     // Validate required fields
     if (!body.itemId) {
+      logApiError('POST /api/agents/start', 400, 'VALIDATION_ERROR', 'itemId is required', { agent: body.agent });
       return NextResponse.json(createValidationError('itemId is required').toResponse(), { status: 400 });
     }
 
     if (!body.agent) {
+      logApiError('POST /api/agents/start', 400, 'VALIDATION_ERROR', 'agent is required', { itemId: body.itemId });
       return NextResponse.json(createValidationError('agent is required').toResponse(), { status: 400 });
     }
 
     // Validate agent name
-    if (!VALID_AGENTS.includes(body.agent)) {
+    if (!isValidAgent(body.agent)) {
+      logApiError('POST /api/agents/start', 400, 'VALIDATION_ERROR', `Invalid agent name: ${body.agent}`, { agent: body.agent, itemId: body.itemId });
       return NextResponse.json(createValidationError(`Invalid agent name: ${body.agent}`).toResponse(), { status: 400 });
     }
 
@@ -104,6 +105,7 @@ export async function POST(
     });
 
     if (!item) {
+      logApiError('POST /api/agents/start', 404, 'ITEM_NOT_FOUND', `Item not found: ${body.itemId}`, { agent: body.agent, itemId: body.itemId });
       return NextResponse.json(
         createItemNotFoundError(body.itemId).toResponse(),
         { status: 404 }
@@ -114,7 +116,7 @@ export async function POST(
     // Find which pipeline stage this agent works in
     let targetStage: string = 'testing'; // default fallback for non-pipeline agents
     let isPipelineAgent = false;
-    const normalizedAgent = body.agent.toLowerCase().replace(/\./g, '');
+    const normalizedAgent = normalizeAgentName(body.agent);
     for (const [stageId, info] of Object.entries(PIPELINE_STAGES)) {
       if (info && info.agent === normalizedAgent) {
         targetStage = stageId;
@@ -141,6 +143,7 @@ export async function POST(
           },
         },
       };
+      logApiError('POST /api/agents/start', 400, 'INVALID_STAGE', errorResponse.error.message, { agent: body.agent, itemId: body.itemId, currentStage, targetStage });
       return NextResponse.json(errorResponse, { status: 400 });
     }
 
@@ -164,6 +167,7 @@ export async function POST(
             },
           },
         };
+        logApiError('POST /api/agents/start', 400, 'DEPENDENCIES_NOT_MET', 'Not all dependencies are completed', { agent: body.agent, itemId: body.itemId, unmetDependencies });
         return NextResponse.json(errorResponse, { status: 400 });
       }
 
@@ -183,6 +187,7 @@ export async function POST(
 
         const wipCheck = checkWipLimit(targetStage as StageId, currentCount, stage.wipLimit);
         if (!wipCheck.allowed) {
+          logApiError('POST /api/agents/start', 400, 'WIP_LIMIT_EXCEEDED', `WIP limit exceeded for stage: ${targetStage}`, { agent: body.agent, itemId: body.itemId, targetStage, wipLimit: stage.wipLimit, currentCount });
           return NextResponse.json(
             createWipLimitExceededError(targetStage, stage.wipLimit, currentCount).toResponse(),
             { status: 400 }

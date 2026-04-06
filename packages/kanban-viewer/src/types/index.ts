@@ -58,8 +58,6 @@ export type {
   CreateItemResponse,
   UpdateItemRequest,
   UpdateItemResponse,
-  RejectItemRequest,
-  RejectItemResponse,
   RenderItemResponse,
   // Agent endpoints
   AgentStartRequest,
@@ -208,6 +206,7 @@ export interface Mission {
     instanceCount: number;
     depGraphMaxPerStage: number;
     memoryBudgetCeiling: number;
+    wipLimit: number;
     bindingConstraint: string;
     concurrencyOverride: number | null;
   } | null;

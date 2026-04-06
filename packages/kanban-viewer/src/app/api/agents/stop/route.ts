@@ -6,6 +6,9 @@
  * - Clear assignedAgent on item
  * - Create WorkLog entry with provided summary
  * - Move item to next stage based on outcome
+ *
+ * outcome='rejected': moves item backward to returnTo stage, increments rejectionCount.
+ * Escalates to 'blocked' when rejectionCount reaches REJECTION_ESCALATION_THRESHOLD.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -14,24 +17,18 @@ import {
   createValidationError,
   createItemNotFoundError,
   createDatabaseError,
-  createWipLimitExceededError,
 } from '@/lib/errors';
 import { getAndValidateProjectId } from '@/lib/project-utils';
 import type { AgentStopRequest, AgentStopResponse, ApiError } from '@/types/api';
 import type { AgentName } from '@/types/agent';
 import type { StageId } from '@/types/board';
 import type { WorkLogEntry, WorkLogAction } from '@/types/item';
-import { AGENT_DISPLAY_NAMES, PIPELINE_STAGES, type StageId as SharedStageId } from '@ai-team/shared';
+import { PIPELINE_STAGES, isValidAgent, type StageId as SharedStageId } from '@ai-team/shared';
+import { logApiError } from '@/lib/api-logger';
 
-/**
- * Valid agent names for validation.
- */
-const VALID_AGENTS: AgentName[] = Object.values(AGENT_DISPLAY_NAMES) as AgentName[];
-
-/**
- * Valid outcome values.
- */
-const VALID_OUTCOMES = ['completed', 'blocked'] as const;
+const VALID_OUTCOMES = ['completed', 'blocked', 'rejected'] as const;
+const VALID_RETURN_TO_STAGES: StageId[] = ['ready', 'testing', 'implementing', 'review', 'probing'];
+const REJECTION_ESCALATION_THRESHOLD = 2;
 
 /**
  * POST /api/agents/stop
@@ -62,6 +59,7 @@ export async function POST(
           message: 'X-Project-ID header is required',
         },
       };
+      logApiError('POST /api/agents/stop', 400, errorResponse.error.code, errorResponse.error.message);
       return NextResponse.json(errorResponse, { status: 400 });
     }
     const projectId = projectValidation.projectId;
@@ -76,25 +74,46 @@ export async function POST(
 
     // Validate required fields
     if (!body.itemId) {
+      logApiError('POST /api/agents/stop', 400, 'VALIDATION_ERROR', 'itemId is required', { agent: body.agent });
       return NextResponse.json(createValidationError('itemId is required').toResponse(), { status: 400 });
     }
 
     if (!body.agent) {
+      logApiError('POST /api/agents/stop', 400, 'VALIDATION_ERROR', 'agent is required', { itemId: body.itemId });
       return NextResponse.json(createValidationError('agent is required').toResponse(), { status: 400 });
     }
 
     if (!body.summary) {
+      logApiError('POST /api/agents/stop', 400, 'VALIDATION_ERROR', 'summary is required', { agent: body.agent, itemId: body.itemId });
       return NextResponse.json(createValidationError('summary is required').toResponse(), { status: 400 });
     }
 
     // Validate agent name
-    if (!VALID_AGENTS.includes(body.agent)) {
+    if (!isValidAgent(body.agent)) {
+      logApiError('POST /api/agents/stop', 400, 'VALIDATION_ERROR', `Invalid agent name: ${body.agent}`, { agent: body.agent, itemId: body.itemId });
       return NextResponse.json(createValidationError(`Invalid agent name: ${body.agent}`).toResponse(), { status: 400 });
     }
 
     // Validate outcome if provided
     if (body.outcome !== undefined && !VALID_OUTCOMES.includes(body.outcome)) {
+      logApiError('POST /api/agents/stop', 400, 'VALIDATION_ERROR', 'Invalid outcome value', { agent: body.agent, itemId: body.itemId, outcome: body.outcome });
       return NextResponse.json(createValidationError('Invalid outcome value').toResponse(), { status: 400 });
+    }
+
+    // returnTo is only valid with outcome=rejected, and required when outcome=rejected
+    if (body.outcome === 'rejected' && !body.returnTo) {
+      logApiError('POST /api/agents/stop', 400, 'VALIDATION_ERROR', 'returnTo is required when outcome=rejected', { agent: body.agent, itemId: body.itemId });
+      return NextResponse.json(createValidationError('returnTo is required when outcome=rejected').toResponse(), { status: 400 });
+    }
+
+    if (body.returnTo && body.outcome !== 'rejected') {
+      logApiError('POST /api/agents/stop', 400, 'VALIDATION_ERROR', 'returnTo is only valid when outcome=rejected', { agent: body.agent, itemId: body.itemId });
+      return NextResponse.json(createValidationError('returnTo is only valid when outcome=rejected').toResponse(), { status: 400 });
+    }
+
+    if (body.returnTo && !VALID_RETURN_TO_STAGES.includes(body.returnTo as StageId)) {
+      logApiError('POST /api/agents/stop', 400, 'VALIDATION_ERROR', `Invalid returnTo stage: ${body.returnTo}`, { agent: body.agent, itemId: body.itemId });
+      return NextResponse.json(createValidationError(`Invalid returnTo stage: ${body.returnTo}`).toResponse(), { status: 400 });
     }
 
     // Check if item exists and belongs to the specified project
@@ -103,6 +122,7 @@ export async function POST(
     });
 
     if (!item) {
+      logApiError('POST /api/agents/stop', 404, 'ITEM_NOT_FOUND', `Item not found: ${body.itemId}`, { agent: body.agent, itemId: body.itemId });
       return NextResponse.json(createItemNotFoundError(body.itemId).toResponse(), { status: 404 });
     }
 
@@ -119,6 +139,7 @@ export async function POST(
           message: `Item ${body.itemId} is not currently claimed`,
         },
       };
+      logApiError('POST /api/agents/stop', 400, 'NOT_CLAIMED', errorResponse.error.message, { agent: body.agent, itemId: body.itemId, currentStage: item.stageId });
       return NextResponse.json(errorResponse, { status: 400 });
     }
 
@@ -132,11 +153,66 @@ export async function POST(
           details: { claimedBy: claim.agentName },
         },
       };
+      logApiError('POST /api/agents/stop', 403, 'CLAIM_MISMATCH', errorResponse.error.message, { agent: body.agent, itemId: body.itemId, claimedBy: claim.agentName });
       return NextResponse.json(errorResponse, { status: 403 });
     }
 
-    // Determine next stage and action based on outcome
     const outcome = body.outcome ?? 'completed';
+
+    // Always release the claim — the work happened regardless of what comes next
+    await prisma.agentClaim.delete({
+      where: { itemId: body.itemId },
+    });
+
+    // Handle rejection path separately: increment counter, maybe escalate, move backward
+    if (outcome === 'rejected') {
+      const returnTo = body.returnTo as StageId;
+      const newRejectionCount = item.rejectionCount + 1;
+      const escalated = newRejectionCount >= REJECTION_ESCALATION_THRESHOLD;
+      const targetStage: StageId = escalated ? 'blocked' : returnTo;
+
+      const workLog = await prisma.workLog.create({
+        data: {
+          agent: body.agent,
+          action: 'rejected' as WorkLogAction,
+          summary: body.summary,
+          itemId: body.itemId,
+        },
+      });
+
+      await prisma.item.update({
+        where: { id: body.itemId },
+        data: {
+          stageId: targetStage,
+          assignedAgent: null,
+          rejectionCount: { increment: 1 },
+        },
+      });
+
+      const workLogEntry: WorkLogEntry = {
+        id: workLog.id,
+        agent: workLog.agent,
+        action: workLog.action as WorkLogAction,
+        summary: workLog.summary,
+        timestamp: workLog.timestamp,
+      };
+
+      const response: AgentStopResponse = {
+        success: true,
+        data: {
+          itemId: body.itemId,
+          agent: body.agent,
+          workLogEntry,
+          nextStage: targetStage,
+          rejectionCount: newRejectionCount,
+          escalated,
+        },
+      };
+
+      return NextResponse.json(response);
+    }
+
+    // Completed / blocked path
     let nextStage: StageId;
     if (outcome === 'blocked') {
       nextStage = 'blocked';
@@ -145,11 +221,6 @@ export async function POST(
       nextStage = (pipelineInfo?.nextStage as StageId) ?? 'review';
     }
     const action: WorkLogAction = outcome === 'blocked' ? 'note' : 'completed';
-
-    // Always release the claim and record work log — the work happened regardless of WIP limits
-    await prisma.agentClaim.delete({
-      where: { itemId: body.itemId },
-    });
 
     // Create work log entry
     const workLog = await prisma.workLog.create({

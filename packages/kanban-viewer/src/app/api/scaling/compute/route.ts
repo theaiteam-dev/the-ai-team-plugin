@@ -47,15 +47,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // Query non-archived items with dependencies for dep graph analysis
-    const items = await prisma.item.findMany({
-      where: {
-        archivedAt: null,
-        projectId,
-      },
-      include: {
-        dependsOn: true,
-      },
-    });
+    const [items, testingStage] = await Promise.all([
+      prisma.item.findMany({
+        where: { archivedAt: null, projectId },
+        include: { dependsOn: true },
+      }),
+      prisma.stage.findFirst({
+        where: { name: 'testing' },
+      }),
+    ]);
 
     // Map to DepGraphItem format
     const depGraphItems = items.map((item) => ({
@@ -68,10 +68,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       : 1;
 
     const memoryCeiling = computeMemoryBudget(body.availableMemoryMB);
+    const wipLimit = testingStage?.wipLimit ?? 3;
 
     const rationale = computeAdaptiveScaling({
       depGraphMax,
       memoryCeiling,
+      wipLimit,
       concurrencyOverride: body.concurrencyOverride,
     });
 

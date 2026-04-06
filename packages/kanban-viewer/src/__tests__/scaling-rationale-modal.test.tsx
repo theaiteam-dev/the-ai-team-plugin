@@ -7,6 +7,7 @@ const baseRationale: ScalingRationale = {
   instanceCount: 3,
   depGraphMaxPerStage: 5,
   memoryBudgetCeiling: 4,
+  wipLimit: 3,
   bindingConstraint: 'memory',
   concurrencyOverride: null,
 };

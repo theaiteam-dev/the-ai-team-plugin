@@ -128,26 +128,6 @@ export interface UpdateItemResponse {
 }
 
 /**
- * POST /api/items/[id]/reject - Request to reject an item.
- */
-export interface RejectItemRequest {
-  reason: string;
-  agent: AgentName;
-}
-
-/**
- * POST /api/items/[id]/reject - Response after rejecting an item.
- */
-export interface RejectItemResponse {
-  success: true;
-  data: {
-    item: Item;
-    escalated: boolean;
-    rejectionCount: number;
-  };
-}
-
-/**
  * GET /api/items/[id]/render - Response with rendered markdown.
  */
 export interface RenderItemResponse {
@@ -187,7 +167,9 @@ export interface AgentStopRequest {
   itemId: string;
   agent: AgentName;
   summary: string;
-  outcome?: 'completed' | 'blocked';
+  outcome?: 'completed' | 'blocked' | 'rejected';
+  /** Required when outcome='rejected'. The stage to send the item back to. */
+  returnTo?: StageId;
   advance?: boolean;
 }
 
@@ -203,6 +185,10 @@ export interface AgentStopResponse {
     nextStage: StageId | null;
     wipExceeded?: boolean;
     blockedStage?: StageId;
+    /** Present when outcome='rejected' */
+    rejectionCount?: number;
+    /** True when rejection escalated item to blocked */
+    escalated?: boolean;
   };
 }
 
