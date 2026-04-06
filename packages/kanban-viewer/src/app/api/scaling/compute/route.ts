@@ -34,7 +34,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     let body: { availableMemoryMB?: number; concurrencyOverride?: number } = {};
     try {
-      body = await request.json();
+      const parsed = await request.json();
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        body = parsed;
+      }
     } catch {
       // Empty body is fine — all fields are optional
     }

@@ -68,6 +68,9 @@ var missionsPrecheckMissionPrecheckCmd = &cobra.Command{
 			if err := json.Unmarshal([]byte(missionsPrecheckMissionPrecheckCmd_output), &outputObj); err != nil {
 				return fmt.Errorf("--output must be valid JSON: %w", err)
 			}
+			if outputMap, ok := outputObj.(map[string]interface{}); !ok || outputMap == nil {
+				return fmt.Errorf("--output must be a JSON object, not an array or primitive")
+			}
 			bodyMap["output"] = outputObj
 		}
 		resp, err := c.Do("POST", "/api/missions/precheck", pathParams, queryParams, bodyMap)

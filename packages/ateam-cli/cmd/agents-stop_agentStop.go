@@ -71,7 +71,7 @@ func handlePoolManagement(agentName, outcome string, advance bool) (claimedNext,
 	if missionID == "" {
 		return "", ""
 	}
-	poolDir := fmt.Sprintf("/tmp/.ateam-pool/%s", missionID)
+	poolDir := filepath.Join("/tmp/.ateam-pool", filepath.Base(missionID))
 
 	// Self-release: mv .busy → .idle
 	busyFile := filepath.Join(poolDir, agentName+".busy")

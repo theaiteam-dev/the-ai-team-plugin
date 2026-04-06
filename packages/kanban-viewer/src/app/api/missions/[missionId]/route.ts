@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { createValidationError, createDatabaseError, ApiError as ApiErrorClass, ErrorCodes } from '@/lib/errors';
 import { getAndValidateProjectId } from '@/lib/project-utils';
 import { safeJsonParse } from '@/lib/json-utils';
 import type { ApiError } from '@/types/api';
@@ -83,11 +84,8 @@ export async function PATCH(
   try {
     const projectValidation = getAndValidateProjectId(request.headers);
     if (!projectValidation.valid) {
-      const errorResponse: ApiError = {
-        success: false,
-        error: projectValidation.error,
-      };
-      return NextResponse.json(errorResponse, { status: 400 });
+      const err = createValidationError(projectValidation.error.message);
+      return NextResponse.json(err.toResponse(), { status: err.httpStatus });
     }
 
     const projectId = projectValidation.projectId;
@@ -97,11 +95,13 @@ export async function PATCH(
     try {
       body = await request.json();
     } catch {
-      const apiError: ApiError = {
-        success: false,
-        error: { code: 'INVALID_JSON', message: 'Request body must be valid JSON' },
-      };
-      return NextResponse.json(apiError, { status: 400 });
+      const err = createValidationError('Request body must be valid JSON');
+      return NextResponse.json(err.toResponse(), { status: err.httpStatus });
+    }
+
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      const err = createValidationError('Request body must be a JSON object');
+      return NextResponse.json(err.toResponse(), { status: err.httpStatus });
     }
 
     const mission = await prisma.mission.findUnique({
@@ -109,11 +109,8 @@ export async function PATCH(
     });
 
     if (!mission) {
-      const apiError: ApiError = {
-        success: false,
-        error: { code: 'MISSION_NOT_FOUND', message: `Mission ${missionId} not found` },
-      };
-      return NextResponse.json(apiError, { status: 404 });
+      const err = new ApiErrorClass(ErrorCodes.MISSION_NOT_FOUND, `Mission ${missionId} not found`);
+      return NextResponse.json(err.toResponse(), { status: err.httpStatus });
     }
 
     const updateData: Record<string, unknown> = {};
@@ -134,13 +131,10 @@ export async function PATCH(
       },
     });
   } catch (error) {
-    const apiError: ApiError = {
-      success: false,
-      error: {
-        code: 'DATABASE_ERROR',
-        message: error instanceof Error ? error.message : 'Failed to update mission',
-      },
-    };
-    return NextResponse.json(apiError, { status: 500 });
+    const err = createDatabaseError(
+      error instanceof Error ? error.message : 'Failed to update mission',
+      error
+    );
+    return NextResponse.json(err.toResponse(), { status: err.httpStatus });
   }
 }

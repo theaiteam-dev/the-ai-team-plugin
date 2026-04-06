@@ -7,7 +7,9 @@ description: Instance pool claim/release protocol for pipeline agents (Murdock, 
 
 Pipeline agents (Murdock → B.A. → Lynch → Amy) coordinate via a file-based instance pool in `/tmp/.ateam-pool/{missionId}/`. Each slot is either `.idle` or `.busy`.
 
-**The `agentStop` CLI handles all pool management automatically** — self-release and next-agent claiming are done by the CLI, not by agents manually. The only manual pool operation agents perform is claiming their own slot on startup (Step 1).
+**The `agentStop` CLI handles all pool management automatically** — self-release and next-agent claiming are done by the CLI, not by agents manually. The only manual pool operation agents perform is claiming their own slot on startup (Step 1 below).
+
+**Note:** If your slot was pre-claimed by the `agentStop` of the upstream agent (i.e., it's already `.busy` when you start), skip Step 1 — your slot is already claimed. Step 1 only applies when you start from an `.idle` state.
 
 ---
 

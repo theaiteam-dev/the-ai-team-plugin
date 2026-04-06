@@ -96,7 +96,7 @@ Agents spent 87.7 min total idle between items vs 26.4 min actually working — 
 
 4. **Lynch is the fastest worker** (avg 0.8 min), suggesting reviews are lightweight relative to implementation and testing.
 
-5. **Next opportunity: pipeline parallelism.** Individual-dependency gating (instead of wave-gating) and multi-instance agents would address queue wait. See `prd/drafts/pipeline-parallelism.md` for modeled projections — 1.83x speedup with 2x instances + individual-dep gating.
+5. **Next opportunity: pipeline parallelism.** Individual-dependency gating (instead of wave-gating) and multi-instance agents would address queue wait. See `prd/ready/pipeline-parallelism.md` for modeled projections — 1.83x speedup with 2x instances + individual-dep gating.
 
 ## Other Findings
 

@@ -365,7 +365,7 @@ LOOP CONTINUOUSLY:
         claimed = claimInstance(alert.target_agent_type)
         if claimed:
             pending_alerts.remove(alert)
-            Bash("ateam agents-start agentStart --itemId {alert.item_id} --agent {claimed}")
+            # NOTE: Do NOT call agentStart here — the dispatched agent owns agentStart as its first action
             dispatch(claimed, alert.item_id)
             active_instances[alert.item_id] = claimed
 

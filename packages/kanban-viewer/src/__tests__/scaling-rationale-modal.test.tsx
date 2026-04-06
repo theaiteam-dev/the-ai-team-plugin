@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { ScalingRationaleModal } from '../components/scaling-rationale-modal';
-import type { ScalingRationale } from '../types/scaling-modal';
+import { ScalingRationaleModal } from '@/components/scaling-rationale-modal';
+import type { ScalingRationale } from '@/types/scaling-modal';
 
 const baseRationale: ScalingRationale = {
   instanceCount: 3,

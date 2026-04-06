@@ -60,10 +60,10 @@ var scalingComputeCmd = &cobra.Command{
 		jsonMode, _ := cmd.Root().PersistentFlags().GetBool("json")
 		noColor, _ := cmd.Root().PersistentFlags().GetBool("no-color")
 		if jsonMode {
-			fmt.Printf("%s\n", string(resp))
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", string(resp))
 		} else {
 			if err := output.PrintTable(resp, noColor); err != nil {
-				fmt.Println(string(resp))
+				fmt.Fprintln(cmd.OutOrStdout(), string(resp))
 			}
 		}
 		return nil

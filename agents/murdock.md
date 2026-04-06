@@ -229,7 +229,7 @@ If you receive a work item with `NO_TEST_NEEDED` in the description and `outputs
 **You should not be dispatched for this item at all.** Hannibal should skip the testing stage and move it directly to implementing. If you ARE dispatched for such an item by mistake:
 
 1. Log the situation: `ateam activity createActivityEntry --agent "Murdock" --message "Item {id} is flagged NO_TEST_NEEDED - no tests to write" --level info`
-2. Run `ateam agents-stop agentStop --itemId "{id}" --agent "murdock" --outcome completed --summary "No tests needed - item is a non-code change (documentation/config)"`
+2. Run `ateam agents-stop agentStop --itemId "{id}" --agent "murdock" --outcome completed --advance=false --summary "No tests needed - item is a non-code change (documentation/config)"`
 3. Do NOT create an empty test file or a placeholder test
 4. Report back to Hannibal that no tests were written
 

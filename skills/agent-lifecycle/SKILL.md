@@ -80,7 +80,7 @@ The summary is stored in the work item's `work_log` and displayed in the kanban 
 
 **Good summaries by role:**
 
-```
+```text
 # Murdock — include test file path and count
 "Created 5 test cases at src/__tests__/order.test.ts covering happy path, empty input, and auth failure"
 
@@ -104,7 +104,7 @@ The summary is stored in the work item's `work_log` and displayed in the kanban 
 ```
 
 **Bad summaries:**
-```
+```text
 # Too vague — tells the next agent nothing
 "Done"
 "Completed work"

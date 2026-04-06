@@ -271,7 +271,9 @@ git rev-parse --short HEAD
    Remove the mission's pool directory from `/tmp`:
    ```bash
    MISSION_ID=$(ateam missions-current getCurrentMission --json | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['id'])")
-   rm -rf "/tmp/.ateam-pool/${MISSION_ID}"
+   if [ -n "$MISSION_ID" ] && [[ "$MISSION_ID" == M-* ]]; then
+     rm -rf "/tmp/.ateam-pool/${MISSION_ID}"
+   fi
    ```
    This prevents stale `.idle`/`.busy` files from accumulating across missions.
 

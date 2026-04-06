@@ -192,7 +192,7 @@ SendMessage({
 })
 ```
 
-No START/ACK needed. On VERIFIED, `--advance` already moved the item to `done`. On FLAG, Hannibal handles rejection.
+No START/ACK needed. On VERIFIED, `--advance` already moved the item to `done`. On FLAG, Amy calls `agentStop --outcome rejected --return-to implementing` to send the item back, then sends START directly to B.A. with the bug details.
 
 ### Tawnia → Hannibal (terminal — no downstream)
 
@@ -238,5 +238,4 @@ SendMessage({
 
 Before calling `agentStop` and sending a peer handoff:
 
-- **Senders** (Murdock, B.A., Lynch on approval): **Consult the `pool-handoff` skill** to atomically claim an idle instance of the next agent and release your own slot.
-- **Terminal agents** (Amy, Tawnia, Stockwell): **Consult the `pool-handoff` skill** to release your own slot (`mv own .busy → .idle`). No downstream instance to claim.
+- **All agents**: Pool release and next-agent claiming are handled atomically by the `agentStop` CLI command. **Do NOT manually `mv` pool files** — this is now automated. See the `pool-handoff` skill for details on the only manual operation (claiming your own slot on startup).
