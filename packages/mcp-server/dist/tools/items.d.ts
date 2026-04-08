@@ -6,7 +6,6 @@
  * - item_update: Update an existing work item
  * - item_get: Retrieve a single item by ID
  * - item_list: List items with optional filtering
- * - item_reject: Record rejection with reason
  * - item_render: Get markdown representation
  */
 import { z } from 'zod';
@@ -145,22 +144,6 @@ export declare const ItemListInputSchema: z.ZodObject<{
     stage?: string | undefined;
 }>;
 /**
- * Schema for item_reject tool input.
- */
-export declare const ItemRejectInputSchema: z.ZodObject<{
-    id: z.ZodString;
-    reason: z.ZodString;
-    agent: z.ZodOptional<z.ZodString>;
-}, "strip", z.ZodTypeAny, {
-    id: string;
-    reason: string;
-    agent?: string | undefined;
-}, {
-    id: string;
-    reason: string;
-    agent?: string | undefined;
-}>;
-/**
  * Schema for item_render tool input.
  */
 export declare const ItemRenderInputSchema: z.ZodObject<{
@@ -174,7 +157,6 @@ type ItemCreateInput = z.infer<typeof ItemCreateInputSchema>;
 type ItemUpdateInput = z.infer<typeof ItemUpdateInputSchema>;
 type ItemGetInput = z.infer<typeof ItemGetInputSchema>;
 type ItemListInput = z.infer<typeof ItemListInputSchema>;
-type ItemRejectInput = z.infer<typeof ItemRejectInputSchema>;
 type ItemRenderInput = z.infer<typeof ItemRenderInputSchema>;
 interface WorkItem {
     id: string;
@@ -190,10 +172,6 @@ interface WorkItem {
         impl: string;
         types?: string;
     };
-}
-interface RejectResult {
-    item: WorkItem;
-    escalated: boolean;
 }
 interface RenderResult {
     markdown: string;
@@ -214,10 +192,6 @@ export declare function itemGet(input: ItemGetInput): Promise<ToolResponse<WorkI
  * Lists work items with optional filtering.
  */
 export declare function itemList(input: ItemListInput): Promise<ToolResponse<WorkItem[]> | McpErrorResponse>;
-/**
- * Records a rejection with reason.
- */
-export declare function itemReject(input: ItemRejectInput): Promise<ToolResponse<RejectResult> | McpErrorResponse>;
 /**
  * Returns markdown representation of an item.
  */
@@ -368,24 +342,6 @@ export declare const itemTools: ({
         stage?: string | undefined;
     }>;
     handler: typeof itemList;
-} | {
-    name: string;
-    description: string;
-    inputSchema: object;
-    zodSchema: z.ZodObject<{
-        id: z.ZodString;
-        reason: z.ZodString;
-        agent: z.ZodOptional<z.ZodString>;
-    }, "strip", z.ZodTypeAny, {
-        id: string;
-        reason: string;
-        agent?: string | undefined;
-    }, {
-        id: string;
-        reason: string;
-        agent?: string | undefined;
-    }>;
-    handler: typeof itemReject;
 } | {
     name: string;
     description: string;

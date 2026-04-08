@@ -39,7 +39,7 @@ hooks:
   Stop:
     - hooks:
         - type: command
-          command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/enforce-completion-log.js"
+          command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/enforce-handoff.js"
         - type: command
           command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/observe-stop.js lynch"
 ---
@@ -397,12 +397,11 @@ VERDICT: APPROVED/REJECTED
 
 ## Team Communication (Native Teams Mode)
 
-**Consult the `teams-messaging` skill** for message formats, the wait-and-ACK protocol, and shutdown handling.
+**Consult the `teams-messaging` skill** for message formats and shutdown handling.
 
-Lynch receives `START` from B.A. (reply immediately with `ACK`) then:
+Lynch receives `START` from B.A. or Hannibal. If from a peer, reply immediately with `ACK`.
 
-- **APPROVED**: call `agentStop --outcome completed`, send `START` to `amy` with a one-line summary of what was reviewed and any areas to probe, then follow the wait-and-ACK protocol from the skill.
-- **REJECTED**: call `agentStop --outcome rejected --return-to testing` (Murdock issue) or `--return-to implementing` (B.A. issue), then send `REJECTED` directly to the responsible agent with specific issues and required fixes. Wait up to 20 seconds for ACK, then send FYI to Hannibal regardless of whether ACK was received. See the `teams-messaging` skill for the REJECTED path message templates.
+- **REJECTED**: call `agentStop --outcome rejected --return-to testing` (Murdock issue) or `--return-to implementing` (B.A. issue) with `--advance=false`. The CLI releases your pool slot but does NOT claim a next-agent. Send `REJECTED` directly to the responsible agent with specific issues and required fixes, then send `FYI` to Hannibal. See the `teams-messaging` skill for REJECTED message templates.
 
 ## Logging Progress
 
@@ -420,18 +419,19 @@ ateam activity createActivityEntry --agent "Lynch" --message "REJECTED <item id>
 
 Do NOT skip these logs. The `agent-lifecycle` skill has additional guidance on message formatting.
 
-### Signal Completion
+### Signal Completion & Handoff
 
-**Consult the `agent-lifecycle` skill** for the completion signaling pattern.
+**Consult the `pool-handoff` skill** for the exact completion sequence.
 
-Run `ateam agents-stop agentStop` with:
+**APPROVED:** Run `ateam agents-stop agentStop --json` with:
 - `--itemId`: the item you reviewed
-- `--agent`: "lynch"
-- `--outcome`: `completed` for APPROVED; `rejected` for REJECTED
-- `--return-to`: (REJECTED only) `testing` if the issue is in the test file; `implementing` if the issue is in the implementation
-- `--summary`: start with APPROVED or REJECTED, then reason (e.g. "APPROVED - All tests pass, implementation matches spec" or "REJECTED - AC 'Returns 401 on invalid token' has no test. Required fixes: add auth failure test")
+- `--agent`: your instance name (e.g. "lynch-1")
+- `--outcome`: completed
+- `--summary`: start with APPROVED, then reason (e.g. "APPROVED - All tests pass, implementation matches spec")
 
-After agentStop, follow the peer-to-peer handoff instructions above.
+The CLI handles pool release and next-agent claiming automatically. Parse `claimedNext` from the JSON response and follow the `pool-handoff` skill's Step 2 to send START/ALERT.
+
+**REJECTED:** Run `ateam agents-stop agentStop --json` with `--outcome rejected --return-to testing` (Murdock issue) or `--return-to implementing` (B.A. issue) and `--advance=false`. Then follow the REJECTED path in the Team Communication section above.
 
 ## Mindset
 

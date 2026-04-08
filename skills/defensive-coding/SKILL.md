@@ -290,6 +290,27 @@ Before defining any type or utility, search the project for existing definitions
 
 ---
 
+## 10. Verify Wiring, Don't Reimplement
+
+When an acceptance criterion says "imports/uses/renders [X from WI-NNN]" or "integrates with [module]," the requirement is to wire the **real** dependency — not to reimplement its behavior inline. An inline reimplementation may produce identical output and pass all tests, but it violates the AC and creates a maintenance divergence.
+
+```
+// BAD: AC says "Renders EmptyState component from WI-179" but reimplements inline
+function App():
+  if todos.length == 0:
+    return <p>No todos yet</p>           // passes text-matching tests, violates AC
+
+// GOOD: import and render the real component
+import { EmptyState } from "./EmptyState"
+function App():
+  if todos.length == 0:
+    return <EmptyState />                 // satisfies the AC — real dependency wired
+```
+
+**Before marking work complete:** For every AC that names a specific module or component, `grep` or search for the import in your implementation file. If the import doesn't exist, the AC is not satisfied — even if tests pass.
+
+---
+
 ## Self-Check Before Submitting
 
 For every function or module you write, verify:
@@ -305,3 +326,4 @@ For every function or module you write, verify:
 9. All API client functions throw errors in a consistent shape.
 10. Path parameters are encoded with `encodeURIComponent` before interpolation.
 11. Every type, interface, and utility is imported from its canonical location — no local redefinitions.
+12. Every AC that names a specific module/component is satisfied by a real import — no inline reimplementations.

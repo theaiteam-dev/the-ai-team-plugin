@@ -26,6 +26,7 @@
 
 import { readFileSync } from 'fs';
 import { resolveAgent, isKnownAgent } from './lib/resolve-agent.js';
+import { lookupAgent } from './lib/observer.js';
 
 // Read hook input from stdin
 let hookInput = {};
@@ -44,7 +45,12 @@ const mockResponse = process.env.__TEST_MOCK_RESPONSE__;
 
 // Only enforce for working agents: murdock, ba, lynch, lynch-final, amy, tawnia
 const TARGET_AGENTS = ['murdock', 'ba', 'lynch', 'lynch-final', 'amy', 'tawnia'];
-const resolvedAgent = resolveAgent(hookInput);
+// For native teammates, Stop hook stdin may lack agent_type/teammate_name.
+// Fall back to session-to-agent map populated by observe-teammate.js.
+const sessionId = hookInput.session_id || '';
+const resolvedFromStdin = resolveAgent(hookInput);
+const resolvedFromMap = !resolvedFromStdin && sessionId ? lookupAgent(sessionId) : null;
+const resolvedAgent = resolvedFromStdin || (resolvedFromMap ? resolvedFromMap.replace(/-\d+$/, '') : null);
 if (!resolvedAgent || !TARGET_AGENTS.includes(resolvedAgent)) {
   console.log(JSON.stringify({}));
   process.exit(0);

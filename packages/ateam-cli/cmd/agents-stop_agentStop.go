@@ -63,22 +63,35 @@ func claimIdleInstance(poolDir, agentType string) string {
 	return ""
 }
 
-// handlePoolManagement performs self-release and optional next-agent claim.
-// Returns (claimedNext, poolAlert) where poolAlert is non-empty when no idle
-// next-agent instance was available.
-func handlePoolManagement(agentName, outcome string, advance bool) (claimedNext, poolAlert string) {
+// poolSelfRelease releases the agent's .busy file back to .idle.
+// This MUST run regardless of whether the API call succeeded — otherwise
+// an API error (e.g. NOT_CLAIMED) leaves orphaned .busy files that
+// permanently block the pool slot.
+func poolSelfRelease(agentName string) {
 	missionID := os.Getenv("ATEAM_MISSION_ID")
 	if missionID == "" {
-		return "", ""
+		return
 	}
 	poolDir := filepath.Join("/tmp/.ateam-pool", filepath.Base(missionID))
-
-	// Self-release: mv .busy → .idle
 	busyFile := filepath.Join(poolDir, agentName+".busy")
 	idleFile := filepath.Join(poolDir, agentName+".idle")
 	if err := os.Rename(busyFile, idleFile); err != nil && !os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "POOL_WARN: failed to release %s slot: %v\n", agentName, err)
 	}
+}
+
+// handlePoolManagement performs optional next-agent claim after self-release.
+// Returns (claimedNext, poolAlert) where poolAlert is non-empty when no idle
+// next-agent instance was available.
+// NOTE: Self-release is handled separately by poolSelfRelease (called via defer).
+func handlePoolManagement(agentName, outcome string, advance bool) (claimedNext, poolAlert string) {
+	missionID := os.Getenv("ATEAM_MISSION_ID")
+	if missionID == "" {
+		fmt.Fprintln(os.Stderr, "WARNING: ATEAM_MISSION_ID not set — pool management skipped (no claimedNext will be returned)")
+		return "", ""
+	}
+
+	poolDir := filepath.Join("/tmp/.ateam-pool", filepath.Base(missionID))
 
 	// Only claim next when advancing forward through the pipeline on success
 	if !advance || outcome == "rejected" || outcome == "blocked" {
@@ -156,6 +169,11 @@ var agentsStopAgentStopCmd = &cobra.Command{
 
 		// agentName/outcome/advance used for pool management — resolved from flags or --body
 		agentName := agentsStopAgentStopCmd_agent
+
+		// Always release pool slot on exit — even if the API call fails.
+		// Without this, API errors (e.g. NOT_CLAIMED when agentStart was skipped)
+		// leave orphaned .busy files that permanently block the pool slot.
+		defer poolSelfRelease(agentName)
 		outcome := agentsStopAgentStopCmd_outcome
 		advance := agentsStopAgentStopCmd_advance
 
@@ -190,13 +208,11 @@ var agentsStopAgentStopCmd = &cobra.Command{
 		}
 
 		if apiErr != nil {
-			if strings.Contains(apiErr.Error(), "WIP_LIMIT_EXCEEDED") {
-				return fmt.Errorf("WIP_LIMIT_EXCEEDED: the target stage is at WIP capacity. The item claim has NOT been released. Call `agentStop --advance=false` to release the claim, then send ALERT to Hannibal to redispatch when capacity opens")
-			}
+			// defer poolSelfRelease runs on exit — pool slot is always released
 			return apiErr
 		}
 
-		// Check for wipExceeded before pool management to avoid divergence
+		// Check for wipExceeded — item was NOT advanced but work was logged
 		var parsed struct {
 			Data struct {
 				WipExceeded  bool   `json:"wipExceeded"`
@@ -205,8 +221,8 @@ var agentsStopAgentStopCmd = &cobra.Command{
 		}
 		wipExceeded := json.Unmarshal(resp, &parsed) == nil && parsed.Data.WipExceeded
 
-		// Pool management: self-release + next-agent claim (no-op if ATEAM_MISSION_ID unset)
-		// Skip when WIP exceeded — item claim was NOT released, so pool state must not change
+		// Pool management: next-agent claim only (self-release handled by defer)
+		// Skip next-agent claim when WIP exceeded — item didn't advance, no handoff needed
 		var claimedNext, poolAlert string
 		if !wipExceeded {
 			claimedNext, poolAlert = handlePoolManagement(
@@ -229,7 +245,7 @@ var agentsStopAgentStopCmd = &cobra.Command{
 
 		// Surface WIP limit warning
 		if wipExceeded {
-			fmt.Fprintf(os.Stderr, "\nWARNING: WIP_LIMIT_EXCEEDED on '%s' stage. Work was logged but the item claim has NOT been released. Call `agentStop --advance=false` to release the claim, then send ALERT to Hannibal to redispatch when capacity opens.\n", parsed.Data.BlockedStage)
+			fmt.Fprintf(os.Stderr, "\nWARNING: WIP_LIMIT_EXCEEDED on '%s' stage. Work was logged but item was NOT advanced. Send ALERT to Hannibal to redispatch when capacity opens.\n", parsed.Data.BlockedStage)
 		}
 
 		// Surface pool alert so agents know to send ALERT to Hannibal

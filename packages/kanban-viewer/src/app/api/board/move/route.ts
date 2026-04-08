@@ -137,7 +137,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const result = await prisma.$transaction(async (tx) => {
         // Count items currently in target stage (for this project only)
         const currentCount = await tx.item.count({
-          where: { stageId: toStage, projectId },
+          where: { stageId: toStage, projectId, archivedAt: null },
         });
 
         // Check WIP limit unless force flag is set

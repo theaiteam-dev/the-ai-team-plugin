@@ -28,7 +28,7 @@ export declare const BoardMoveInputSchema: z.ZodObject<{
  */
 export declare const BoardClaimInputSchema: z.ZodObject<{
     itemId: z.ZodString;
-    agent: z.ZodEffects<z.ZodEffects<z.ZodEffects<z.ZodString, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia", string>, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia", string>, string, string>;
+    agent: z.ZodEffects<z.ZodEffects<z.ZodEffects<z.ZodString, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia" | "stockwell", string>, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia" | "stockwell", string>, string, string>;
 }, "strip", z.ZodTypeAny, {
     itemId: string;
     agent: string;
@@ -142,7 +142,7 @@ export declare const boardTools: {
         description: string;
         inputSchema: z.ZodObject<{
             itemId: z.ZodString;
-            agent: z.ZodEffects<z.ZodEffects<z.ZodEffects<z.ZodString, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia", string>, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia", string>, string, string>;
+            agent: z.ZodEffects<z.ZodEffects<z.ZodEffects<z.ZodString, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia" | "stockwell", string>, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia" | "stockwell", string>, string, string>;
         }, "strip", z.ZodTypeAny, {
             itemId: string;
             agent: string;

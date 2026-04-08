@@ -22,7 +22,7 @@ export declare const DepsCheckSchema: z.ZodObject<{
  * Schema for activity_log tool input.
  */
 export declare const ActivityLogSchema: z.ZodObject<{
-    agent: z.ZodEffects<z.ZodEffects<z.ZodEffects<z.ZodString, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia", string>, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia", string>, string, string>;
+    agent: z.ZodEffects<z.ZodEffects<z.ZodEffects<z.ZodString, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia" | "stockwell", string>, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia" | "stockwell", string>, string, string>;
     message: z.ZodString;
 }, "strip", z.ZodTypeAny, {
     message: string;
@@ -35,7 +35,7 @@ export declare const ActivityLogSchema: z.ZodObject<{
  * Schema for log tool input (simple shorthand).
  */
 export declare const LogSchema: z.ZodObject<{
-    agent: z.ZodEffects<z.ZodEffects<z.ZodEffects<z.ZodString, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia", string>, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia", string>, string, string>;
+    agent: z.ZodEffects<z.ZodEffects<z.ZodEffects<z.ZodString, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia" | "stockwell", string>, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia" | "stockwell", string>, string, string>;
     message: z.ZodString;
 }, "strip", z.ZodTypeAny, {
     message: string;
@@ -124,7 +124,7 @@ export declare const utilsTools: ({
     description: string;
     inputSchema: object;
     zodSchema: z.ZodObject<{
-        agent: z.ZodEffects<z.ZodEffects<z.ZodEffects<z.ZodString, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia", string>, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia", string>, string, string>;
+        agent: z.ZodEffects<z.ZodEffects<z.ZodEffects<z.ZodString, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia" | "stockwell", string>, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia" | "stockwell", string>, string, string>;
         message: z.ZodString;
     }, "strip", z.ZodTypeAny, {
         message: string;

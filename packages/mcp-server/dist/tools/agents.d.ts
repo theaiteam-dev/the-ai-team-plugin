@@ -12,7 +12,7 @@ import type { ToolResponse } from '../lib/tool-response.js';
  */
 export declare const AgentStartSchema: z.ZodObject<{
     itemId: z.ZodString;
-    agent: z.ZodEffects<z.ZodEffects<z.ZodEffects<z.ZodString, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia", string>, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia", string>, string, string>;
+    agent: z.ZodEffects<z.ZodEffects<z.ZodEffects<z.ZodString, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia" | "stockwell", string>, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia" | "stockwell", string>, string, string>;
     task_id: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     itemId: string;
@@ -29,7 +29,7 @@ export type AgentStartInput = z.infer<typeof AgentStartSchema>;
  */
 export declare const AgentStopSchema: z.ZodObject<{
     itemId: z.ZodString;
-    agent: z.ZodEffects<z.ZodEffects<z.ZodEffects<z.ZodString, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia", string>, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia", string>, string, string>;
+    agent: z.ZodEffects<z.ZodEffects<z.ZodEffects<z.ZodString, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia" | "stockwell", string>, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia" | "stockwell", string>, string, string>;
     status: z.ZodEnum<["success", "failed"]>;
     summary: z.ZodString;
     files_created: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
@@ -81,7 +81,7 @@ export declare const agentTools: ({
             agent: {
                 type: string;
                 description: string;
-                enum: readonly ["murdock", "ba", "lynch", "amy", "hannibal", "face", "sosa", "tawnia"];
+                enum: readonly ["murdock", "ba", "lynch", "amy", "hannibal", "face", "sosa", "tawnia", "stockwell"];
             };
             task_id: {
                 type: string;
@@ -96,7 +96,7 @@ export declare const agentTools: ({
     };
     zodSchema: z.ZodObject<{
         itemId: z.ZodString;
-        agent: z.ZodEffects<z.ZodEffects<z.ZodEffects<z.ZodString, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia", string>, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia", string>, string, string>;
+        agent: z.ZodEffects<z.ZodEffects<z.ZodEffects<z.ZodString, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia" | "stockwell", string>, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia" | "stockwell", string>, string, string>;
         task_id: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
         itemId: string;
@@ -121,7 +121,7 @@ export declare const agentTools: ({
             agent: {
                 type: string;
                 description: string;
-                enum: readonly ["murdock", "ba", "lynch", "amy", "hannibal", "face", "sosa", "tawnia"];
+                enum: readonly ["murdock", "ba", "lynch", "amy", "hannibal", "face", "sosa", "tawnia", "stockwell"];
             };
             status: {
                 type: string;
@@ -152,7 +152,7 @@ export declare const agentTools: ({
     };
     zodSchema: z.ZodObject<{
         itemId: z.ZodString;
-        agent: z.ZodEffects<z.ZodEffects<z.ZodEffects<z.ZodString, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia", string>, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia", string>, string, string>;
+        agent: z.ZodEffects<z.ZodEffects<z.ZodEffects<z.ZodString, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia" | "stockwell", string>, "murdock" | "ba" | "lynch" | "amy" | "hannibal" | "face" | "sosa" | "tawnia" | "stockwell", string>, string, string>;
         status: z.ZodEnum<["success", "failed"]>;
         summary: z.ZodString;
         files_created: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;

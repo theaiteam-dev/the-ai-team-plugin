@@ -38,6 +38,10 @@ When you finish work, call `agentStop` normally. The CLI automatically:
 4. Returns `claimedNext` in the response
 
 ```bash
+# ATEAM_MISSION_ID must be set for pool management to work.
+# Get it from the current mission if not already in your environment:
+export ATEAM_MISSION_ID=$(ateam missions-current getCurrentMission --json | jq -r '.id')
+
 RESULT=$(ateam agents-stop agentStop \
   --itemId "$ITEM_ID" \
   --agent "$MY_NAME" \

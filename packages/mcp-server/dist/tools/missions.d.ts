@@ -33,23 +33,89 @@ export declare const MissionInitInputSchema: z.ZodObject<{
 export declare const MissionCurrentInputSchema: z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>;
 /**
  * Schema for mission_precheck tool input.
+ * Accepts a pre-computed result from the caller — no shell execution here.
  */
 export declare const MissionPrecheckInputSchema: z.ZodObject<{
-    checks: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+    passed: z.ZodBoolean;
+    blockers: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
+    output: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodObject<{
+        stdout: z.ZodString;
+        stderr: z.ZodString;
+        timedOut: z.ZodBoolean;
+    }, "strip", z.ZodTypeAny, {
+        stdout: string;
+        stderr: string;
+        timedOut: boolean;
+    }, {
+        stdout: string;
+        stderr: string;
+        timedOut: boolean;
+    }>>>;
 }, "strip", z.ZodTypeAny, {
-    checks?: string[] | undefined;
+    passed: boolean;
+    blockers: string[];
+    output: Record<string, {
+        stdout: string;
+        stderr: string;
+        timedOut: boolean;
+    }>;
 }, {
-    checks?: string[] | undefined;
+    passed: boolean;
+    blockers?: string[] | undefined;
+    output?: Record<string, {
+        stdout: string;
+        stderr: string;
+        timedOut: boolean;
+    }> | undefined;
+}>;
+/**
+ * Schema for mission_list tool input.
+ */
+export declare const MissionListInputSchema: z.ZodObject<{
+    state: z.ZodOptional<z.ZodEnum<["initializing", "prechecking", "precheck_failure", "running", "postchecking", "completed", "failed", "archived"]>>;
+}, "strip", z.ZodTypeAny, {
+    state?: "failed" | "completed" | "initializing" | "prechecking" | "precheck_failure" | "running" | "postchecking" | "archived" | undefined;
+}, {
+    state?: "failed" | "completed" | "initializing" | "prechecking" | "precheck_failure" | "running" | "postchecking" | "archived" | undefined;
 }>;
 /**
  * Schema for mission_postcheck tool input.
+ * Accepts a pre-computed result from the caller — no shell execution here.
+ * Hannibal reads ateam.config.json, runs checks via Bash in the target project,
+ * then passes results here.
  */
 export declare const MissionPostcheckInputSchema: z.ZodObject<{
-    checks: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+    passed: z.ZodBoolean;
+    blockers: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
+    output: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodObject<{
+        stdout: z.ZodString;
+        stderr: z.ZodString;
+        timedOut: z.ZodBoolean;
+    }, "strip", z.ZodTypeAny, {
+        stdout: string;
+        stderr: string;
+        timedOut: boolean;
+    }, {
+        stdout: string;
+        stderr: string;
+        timedOut: boolean;
+    }>>>;
 }, "strip", z.ZodTypeAny, {
-    checks?: string[] | undefined;
+    passed: boolean;
+    blockers: string[];
+    output: Record<string, {
+        stdout: string;
+        stderr: string;
+        timedOut: boolean;
+    }>;
 }, {
-    checks?: string[] | undefined;
+    passed: boolean;
+    blockers?: string[] | undefined;
+    output?: Record<string, {
+        stdout: string;
+        stderr: string;
+        timedOut: boolean;
+    }> | undefined;
 }>;
 /**
  * Schema for mission_archive tool input.
@@ -70,8 +136,9 @@ export declare const MissionArchiveInputSchema: z.ZodObject<{
 type MissionInitInput = z.infer<typeof MissionInitInputSchema>;
 type MissionCurrentInput = z.infer<typeof MissionCurrentInputSchema>;
 type MissionPrecheckInput = z.infer<typeof MissionPrecheckInputSchema>;
-type MissionPostcheckInput = z.infer<typeof MissionPostcheckInputSchema>;
+type MissionPostcheckInput = z.input<typeof MissionPostcheckInputSchema>;
 type MissionArchiveInput = z.infer<typeof MissionArchiveInputSchema>;
+type MissionListInput = z.infer<typeof MissionListInputSchema>;
 interface PreviousMission {
     name: string;
     archiveDir: string;
@@ -137,9 +204,15 @@ interface MissionPrecheckResult {
 }
 interface MissionPostcheckResult {
     success: boolean;
-    allPassed: boolean;
-    checks: CheckResult[];
-    boardUpdated?: boolean;
+    data: {
+        passed: boolean;
+        lintErrors: number;
+        unitTestsPassed: number;
+        unitTestsFailed: number;
+        e2eTestsPassed: number;
+        e2eTestsFailed: number;
+        blockers: string[];
+    };
 }
 interface MissionArchiveResult {
     success: boolean;
@@ -162,11 +235,31 @@ export declare function missionInit(input: MissionInitInput): Promise<ToolRespon
  */
 export declare function missionCurrent(input: MissionCurrentInput): Promise<ToolResponse<MissionCurrentResult> | McpErrorResponse>;
 /**
- * Runs configured pre-flight checks.
+ * Accepts a pre-computed precheck result and forwards it to the API.
+ * The caller runs lint/tests and passes { passed, blockers, output }.
  */
 export declare function missionPrecheck(input: MissionPrecheckInput): Promise<ToolResponse<MissionPrecheckResult> | McpErrorResponse>;
+interface MissionSummary {
+    id: string;
+    name: string;
+    state: string;
+    prdPath: string;
+    startedAt: string;
+    completedAt: string | null;
+    archivedAt: string | null;
+}
+interface MissionListResult {
+    success: boolean;
+    data: MissionSummary[];
+}
 /**
- * Runs configured post-completion checks.
+ * Lists missions, optionally filtered by state.
+ */
+export declare function missionList(input: MissionListInput): Promise<ToolResponse<MissionListResult> | McpErrorResponse>;
+/**
+ * Records pre-computed post-completion check results.
+ * The caller (Hannibal) runs checks via Bash in the target project first,
+ * then passes results here to update mission state.
  */
 export declare function missionPostcheck(input: MissionPostcheckInput): Promise<ToolResponse<MissionPostcheckResult> | McpErrorResponse>;
 /**
@@ -206,11 +299,37 @@ export declare const missionTools: ({
     description: string;
     inputSchema: object;
     zodSchema: z.ZodObject<{
-        checks: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+        passed: z.ZodBoolean;
+        blockers: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
+        output: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodObject<{
+            stdout: z.ZodString;
+            stderr: z.ZodString;
+            timedOut: z.ZodBoolean;
+        }, "strip", z.ZodTypeAny, {
+            stdout: string;
+            stderr: string;
+            timedOut: boolean;
+        }, {
+            stdout: string;
+            stderr: string;
+            timedOut: boolean;
+        }>>>;
     }, "strip", z.ZodTypeAny, {
-        checks?: string[] | undefined;
+        passed: boolean;
+        blockers: string[];
+        output: Record<string, {
+            stdout: string;
+            stderr: string;
+            timedOut: boolean;
+        }>;
     }, {
-        checks?: string[] | undefined;
+        passed: boolean;
+        blockers?: string[] | undefined;
+        output?: Record<string, {
+            stdout: string;
+            stderr: string;
+            timedOut: boolean;
+        }> | undefined;
     }>;
     handler: typeof missionPrecheck;
 } | {
@@ -218,11 +337,37 @@ export declare const missionTools: ({
     description: string;
     inputSchema: object;
     zodSchema: z.ZodObject<{
-        checks: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+        passed: z.ZodBoolean;
+        blockers: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
+        output: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodObject<{
+            stdout: z.ZodString;
+            stderr: z.ZodString;
+            timedOut: z.ZodBoolean;
+        }, "strip", z.ZodTypeAny, {
+            stdout: string;
+            stderr: string;
+            timedOut: boolean;
+        }, {
+            stdout: string;
+            stderr: string;
+            timedOut: boolean;
+        }>>>;
     }, "strip", z.ZodTypeAny, {
-        checks?: string[] | undefined;
+        passed: boolean;
+        blockers: string[];
+        output: Record<string, {
+            stdout: string;
+            stderr: string;
+            timedOut: boolean;
+        }>;
     }, {
-        checks?: string[] | undefined;
+        passed: boolean;
+        blockers?: string[] | undefined;
+        output?: Record<string, {
+            stdout: string;
+            stderr: string;
+            timedOut: boolean;
+        }> | undefined;
     }>;
     handler: typeof missionPostcheck;
 } | {
@@ -243,6 +388,18 @@ export declare const missionTools: ({
         dryRun?: boolean | undefined;
     }>;
     handler: typeof missionArchive;
+} | {
+    name: string;
+    description: string;
+    inputSchema: object;
+    zodSchema: z.ZodObject<{
+        state: z.ZodOptional<z.ZodEnum<["initializing", "prechecking", "precheck_failure", "running", "postchecking", "completed", "failed", "archived"]>>;
+    }, "strip", z.ZodTypeAny, {
+        state?: "failed" | "completed" | "initializing" | "prechecking" | "precheck_failure" | "running" | "postchecking" | "archived" | undefined;
+    }, {
+        state?: "failed" | "completed" | "initializing" | "prechecking" | "precheck_failure" | "running" | "postchecking" | "archived" | undefined;
+    }>;
+    handler: typeof missionList;
 })[];
 export {};
 //# sourceMappingURL=missions.d.ts.map

@@ -265,6 +265,39 @@ it('calls the order API with cart contents', async () => {
 });
 ```
 
+### Integration Item Wiring Tests (Module Spy Pattern)
+
+**For items that wire multiple components into a parent (integration/assembly items),** text-matching tests are insufficient — they pass whether the real component or an inline reimplementation is used. Use module spies to verify the real component was invoked.
+
+```typescript
+// BAD: Passes with inline <p>No todos yet</p> — doesn't verify real component
+it('shows empty state', () => {
+  render(<App />);
+  expect(screen.getByText(/no todos yet/i)).toBeInTheDocument();
+});
+
+// GOOD: Fails if App doesn't import and render the real EmptyState
+import * as EmptyStateModule from '../components/EmptyState';
+
+it('renders the real EmptyState component when no todos', () => {
+  const spy = vi.spyOn(EmptyStateModule, 'EmptyState');
+  render(<App />);
+  expect(spy).toHaveBeenCalled();
+  spy.mockRestore();
+});
+```
+
+**When to use this pattern:**
+- The work item's ACs say "imports and renders [Component] from [WI-NNN]"
+- The item wires 2+ components into a shared parent
+- The item is typed as an integration/assembly item
+
+**Rules for integration test files:**
+- Do NOT `vi.mock()` any component listed in the work item's dependencies — render them for real
+- Mock only external boundaries (API calls, timers, network)
+- Include at least one module spy per wired component to verify it was actually used
+- Behavioral assertions (text, roles, interactions) are still valuable — use them alongside spies, not instead of
+
 ### Accessibility Testing
 
 When acceptance criteria mention user-facing behavior — form inputs, error messages, interactive controls, status indicators — test using semantic queries and roles, not CSS selectors or test IDs.
@@ -291,6 +324,18 @@ expect(screen.getByRole('status')).toBeInTheDocument();
 ```
 
 These patterns apply to any framework with a testing library that supports role-based queries (Testing Library, Playwright, Cypress). In non-UI contexts (CLI tools, APIs), the equivalent is testing the user-facing contract: help text, error messages, exit codes.
+
+---
+
+## AC Cross-Product Testing
+
+After mapping each acceptance criterion 1:1 to a test, scan for AC *combinations* that imply untested paths. When one AC defines a trigger and another defines a guard or constraint, their cross-product is a test case.
+
+**Example:** AC-A says "submits via Enter key" and AC-B says "submit disabled during in-flight request." Each has a test individually. But the *combination* — "Enter key blocked during in-flight" — is a distinct scenario that neither test covers alone. If you have tests for A and B individually but not A×B, add the combined test.
+
+**How to check:** After your 1:1 reconciliation pass, identify all "trigger" ACs (user actions: click, keypress, form submit) and all "constraint" ACs (guards, validation, disabled states, loading states). For each trigger × constraint pair, ask: "Is there a test that exercises this trigger while the constraint is active?" If not, add one.
+
+This catches the most common review rejection pattern: guards that only protect one interaction path.
 
 ---
 

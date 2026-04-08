@@ -42,7 +42,7 @@ hooks:
   Stop:
     - hooks:
         - type: command
-          command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/enforce-completion-log.js"
+          command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/enforce-handoff.js"
         - type: command
           command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/observe-stop.js ba"
 ---
@@ -115,17 +115,26 @@ You receive a feature item that has already been through the testing stage:
    - Use existing utilities when available
    - Follow established conventions
 
-7. **Write implementation**
+7. **Import-first for integration items (MANDATORY when item has dependencies)**
+   If the work item depends on other items or its ACs reference components/modules from other items:
+   1. **Read every dependency's actual output file** — `outputs.impl` from each dependency item. Note the real exports, prop interfaces, and function signatures.
+   2. **Write all import statements first** at the top of your implementation file.
+   3. **Run typecheck** — verify every import resolves before writing any logic.
+   4. **Then write the rendering/logic** using the real interfaces you just read.
+
+   Never work from your mental model of what a component probably looks like. Read the real source. This prevents the #1 integration failure: reimplementing inline what should be an import.
+
+8. **Write implementation**
    - Start with the simplest code that passes tests
    - Don't over-engineer
    - Handle errors appropriately
 
-8. **Run tests to verify**
+9. **Run tests to verify**
    - All tests must pass
    - No skipped tests
    - No "it.only" left behind
 
-9. **Refactor for clarity**
+10. **Refactor for clarity**
    - Only if needed
    - Don't break tests
    - Improve readability without changing behavior
@@ -339,6 +348,8 @@ AC3: "Total reflects quantities"    → impl: calculateTotal() sums price × qty
 ```
 
 If any AC is not covered by your implementation, fix it before calling agentStop. Murdock's tests cover the ACs — if a test passes but the AC behavior is missing, the test is wrong (message Hannibal).
+
+**Literal wiring check (MANDATORY):** Run the "Verify Wiring, Don't Reimplement" check from the `defensive-coding` skill — for every AC that names a module/component, `grep` for the real import in your implementation file.
 
 **Defensive coding checklist:**
 - [ ] Lookup guards: every db/map/array lookup that can return null has a null check before use

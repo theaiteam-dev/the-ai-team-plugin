@@ -238,7 +238,7 @@ export async function POST(
     if (advance) {
       const targetStage = await prisma.stage?.findUnique({ where: { id: nextStage } });
       if (targetStage != null && targetStage.wipLimit != null) {
-        const currentCount = await prisma.item.count({ where: { stageId: nextStage, projectId } });
+        const currentCount = await prisma.item.count({ where: { stageId: nextStage, projectId, archivedAt: null } });
         if (currentCount >= targetStage.wipLimit) {
           wipExceeded = true;
         }

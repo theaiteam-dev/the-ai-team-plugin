@@ -40,7 +40,7 @@ hooks:
   Stop:
     - hooks:
         - type: command
-          command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/enforce-completion-log.js"
+          command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/enforce-handoff.js"
         - type: command
           command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/observe-stop.js murdock"
 ---
@@ -263,6 +263,8 @@ This claims the item AND records `assigned_agent` on the work item so the kanban
 
 **Integration test requirement:** If the work item's `context` field references two or more source files (e.g., "integrates with `src/services/product.ts`, called from `src/controllers/order.ts`"), include at least one minimally-mocked integration test that exercises the connection between those modules — not just each module in isolation. Mock only the outermost I/O (database, network); keep the real module wiring intact. If the work item has no `context` field or the context does not mention integration points, this requirement does not apply.
 
+**Module spy tests for integration/wiring items (MANDATORY):** If the work item wires multiple components into a parent (ACs say "imports and renders X from WI-NNN"), use module spies to verify real components are rendered — not just text matching. See the `test-writing` skill's "Integration Item Wiring Tests" section. Do NOT `vi.mock()` any component being wired — render them for real, mock only external boundaries (API, network).
+
 ### Step 3: Create Types (if specified)
 
 If `outputs.types` is in the feature item:
@@ -396,6 +398,8 @@ AC3: "Total reflects quantities"    → test: "should calculate total"          
 ```
 
 If any AC has no test, write one before calling agentStop. This is the #1 cause of Lynch rejections.
+
+**Cross-product check (MANDATORY):** After the 1:1 mapping, run the AC Cross-Product Testing check from the `test-writing` skill — scan trigger ACs × constraint ACs for untested combinations.
 
 ## Example Output
 

@@ -5,6 +5,7 @@ description: Reviewer - Final Mission Review (holistic codebase review)
 skills:
   - test-writing
   - defensive-coding
+  - perspective-test
   - security-input
   - code-patterns
   - teams-messaging

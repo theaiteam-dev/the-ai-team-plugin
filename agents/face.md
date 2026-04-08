@@ -101,6 +101,35 @@ ateam items createItem \
 
 Then reference its ID in dependencies for items that need tests.
 
+### Maximizing Fan-Out: Fold Shared Utilities Into Scaffold
+
+**After drafting all items, review the dependency graph.** If a non-scaffold item is depended on by 2+ other items and contains only thin infrastructure (not substantial feature logic), fold it into the scaffold item. This eliminates bottleneck dependencies and maximizes parallel fan-out.
+
+**The test:** Does this item contain substantial feature logic needing 3+ behavioral tests? If yes, keep it separate. If it's just a thin wrapper, client module, types file, or config that other items import — fold it into scaffold.
+
+**Example — API client module:**
+
+A thin fetch wrapper over existing API endpoints (30 lines, 1-2 smoke tests) that 4 UI components will import. If left as a separate item, only 1-2 items can run in parallel per wave. Folded into scaffold:
+
+```
+BEFORE (depth 4, max width 2):
+  Scaffold → API client → (TodoForm, TodoItem) → App
+
+AFTER (depth 3, max width 4):
+  Scaffold+API → (TodoForm, TodoItem, ErrorBanner, EmptyState) → App
+```
+
+**What belongs in scaffold:**
+- Project config (build tools, test runner, linter)
+- Thin client/service modules that wrap existing APIs
+- Shared types imported by 2+ items
+- Utility modules without business logic
+
+**What stays separate:**
+- Components with user-facing behavior
+- Services with complex business logic (validation, state management, transforms)
+- Anything needing 3+ behavioral tests
+
 **If the project already has everything it needs**, skip this step — don't create unnecessary scaffolding items. Log the audit result:
 ```bash
 ateam activity createActivityEntry --agent "Face" --message "Project readiness audit: test runner (vitest), linter (eslint), TypeScript — all present" --level info
@@ -148,9 +177,11 @@ Examples of design work PRDs commonly specify:
 - Header/footer design and branding
 
 **Integration work items:**
-Components built in isolation deliver zero user value until wired into the application. If the PRD describes pages assembled from multiple components, create work items for:
+Components built in isolation deliver zero user value until wired into the application. **Use shell-first decomposition** (see `work-breakdown` skill) when a PRD describes pages assembled from 3+ components: create the integration shell as a scaffold item with real imports pointing to stub components, then create component items that fill in the stubs. This eliminates big-bang integration items that consistently fail.
+
+If shell-first doesn't apply (1-2 components, or components are independent), create integration work items for:
 - Replacing stock/template content with built components in route files
-- Assembling page layouts from individual components (homepage sections, product page structure)
+- Assembling page layouts from individual components
 - Wiring providers, context, or subscribers into root layouts
 - Connecting data loaders to component props
 
@@ -201,6 +232,7 @@ parallel_group: "component-name"                # Prevents conflicting concurren
 **Acceptance criteria rules for common rejection patterns:**
 - **Error/failure paths**: For every operation that can fail (network call, I/O, user-provided callback), include an explicit AC for the failure path (e.g., "When the API returns a non-success status or unparseable response, the error is surfaced to the caller and any optimistic state reverts"). Don't assume B.A. will add error handling if the AC only describes the happy path.
 - **Input validation**: If the feature accepts user input (text fields, file uploads, form submissions), include an AC for invalid/empty input (e.g., "Empty or whitespace-only input is rejected with feedback"). Don't assume B.A. will add validation — if it's not in the AC, it won't be tested or implemented.
+- **Absence/empty conditions**: Use behavioral language ("no meaningful value"), not falsy-value enumerations. See the `work-breakdown` skill's Absence/Empty Conditions section.
 - **Async loading states**: If the feature loads data asynchronously, include an AC for the loading/pending state (e.g., "While data is loading, a loading indicator is shown — the empty state is not shown before data arrives"). Without this, users see misleading empty states on initial load.
 - **Consumer wiring**: When item A produces a module that item B consumes (per the `context` field or dependency graph), add an explicit AC to the **consuming item** that names the dependency: "Imports and uses [module from WI-XXX]" or "Renders [component from WI-XXX] when [condition]." Without this, B.A. implements item B without wiring item A's output, and the gap isn't caught until review or probing.
 - **Shared types**: When multiple items use the same data shape, create a single types item that others depend on. Add an AC to consuming items: "Imports types from [WI-XXX] — does NOT redefine them locally." Local type duplicates drift from the source of truth and are a top review rejection.

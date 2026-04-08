@@ -70,17 +70,18 @@ function getById(id: string): User {
 
 ## Work Item Ordering
 
-The A(i)-Team enforces TDD through work item ordering:
+The A(i)-Team enforces TDD through its pipeline stages. Each work item flows through stages in strict order:
 
 ```
-001-user-types.md       (interface)  ← First: Define the contract
-010-user-tests.md       (test)       ← Second: Write tests against contract
-020-user-impl.md        (implementation) ← Third: Implement to pass tests
+briefings → ready → testing (Murdock) → implementing (B.A.) → review (Lynch) → probing (Amy) → done
 ```
 
-Dependencies ensure this order:
-- Tests depend on interfaces
-- Implementations depend on tests AND interfaces
+The pipeline enforces the TDD contract:
+- Murdock writes tests and types first (RED phase)
+- B.A. implements to pass those tests (GREEN phase)
+- B.A. refactors for clarity (REFACTOR phase)
+- Lynch verifies tests + implementation as a cohesive unit
+- Amy probes for bugs that tests missed
 
 ## Benefits of TDD in A(i)-Team
 

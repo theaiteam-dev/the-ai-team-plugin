@@ -220,6 +220,46 @@ SendMessage({
 
 ---
 
+## Ad-Hoc Peer Requests
+
+Agents sometimes need to ask a peer to fix something mid-work (e.g., B.A. finds a broken import in a test file and asks Murdock to fix it). This is NOT a pipeline handoff — it's a quick coordination message.
+
+**IMPORTANT: Text output is NOT a message.** Printing "Good to go, ba-1" in your conversation output does nothing — only `SendMessage` reaches another agent.
+
+### Requesting a fix
+
+```javascript
+SendMessage({
+  to: "{peer_agent}",
+  message: "FIX: {description of what needs fixing and why}",
+  summary: "Fix request for {file/issue}"
+})
+```
+
+### Replying when done
+
+After completing the fix, **you MUST send a reply** so the requesting agent can proceed:
+
+```javascript
+SendMessage({
+  to: "{requesting_agent}",
+  message: "FIXED: {description of what was changed}",
+  summary: "Fix applied"
+})
+```
+
+If you cannot fix it (e.g., outside your boundaries), reply with why:
+
+```javascript
+SendMessage({
+  to: "{requesting_agent}",
+  message: "CANNOT_FIX: {reason}. Escalating to Hannibal.",
+  summary: "Cannot fix, escalating"
+})
+```
+
+---
+
 ## Shutdown Response
 
 When you receive a shutdown request from Hannibal:

@@ -159,10 +159,9 @@ POOL_DIR="/tmp/.ateam-pool/${MISSION_ID}"
 
 **Lifecycle:**
 - **Mission start:** Hannibal creates the directory upfront, then creates `.idle` files for each lane only after receiving READY messages from all 4 agents in that lane (see Agent Pre-Warming).
-- **Agent gets work (agentStart):** Agent `mv`s its own `.idle` → `.busy` (marks itself busy).
-- **Agent finishes work (agentStop):** Agent `mv`s its own `.busy` → `.idle` AFTER completing the handoff to the next stage. Do NOT `touch` a new `.idle` — always `mv` the existing `.busy` back, so both files never coexist.
-- **Claiming a target:** Sending agent atomically `mv`s a target's `.idle` → `.busy`. On same-filesystem `mv`, only one of two racing agents will succeed — the loser gets ENOENT and retries the next idle file.
-- **Mission end:** Tawnia removes the entire pool directory after the final commit (not Hannibal — Tawnia's subagent dispatch guarantees this runs even if Hannibal's session ends early).
+- **Agent gets work (agentStart):** Agent `mv`s its own `.idle` → `.busy` via the `pool-handoff` skill (Step 1 — the only manual pool operation).
+- **Agent finishes work (agentStop --json):** The CLI automatically: (1) releases the agent's `.busy` → `.idle`, (2) claims an idle next-stage instance (`.idle` → `.busy`), (3) returns `claimedNext` in the JSON response. **Agents do NOT manually `mv` pool files on completion.**
+- **Mission end:** Tawnia removes the entire pool directory after the final commit.
 
 **Directory creation (Hannibal, before pre-warming):**
 ```bash
@@ -208,13 +207,18 @@ for lane_number in 1..N:
             subagent_type: agentTypeToSubagent(instance.agentType),
             description:  "{instance.name}: standby",
             prompt:       "You are {instance.name} ({instance.agentType} instance {lane_number}).
-                           Your FIRST action on startup is to send Hannibal a ready signal:
-                             SendMessage(to: 'hannibal', content: 'READY: {instance.name}')
-                           Then await work item assignments from Hannibal via SendMessage.
+                           Environment: export ATEAM_MISSION_ID='{missionId}'
+                           Your FIRST action on startup:
+                             1. Run: export ATEAM_MISSION_ID='{missionId}'
+                             2. Send Hannibal a ready signal:
+                                SendMessage(to: 'hannibal', content: 'READY: {instance.name}')
+                           Then await work item assignments via SendMessage.
                            When receiving work, use exactly '--agent \"{instance.name}\"' in all
                            ateam agents-start and ateam agents-stop commands.
-                           After completing work, include your instance name in completion
-                           messages: 'DONE: WI-XXX - summary ({instance.name})'."
+                           IMPORTANT: Always pass --json to agentStop. The CLI handles pool
+                           management and returns claimedNext in the response. If claimedNext
+                           is set, send START to that instance. If poolAlert is set, send
+                           ALERT to Hannibal. See your agent prompt for the exact sequence."
         )
 
     # Wait for READY messages from all 4 agents in this lane before continuing.
@@ -226,17 +230,51 @@ for lane_number in 1..N:
         touch "${POOL_DIR}/${instance.name}.idle"
 ```
 
-**`wait_for_lane_ready(lane_number)`**: Block on incoming `SendMessage` until all 4 expected READY messages arrive:
+**`wait_for_lane_ready(lane_number)`**: Block on incoming `SendMessage` until all 4 expected READY messages arrive, with a **60-second timeout per lane**:
 
 ```
 lane_agents = {"murdock-{N}", "ba-{N}", "lynch-{N}", "amy-{N}"}
 ready = set()
+deadline = now() + 60s
 
 while ready != lane_agents:
-    msg = receive next SendMessage
+    remaining = deadline - now()
+    if remaining <= 0:
+        break
+    msg = receive next SendMessage (timeout: remaining)
+    if msg is timeout:
+        break
     if msg.content starts with "READY:" and msg.sender in lane_agents:
         ready.add(msg.sender)
+
+if ready != lane_agents:
+    missing = lane_agents - ready
+    for agent in missing:
+        Bash("ateam activity createActivityEntry --agent hannibal --message 'TIMEOUT: {agent} did not send READY within 60s — respawning' --level warning")
+        # Kill the silent agent and respawn
+        SendMessage(type: "shutdown_request", recipient: agent, content: "No READY received — shutting down for respawn")
+        Task(... same params as original spawn for this agent ...)
+
+    # Wait another 60s for respawned agents only
+    respawn_deadline = now() + 60s
+    while ready != lane_agents:
+        remaining = respawn_deadline - now()
+        if remaining <= 0:
+            break
+        msg = receive next SendMessage (timeout: remaining)
+        if msg is timeout:
+            break
+        if msg.content starts with "READY:" and msg.sender in lane_agents:
+            ready.add(msg.sender)
+
+    if ready != lane_agents:
+        still_missing = lane_agents - ready
+        for agent in still_missing:
+            Bash("ateam activity createActivityEntry --agent hannibal --message 'DEGRADED: {agent} failed to start after respawn — lane {lane_number} is degraded' --level error")
+        # Continue with remaining lanes — degraded agents will be skipped during dispatch
 ```
+
+**Do NOT use tmux pane liveness as a health check.** A pane can exist with a dead Claude Code process inside it. The only reliable signal that an agent is alive is a READY message. Silence after dispatch is a red flag, not a sign the agent is busy.
 
 **Example with N=2:**
 ```
@@ -429,6 +467,51 @@ function dispatch(instance, item_id):
         )
 ```
 
+## Dispatch Timeout Enforcement
+
+After dispatching work to any agent (via `SendMessage` or `Task`), Hannibal must enforce a **60-second acknowledgment timeout**. The expected signals are:
+
+- **ACK or FYI message** from the dispatched agent, OR
+- **`teammate_idle` event** (agent went idle, meaning it picked up the work)
+
+If neither arrives within 60 seconds, treat the agent as crashed:
+
+```
+function dispatch_with_timeout(instance, item_id):
+    dispatch(instance, item_id)
+    deadline = now() + 60s
+
+    while now() < deadline:
+        msg = receive next SendMessage (timeout: deadline - now())
+        if msg confirms activity from instance (ACK, FYI, or teammate_idle):
+            return SUCCESS
+        # Other messages (from different agents) — process normally, keep waiting
+
+    # Timeout — agent is presumed crashed
+    Bash("ateam activity createActivityEntry --agent hannibal --message 'TIMEOUT: {instance.name} did not acknowledge WI-{item_id} within 60s — respawning' --level warning")
+
+    # Release the dead agent's pool claim so it doesn't block handoffs
+    mv "${POOL_DIR}/${instance.name}.busy" "${POOL_DIR}/${instance.name}.idle" 2>/dev/null
+
+    # Respawn and redispatch
+    SendMessage(type: "shutdown_request", recipient: instance.name, content: "No ACK — shutting down for respawn")
+    Task(... same params as original spawn for this instance ...)
+
+    # Wait 60s for the respawned agent's READY
+    msg = receive next SendMessage (timeout: 60s)
+    if msg.content starts with "READY:" and msg.sender == instance.name:
+        dispatch(instance, item_id)
+        return SUCCESS
+
+    # Respawn also failed — mark degraded, release item
+    Bash("ateam activity createActivityEntry --agent hannibal --message 'DEGRADED: {instance.name} failed after respawn — releasing WI-{item_id}' --level error")
+    Bash("ateam board-release releaseItem --itemId {item_id}")
+    del active_instances[item_id]
+    return DEGRADED
+```
+
+**Do NOT check tmux pane liveness as a proxy for agent health.** A pane can exist with a dead process inside it. Message-based signals (READY, ACK, FYI, `teammate_idle`) are the only reliable health indicators.
+
 ## Agent Dispatch Workflows
 
 ### Dispatching Murdock (testing stage)
@@ -460,8 +543,7 @@ Task(
 
   STOP after creating these files. Do NOT create {outputs.impl}.
 
-  When done, run `ateam agents-stop agentStop --itemId {itemId} --agent \"murdock-2\" --outcome completed --summary \"...\"`, then notify Hannibal:
-  SendMessage(type: 'message', recipient: 'hannibal', content: 'DONE: {itemId} - summary (murdock-2)', summary: 'Tests complete for {itemId}')"
+  When done, follow the pool-handoff skill: run `ateam agents-stop agentStop --json --itemId {itemId} --agent \"murdock-2\" --outcome completed --summary \"...\"`, parse claimedNext from the response, and send START to the claimed B.A. instance (or ALERT to Hannibal if poolAlert is set)."
 )
 ```
 
@@ -503,8 +585,7 @@ Task(
   Test file is at: {outputs.test}
   Create the implementation at: {outputs.impl}
 
-  When done, run `ateam agents-stop agentStop --itemId {itemId} --agent \"ba-1\" --outcome completed --summary \"...\"`, then notify Hannibal:
-  SendMessage(type: 'message', recipient: 'hannibal', content: 'DONE: {itemId} - summary (ba-1)', summary: 'Implementation complete for {itemId}')"
+  When done, follow the pool-handoff skill: run `ateam agents-stop agentStop --json --itemId {itemId} --agent \"ba-1\" --outcome completed --summary \"...\"`, parse claimedNext from the response, and send START to the claimed Lynch instance (or ALERT to Hannibal if poolAlert is set)."
 )
 ```
 
@@ -540,8 +621,7 @@ Task(
   - Implementation: {outputs.impl}
   - Types (if exists): {outputs.types}
 
-  When done, run `ateam agents-stop agentStop --itemId {itemId} --agent \"lynch-1\" --outcome completed --summary \"...\"`, then notify Hannibal:
-  SendMessage(type: 'message', recipient: 'hannibal', content: 'DONE: {itemId} - APPROVED/REJECTED - summary (lynch-1)', summary: 'Review complete for {itemId}')"
+  When done, follow the pool-handoff skill: run `ateam agents-stop agentStop --json --itemId {itemId} --agent \"lynch-1\" --outcome completed --summary \"...\"`, parse claimedNext from the response, and send START to the claimed Amy instance (or ALERT to Hannibal if poolAlert is set). For REJECTED, use --outcome rejected --return-to testing/implementing --advance=false, then send REJECTED to the responsible agent."
 )
 ```
 
@@ -577,8 +657,7 @@ Task(
 
   Execute the Raptor Protocol. Respond with VERIFIED or FLAG.
 
-  When done, run `ateam agents-stop agentStop --itemId {itemId} --agent \"amy-2\" --outcome completed --summary \"...\"`, then notify Hannibal:
-  SendMessage(type: 'message', recipient: 'hannibal', content: 'DONE: {itemId} - VERIFIED/FLAG - summary (amy-2)', summary: 'Probing complete for {itemId}')"
+  When done, run `ateam agents-stop agentStop --json --itemId {itemId} --agent \"amy-2\" --outcome completed --summary \"...\"`. Amy is terminal — no downstream handoff. Send FYI to Hannibal with verdict. For FLAG, use --outcome rejected --return-to implementing --advance=false, then send START to B.A. with bug details."
 )
 ```
 
@@ -600,30 +679,30 @@ Task(
 
   Update documentation and create the final commit.
 
-  When done, run `ateam agents-stop agentStop`, then notify Hannibal:
-  SendMessage(type: 'message', recipient: 'hannibal', content: 'DONE: docs - summary with commit hash', summary: 'Documentation and commit complete')"
+  When done, run `ateam agents-stop agentStop --json`, then send DONE to Hannibal with commit hash."
 )
 ```
 
 ## Completion Message Parsing
 
-Teammates include their instance name in completion messages. Parse accordingly:
+With CLI-automated pool handoffs, Hannibal receives **FYI** (successful handoff) or **ALERT** (no idle instance) messages from pipeline agents, not DONE. Hannibal only needs to act on ALERTs.
 
 ```
-# Message format:
-"DONE: WI-003 - Created 5 test cases (murdock-2)"
-"DONE: WI-003 - APPROVED - All tests pass (lynch-1)"
-"DONE: WI-003 - VERIFIED - All probes pass (amy-1)"
-"DONE: WI-003 - FLAG - Race condition found (amy-2)"
+# Peer handoff messages (pipeline agents → Hannibal):
+"FYI: WI-003 → ba-1 (murdock-2)"          # successful handoff, no action needed
+"ALERT: WI-003 - no idle ba instance available (murdock-2)"  # queue for dispatch
+
+# Terminal agent messages (Amy, Tawnia, Stockwell → Hannibal):
+"FYI: WI-003 - Probing complete. VERIFIED. (amy-1)"
+"DONE: docs - Updated README with commit abc123"
+"DONE: FINAL-REVIEW - FINAL APPROVED - all requirements met"
+
+# Error paths:
+"ALERT: WI-003 - No ACK from ba-1 after 20s (murdock-2)"  # handoff timeout
 "BLOCKED: WI-004 - Missing type definitions (murdock-1)"
-
-# Extract:
-item_id      = parse "WI-XXX" from message
-instance_name = parse "(murdock-2)" suffix, OR derive from SendMessage sender field
-verdict      = parse APPROVED/REJECTED/VERIFIED/FLAG if present
 ```
 
-The `SendMessage` sender field is the most reliable source of the instance name — use it when the message suffix is absent or ambiguous.
+**Hannibal's role in native teams mode:** Monitor FYI messages passively. Act only on ALERT (queue item in `pending_alerts`, dispatch when capacity opens) and BLOCKED (investigate and intervene).
 
 ## Minimizing Per-Cycle Token Spend
 
@@ -681,86 +760,65 @@ Production measurements show Hannibal-mediated dispatch adds 2-3 minutes of late
 
 **No instance-number affinity.** `murdock-2` completing WI-008 may hand off to `ba-1` or `ba-2` — whichever has an `.idle` file first. The instance numbers of sender and receiver are independent.
 
-### Agent-Side Claiming Flow
+### Agent-Side Handoff (CLI-Automated)
 
-Every pipeline agent (except Amy, who has no downstream handoff) executes this flow after `agentStop`:
+The `agentStop` CLI handles all pool management automatically: self-release (`.busy` → `.idle`), next-agent claiming (`.idle` → `.busy`), and returning `claimedNext` in the JSON response. **Agents do NOT manually `mv` pool files.**
+
+Every pipeline agent (except Amy, who has no downstream handoff) executes this flow:
 
 ```bash
-# === Run by the completing agent (e.g. murdock-2 finishing WI-005) ===
+# === Step 1: Call agentStop with --json ===
+RESULT=$(ateam agents-stop agentStop \
+  --itemId "WI-005" \
+  --agent "${MY_INSTANCE_NAME}" \
+  --outcome completed \
+  --summary "..." \
+  --json)
 
-POOL_DIR="/tmp/.ateam-pool/${MISSION_ID}"
-NEXT_TYPE="ba"   # murdock→ba, ba→lynch, lynch→amy
+# === Step 2: Parse the response ===
+CLAIMED_NEXT=$(echo "$RESULT" | jq -r '.data.claimedNext // ""')
+POOL_ALERT=$(echo "$RESULT" | jq -r '.data.poolAlert // ""')
 
-# Step 1: Return own .busy file to .idle (mark self as available for new work)
-# MUST use mv — do NOT touch a new .idle file. Both files coexisting = corrupted pool state.
-mv "${POOL_DIR}/${MY_INSTANCE_NAME}.busy" "${POOL_DIR}/${MY_INSTANCE_NAME}.idle"
-
-# Step 2: Attempt to claim an idle instance of the next agent type
-MAX_RETRIES=3
-CLAIMED=""
-
-for attempt in 1..MAX_RETRIES:
-    # Glob matches both "ba.idle" (N=1) and "ba-1.idle", "ba-2.idle" (N>1)
-    NEXT=$(ls ${POOL_DIR}/${NEXT_TYPE}.idle ${POOL_DIR}/${NEXT_TYPE}-*.idle 2>/dev/null | head -1)
-    if [ -z "$NEXT" ]; then
-        break   # no idle files at all — skip to ALERT
-    fi
-
-    BASENAME=$(basename "$NEXT" .idle)
-    mv "$NEXT" "${POOL_DIR}/${BASENAME}.busy" 2>/dev/null
-    if [ $? -eq 0 ]; then
-        CLAIMED="${BASENAME}"
-        break   # won the race
-    fi
-    # Lost race (ENOENT) — another agent claimed it first. Retry.
-
-if [ -n "$CLAIMED" ]; then
-    # === SUCCESS: Send START directly to the claimed instance ===
+# === Step 3: Hand off or alert ===
+if [ -n "$CLAIMED_NEXT" ]; then
+    # SUCCESS: Send START directly to the claimed instance
     SendMessage(
-        type: "message",
-        recipient: "${CLAIMED}",
-        content: "START: WI-005 - {title}\nTest file: {outputs.test}\nImpl file: {outputs.impl}\nFetch details: ateam items renderItem --id WI-005\nFirst run: ateam agents-start agentStart --itemId WI-005 --agent \"${CLAIMED}\"",
-        summary: "Handoff WI-005 to ${CLAIMED}"
+        to: "${CLAIMED_NEXT}",
+        message: "START: WI-005 - {one-line summary}\nRun: ateam items renderItem --id WI-005",
+        summary: "START WI-005"
     )
-
-    # Notify Hannibal (informational only — no action needed)
+    # Wait up to 20s for ACK, then notify Hannibal
     SendMessage(
-        type: "message",
-        recipient: "hannibal",
-        content: "FYI: WI-005 handed to ${CLAIMED} (${MY_INSTANCE_NAME})",
-        summary: "FYI: WI-005 → ${CLAIMED}"
+        to: "hannibal",
+        message: "FYI: WI-005 → ${CLAIMED_NEXT} (${MY_INSTANCE_NAME})",
+        summary: "FYI WI-005 → ${CLAIMED_NEXT}"
     )
-else
-    # === NO IDLE INSTANCE: Alert Hannibal to queue the item ===
+elif [ -n "$POOL_ALERT" ]; then
+    # NO IDLE INSTANCE: Alert Hannibal to queue
     SendMessage(
-        type: "message",
-        recipient: "hannibal",
-        content: "ALERT: No idle ${NEXT_TYPE} instance for WI-005 (${MY_INSTANCE_NAME})",
-        summary: "ALERT: No idle ${NEXT_TYPE} for WI-005"
+        to: "hannibal",
+        message: "ALERT: WI-005 - ${POOL_ALERT} (${MY_INSTANCE_NAME})",
+        summary: "ALERT WI-005"
     )
 fi
 ```
 
-**Stage advancement:** The completing agent calls `ateam agents-stop agentStop --advance` which advances the item to the next stage atomically. The `board-move` call is NOT needed in the peer handoff path — `agentStop --advance` handles it.
+**Requires:** `ATEAM_MISSION_ID` must be set in the agent's environment (set during pre-warming). Without it, pool management is silently skipped and `claimedNext` is always empty.
+
+**Stage advancement:** `agentStop --advance` advances the item to the next stage atomically. No separate `board-move` call needed.
 
 ### Receiving Agent Flow
 
-When a pipeline agent receives a `START` message from a peer (not from Hannibal):
+When a pipeline agent receives a `START` message from a peer:
 
 ```bash
-# === Run by the receiving agent (e.g. ba-2 receiving START for WI-005) ===
-
-# The .idle file was already mv'd to .busy by the sender — no action needed.
+# The CLI already mv'd the receiver's .idle → .busy — no manual claim needed.
 # Proceed with normal work:
 ateam agents-start agentStart --itemId "WI-005" --agent "${MY_INSTANCE_NAME}"
 
 # ... do work ...
 
-ateam agents-stop agentStop --itemId "WI-005" --agent "${MY_INSTANCE_NAME}" \
-    --outcome completed --summary "..."
-
-# Then execute the same claiming flow above to hand off to the NEXT stage.
-# (Unless this is Amy — Amy sends DONE directly to Hannibal.)
+# Call agentStop --json and follow the same handoff flow above.
 ```
 
 ### When All Instances of the Next Type Are Busy
@@ -807,8 +865,7 @@ Task(
   2. The mission's commits — correct, consistent, secure?
   3. Integration — do changes wire into the existing codebase?
 
-  When done, run `ateam agents-stop agentStop`, then notify Hannibal:
-  SendMessage(type: 'message', recipient: 'hannibal', content: 'DONE: FINAL-REVIEW - FINAL APPROVED/REJECTED - summary', summary: 'Final mission review complete')"
+  When done, run `ateam missions-final-review writeFinalReview --missionId {missionId} --report \"...\"` to persist the review, then send DONE to Hannibal with verdict."
 )
 ```
 
@@ -843,12 +900,10 @@ T=0s    HANNIBAL:
           # WI-003 stays in ready; dispatched when a murdock completes
 
 T=30s   MURDOCK-1 finishes WI-001:
-        agentStop --advance (WI-001 → implementing)
-        mv murdock-1.busy → murdock-1.idle             # mark self idle (mv, NOT touch)
-        ls ba-*.idle → ba-1.idle                       # find idle ba
-        mv ba-1.idle → ba-1.busy                       # claim ba-1 (atomic)
-        SendMessage(to: "ba-1", "START: WI-001...")    # direct peer handoff
-        SendMessage(to: "hannibal", "FYI: WI-001 handed to ba-1 (murdock-1)")
+        RESULT=$(agentStop --json --advance)            # CLI: release murdock-1, claim ba-1
+        claimedNext = "ba-1"                            # from JSON response
+        SendMessage(to: "ba-1", "START: WI-001...")     # direct peer handoff
+        SendMessage(to: "hannibal", "FYI: WI-001 → ba-1 (murdock-1)")
 
         HANNIBAL receives FYI:
         active_instances[001] = "ba-1"
@@ -858,37 +913,31 @@ T=30s   MURDOCK-1 finishes WI-001:
           board-move 003 → testing; dispatch(murdock-1, 003)
 
 T=40s   MURDOCK-2 finishes WI-002:
-        agentStop --advance (WI-002 → implementing)
-        mv murdock-2.busy → murdock-2.idle
-        ls ba-*.idle → ba-2.idle
-        mv ba-2.idle → ba-2.busy
+        RESULT=$(agentStop --json --advance)            # CLI: release murdock-2, claim ba-2
+        claimedNext = "ba-2"
         SendMessage(to: "ba-2", "START: WI-002...")
-        SendMessage(to: "hannibal", "FYI: WI-002 handed to ba-2 (murdock-2)")
+        SendMessage(to: "hannibal", "FYI: WI-002 → ba-2 (murdock-2)")
 
 T=60s   BA-1 finishes WI-001:
-        agentStop --advance (WI-001 → review)
-        mv ba-1.busy → ba-1.idle
-        ls lynch-*.idle → lynch-1.idle
-        mv lynch-1.idle → lynch-1.busy
+        RESULT=$(agentStop --json --advance)            # CLI: release ba-1, claim lynch-1
+        claimedNext = "lynch-1"
         SendMessage(to: "lynch-1", "START: WI-001...")
-        SendMessage(to: "hannibal", "FYI: WI-001 handed to lynch-1 (ba-1)")
+        SendMessage(to: "hannibal", "FYI: WI-001 → lynch-1 (ba-1)")
 
 T=65s   MURDOCK-1 finishes WI-003:
-        agentStop --advance (WI-003 → implementing)
-        mv murdock-1.busy → murdock-1.idle
-        ls ba-*.idle → ba-1.idle (ba-1 just freed at T=60s)
-        mv ba-1.idle → ba-1.busy
+        RESULT=$(agentStop --json --advance)            # CLI: release murdock-1, claim ba-1 (just freed at T=60s)
+        claimedNext = "ba-1"
         SendMessage(to: "ba-1", "START: WI-003...")
-        SendMessage(to: "hannibal", "FYI: WI-003 handed to ba-1 (murdock-1)")
+        SendMessage(to: "hannibal", "FYI: WI-003 → ba-1 (murdock-1)")
 
-        ... pipeline continues — all handoffs are peer-to-peer ...
+        ... pipeline continues — all handoffs are peer-to-peer via CLI ...
         ... Hannibal only processes FYI messages and fills from ready ...
 ```
 
 **KEY INSIGHTS:**
 1. Two idle Murdock instances → two items enter testing simultaneously (Hannibal dispatches)
-2. All subsequent handoffs are peer-to-peer — zero Hannibal latency in the critical path
-3. Atomic `mv` prevents double-claiming: two agents racing for `ba-1.idle` — one wins, other retries
+2. All subsequent handoffs are peer-to-peer via CLI — zero Hannibal latency in the critical path
+3. `agentStop --json` handles pool mv atomically — agents never manually touch pool files after startup
 4. Hannibal's loop is lightweight: process FYI messages (update tracking), drain alerts, fill from ready
 5. Instance names propagate through agentStart/agentStop (murdock-1, ba-2, etc.)
 

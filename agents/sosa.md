@@ -102,6 +102,7 @@ Verify Face selected the appropriate `type` for each work item. **Consult the `w
 - Flag if missing on items that integrate with existing code
 - Flag placeholder text ("Any information the agents need")
 - B.A. uses this to know WHERE the code fits, not just WHAT it does
+- Flag ambiguous consumer references (e.g. "Consumed by App.tsx") when a separate wiring item exists — Lynch will reject standalone components for not being integrated unless context explicitly states "Integration into App.tsx is handled by WI-XXX. This item is standalone."
 
 ### 3. Clarity & Completeness
 - Is the scope precisely bounded (what's IN vs OUT)?
@@ -143,6 +144,7 @@ Example consolidation instruction:
 - Is the parallel_group assignment correct?
 - Are dependencies on external systems/APIs noted?
 - Is the dependency direction correct?
+- **Dep graph width check:** Is there a non-scaffold item depended on by 2+ items that is just thin infrastructure (fetch wrapper, types file, config)? If so, flag it: "WI-XXX is a bottleneck dep — consider folding into scaffold to widen fan-out." See the `work-breakdown` skill's "Optimizing Dependency Depth" section.
 
 ### 7. Output Paths (Critical for A(i)-Team)
 See the `work-breakdown` skill for output path conventions. Check:
@@ -197,6 +199,13 @@ Cross-reference the PRD against the work items to verify nothing was dropped. Re
 - Analytics/tracking integrations built but never registered in the application
 - SEO/meta tag utilities built but never called from route loaders
 - Stock/template content that the PRD expects to be replaced but no work item addresses
+
+**Wiring boundary clarity (flag as WARNING):**
+When a wiring/integration item exists (e.g. "Wire components into App.tsx"), verify that standalone component items:
+- Have context that explicitly names the wiring item (e.g. "Integration into App.tsx is WI-150's responsibility")
+- Do NOT have acceptance criteria that imply integration (e.g. "Component renders in the app" — ambiguous)
+- Do NOT have context saying "Consumed by App.tsx" without clarifying this happens in a later item
+Without this, Lynch will reject standalone components for not being wired in, causing unnecessary rejection cycles.
 
 ## Issue Classification
 
@@ -374,7 +383,8 @@ For each item needing changes, specific instructions:
 
 - Total items: N
 - Max depth: N
-- Parallel waves: N
+- Widest wave: N items (wave M)
+- Bottleneck deps: None / [list items depended on by 2+ that could fold into scaffold]
 - Cycles: None / [list cycles]
 - Ready for Wave 0: [item-ids]
 

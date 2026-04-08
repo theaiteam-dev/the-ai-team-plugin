@@ -64,15 +64,37 @@ export const MissionInitInputSchema = z.object({
 export const MissionCurrentInputSchema = z.object({});
 /**
  * Schema for mission_precheck tool input.
+ * Accepts a pre-computed result from the caller — no shell execution here.
  */
 export const MissionPrecheckInputSchema = z.object({
-    checks: z.array(z.string()).optional(),
+    passed: z.boolean(),
+    blockers: z.array(z.string()).default([]),
+    output: z.record(z.object({
+        stdout: z.string(),
+        stderr: z.string(),
+        timedOut: z.boolean(),
+    })).default({}),
+});
+/**
+ * Schema for mission_list tool input.
+ */
+export const MissionListInputSchema = z.object({
+    state: z.enum(['initializing', 'prechecking', 'precheck_failure', 'running', 'postchecking', 'completed', 'failed', 'archived']).optional(),
 });
 /**
  * Schema for mission_postcheck tool input.
+ * Accepts a pre-computed result from the caller — no shell execution here.
+ * Hannibal reads ateam.config.json, runs checks via Bash in the target project,
+ * then passes results here.
  */
 export const MissionPostcheckInputSchema = z.object({
-    checks: z.array(z.string()).optional(),
+    passed: z.boolean(),
+    blockers: z.array(z.string()).default([]),
+    output: z.record(z.object({
+        stdout: z.string(),
+        stderr: z.string(),
+        timedOut: z.boolean(),
+    })).default({}),
 });
 /**
  * Schema for mission_archive tool input.
@@ -123,15 +145,16 @@ export async function missionCurrent(input) {
     return withErrorBoundary(handler)(input);
 }
 /**
- * Runs configured pre-flight checks.
+ * Accepts a pre-computed precheck result and forwards it to the API.
+ * The caller runs lint/tests and passes { passed, blockers, output }.
  */
 export async function missionPrecheck(input) {
     const handler = async (args) => {
-        const body = {};
-        if (args.checks !== undefined) {
-            body.checks = args.checks;
-        }
-        const result = await client.post('/api/missions/precheck', body);
+        const result = await client.post('/api/missions/precheck', {
+            passed: args.passed,
+            blockers: args.blockers,
+            output: args.output,
+        });
         // Set mission-active marker when prechecks pass — signals enforcement
         // hooks that Hannibal's orchestration loop is about to start
         if (result.data.allPassed) {
@@ -145,14 +168,31 @@ export async function missionPrecheck(input) {
     return withErrorBoundary(handler)(input);
 }
 /**
- * Runs configured post-completion checks.
+ * Lists missions, optionally filtered by state.
+ */
+export async function missionList(input) {
+    const handler = async (args) => {
+        const url = args.state ? `/api/missions?state=${args.state}` : '/api/missions';
+        const result = await client.get(url);
+        return {
+            content: [{ type: 'text', text: JSON.stringify(result.data) }],
+            data: result.data,
+        };
+    };
+    return withErrorBoundary(handler)(input);
+}
+/**
+ * Records pre-computed post-completion check results.
+ * The caller (Hannibal) runs checks via Bash in the target project first,
+ * then passes results here to update mission state.
  */
 export async function missionPostcheck(input) {
     const handler = async (args) => {
-        const body = {};
-        if (args.checks !== undefined) {
-            body.checks = args.checks;
-        }
+        const body = {
+            passed: args.passed,
+            blockers: args.blockers ?? [],
+            output: args.output ?? {},
+        };
         const result = await client.post('/api/missions/postcheck', body);
         return {
             content: [{ type: 'text', text: JSON.stringify(result.data) }],
@@ -220,7 +260,7 @@ export const missionTools = [
     },
     {
         name: 'mission_postcheck',
-        description: 'Run configured post-completion checks (lint, unit tests, e2e) after all items are done.',
+        description: 'Record pre-computed post-completion check results (lint, unit tests, e2e) after all items are done. Caller must run checks via Bash first using commands from ateam.config.json, then pass { passed, blockers, output } here.',
         inputSchema: zodToJsonSchema(MissionPostcheckInputSchema),
         zodSchema: MissionPostcheckInputSchema,
         handler: missionPostcheck,
@@ -231,6 +271,13 @@ export const missionTools = [
         inputSchema: zodToJsonSchema(MissionArchiveInputSchema),
         zodSchema: MissionArchiveInputSchema,
         handler: missionArchive,
+    },
+    {
+        name: 'mission_list',
+        description: 'List missions for the current project, optionally filtered by state.',
+        inputSchema: zodToJsonSchema(MissionListInputSchema),
+        zodSchema: MissionListInputSchema,
+        handler: missionList,
     },
 ];
 //# sourceMappingURL=missions.js.map

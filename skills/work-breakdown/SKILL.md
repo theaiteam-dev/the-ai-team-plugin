@@ -65,10 +65,39 @@ Choose the type that matches the nature of the work:
 
 **Typical decomposition:** 5–15 items for most PRDs. 20+ is a red flag. 30+ is almost certainly over-split.
 
+**The 5-test ceiling:** If Murdock would need more than 5 tests to cover a feature item's acceptance criteria, the item is too big — split it. This works bidirectionally: test count informs sizing (not just the reverse). An item with 8 ACs almost certainly needs splitting; an item with 2 ACs might be too small or under-specified.
+
+### Atomicity (The #1 Decomposition Defect)
+
+Research across 1,000+ user stories identifies **compound items** — items that bundle two or more independent behaviors — as the single most common breakdown defect. A compound item forces Murdock to test two concerns, B.A. to implement two things, and Lynch to review a bigger surface. Every atomicity violation multiplies downstream rework.
+
+**Test:** Can you describe this item's outcome in one sentence without "and"? If you need "and," it's probably two items.
+
+- "Users can create orders **and** view order history" → two items
+- "Users can create orders with line items and see real-time totals" → one item (totals are part of creation)
+
+### Splitting Patterns
+
+When an item is too big, use one of these named patterns to find the natural seam:
+
+| Pattern | When to use | Example |
+|---------|-------------|---------|
+| **Workflow steps** | Multi-step processes | Checkout: cart → shipping → payment → confirm |
+| **CRUD operations** | "Manage X" stories | Create account, edit profile, delete account |
+| **Business rule variations** | Multiple rules for same goal | Tax: taxable states vs. exempt states |
+| **Simple/complex** | Feature with many options | Basic search first, then filters and sorting |
+| **Data variations** | Complex data handling | Search by name first, add filters later |
+| **Defer performance** | Functional + NFR combined | Make it work, then make it fast |
+
+**The meta-pattern:** Find the core complexity, list all variations, then capture one complete vertical slice through the complexity rather than multiple variations at once.
+
+**Anti-pattern — horizontal slicing:** Never split by architectural layer (UI item, API item, DB item). Each item must be a complete vertical slice that can be independently tested and delivered.
+
 ### Good Splits
 
-- "User authentication service" → separate items for login, logout, token refresh, password reset
-- "Order processing" → separate items for create order, cancel order, refund order
+- "User authentication service" → separate items for login, logout, token refresh, password reset (CRUD pattern)
+- "Order processing" → separate items for create order, cancel order, refund order (CRUD pattern)
+- "Search feature" → basic search, then add filters, then add sorting (simple/complex pattern)
 
 ### Bad Splits (Over-splitting)
 
@@ -76,6 +105,41 @@ Choose the type that matches the nature of the work:
 - Creating artificial boundaries that require excessive cross-references
 - 5 items that all write to the same file and could be described as "build the X component"
 - Each item generates a test file, and 40 test files for one PRD is excessive
+- Horizontal slicing: "Create todo UI", "Create todo API", "Create todo DB migration" (should be one item)
+
+### Shell-First Decomposition for Integration-Heavy PRDs
+
+When a PRD describes a page or app assembled from multiple components, **create the integration shell first** as a scaffold item, then create component items that fill in the stubs:
+
+```
+WI-001: App shell with stubs (scaffold — creates App.tsx with real imports, stub components)
+WI-002: EmptyState component (replaces stub with real implementation)
+WI-003: TodoList component (replaces stub with real implementation)
+WI-004: CreateTodo component (replaces stub with real implementation)
+```
+
+WI-001 creates:
+```tsx
+// App.tsx — shell with real imports, stub components exist as empty exports
+import { EmptyState } from './components/EmptyState';
+import { TodoList } from './components/TodoList';
+import { CreateTodo } from './components/CreateTodo';
+// ... real wiring with real imports, components are initially stubs
+```
+
+Each subsequent item replaces its stub with the real implementation. The imports and wiring are correct from day one — no "big-bang integration item" at the end that tries to wire 4+ components at once.
+
+**Why this works:** Integration items fail because the implementing agent reimagines component interfaces instead of importing real ones. Shell-first eliminates the problem — the wiring exists before the components do, and B.A. only needs to flesh out each component to match its already-wired interface.
+
+**When to use shell-first:**
+- PRD describes a page composed of 3+ distinct components
+- Multiple components need to be wired into a shared parent
+- The parent manages shared state consumed by children
+
+**When NOT to use shell-first:**
+- Components are independent (no shared parent wiring needed)
+- PRD is primarily API/backend work with no page assembly
+- Only 1-2 components to wire (a single integration item is fine)
 
 ### Over-splitting Consolidation
 
@@ -140,6 +204,18 @@ Measurable criteria defining "done." Each criterion must describe an observable,
 - Each `task` needs 1–2 "done when" criteria (e.g., "vitest runs with zero tests passing")
 - `feature` items typically have 3–5 criteria; `task` items have 1–3
 
+#### Example Mapping Validation
+
+For each AC you write, ask: "Can I describe a concrete input and expected output?" If you can't give a specific example, the AC is too vague for Murdock to test.
+
+| AC | Example | Verdict |
+|----|---------|---------|
+| "Returns 201 with order ID" | `POST {items: [{sku: "W", qty: 2}]}` → `{id: "ord_123"}` | Testable |
+| "Handles errors gracefully" | ??? — which errors? what's "graceful"? | Too vague — rewrite |
+| "When createTodo fails, error is shown and input preserved" | `createTodo` rejects → banner shows error text, input still has typed value | Testable |
+
+If you can't produce a concrete example for an AC, it needs to be rewritten with specific inputs, actions, and observable outcomes. This is the single most effective technique for preventing downstream rework — vague ACs produce vague tests which produce wrong implementations.
+
 **BAD:**
 ```
 "Uses bcrypt for hashing"           # implementation choice, not behavior
@@ -154,6 +230,24 @@ Measurable criteria defining "done." Each criterion must describe an observable,
 "POST /api/orders with valid items returns 201 with order ID"
 "POST /api/orders with empty items array returns 400"
 ```
+
+#### Absence/Empty Conditions
+
+When an AC describes "render nothing" or "hide when absent" behavior, use behavioral language rather than enumerating specific falsy values. Let the implementation agent decide what constitutes "no meaningful value" in their language.
+
+**BAD:**
+```
+"When error is null or empty string, nothing is rendered"
+# Misses whitespace-only strings, undefined, etc. — language-specific gaps
+```
+
+**GOOD:**
+```
+"When no meaningful error is present, nothing is rendered"
+# Implementation agent handles null, empty, whitespace, undefined idiomatically
+```
+
+Enumerating falsy values creates gaps because different languages and frameworks have different falsy semantics. Behavioral language lets the implementer cover all cases naturally.
 
 #### Error Path Enumeration (Mandatory for Features with Multiple Async Operations)
 
@@ -364,6 +458,30 @@ Items can be in the same wave (no declared dependencies between them) when:
 - Item B wires item A's component into a route or layout
 - Item B tests or depends on item A's API contract
 - Item B documents item A's output
+
+### Optimizing Dependency Depth for Parallelism
+
+After drafting items, review the dep graph shape. **Wider is better** — more items per wave means more pipeline parallelism. If the graph is deep and narrow, look for bottleneck items that can be folded into scaffold.
+
+**Bottleneck item:** A non-scaffold item depended on by 2+ other items. Every downstream item must wait for the bottleneck to reach `done` before entering the pipeline — this serializes work.
+
+**Fix:** If the bottleneck is thin infrastructure (types, fetch wrappers, config, utility modules without business logic), fold it into the scaffold/foundation item. All its dependents now depend on scaffold instead, and they fan out in the same wave.
+
+**Do NOT fold** items that contain substantial feature logic (user-facing behavior, complex state management, 3+ behavioral tests). Those are real features that deserve their own pipeline pass.
+
+**Example:**
+
+```
+BAD  — API client as separate item (depth 4, max width 2):
+  Scaffold → API client → (Form, TodoItem) → App
+             ^^^^^^^^^^^^
+             bottleneck: thin fetch wrapper, 1-2 smoke tests, 4 dependents
+
+GOOD — API client folded into scaffold (depth 3, max width 4):
+  Scaffold+API → (Form, TodoItem, ErrorBanner, EmptyState) → App
+```
+
+Same total work, but wave 1 processes 4 items concurrently instead of 2.
 
 ---
 
