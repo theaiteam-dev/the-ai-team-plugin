@@ -373,13 +373,28 @@ LOOP CONTINUOUSLY:
             alerted_at:       now()
         })
 
-    on DONE message from {instanceName} (probing stage only):
-        # Amy instances send DONE directly to Hannibal (no downstream peer handoff)
+    on MISSION_COMPLETE message from {instanceName} (Amy):
+        # Amy's agentStop response contained missionComplete:true — ALL items are in done stage.
+        # This is the PRIMARY trigger for the final review sequence.
+        # Amy already advanced the item to done and released her claim.
         item_id = extract WI-XXX from message
         del active_instances[item_id]
 
-        if VERIFIED: Bash("ateam board-move moveItem --itemId {item_id} --toStage done")
-        if FLAG:     Bash("ateam items rejectItem --id {item_id}")
+        # IMMEDIATELY check dep gates — this item reaching done may have unblocked others
+        deps_result = Bash("ateam deps-check checkDeps --json")
+        for dep_item_id in deps_result.readyItems:
+            if dep_item is in briefings stage:
+                Bash("ateam board-move moveItem --itemId {dep_item_id} --toStage ready")
+
+        # Proceed directly to Final Review sequence — skip Phase 4 completion detection
+        finalReviewReady = true
+        break  # exit orchestration loop → proceed to Final Review
+
+    on FYI message from Amy {instanceName} (probing stage):
+        # Amy verified an item but more items remain in the pipeline.
+        # Amy already advanced the item to done via agentStop --advance.
+        item_id = extract WI-XXX from message
+        del active_instances[item_id]
 
         # IMMEDIATELY check dep gates — this item reaching done may unblock others.
         # Do not wait for the next loop iteration. Run deps-check and unlock now.
@@ -437,7 +452,35 @@ LOOP CONTINUOUSLY:
         dispatch(claimed, item_id)
         active_instances[item_id] = claimed
 
-    # When finalReviewReady: true → dispatch Stockwell for Final Review
+    # ═══════════════════════════════════════════════════════════
+    # PHASE 4: COMPLETION DETECTION (FALLBACK)
+    # ═══════════════════════════════════════════════════════════
+    # PRIMARY trigger is MISSION_COMPLETE message from Amy (Phase 1).
+    # This phase is a SAFETY NET for edge cases: missed messages,
+    # items moved to done externally, or blocked-then-unblocked items.
+    #
+    # Conditions for completion:
+    # 1. active_instances is empty (no agents working on items)
+    # 2. pending_alerts is empty (no queued handoffs waiting)
+    # 3. Board shows all items in done stage (or blocked)
+
+    if active_instances is empty AND pending_alerts is empty:
+        board = Bash("ateam board getBoard --json")
+        all_items = board.stages.flatMap(s => s.items)
+        done_items = board.stages.find(s => s.name == "Done").items
+        blocked_items = board.stages.find(s => s.name == "Blocked").items
+
+        if len(done_items) + len(blocked_items) == len(all_items) AND len(done_items) > 0:
+            if len(blocked_items) > 0:
+                # Some items blocked — report and wait for human intervention
+                Bash("ateam activity createActivityEntry --agent hannibal --message 'Pipeline drained but {len(blocked_items)} item(s) blocked — awaiting human intervention' --level warn")
+                # Do NOT dispatch Stockwell — blocked items need resolution first
+            else:
+                # ALL items in done — dispatch Stockwell for Final Mission Review
+                finalReviewReady = true
+                break  # exit orchestration loop → proceed to Final Review
+
+    # If not complete, loop back to Phase 1 (process next messages)
 ```
 
 ## Dispatch Helper
@@ -693,7 +736,8 @@ With CLI-automated pool handoffs, Hannibal receives **FYI** (successful handoff)
 "ALERT: WI-003 - no idle ba instance available (murdock-2)"  # queue for dispatch
 
 # Terminal agent messages (Amy, Tawnia, Stockwell → Hannibal):
-"FYI: WI-003 - Probing complete. VERIFIED. (amy-1)"
+"FYI: WI-003 - Probing complete. VERIFIED. (amy-1)"                          # More items remain
+"MISSION_COMPLETE: WI-007 - all items verified and in done stage. (amy-1)"   # ALL items done — triggers Stockwell
 "DONE: docs - Updated README with commit abc123"
 "DONE: FINAL-REVIEW - FINAL APPROVED - all requirements met"
 

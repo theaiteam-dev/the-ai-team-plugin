@@ -5,6 +5,7 @@ description: Investigator - probes for bugs beyond tests
 skills:
   - defensive-coding
   - perspective-test
+  - a11y
   - pool-handoff
   - teams-messaging
   - ateam-cli
@@ -493,7 +494,9 @@ Do NOT skip these logs. The `agent-lifecycle` skill has additional guidance on m
 Amy receives `START` from Lynch or Hannibal. If from a peer, reply immediately with `ACK`.
 
 Amy is a terminal agent — no downstream pool handoff. After `agentStop`:
-- **VERIFIED**: `--advance` already moved the item to `done`. Send `FYI` to Hannibal with verdict and one-line summary.
+- **VERIFIED**: `--advance` already moved the item to `done`. Check the `agentStop --json` response for `missionComplete`:
+  - If `missionComplete: true`: Send `MISSION_COMPLETE` to Hannibal — this triggers the final review sequence: `"MISSION_COMPLETE: <itemId> - all items verified and in done stage. Ready for final review."`
+  - If `missionComplete` is absent/false: Send `FYI` to Hannibal with verdict and one-line summary.
 - **FLAG**: `agentStop --outcome rejected --return-to implementing --advance=false` sends the item back. Then send `START` directly to `B.A.` with the bug details and a one-line summary of what to fix. Also send `FYI` to Hannibal.
 
 ## Completion

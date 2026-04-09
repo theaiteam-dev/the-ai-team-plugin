@@ -5,6 +5,7 @@ description: Decomposer - breaks PRDs into work items
 skills:
   - ateam-cli
   - work-breakdown
+  - a11y
 hooks:
   PreToolUse:
     - hooks:
@@ -380,6 +381,8 @@ Before completing decomposition:
 - [ ] Every cross-item dependency has a wiring AC on the consuming item
 - [ ] Shared types have a single source item — consumers import, not redefine
 - [ ] Multi-trigger actions list **every** trigger as a separate AC line
+- [ ] UI items have a11y ACs per the `a11y` skill (input labels, button context, live regions, keyboard parity)
+- [ ] Competing UI states (error/empty/loading) have precedence ACs
 - [ ] No circular dependencies (verified by `ateam deps-check checkDeps --json`)
 - [ ] Parallel groups prevent file conflicts
 - [ ] Dependencies are minimal and explicit

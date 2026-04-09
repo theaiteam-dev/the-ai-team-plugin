@@ -144,7 +144,7 @@ briefings → ready → testing → implementing → review → probing → done
                                                                   ▼
                                                         ┌─────────────────┐
                                                         │  Final Review   │
-                                                        │    (Lynch)      │
+                                                        │  (Stockwell)    │
                                                         └────────┬────────┘
                                                                  │
                                                                  ▼
@@ -287,14 +287,18 @@ WIP limits are **per stage** — each pipeline column independently caps how man
    - Use `ateam deps-check checkDeps` to find items ready to move from briefings → ready
    - Start new features if per-stage WIP limits allow (check instance availability, not global count)
 
-6. **Final Mission Review:**
-   - When ALL items reach `done` stage, trigger final review
-   - Lynch reviews entire codebase for cross-cutting issues
-   - Focus: readability, security, race conditions, code quality
+6. **Final Mission Review (Stockwell):**
+   - When ALL items reach `done` stage, dispatch Stockwell for final review
+   - Stockwell reviews PRD + diff for cross-cutting issues
+   - Focus: PRD compliance, consistency, security, integration
    - If FINAL APPROVED → proceed to post-checks
    - If FINAL REJECTED → specified items return to pipeline
 
 7. **Post-Mission Checks:**
+   **GATE: Stockwell's Final Mission Review MUST have completed before running postchecks.**
+   If Stockwell was not dispatched or did not return a verdict, STOP and dispatch Stockwell first.
+   This is not optional — postchecks without a final review means cross-cutting issues go undetected.
+
    Run checks via Bash first (like precheck), then call `ateam missions-postcheck missionPostcheck` with results.
 
    Read `ateam.config.json` to get the list of check names (`config.postcheck`) and their commands

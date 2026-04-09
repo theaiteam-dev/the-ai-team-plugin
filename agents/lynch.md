@@ -7,6 +7,7 @@ skills:
   - defensive-coding
   - security-input
   - code-patterns
+  - a11y
   - pool-handoff
   - teams-messaging
   - ateam-cli
@@ -85,26 +86,25 @@ Review them as a cohesive unit, not separately.
 
 **When rejecting, reference specific unmet acceptance criteria by text** (e.g., "AC 'Returns 401 on invalid password' is not covered by any test"). This gives Murdock/B.A. precise guidance on what to fix.
 
-### Step 2: Read ALL Output Files Together
+### Step 2: Run Typecheck and Tests FIRST (before reading code)
+
+**This step comes before reading any source files.** Running tests first establishes ground truth — if tests pass, the code works. Do not predict test outcomes from reading code; that leads to false rejections based on stale reads or incorrect assumptions.
+
+- Run `bun run typecheck` (or project equivalent like `pnpm typecheck`, `tsc --noEmit`) — **reject immediately on type errors**. This catches cross-item type breakage (e.g., a stub wired into App.tsx that breaks when the real component lands with required props).
+- Run the full test suite **once** — **reject immediately on test failures** with specific failing test names. Do not debug.
+- If both pass, proceed to code review. If either fails, reject with specific errors — do not read the code to try to diagnose why.
+- For follow-up checks later in the review, use **targeted test runs** (`pnpm test <specific-file>`)
+- Do not re-run the full suite after reading each file
+
+### Step 3: Read ALL Output Files Together
 - Test file
 - Implementation file
 - Types file (if exists)
 - Trace the execution flow to understand how the code fulfills each requirement
 
-### Running Tests
+### Step 4: Evaluate Test Quality
 
-- Run the full test suite **once** at the start of your review
-- If tests fail, **reject immediately** with specific failing test names — do not debug
-- For follow-up checks, use **targeted test runs** (`pnpm test <specific-file>`)
-- Do not re-run the full suite after reading each file
-
-### Step 3: Run Tests and Evaluate Test Quality
-
-**First: do the tests pass?**
-- All must pass — reject immediately on failure with specific test names
-- Note any flaky behavior
-
-**Then: are the tests actually good?**
+**Tests already passed in Step 2 — now evaluate whether they're actually good.**
 
 This is a full code review of the test file, not just a green-light check. Ask yourself: *if the implementation had a subtle bug, would these tests catch it?*
 
@@ -125,8 +125,11 @@ The **test-writing** skill is preloaded at startup and contains full examples fo
 - *Source file regex matching or local reimplementations* — `readFileSync` on production code with regex, or function-under-test defined locally instead of imported
 - *Incomplete documented contract assertions* — testing only `.status` when both `.status` and `.body` are part of the documented contract
 - *Weak assertions on critical computed values* — `toBeTruthy()` or `toBeDefined()` on a total, ID, or transformed value where the exact value is knowable
+- *Scaffold file-existence-only tests* — for task/scaffold items, tests that only verify files exist without checking build output (see Ban 10 in test-writing skill)
 
 Consult the test-writing skill for code examples of each pattern.
+
+**"Only/never" qualifier check:** Scan each AC for exclusionary language ("only," "never," "exclusively," "must not"). Each match requires both a positive and negative test. If Murdock only wrote the positive case, flag as NOT COVERED.
 
 **Mocking — is it realistic?**
 - Flag over-mocked tests where every dependency is stubbed and there's no real logic being exercised
@@ -147,7 +150,7 @@ Consult the test-writing skill for code examples of each pattern.
 - If you could delete a test and the coverage would tell you nothing changed, it's a bad test
 - Tests that only verify happy-path mocks return the mock value are effectively no-ops
 
-### Step 4: Adversarial Implementation Review
+### Step 5: Adversarial Implementation Review
 
 After evaluating test quality, switch perspective: become an attacker trying to break the implementation. For each function in the diff, ask:
 
@@ -264,6 +267,7 @@ AC Coverage Matrix:
 
 ### Implementation
 - [ ] All tests pass
+- [ ] Typecheck passes (`bun run typecheck` or equivalent)
 - [ ] Matches the feature specification
 - [ ] Handles errors appropriately
 - [ ] Code is readable
@@ -288,7 +292,7 @@ AC Coverage Matrix:
 
    This claims the item AND records `assigned_agent` on the work item so the kanban UI shows you're working on it.
 
-2. **Follow the Review Process** (Steps 1-6 above)
+2. **Follow the Review Process** (Steps 1-9 above)
 
 3. **Render verdict**
 

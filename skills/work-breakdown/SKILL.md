@@ -266,22 +266,11 @@ If a feature has multiple async operations (create, update, delete, fetch), each
 "When deleteTodo fails, the todo remains in the list and ErrorBanner shows the error"
 ```
 
-#### Accessibility Criteria (Mandatory for UI Items with .tsx Output)
+#### Accessibility Criteria (Mandatory for UI Items)
 
-If a work item outputs `.tsx` files, include at least one a11y criterion. Murdock writes a11y-aware tests; B.A. implements markup to pass them. Catching gaps here is far cheaper than Amy finding them post-implementation.
+If a work item produces user-facing markup (HTML, JSX, TSX, Vue, Svelte, server-rendered templates — anything a user interacts with in a browser), include a11y criteria. Consult the **a11y skill** for the full checklist of patterns: input labeling, button context, ARIA live regions, keyboard parity, focus management, and competing UI state precedence.
 
-**BAD:**
-```
-# No a11y criteria at all
-# Murdock writes getByRole('checkbox') with no accessible name — passes but unusable by screen readers
-```
-
-**GOOD:**
-```
-"Each todo item's checkbox has an accessible label containing the todo title"
-"ErrorBanner uses role='alert' so screen readers announce errors immediately"
-"Inline edit can be triggered via keyboard (Enter or F2), not only double-click"
-```
+Catching a11y gaps at AC authoring is far cheaper than Amy finding them post-implementation.
 
 ### `context`
 

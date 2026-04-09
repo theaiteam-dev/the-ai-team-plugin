@@ -179,7 +179,51 @@ expect(items).toHaveLength(3);
 expect(result).toEqual({ id: '1', status: 'active' });
 ```
 
-### 10. Hardcoded Counts (FRAGILE)
+### 10. Scaffold File-Existence-Only Tests (BANNED)
+
+Tests that verify scaffold files exist or have non-empty content, but never check that the toolchain produces working output. Config files, build plugins, and entry points can all exist yet be completely unwired — producing zero output at build time.
+
+```typescript
+// BAD: Every file exists, but nothing proves the build works
+it('has a tailwind config', () => {
+  expect(fs.existsSync('tailwind.config.ts')).toBe(true);
+});
+it('has a vite config', () => {
+  expect(fs.existsSync('vite.config.ts')).toBe(true);
+});
+it('has a CSS entry point', () => {
+  expect(fs.existsSync('src/index.css')).toBe(true);
+});
+// All three pass even if Tailwind is never wired into Vite
+// and the build produces zero CSS bytes.
+
+// GOOD: Verify the build toolchain produces expected artifacts
+it('build produces non-zero CSS output', async () => {
+  const result = await $`bun run build`;
+  const cssFiles = glob.sync('dist/**/*.css');
+  expect(cssFiles.length).toBeGreaterThan(0);
+  const cssSize = fs.statSync(cssFiles[0]).size;
+  expect(cssSize).toBeGreaterThan(0);
+});
+
+it('build produces non-zero JS output', async () => {
+  const result = await $`bun run build`;
+  const jsFiles = glob.sync('dist/**/*.js');
+  expect(jsFiles.length).toBeGreaterThan(0);
+});
+
+// ALSO GOOD: Verify the dev server starts without errors
+it('dev server starts cleanly', async () => {
+  const proc = spawn('bun', ['run', 'dev']);
+  const output = await collectUntil(proc.stderr, 'ready in', 5000);
+  expect(output).not.toMatch(/error/i);
+  proc.kill();
+});
+```
+
+**Rule:** For scaffold/task items that set up a build toolchain, at least one test must verify the build produces expected output — not just that config files exist. "Configured" means "the build uses it and produces output," not "the file is on disk."
+
+### 11. Hardcoded Counts (FRAGILE)
 
 `toHaveLength(22)` breaks when features are added. Test structural properties or derive the count from the source of truth.
 
@@ -327,6 +371,41 @@ These patterns apply to any framework with a testing library that supports role-
 
 ---
 
+## "Only/Never" Qualifier Tests
+
+When an acceptance criterion contains exclusionary language — "only," "never," "exclusively," "must not" — it implies two test cases, not one:
+
+1. **Positive test:** The thing happens when expected (Y → X)
+2. **Negative test:** The thing does NOT happen when the condition is absent (¬Y → ¬X)
+
+Testing only the positive case is the most common way to "cover" an AC while missing a real bug.
+
+```typescript
+// AC: "EmptyState is shown ONLY after loading completes successfully with zero results"
+
+// Insufficient: Tests the positive case only
+it('shows EmptyState after successful empty load', async () => {
+  mockGetTodos.mockResolvedValue([]);
+  render(<App />);
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/no todos/i));
+});
+
+// REQUIRED: Negative test — the "only" qualifier demands it
+it('does NOT show EmptyState after failed load', async () => {
+  mockGetTodos.mockRejectedValue(new Error('Network error'));
+  render(<App />);
+  await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+  // Dismiss the error
+  await user.click(screen.getByLabelText('Dismiss error'));
+  // EmptyState must NOT appear — load never succeeded
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+});
+```
+
+**How to check:** After your 1:1 AC reconciliation, scan each criterion for "only," "never," "exclusively," "must not," or "should not." For each match, verify you have both the positive and negative test. If you only have one, add the other.
+
+---
+
 ## AC Cross-Product Testing
 
 After mapping each acceptance criterion 1:1 to a test, scan for AC *combinations* that imply untested paths. When one AC defines a trigger and another defines a guard or constraint, their cross-product is a test case.
@@ -367,6 +446,8 @@ For every test file, verify:
 6. No assertion is trivially true (`toBeDefined()` on a known value, `>= 0` on a length).
 7. No source files are read as strings for regex matching.
 8. No functions are redefined locally instead of imported.
+9. Scaffold/task items have at least one test verifying build output, not just file existence.
+10. Every AC with "only/never/exclusively" has both a positive and negative test.
 
 See `references/testing-anti-patterns.md` for extended examples of each banned pattern.
 See `references/testing-good-patterns.md` for positive examples of behavior-focused testing.

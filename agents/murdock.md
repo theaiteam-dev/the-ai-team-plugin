@@ -6,6 +6,7 @@ permissionMode: acceptEdits
 skills:
   - test-writing
   - tdd-workflow
+  - a11y
   - pool-handoff
   - teams-messaging
   - ateam-cli
@@ -75,12 +76,12 @@ Write ONLY tests and type definitions. **Do NOT write implementation code** - th
 
 | Type | Test Count | Focus |
 |------|------------|-------|
-| `task` | 1-3 smoke tests | "Does it compile? Does it run?" |
+| `task` | 1-3 smoke tests | "Does it compile? Does it run? Does the build produce expected output?" |
 | `feature` | 3-5 tests | Happy path, error path, key edge cases |
 | `bug` | 2-3 tests | Reproduce bug, verify fix, regression guard |
 | `enhancement` | 2-4 tests | New/changed behavior only |
 
-**For scaffolding (`type: "task"`):** Test the outcome, not the structure. Don't test every field individually - that's the #1 anti-pattern. See the tdd-workflow and test-writing skills for detailed examples.
+**For scaffolding (`type: "task"`):** Test the outcome, not the structure. Don't test every field individually - that's the #1 anti-pattern. For build-toolchain scaffolds (Vite, Webpack, Tailwind, etc.), include at least one test that verifies the build produces expected artifacts (non-zero CSS/JS output) — file-existence checks are not sufficient (see Ban 10 in test-writing skill). See the tdd-workflow and test-writing skills for detailed examples.
 
 ## Testing Philosophy: Move Fast
 
@@ -94,6 +95,7 @@ Write ONLY tests and type definitions. **Do NOT write implementation code** - th
 - Error handling - verify the code handles invalid inputs gracefully
 - **Failure paths (MANDATORY)** - for every operation that can fail (async call, I/O, user-provided callback), include at least one test that verifies the failure path: error surfaced, loading/pending state cleared, optimistic state reverted. If the acceptance criteria list N fallible operations, you need N failure-path tests — not one generic "error" test.
 - **Interaction completeness (MANDATORY)** - if an AC specifies multiple triggers for the same action (e.g., "activated via button click or keyboard shortcut"), test **every** trigger, not just the easiest one. Test the full interaction path end-to-end: if the AC says "keyboard shortcut triggers edit mode," verify the element is reachable/focusable, simulate the keypress, and assert the outcome — don't just test that a handler function exists.
+- **Concurrent execution (MANDATORY)** - for every handler that triggers an async operation, include one test that invokes the trigger twice without awaiting the first call, and asserts the operation executes only once (e.g., only one network request fires, the trigger is inert during an in-flight request). This is the #1 bug pattern Amy catches — missing in-flight guards on async handlers.
 - **Consumer wiring** - if the work item's `context` field says this module is consumed by another module (or the AC explicitly says "imports and uses X"), include at least one test that verifies the integration point — import the real dependency, don't just mock it away.
 
 **DON'T waste time on:**
@@ -380,10 +382,12 @@ Before marking work complete, verify:
 - [ ] Types file exists at `outputs.types` (if specified)
 - [ ] Tests run without syntax errors
 - [ ] Tests fail for the right reason (missing implementation, not broken tests)
+- [ ] `bun run typecheck` (or project equivalent) passes — your test files are included in the project's TypeScript compilation. Unused imports, bad type references, or syntax errors in test files will block B.A. downstream.
 - [ ] Happy path is covered
 - [ ] Key error cases are covered
 - [ ] No shared mutable state between tests
 - [ ] **Every fallible operation in the AC has a failure-path test** (not just the happy path)
+- [ ] **Every async handler has a concurrent-execution test** (trigger fires twice, operation executes once)
 - [ ] **Multi-trigger ACs have tests for every trigger** (not just the easiest path)
 - [ ] **Consumer wiring tested** if context references cross-module integration
 
@@ -398,6 +402,8 @@ AC3: "Total reflects quantities"    → test: "should calculate total"          
 ```
 
 If any AC has no test, write one before calling agentStop. This is the #1 cause of Lynch rejections.
+
+**"Only/never" qualifier check (MANDATORY):** After the 1:1 mapping, scan each AC for exclusionary language ("only," "never," "exclusively," "must not"). Each match requires both a positive and negative test — see the `test-writing` skill's "Only/Never Qualifier Tests" section. This is the #1 cause of Amy rejections.
 
 **Cross-product check (MANDATORY):** After the 1:1 mapping, run the AC Cross-Product Testing check from the `test-writing` skill — scan trigger ACs × constraint ACs for untested combinations.
 

@@ -92,6 +92,7 @@ let instanceName = null;
 let agentStopOutcome = null;
 let agentStopReturnTo = null;
 let claimedNext = null; // Extracted from agentStop JSON response in transcript
+let missionComplete = false; // True when agentStop response indicates all items done
 
 for (const line of lines) {
   let entry;
@@ -110,6 +111,7 @@ for (const line of lines) {
       const text = block.text || (typeof block.content === 'string' ? block.content : '') || '';
       const claimedMatch = text.match(/"claimedNext"\s*:\s*"([^"]+)"/);
       if (claimedMatch) claimedNext = claimedMatch[1];
+      if (/"missionComplete"\s*:\s*true/.test(text)) missionComplete = true;
     }
 
     if (block?.type !== 'tool_use') continue;
@@ -137,9 +139,13 @@ for (const line of lines) {
       const target = HANDOFF_TARGETS[resolvedAgent];
 
       if (resolvedAgent === 'amy') {
-        // Amy just needs to send FYI to hannibal
-        if (recipient === 'hannibal' && content.includes('FYI')) {
-          foundHandoff = true;
+        // Amy sends MISSION_COMPLETE when all items are done, FYI otherwise
+        if (recipient === 'hannibal') {
+          if (missionComplete && content.includes('MISSION_COMPLETE')) {
+            foundHandoff = true;
+          } else if (!missionComplete && content.includes('FYI')) {
+            foundHandoff = true;
+          }
         }
       } else if (agentStopOutcome === 'rejected') {
         // Rejection path: validate recipient matches --return-to stage
@@ -197,10 +203,18 @@ if (!foundAgentStop) {
 
 if (!foundHandoff) {
   if (resolvedAgent === 'amy') {
-    missing.push(
-      `${missing.length + 1}. Send FYI to Hannibal:\n` +
-      `   SendMessage to "hannibal" with content: "FYI: <itemId> - probing complete. VERIFIED."`
-    );
+    if (missionComplete) {
+      missing.push(
+        `${missing.length + 1}. Your agentStop response contains missionComplete: true — ALL items are done!\n` +
+        `   Send MISSION_COMPLETE to Hannibal (not FYI):\n` +
+        `   SendMessage to "hannibal" with content: "MISSION_COMPLETE: <itemId> - all items verified and in done stage. Ready for final review."`
+      );
+    } else {
+      missing.push(
+        `${missing.length + 1}. Send FYI to Hannibal:\n` +
+        `   SendMessage to "hannibal" with content: "FYI: <itemId> - probing complete. VERIFIED."`
+      );
+    }
   } else if (agentStopOutcome === 'rejected') {
     const rejTargets = REJECTION_TARGETS[resolvedAgent];
     const expectedType = rejTargets && agentStopReturnTo ? rejTargets[agentStopReturnTo] : null;

@@ -255,6 +255,34 @@ export async function POST(
       },
     });
 
+    // Check if all mission items are now in done stage (mission complete)
+    let missionComplete = false;
+    if (shouldAdvance && nextStage === 'done') {
+      try {
+        const missionItem = await prisma.missionItem.findFirst({
+          where: { itemId: body.itemId },
+          select: { missionId: true },
+        });
+        if (missionItem) {
+          const missionItemIds = await prisma.missionItem.findMany({
+            where: { missionId: missionItem.missionId },
+            select: { itemId: true },
+          });
+          const allItemIds = missionItemIds.map((mi) => mi.itemId);
+          const nonDoneCount = await prisma.item.count({
+            where: {
+              id: { in: allItemIds },
+              stageId: { not: 'done' },
+              archivedAt: null,
+            },
+          });
+          missionComplete = nonDoneCount === 0;
+        }
+      } catch {
+        // Mission lookup failed (no mission context) — not an error, just no signal
+      }
+    }
+
     // Build response work log entry
     const workLogEntry: WorkLogEntry = {
       id: workLog.id,
@@ -273,6 +301,7 @@ export async function POST(
         workLogEntry,
         nextStage: shouldAdvance ? nextStage : (item.stageId as StageId),
         ...(wipExceeded ? { wipExceeded: true, blockedStage: nextStage } : {}),
+        ...(missionComplete ? { missionComplete: true } : {}),
       },
     };
 

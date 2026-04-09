@@ -189,6 +189,8 @@ export interface AgentStopResponse {
     rejectionCount?: number;
     /** True when rejection escalated item to blocked */
     escalated?: boolean;
+    /** True when all mission items have reached done stage */
+    missionComplete?: boolean;
   };
 }
 

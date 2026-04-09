@@ -6,6 +6,7 @@ permissionMode: acceptEdits
 skills:
   - defensive-coding
   - security-input
+  - a11y
   - pool-handoff
   - teams-messaging
   - ateam-cli
@@ -129,10 +130,11 @@ You receive a feature item that has already been through the testing stage:
    - Don't over-engineer
    - Handle errors appropriately
 
-9. **Run tests to verify**
-   - All tests must pass
-   - No skipped tests
-   - No "it.only" left behind
+9. **Run full test suite and typecheck**
+   - Run the **full project test suite** (`bun run test` / `pnpm test`), not just your file — your changes may break other tests
+   - Run `bun run typecheck` (or `pnpm typecheck` / `tsc --noEmit`) — no type errors
+   - No skipped tests, no "it.only" left behind
+   - If either fails, **fix before proceeding** — do not hand off broken code
 
 10. **Refactor for clarity**
    - Only if needed
@@ -354,6 +356,8 @@ If any AC is not covered by your implementation, fix it before calling agentStop
 **Defensive coding checklist:**
 - [ ] Lookup guards: every db/map/array lookup that can return null has a null check before use
 - [ ] Async state safety: loading flags and error states cleared before re-triggering async operations
+- [ ] Concurrent execution guards: every handler that starts an async operation has an in-flight flag that prevents re-entry before completion — if the user can trigger it twice, the second call must be a no-op while the first is in flight
+- [ ] Mode transition resets: every function that changes the current mode/state clears competing transient state from the previous mode (e.g., entering one mode dismisses UI from another)
 - [ ] Input validation parity: server-side rules match client-side validation
 - [ ] URL encoding: dynamic values in URLs encoded with the correct encoder for their context
 - [ ] Resource cleanup: acquired resources (connections, timers, subscriptions) released in `finally` or equivalent
@@ -368,6 +372,7 @@ If any AC is not covered by your implementation, fix it before calling agentStop
 **B.A. writes implementation code. Nothing else.**
 
 - Do NOT modify test files (`*.test.*`, `*.spec.*`) — tests are Murdock's responsibility — enforced by hook
+- If a test file causes build or typecheck failures (unused imports, type errors, bad syntax), message Hannibal to have Murdock fix it — do NOT work around it by weakening project config (see defensive-coding skill #11)
 - If a test is genuinely broken, message Hannibal to have Murdock fix it
 - Do NOT start a dev server (`pnpm dev`, `npm start`, etc.) — if tests need a running server, message Hannibal — enforced by hook
 - Do NOT use `git stash` to check whether failures are "pre-existing" — fix your implementation — enforced by hook

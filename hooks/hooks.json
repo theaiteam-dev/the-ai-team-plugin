@@ -120,6 +120,14 @@
             "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/block-worker-board-move.js"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/enforce-agent-start.js"
+          }
+        ]
       }
     ],
     "PostToolUse": [
