@@ -225,6 +225,20 @@ components:
         precheckOutput:
           type: object
           nullable: true
+        retroReport:
+          type: string
+          nullable: true
+          description: Markdown retrospective report
+        finalReview:
+          type: string
+          nullable: true
+          description: Markdown of Stockwell's final mission review report
+        scalingRationale:
+          type: object
+          nullable: true
+          description: |
+            JSON blob describing agent instance counts and the binding
+            constraint for scaling decisions (see ScalingRationale type).
 
     ActivityEntry:
       type: object
@@ -978,71 +992,6 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
-  /api/items/{id}/reject:
-    post:
-      operationId: rejectItem
-      summary: Record a rejection on an item
-      description: |
-        Increments the rejection counter. After 2 rejections the item is
-        automatically escalated to the blocked stage.
-      tags: [items]
-      parameters:
-        - $ref: '#/components/parameters/ProjectId'
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [reason, agent]
-              properties:
-                reason:
-                  type: string
-                agent:
-                  $ref: '#/components/schemas/AgentName'
-      responses:
-        '200':
-          description: Rejection recorded
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [success, data]
-                properties:
-                  success:
-                    type: boolean
-                    enum: [true]
-                  data:
-                    type: object
-                    required: [item, escalated, rejectionCount]
-                    properties:
-                      item:
-                        $ref: '#/components/schemas/Item'
-                      escalated:
-                        type: boolean
-                        description: true if item was moved to blocked
-                      rejectionCount:
-                        type: integer
-        '400':
-          description: VALIDATION_ERROR · INVALID_STAGE (item must be in review)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: ITEM_NOT_FOUND
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
-          $ref: '#/components/responses/ServerError'
-
   /api/items/{id}/render:
     get:
       operationId: renderItem
@@ -1158,6 +1107,12 @@ paths:
         Releases the claim, appends a WorkLog entry, and optionally advances
         the item to the next pipeline stage (or blocked if outcome=blocked).
 
+        When `outcome=rejected`, the item is moved backward to the `returnTo`
+        stage and its `rejectionCount` is incremented. After 2 rejections the
+        item is automatically escalated to `blocked`. `returnTo` is required
+        when `outcome=rejected` and is only valid in that case. This replaces
+        the former `/api/items/{id}/reject` endpoint.
+
         When `advance=true` (default), WIP limits on the target stage are
         checked before moving. If the target stage is at capacity, the request
         fails with `WIP_LIMIT_EXCEEDED` and no state is changed.
@@ -1183,8 +1138,15 @@ paths:
                   type: string
                 outcome:
                   type: string
-                  enum: [completed, blocked]
+                  enum: [completed, blocked, rejected]
                   default: completed
+                returnTo:
+                  allOf:
+                    - $ref: '#/components/schemas/StageId'
+                  description: |
+                    Target stage to move the item to when `outcome=rejected`.
+                    Required when `outcome=rejected`, and invalid in any
+                    other case.
                 advance:
                   type: boolean
                   default: true
@@ -1561,6 +1523,103 @@ paths:
                     enum: [true]
                   data:
                     $ref: '#/components/schemas/Mission'
+        '404':
+          description: MISSION_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/missions/{missionId}/final-review:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - name: missionId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^M-\d{8}-\d{3}$'
+
+    post:
+      operationId: storeFinalReview
+      summary: Store Stockwell's final mission review report
+      description: |
+        Stores the markdown final review report on the mission record.
+        The lookup is scoped to the requesting project so missions cannot
+        be read or overwritten across project boundaries.
+      tags: [missions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [finalReview]
+              properties:
+                finalReview:
+                  type: string
+                  description: Markdown body of the final mission review report
+      responses:
+        '200':
+          description: Final review stored
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [missionId]
+                    properties:
+                      missionId:
+                        type: string
+        '400':
+          description: VALIDATION_ERROR — finalReview body field is required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: MISSION_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+    get:
+      operationId: getFinalReview
+      summary: Get Stockwell's stored final mission review report
+      tags: [missions]
+      responses:
+        '200':
+          description: Final review report
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [missionId, finalReview]
+                    properties:
+                      missionId:
+                        type: string
+                      finalReview:
+                        type: string
+                        nullable: true
+                        description: Markdown body, or null if no review has been stored yet
         '404':
           description: MISSION_NOT_FOUND
           content:

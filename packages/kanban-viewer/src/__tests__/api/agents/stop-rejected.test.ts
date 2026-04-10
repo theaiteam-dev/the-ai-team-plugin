@@ -38,6 +38,9 @@ const mockPrisma = {
   stage: {
     findUnique: vi.fn(),
   },
+  $transaction: vi.fn(async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => {
+    return callback(mockPrisma);
+  }),
 };
 
 vi.mock('@/lib/db', () => ({
@@ -151,7 +154,7 @@ describe('POST /api/agents/stop — outcome=rejected', () => {
         agent: 'Lynch',
         summary: 'Tests are wrong',
         outcome: 'rejected',
-        returnTo: 'not-a-stage',
+        returnTo: 'not-a-stage' as unknown as 'ready',
       });
 
       const response = await POST(request);

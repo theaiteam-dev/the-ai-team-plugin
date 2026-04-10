@@ -26,17 +26,11 @@ var scalingComputeCmd = &cobra.Command{
 		pathParams := map[string]string{}
 		queryParams := map[string]string{}
 
-		concurrencyFlag := cmd.Flags().Lookup("concurrency")
-		concurrencySet := concurrencyFlag.Changed
+		concurrencySet := cmd.Flags().Changed("concurrency")
 		concurrencyValue := scalingComputeCmd_concurrency
-		concurrencyFlag.Changed = false
-		scalingComputeCmd_concurrency = 0
 
-		memoryFlag := cmd.Flags().Lookup("memory")
-		memorySet := memoryFlag.Changed
+		memorySet := cmd.Flags().Changed("memory")
 		memoryValue := scalingComputeCmd_memory
-		memoryFlag.Changed = false
-		scalingComputeCmd_memory = 0
 
 		if concurrencySet && concurrencyValue < 1 {
 			return fmt.Errorf("--concurrency must be >= 1 when provided, got %d", concurrencyValue)

@@ -11,6 +11,33 @@
  *
  * Used by: Murdock, B.A., Lynch, Amy
  *
+ * ── Registration ────────────────────────────────────────────────
+ * This hook validates native teams mode peer-to-peer SendMessage
+ * handoffs. It is registered PER-AGENT in agent frontmatter on the
+ * Stop event:
+ *   - agents/murdock.md
+ *   - agents/ba.md
+ *   - agents/lynch.md
+ *   - agents/amy.md
+ *
+ * It is intentionally NOT registered in the global hooks/hooks.json
+ * because legacy subagent mode dispatches via the Agent tool (not
+ * SendMessage), so this hook's SendMessage-based checks would not
+ * apply — and would false-positive on every legacy Stop event.
+ *
+ * ── What it validates ───────────────────────────────────────────
+ * After `agentStop` returns, the pipeline agent must send a single
+ * SendMessage to the correct peer:
+ *   - START → next pipeline agent (`claimedNext` from agentStop
+ *     response) on the happy path (Murdock→B.A., B.A.→Lynch,
+ *     Lynch→Amy)
+ *   - REJECTED → upstream peer (Lynch→Murdock/B.A., Amy→B.A.) when
+ *     outcome=rejected with a return-to stage
+ *   - FYI → hannibal when the item advances but no next peer exists
+ *     (Amy on non-final items)
+ *   - MISSION_COMPLETE → hannibal when Amy's agentStop response
+ *     reports missionComplete:true
+ *
  * Input (stdin JSON):
  *   { session_id, hook_event_name, transcript_path, last_assistant_message, ... }
  *

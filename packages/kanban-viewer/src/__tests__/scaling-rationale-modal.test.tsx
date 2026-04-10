@@ -7,7 +7,7 @@ const baseRationale: ScalingRationale = {
   instanceCount: 3,
   depGraphMaxPerStage: 5,
   memoryBudgetCeiling: 4,
-  wipLimit: 3,
+  wipLimit: 6,
   bindingConstraint: 'memory',
   concurrencyOverride: null,
 };
@@ -93,6 +93,30 @@ describe('ScalingRationaleModal', () => {
       expect(screen.getByText('4')).toBeInTheDocument();
     });
 
+    it('should display WIP limit per stage', () => {
+      const rationale: ScalingRationale = { ...baseRationale, wipLimit: 7 };
+      render(<ScalingRationaleModal scalingRationale={rationale} />);
+      fireEvent.click(screen.getByRole('button', { name: /scaling/i }));
+
+      expect(screen.getByText('WIP limit per stage')).toBeInTheDocument();
+      expect(screen.getByText('7')).toBeInTheDocument();
+    });
+
+    it('should show both wip binding constraint and wip limit value when wip is binding', () => {
+      const rationale: ScalingRationale = {
+        ...baseRationale,
+        wipLimit: 7,
+        bindingConstraint: 'wip',
+      };
+      render(<ScalingRationaleModal scalingRationale={rationale} />);
+      fireEvent.click(screen.getByRole('button', { name: /scaling/i }));
+
+      // Both rows remain visible — the constraint name and the numeric WIP limit.
+      expect(screen.getByText('wip')).toBeInTheDocument();
+      expect(screen.getByText('WIP limit per stage')).toBeInTheDocument();
+      expect(screen.getByText('7')).toBeInTheDocument();
+    });
+
     it('should display binding constraint', () => {
       render(<ScalingRationaleModal scalingRationale={baseRationale} />);
       fireEvent.click(screen.getByRole('button', { name: /scaling/i }));
@@ -129,12 +153,12 @@ describe('ScalingRationaleModal', () => {
   });
 
   describe('binding constraint variations', () => {
-    it('should show dep-graph as binding constraint', () => {
-      const rationale: ScalingRationale = { ...baseRationale, bindingConstraint: 'dep-graph' };
+    it('should show dep_graph as binding constraint', () => {
+      const rationale: ScalingRationale = { ...baseRationale, bindingConstraint: 'dep_graph' };
       render(<ScalingRationaleModal scalingRationale={rationale} />);
       fireEvent.click(screen.getByRole('button', { name: /scaling/i }));
 
-      expect(screen.getByText('dep-graph')).toBeInTheDocument();
+      expect(screen.getByText('dep_graph')).toBeInTheDocument();
     });
 
     it('should show wip as binding constraint', () => {

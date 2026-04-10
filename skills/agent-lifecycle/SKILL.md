@@ -62,11 +62,18 @@ ateam agents-stop agentStop \
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--itemId` | Yes | Work item ID (e.g. `WI-007`, `FINAL-REVIEW`, `docs`) |
-| `--agent` | Yes | Your agent name in lowercase (e.g. `murdock`, `ba`, `lynch`) |
+| `--agent` | Yes | Your agent name / instance (e.g. `murdock`, `murdock-2`, `ba-1`, `lynch`) |
 | `--outcome` | Yes | `completed`, `blocked`, or `rejected` |
 | `--summary` | Yes | What you did — see "What makes a good summary" below |
-| `--advance` | No | Default `true` — advances item to next stage. Pass `--advance=false` to release without advancing. |
-| `--return-to` | Conditional | Required when `--outcome rejected`. Stage to send item back to (`testing`, `implementing`, etc.) |
+| `--advance` | No | Default `true` — advances item to next stage and runs pool management. Pass `--advance=false` to release the claim without advancing (e.g. on WIP_LIMIT_EXCEEDED, or when rejecting an item). |
+| `--return-to` | Conditional | **Required** when `--outcome rejected`. Stage to send the item back to. Valid values: `ready \| testing \| implementing \| review \| probing`. |
+
+> **Always pass `--json` on the root `ateam` command** (e.g. `ateam --json agents-stop agentStop ...`). The JSON response includes two fields the handoff flow depends on:
+> - `data.claimedNext` — instance name (e.g. `ba-2`) that the CLI automatically claimed from the pool for the next pipeline stage. Send a `START` message directly to this instance.
+> - `data.poolAlert` — non-empty string when no idle next-stage instance was available. Send an `ALERT` to Hannibal so he can queue the handoff.
+> - `data.wipExceeded` — `true` if the target stage hit its WIP limit. Work was logged but the item did NOT advance.
+>
+> Without `--json`, these fields are printed in a human table and cannot be parsed reliably.
 
 ### What Makes a Good Summary
 
@@ -114,25 +121,23 @@ The summary is stored in the work item's `work_log` and displayed in the kanban 
 "I read the feature item and then looked at the existing tests and then wrote 5 new tests covering..."
 ```
 
-### --advance=false: WIP Limit Exceeded
+### WIP Limit Exceeded (`wipExceeded: true`)
 
-When calling `agentStop` and the target stage is at WIP capacity, the API returns `WIP_LIMIT_EXCEEDED` (409). In this case:
+When you call `agentStop` with `--advance=true` (the default) and the target stage is at WIP capacity, the API **still logs your work and releases your claim**, but it does NOT advance the item. The JSON response sets `data.wipExceeded: true` and includes `data.blockedStage` (the stage that was full). The CLI also prints a `WARNING: WIP_LIMIT_EXCEEDED` line on stderr.
 
-1. Call `agentStop` with `--advance=false` to release your claim without advancing the item:
-   ```bash
-   ateam agents-stop agentStop --itemId "WI-007" --agent "murdock" --outcome completed --summary "..." --advance=false
-   ```
+When you see `wipExceeded: true`:
 
+1. Do NOT call `agentStop` again — your work is already logged and your claim is released.
 2. Send an ALERT to Hannibal so he can re-dispatch when capacity opens:
    ```javascript
    SendMessage({
      to: "hannibal",
-     message: "ALERT: WI-007 - WIP limit exceeded for next stage. Item released, needs re-dispatch.",
+     message: "ALERT: WI-007 - WIP_LIMIT_EXCEEDED on <blockedStage>. Work logged, item released, needs re-dispatch.",
      summary: "WIP limit exceeded for WI-007"
    })
    ```
 
-Do NOT retry agentStop in a loop — release once and let Hannibal handle scheduling.
+You can also use `--advance=false` explicitly when you already know the next stage is full (uncommon — normally you let the API detect it). Do NOT retry `agentStop` in a loop; release once and let Hannibal handle scheduling.
 
 ### --outcome blocked: Error Cases
 
@@ -155,34 +160,49 @@ Do NOT use `blocked` for a review rejection — use `--outcome rejected` instead
 
 ### --outcome rejected: Sending an Item Backward
 
-Use `--outcome rejected` when you are rejecting an item and sending it back for rework. The API increments `rejectionCount` and moves the item to the stage you specify. After 2 rejections, the item is automatically escalated to `blocked`.
+Use `--outcome rejected` when you are rejecting an item and sending it back for rework. The API:
+
+1. Increments `rejectionCount` on the work item
+2. Moves the item backward to the stage named in `--return-to`
+3. Releases your claim
+4. Automatically escalates the item to `blocked` when `rejectionCount` hits **2**
+
+Rejection is a first-class outcome of `agentStop` — there is **no separate `rejectItem` command**. Pool management is skipped for rejections (no `claimedNext` is returned), because peer handoff goes backward, not forward.
 
 `--return-to` specifies where the item goes:
 
-| Who rejects | Why | `--return-to` |
-|-------------|-----|---------------|
-| Lynch | Tests are wrong/missing | `testing` |
-| Lynch | Implementation is wrong | `implementing` |
-| Amy | Code bug found (FLAG) | `implementing` |
+| Who rejects | Why | `--return-to` | Send REJECTED to |
+|-------------|-----|---------------|------------------|
+| Lynch | Tests are wrong/missing | `testing` | a `murdock-N` instance |
+| Lynch | Implementation is wrong | `implementing` | a `ba-N` instance |
+| Amy | Code bug found (FLAG) | `implementing` | a `ba-N` instance |
 
 ```bash
 # Lynch — bad tests
-ateam agents-stop agentStop \
-  --itemId "WI-007" --agent "Lynch" \
-  --outcome rejected --return-to testing \
+ateam --json agents-stop agentStop \
+  --itemId "WI-007" --agent "lynch-1" \
+  --outcome rejected --return-to testing --advance=false \
   --summary "REJECTED - AC 'Returns 401 on invalid token' has no test"
 
 # Lynch — bad implementation
-ateam agents-stop agentStop \
-  --itemId "WI-007" --agent "Lynch" \
-  --outcome rejected --return-to implementing \
+ateam --json agents-stop agentStop \
+  --itemId "WI-007" --agent "lynch-1" \
+  --outcome rejected --return-to implementing --advance=false \
   --summary "REJECTED - Implementation does not handle null case at line 42"
 
-# Amy — code bug
-ateam agents-stop agentStop \
-  --itemId "WI-007" --agent "Amy" \
-  --outcome rejected --return-to implementing \
+# Amy — code bug (FLAG)
+ateam --json agents-stop agentStop \
+  --itemId "WI-007" --agent "amy-2" \
+  --outcome rejected --return-to implementing --advance=false \
   --summary "FLAG - requireOk crashes when API returns plain-text error body"
 ```
 
-After calling `agentStop --outcome rejected`, send a `START` message directly to the appropriate agent (Murdock for testing, B.A. for implementing) — **do not wait for Hannibal to re-dispatch**.
+After calling `agentStop --outcome rejected`, send a `REJECTED:` message directly to the appropriate peer instance (e.g. `murdock-1` when returning to testing, `ba-2` when returning to implementing) — **do not wait for Hannibal to re-dispatch**. Include the specific reason and file/line references in the message body so the receiving agent can fix the issue without re-reading the work log.
+
+```javascript
+SendMessage({
+  to: "murdock-1",
+  message: "REJECTED: WI-007 - AC 'Returns 401 on invalid token' has no test. Add a test case for the 401 path before returning to review.",
+  summary: "REJECTED WI-007 → murdock-1"
+})
+```

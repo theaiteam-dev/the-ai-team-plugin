@@ -42,6 +42,13 @@ func agentType(name string) string {
 // claimIdleInstance atomically claims an idle instance of agentType from poolDir.
 // Returns the claimed instance name (e.g. "ba-2") or "" if none available.
 func claimIdleInstance(poolDir, agentType string) string {
+	// Guard: /tmp is cleared on reboot, so if a mission spans a restart the
+	// pool directory may have vanished. Surface the failure loudly rather than
+	// silently returning "" (which looks like "no idle instances").
+	if _, err := os.Stat(poolDir); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "POOL_WARN: pool directory %s does not exist — was it cleared? Mission may need to be reinitialized with 'ateam scaling compute'.\n", poolDir)
+		return ""
+	}
 	// Match both "ba.idle" (N=1) and "ba-1.idle", "ba-2.idle" (N>1)
 	patterns := []string{
 		filepath.Join(poolDir, agentType+".idle"),
@@ -49,7 +56,11 @@ func claimIdleInstance(poolDir, agentType string) string {
 	}
 	var candidates []string
 	for _, pattern := range patterns {
-		matches, _ := filepath.Glob(pattern)
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "POOL_WARN: glob error for pattern %q: %v\n", pattern, err)
+			continue
+		}
 		candidates = append(candidates, matches...)
 	}
 	for _, idleFile := range candidates {
@@ -68,6 +79,12 @@ func claimIdleInstance(poolDir, agentType string) string {
 // an API error (e.g. NOT_CLAIMED) leaves orphaned .busy files that
 // permanently block the pool slot.
 func poolSelfRelease(agentName string) {
+	// Guard against empty agent name: the --body code path can leave agentName
+	// unset if the body JSON has no "agent" field. Without this guard, we'd
+	// stat/rename paths like "/tmp/.ateam-pool/<mid>/.busy" which is nonsense.
+	if agentName == "" {
+		return
+	}
 	missionID := os.Getenv("ATEAM_MISSION_ID")
 	if missionID == "" {
 		return

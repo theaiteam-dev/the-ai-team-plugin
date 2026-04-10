@@ -67,6 +67,10 @@ func wipLimitExceededResponse() []byte {
 // Returns stdout output and any error.
 func executeAgentStop(t *testing.T, serverURL string, extraArgs ...string) (string, error) {
 	t.Helper()
+	// Reset flag state before AND after: cobra keeps Changed() and module
+	// variables on the shared rootCmd, so prior tests would otherwise leak.
+	resetAgentsStopAgentStopFlagsForTest()
+	t.Cleanup(resetAgentsStopAgentStopFlagsForTest)
 	var buf bytes.Buffer
 	rootCmd.SetOut(&buf)
 	rootCmd.SetErr(&buf)

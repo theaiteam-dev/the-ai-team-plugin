@@ -41,6 +41,7 @@ describe('ScalingRationale shape', () => {
       instanceCount: 2,
       depGraphMaxPerStage: 3,
       memoryBudgetCeiling: 4,
+      wipLimit: 5,
       bindingConstraint: 'memory',
       concurrencyOverride: null,
     };

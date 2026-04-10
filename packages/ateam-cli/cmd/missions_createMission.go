@@ -59,13 +59,8 @@ var missionsCreateMissionCmd = &cobra.Command{
 			}
 			return nil
 		}
-		// Capture and immediately reset concurrency state so that cobra command
-		// reuse across test executions doesn't leak stale Changed() status.
-		concurrencyFlag := cmd.Flags().Lookup("concurrency")
-		concurrencySet := concurrencyFlag.Changed
+		concurrencySet := cmd.Flags().Changed("concurrency")
 		concurrencyValue := missionsCreateMissionCmd_concurrency
-		concurrencyFlag.Changed = false
-		missionsCreateMissionCmd_concurrency = 0
 
 		if concurrencySet && concurrencyValue < 1 {
 			return fmt.Errorf("--concurrency must be >= 1 when provided, got %d", concurrencyValue)

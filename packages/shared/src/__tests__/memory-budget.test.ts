@@ -37,4 +37,20 @@ describe('computeMemoryBudget()', () => {
     // 16000 MB → 16000 * 0.8 = 12800; 12800 / 400 = 32; 32 / 4 = 8
     expect(computeMemoryBudget(16000)).toBe(8);
   });
+
+  it('honors a custom mbPerAgent override (half the default doubles the ceiling)', () => {
+    // Default: 16000 MB, 400 MB/agent → 8
+    // Custom:  16000 MB, 200 MB/agent → 16000 * 0.8 = 12800; 12800 / 200 = 64; 64 / 4 = 16
+    const defaultCeiling = computeMemoryBudget(16000);
+    const customCeiling = computeMemoryBudget(16000, 200);
+    expect(defaultCeiling).toBe(8);
+    expect(customCeiling).toBe(16);
+    expect(customCeiling).toBe(defaultCeiling * 2);
+  });
+
+  it('returns at least 1 even when mbPerAgent is so high the computed ceiling would be <1', () => {
+    // 1000 MB free, 100000 MB per agent → floor(1000 * 0.8 / 100000 / 4) = 0,
+    // clamped to 1 by the Math.max guard.
+    expect(computeMemoryBudget(1000, 100000)).toBe(1);
+  });
 });

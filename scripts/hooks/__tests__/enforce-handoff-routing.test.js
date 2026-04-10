@@ -290,6 +290,77 @@ describe('enforce-handoff — Amy terminal handoff', () => {
     expect(result.exitCode).toBe(0);
     expect(parseOutput(result.stdout)).toEqual({});
   });
+
+  it('allows Amy with missionComplete=true sending MISSION_COMPLETE to hannibal', () => {
+    const transcriptPath = writeTranscript([
+      {
+        name: 'Bash',
+        input: { command: 'ateam agents-stop agentStop --itemId "WI-003" --agent "amy-1" --outcome completed --summary "verified" --json' },
+      },
+      {
+        type: 'tool_result',
+        text: '{"success":true,"data":{"claimedNext":"","missionComplete":true}}',
+      },
+      {
+        name: 'SendMessage',
+        input: {
+          to: 'hannibal',
+          content: 'MISSION_COMPLETE: WI-003 - all items verified and in done stage. Ready for final review.',
+        },
+      },
+    ]);
+
+    const result = runHook({ agent_type: 'ai-team:amy-1', transcript_path: transcriptPath });
+    expect(result.exitCode).toBe(0);
+    expect(parseOutput(result.stdout)).toEqual({});
+  });
+
+  it('blocks Amy with missionComplete=true sending only plain FYI (no MISSION_COMPLETE)', () => {
+    const transcriptPath = writeTranscript([
+      {
+        name: 'Bash',
+        input: { command: 'ateam agents-stop agentStop --itemId "WI-003" --agent "amy-1" --outcome completed --summary "verified" --json' },
+      },
+      {
+        type: 'tool_result',
+        text: '{"success":true,"data":{"claimedNext":"","missionComplete":true}}',
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'hannibal', content: 'FYI: WI-003 - probing complete. VERIFIED.' },
+      },
+    ]);
+
+    const result = runHook({ agent_type: 'ai-team:amy-1', transcript_path: transcriptPath });
+    const output = parseOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(output.reason).toContain('MISSION_COMPLETE');
+  });
+
+  it('blocks Amy with missionComplete=false sending premature MISSION_COMPLETE', () => {
+    const transcriptPath = writeTranscript([
+      {
+        name: 'Bash',
+        input: { command: 'ateam agents-stop agentStop --itemId "WI-003" --agent "amy-1" --outcome completed --summary "verified" --json' },
+      },
+      {
+        type: 'tool_result',
+        text: '{"success":true,"data":{"claimedNext":"","missionComplete":false}}',
+      },
+      {
+        name: 'SendMessage',
+        input: {
+          to: 'hannibal',
+          content: 'MISSION_COMPLETE: WI-003 - all items verified and in done stage. Ready for final review.',
+        },
+      },
+    ]);
+
+    const result = runHook({ agent_type: 'ai-team:amy-1', transcript_path: transcriptPath });
+    const output = parseOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(output.reason).toContain('FYI');
+  });
 });
 
 // =============================================================================

@@ -24,6 +24,10 @@ func createMissionSuccessResponse() []byte {
 // executeCreateMission runs the createMission command with the given args against the mock server.
 func executeCreateMission(t *testing.T, serverURL string, extraArgs ...string) (string, error) {
 	t.Helper()
+	// Reset flag state before AND after: cobra keeps Changed() and module
+	// variables on the shared rootCmd, so prior tests would otherwise leak.
+	resetMissionsCreateMissionFlagsForTest()
+	t.Cleanup(resetMissionsCreateMissionFlagsForTest)
 	var buf bytes.Buffer
 	rootCmd.SetOut(&buf)
 	rootCmd.SetErr(&buf)
@@ -108,6 +112,39 @@ func TestCreateMissionConcurrencyZeroIsInvalid(t *testing.T) {
 	}
 	if err == nil {
 		t.Error("expected an error for --concurrency 0, but got none")
+	}
+}
+
+// TestCreateMissionConcurrencyDoubleInvocationPicksUpNewValues verifies that
+// invoking the command twice in the same test with different --concurrency
+// values picks up the second invocation's value, not the first. Issue #12:
+// previously the production RunE manually reset cobra flag state, which
+// coupled tests to that cleanup. With the reset moved to test helpers, the
+// in-test helper must correctly isolate invocations.
+func TestCreateMissionConcurrencyDoubleInvocationPicksUpNewValues(t *testing.T) {
+	var capturedBodies []map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBodies = append(capturedBodies, captureBody(t, r))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(createMissionSuccessResponse())
+	}))
+	defer srv.Close()
+
+	if _, err := executeCreateMission(t, srv.URL, "--concurrency", "7"); err != nil {
+		t.Fatalf("first invocation: unexpected error: %v", err)
+	}
+	if _, err := executeCreateMission(t, srv.URL, "--concurrency", "2"); err != nil {
+		t.Fatalf("second invocation: unexpected error: %v", err)
+	}
+
+	if len(capturedBodies) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(capturedBodies))
+	}
+	if got := capturedBodies[0]["concurrencyOverride"]; got != float64(7) {
+		t.Errorf("first call: expected concurrencyOverride=7, got %v", got)
+	}
+	if got := capturedBodies[1]["concurrencyOverride"]; got != float64(2) {
+		t.Errorf("second call: expected concurrencyOverride=2 (not stale 7), got %v", got)
 	}
 }
 

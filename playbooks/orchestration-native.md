@@ -405,10 +405,15 @@ LOOP CONTINUOUSLY:
         # Then fall through to Phase 3 to dispatch newly ready items
 
     on DONE message from {instanceName} (review stage, REJECTED):
-        # Lynch sends DONE-REJECTED directly to Hannibal (rejection needs orchestrator)
+        # Lynch already called `agentStop --outcome rejected --return-to <testing|implementing>`,
+        # which incremented rejection_count and moved the item back to the return-to stage
+        # atomically. The legacy `ateam items rejectItem` CLI command no longer exists —
+        # rejection is a first-class outcome of agentStop.
+        # Hannibal's only job here is to clear the item from in-flight tracking so PHASE 3
+        # can re-dispatch it to a Murdock/B.A. instance when stage capacity is available.
         item_id = extract WI-XXX from message
         del active_instances[item_id]
-        Bash("ateam items rejectItem --id {item_id}")
+        # The item is now in its return-to stage, ready for redispatch in PHASE 3.
 
     # ═══════════════════════════════════════════════════════════
     # PHASE 1b: DRAIN PENDING ALERTS

@@ -23,12 +23,16 @@ const PIPELINE_AGENT_TYPES = 4;
  * Returns the maximum per-agent-type instance count the host memory supports.
  *
  * @param freeMemMB - Available memory in MB. Defaults to os.freemem() / 1024 / 1024.
+ * @param mbPerAgent - Estimated MB per subagent instance. Defaults to MB_PER_AGENT (400).
  * @returns Maximum instances (>= 1)
  */
-export function computeMemoryBudget(freeMemMB?: number): number {
+export function computeMemoryBudget(
+  freeMemMB?: number,
+  mbPerAgent: number = MB_PER_AGENT,
+): number {
   const availableMB = freeMemMB ?? freemem() / 1024 / 1024;
   const ceiling = Math.floor(
-    (availableMB * MEMORY_SAFETY_FACTOR) / MB_PER_AGENT / PIPELINE_AGENT_TYPES,
+    (availableMB * MEMORY_SAFETY_FACTOR) / mbPerAgent / PIPELINE_AGENT_TYPES,
   );
   return Math.max(1, ceiling);
 }

@@ -72,7 +72,7 @@ mission/
 - `ItemDependency`: Self-referential many-to-many dependencies
 - `AgentClaim`: One-to-one agent-to-item claims
 - `WorkLog`: Agent work history with outcomes
-- `Mission`: Mission tracking with state and timestamps
+- `Mission`: Mission tracking with state and timestamps; also stores `finalReview` (markdown of Stockwell's final mission review report) and `scalingRationale` (JSON blob describing agent instance counts and the binding constraint for scaling decisions)
 - `MissionItem`: Many-to-many mission-to-item mapping
 - `ActivityLog`: System activity with levels (info/warn/error)
 
@@ -82,6 +82,7 @@ mission/
 - `POST /api/board/move` - Move item between stages
 - `POST /api/items` - Create work items
 - `POST /api/missions` - Create a mission (use `force: true` to archive failed/completed missions and their items)
+- `POST/GET /api/missions/{missionId}/final-review` - Store and retrieve Stockwell's final mission review report (markdown, scoped to the requesting project)
 - `GET /api/activity` - Activity log entries (returns project-level logs when no active mission)
 
 **SSE Endpoint** (`src/app/api/board/events/route.ts`): Polls database for changes, emits events: `item-added`, `item-moved`, `item-updated`, `item-deleted`, `board-updated`, `activity-entry-added`.
@@ -92,7 +93,7 @@ mission/
 
 ```typescript
 type Stage = 'briefings' | 'ready' | 'probing' | 'testing' | 'implementing' | 'review' | 'done' | 'blocked';
-type AgentName = 'Hannibal' | 'Face' | 'Murdock' | 'B.A.' | 'Amy' | 'Lynch';
+type AgentName = 'Hannibal' | 'Face' | 'Murdock' | 'B.A.' | 'Lynch' | 'Amy' | 'Tawnia' | 'Stockwell';
 type BoardEventType = 'item-added' | 'item-moved' | 'item-updated' | 'item-deleted' | 'board-updated' | 'activity-entry-added';
 
 interface LogEntry {

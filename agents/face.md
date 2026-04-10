@@ -42,7 +42,7 @@ opus
 
 **Second Pass (refinement):**
 - Read (ONLY to read Sosa's refinement report if not in prompt)
-- Bash (`ateam` CLI) ONLY: `ateam items updateItem`, `ateam items rejectItem`, `ateam board-move moveItem`, `ateam deps-check checkDeps --json`, `ateam activity createActivityEntry`
+- Bash (`ateam` CLI) ONLY: `ateam items updateItem`, `ateam items deleteItem`, `ateam board-move moveItem`, `ateam deps-check checkDeps --json`, `ateam activity createActivityEntry`
 - **DO NOT use Glob/Grep on second pass** - all information is in Sosa's report
 
 **IMPORTANT:** Never explore the ai-team plugin directory. Only explore the target project.
@@ -145,7 +145,7 @@ After Sosa reviews and humans answer questions:
 1. Read Sosa's refinement report (passed in prompt)
 2. **Handle consolidations first** (if Sosa flagged over-splitting):
    - Use `ateam items updateItem` to update the target item with merged objective/acceptance criteria
-   - Use `ateam items rejectItem` with reason "consolidated" to remove absorbed items
+   - Use `ateam items deleteItem <id>` to soft-delete absorbed items (include a `ateam activity createActivityEntry --agent "Face" --message "Deleted WI-XXX: consolidated into WI-YYY"` log line so the consolidation rationale is visible in the Live Feed)
 3. Apply all other recommended changes to existing items
 4. Use `ateam items updateItem` for in-place modifications
 5. Move Wave 0 items (no dependencies) to `ready` stage using `ateam board-move moveItem`

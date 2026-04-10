@@ -17,7 +17,7 @@ export function ScalingRationaleModal({ scalingRationale }: ScalingRationaleModa
     return null;
   }
 
-  const { instanceCount, depGraphMaxPerStage, memoryBudgetCeiling, bindingConstraint, concurrencyOverride } = scalingRationale;
+  const { instanceCount, depGraphMaxPerStage, memoryBudgetCeiling, wipLimit, bindingConstraint, concurrencyOverride } = scalingRationale;
 
   return (
     <>
@@ -39,6 +39,9 @@ export function ScalingRationaleModal({ scalingRationale }: ScalingRationaleModa
 
             <dt className="text-muted-foreground">Memory budget ceiling</dt>
             <dd>{memoryBudgetCeiling}</dd>
+
+            <dt className="text-muted-foreground">WIP limit per stage</dt>
+            <dd>{wipLimit}</dd>
 
             <dt className="text-muted-foreground">Binding constraint</dt>
             <dd>{bindingConstraint}</dd>

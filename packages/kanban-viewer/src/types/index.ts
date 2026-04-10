@@ -202,14 +202,7 @@ export interface Mission {
   completed_at?: string;
   duration_ms?: number;
   status: 'active' | 'paused' | 'completed' | 'planning' | 'final_review' | 'post_checks' | 'documentation' | 'complete';
-  scalingRationale?: {
-    instanceCount: number;
-    depGraphMaxPerStage: number;
-    memoryBudgetCeiling: number;
-    wipLimit: number;
-    bindingConstraint: string;
-    concurrencyOverride: number | null;
-  } | null;
+  scalingRationale?: import('@ai-team/shared').ScalingRationale | null;
 }
 
 // Board metadata interface

@@ -159,42 +159,132 @@ export async function POST(
 
     const outcome = body.outcome ?? 'completed';
 
-    // Always release the claim — the work happened regardless of what comes next
-    await prisma.agentClaim.delete({
-      where: { itemId: body.itemId },
-    });
+    // Determine target stage for the completed/blocked path up front (read-only, safe outside tx)
+    let nextStage: StageId = 'review';
+    let action: WorkLogAction = 'completed';
+    if (outcome !== 'rejected') {
+      if (outcome === 'blocked') {
+        nextStage = 'blocked';
+      } else {
+        const pipelineInfo = PIPELINE_STAGES[item.stageId as SharedStageId];
+        nextStage = (pipelineInfo?.nextStage as StageId) ?? 'review';
+      }
+      action = outcome === 'blocked' ? 'note' : 'completed';
+    }
 
-    // Handle rejection path separately: increment counter, maybe escalate, move backward
-    if (outcome === 'rejected') {
-      const returnTo = body.returnTo as StageId;
-      const newRejectionCount = item.rejectionCount + 1;
-      const escalated = newRejectionCount >= REJECTION_ESCALATION_THRESHOLD;
-      const targetStage: StageId = escalated ? 'blocked' : returnTo;
+    const advance = body.advance !== false;
 
-      const workLog = await prisma.workLog.create({
+    // Execute claim release + work log + item update atomically inside a transaction.
+    // This prevents a race where two concurrent stops both pass the WIP check and both advance.
+    type TxResult =
+      | {
+          kind: 'rejected';
+          workLog: { id: number; agent: string; action: string; summary: string; timestamp: Date };
+          targetStage: StageId;
+          newRejectionCount: number;
+          escalated: boolean;
+        }
+      | {
+          kind: 'completed';
+          workLog: { id: number; agent: string; action: string; summary: string; timestamp: Date };
+          wipExceeded: boolean;
+          shouldAdvance: boolean;
+          nextStage: StageId;
+        };
+
+    const txResult: TxResult = await prisma.$transaction(async (tx) => {
+      // Always release the claim — the work happened regardless of what comes next
+      await tx.agentClaim.delete({
+        where: { itemId: body.itemId },
+      });
+
+      // Handle rejection path: increment counter, maybe escalate, move backward
+      if (outcome === 'rejected') {
+        const returnTo = body.returnTo as StageId;
+        const newRejectionCount = item.rejectionCount + 1;
+        const escalated = newRejectionCount >= REJECTION_ESCALATION_THRESHOLD;
+        const targetStage: StageId = escalated ? 'blocked' : returnTo;
+
+        const workLog = await tx.workLog.create({
+          data: {
+            agent: body.agent,
+            action: 'rejected' as WorkLogAction,
+            summary: body.summary,
+            itemId: body.itemId,
+          },
+        });
+
+        await tx.item.update({
+          where: { id: body.itemId },
+          data: {
+            stageId: targetStage,
+            assignedAgent: null,
+            rejectionCount: { increment: 1 },
+          },
+        });
+
+        return {
+          kind: 'rejected' as const,
+          workLog,
+          targetStage,
+          newRejectionCount,
+          escalated,
+        };
+      }
+
+      // Completed / blocked path — create the work log first so it's recorded regardless of WIP
+      const workLog = await tx.workLog.create({
         data: {
           agent: body.agent,
-          action: 'rejected' as WorkLogAction,
+          action,
           summary: body.summary,
           itemId: body.itemId,
         },
       });
 
-      await prisma.item.update({
+      // Check WIP limits on the target stage when advance=true (default).
+      // Running the check inside the transaction ensures the count we observe cannot change
+      // before we write the stage update — two concurrent agents cannot both pass the check.
+      let wipExceeded = false;
+      if (advance) {
+        const targetStageRow = await tx.stage.findUnique({ where: { id: nextStage } });
+        if (targetStageRow != null && targetStageRow.wipLimit != null) {
+          const currentCount = await tx.item.count({
+            where: { stageId: nextStage, projectId, archivedAt: null },
+          });
+          if (currentCount >= targetStageRow.wipLimit) {
+            wipExceeded = true;
+          }
+        }
+      }
+
+      // Update item: clear assignedAgent, advance stage only when not WIP-blocked
+      const shouldAdvance = advance && !wipExceeded;
+      await tx.item.update({
         where: { id: body.itemId },
         data: {
-          stageId: targetStage,
+          ...(shouldAdvance ? { stageId: nextStage } : {}),
           assignedAgent: null,
-          rejectionCount: { increment: 1 },
         },
       });
 
+      return {
+        kind: 'completed' as const,
+        workLog,
+        wipExceeded,
+        shouldAdvance,
+        nextStage,
+      };
+    });
+
+    // Rejection response (short-circuit — mission completion check doesn't apply)
+    if (txResult.kind === 'rejected') {
       const workLogEntry: WorkLogEntry = {
-        id: workLog.id,
-        agent: workLog.agent,
-        action: workLog.action as WorkLogAction,
-        summary: workLog.summary,
-        timestamp: workLog.timestamp,
+        id: txResult.workLog.id,
+        agent: txResult.workLog.agent,
+        action: txResult.workLog.action as WorkLogAction,
+        summary: txResult.workLog.summary,
+        timestamp: txResult.workLog.timestamp,
       };
 
       const response: AgentStopResponse = {
@@ -203,57 +293,17 @@ export async function POST(
           itemId: body.itemId,
           agent: body.agent,
           workLogEntry,
-          nextStage: targetStage,
-          rejectionCount: newRejectionCount,
-          escalated,
+          nextStage: txResult.targetStage,
+          rejectionCount: txResult.newRejectionCount,
+          escalated: txResult.escalated,
         },
       };
 
       return NextResponse.json(response);
     }
 
-    // Completed / blocked path
-    let nextStage: StageId;
-    if (outcome === 'blocked') {
-      nextStage = 'blocked';
-    } else {
-      const pipelineInfo = PIPELINE_STAGES[item.stageId as SharedStageId];
-      nextStage = (pipelineInfo?.nextStage as StageId) ?? 'review';
-    }
-    const action: WorkLogAction = outcome === 'blocked' ? 'note' : 'completed';
-
-    // Create work log entry
-    const workLog = await prisma.workLog.create({
-      data: {
-        agent: body.agent,
-        action: action,
-        summary: body.summary,
-        itemId: body.itemId,
-      },
-    });
-
-    // Check WIP limits on the target stage when advance=true (default)
-    const advance = body.advance !== false;
-    let wipExceeded = false;
-    if (advance) {
-      const targetStage = await prisma.stage?.findUnique({ where: { id: nextStage } });
-      if (targetStage != null && targetStage.wipLimit != null) {
-        const currentCount = await prisma.item.count({ where: { stageId: nextStage, projectId, archivedAt: null } });
-        if (currentCount >= targetStage.wipLimit) {
-          wipExceeded = true;
-        }
-      }
-    }
-
-    // Update item: clear assignedAgent, advance stage only when not WIP-blocked
-    const shouldAdvance = advance && !wipExceeded;
-    await prisma.item.update({
-      where: { id: body.itemId },
-      data: {
-        ...(shouldAdvance ? { stageId: nextStage } : {}),
-        assignedAgent: null,
-      },
-    });
+    // Completed/blocked path — extract results from the transaction
+    const { workLog, wipExceeded, shouldAdvance } = txResult;
 
     // Check if all mission items are now in done stage (mission complete)
     let missionComplete = false;

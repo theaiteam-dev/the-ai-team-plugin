@@ -113,12 +113,31 @@ LOOP CONTINUOUSLY:
                     new_task = dispatch Amy in background
                     active_tasks[item_id] = new_task.id
                     # DO NOT skip probing! DO NOT move directly to done!
-                if REJECTED: Bash("ateam items rejectItem --id {item_id}")
+                if REJECTED:
+                    # Lynch's subagent has already called
+                    # `ateam agents-stop agentStop --outcome rejected --return-to testing|implementing --summary "..."`
+                    # before exiting. The API incremented rejection_count and moved the item
+                    # back to the return-to stage atomically. There is no `ateam items rejectItem`
+                    # command — rejection is a first-class outcome of agentStop.
+                    # Parse return_to from the TaskOutput (Lynch reports it in the REJECTED block),
+                    # then redispatch the responsible agent against the item's current stage:
+                    if return_to == "testing":
+                        dispatch Murdock with rejection context (see retry pattern below)
+                    elif return_to == "implementing":
+                        dispatch B.A. with rejection context (see retry pattern below)
+                    active_tasks[item_id] = new_task.id
 
             elif item was in probing:
                 # Amy has completed investigation
                 if VERIFIED: Bash("ateam board-move moveItem --itemId {item_id} --toStage done")
-                if FLAG: Bash("ateam items rejectItem --id {item_id}")
+                if FLAG:
+                    # Amy has already called
+                    # `ateam agents-stop agentStop --outcome rejected --return-to implementing --summary "..."`
+                    # to send the item back for a fix. Parse return_to from TaskOutput and redispatch
+                    # the appropriate agent (B.A. for implementation bugs, Murdock for missing test
+                    # coverage) with Amy's diagnosis in the prompt.
+                    dispatch appropriate agent with Amy's FLAG context
+                    active_tasks[item_id] = new_task.id
                 # Moving to done may unlock Wave 2 items!
 
     # ═══════════════════════════════════════════════════════════

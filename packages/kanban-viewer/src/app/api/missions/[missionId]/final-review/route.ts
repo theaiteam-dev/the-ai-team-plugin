@@ -36,9 +36,27 @@ export async function POST(request: Request, context: RouteContext) {
     }
 
     const body = await request.json();
-    const { finalReview } = body as { finalReview: string };
+    const { finalReview } = body as { finalReview?: unknown };
 
-    const mission = await prisma.mission.findUnique({ where: { id: missionId } });
+    // Validate finalReview body field: must be a non-empty string
+    if (!finalReview || typeof finalReview !== 'string') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'finalReview field is required and must be a string',
+          },
+        },
+        { status: 400 }
+      );
+    }
+
+    // Scope the lookup to the requesting project so one project cannot read or overwrite
+    // another project's mission even if it guesses or leaks the mission ID.
+    const mission = await prisma.mission.findFirst({
+      where: { id: missionId, projectId: projectValidation.projectId },
+    });
     if (!mission) {
       return NextResponse.json(
         { success: false, error: { code: 'MISSION_NOT_FOUND', message: `Mission ${missionId} not found` } },
@@ -46,6 +64,7 @@ export async function POST(request: Request, context: RouteContext) {
       );
     }
 
+    // Safe to update by unique id now that we've confirmed the mission belongs to this project
     await prisma.mission.update({
       where: { id: missionId },
       data: { finalReview },
@@ -80,8 +99,9 @@ export async function GET(request: Request, context: RouteContext) {
       return NextResponse.json(errorResponse, { status: 400 });
     }
 
-    const mission = await prisma.mission.findUnique({
-      where: { id: missionId },
+    // Scope lookup to the requesting project so cross-project existence is not leaked
+    const mission = await prisma.mission.findFirst({
+      where: { id: missionId, projectId: projectValidation.projectId },
       select: { finalReview: true },
     });
 

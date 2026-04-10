@@ -16,6 +16,7 @@
  * Returns the maximum per-agent-type instance count the host memory supports.
  *
  * @param freeMemMB - Available memory in MB. Defaults to os.freemem() / 1024 / 1024.
+ * @param mbPerAgent - Estimated MB per subagent instance. Defaults to MB_PER_AGENT (400).
  * @returns Maximum instances (>= 1)
  */
-export declare function computeMemoryBudget(freeMemMB?: number): number;
+export declare function computeMemoryBudget(freeMemMB?: number, mbPerAgent?: number): number;

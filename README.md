@@ -513,15 +513,18 @@ Configure environment via `.claude/settings.local.json`:
 | `ateam items getItem --id <id> --json` | Get item details |
 | `ateam items listItems --json` | List all items |
 | `ateam items updateItem --id <id>` | Update item |
-| `ateam items rejectItem --id <id>` | Reject item (returns to pipeline) |
 | `ateam items renderItem --id <id>` | Render item as markdown |
 | `ateam agents-start agentStart --itemId <id> --agent <name>` | Signal agent start |
-| `ateam agents-stop agentStop --itemId <id> --agent <name> --status success --summary "..."` | Signal agent completion |
-| `ateam missions createMission` | Initialize mission |
+| `ateam agents-stop agentStop --itemId <id> --agent <name> --outcome completed --summary "..."` | Signal agent completion |
+| `ateam agents-stop agentStop --itemId <id> --agent <name> --outcome rejected --return-to <stage> --summary "..."` | Reject item and return to prior stage |
+| `ateam missions createMission [--concurrency N]` | Initialize mission (optional concurrency override) |
 | `ateam missions-current getCurrentMission --json` | Get active mission |
 | `ateam missions-precheck missionPrecheck` | Submit precheck results |
 | `ateam missions-postcheck missionPostcheck --json` | Run postcheck |
 | `ateam missions-archive archiveMission --json` | Archive mission |
+| `ateam missions-final-review getFinalReview --missionId <id> --json` | Fetch persisted final review |
+| `ateam missions-final-review writeFinalReview --missionId <id> --report "..."` | Store Stockwell's final review |
+| `ateam scaling compute [--concurrency N] [--memory N] --json` | Compute adaptive scaling parameters |
 | `ateam deps-check checkDeps --json` | Check dependency readiness |
 | `ateam activity createActivityEntry --agent <name> --message "..." --level info` | Log activity |
 | `ateam activity listActivity --json` | View activity log |
