@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"ateam/internal/client"
 	"ateam/internal/output"
+	"ateam/internal/validate"
 )
 
 var (
@@ -59,6 +60,9 @@ var missionsCreateMissionCmd = &cobra.Command{
 			}
 			return nil
 		}
+		if err := validate.RequireFlags(cmd, "name", "prdPath"); err != nil {
+			return err
+		}
 		concurrencySet := cmd.Flags().Changed("concurrency")
 		concurrencyValue := missionsCreateMissionCmd_concurrency
 
@@ -97,6 +101,7 @@ func init() {
 	missionsCreateMissionCmd.Flags().StringVar(&missionsCreateMissionCmd_name, "name", "", "")
 	missionsCreateMissionCmd.Flags().StringVar(&missionsCreateMissionCmd_prdPath, "prdPath", "", "")
 	missionsCreateMissionCmd.Flags().IntVar(&missionsCreateMissionCmd_concurrency, "concurrency", 0, "Override adaptive scaling with a fixed instance count (must be >= 1)")
-	missionsCreateMissionCmd.MarkFlagRequired("name")
-	missionsCreateMissionCmd.MarkFlagRequired("prdPath")
+	// NOTE: required-flag enforcement is done in RunE via validate.RequireFlags
+	// so that --body / --body-file can be used as an alternative to individual
+	// flags. Cobra's MarkFlagRequired runs before RunE and cannot be bypassed.
 }

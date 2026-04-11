@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"ateam/internal/client"
 	"ateam/internal/output"
+	"ateam/internal/validate"
 )
 
 var (
@@ -57,6 +58,9 @@ var projectsCreateProjectCmd = &cobra.Command{
 			}
 			return nil
 		}
+		if err := validate.RequireFlags(cmd, "id", "name"); err != nil {
+			return err
+		}
 		bodyMap := map[string]interface{}{}
 		bodyMap["id"] = projectsCreateProjectCmd_id
 		bodyMap["name"] = projectsCreateProjectCmd_name
@@ -83,6 +87,7 @@ func init() {
 	projectsCreateProjectCmd.Flags().StringVar(&projectsCreateProjectCmdBodyFile, "body-file", "", "Path to JSON file to use as request body")
 	projectsCreateProjectCmd.Flags().StringVar(&projectsCreateProjectCmd_id, "id", "", "")
 	projectsCreateProjectCmd.Flags().StringVar(&projectsCreateProjectCmd_name, "name", "", "")
-	projectsCreateProjectCmd.MarkFlagRequired("id")
-	projectsCreateProjectCmd.MarkFlagRequired("name")
+	// NOTE: required-flag enforcement is done in RunE via validate.RequireFlags
+	// so that --body / --body-file can be used as an alternative to individual
+	// flags. Cobra's MarkFlagRequired runs before RunE and cannot be bypassed.
 }

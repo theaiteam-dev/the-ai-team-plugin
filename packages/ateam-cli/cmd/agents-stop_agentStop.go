@@ -162,14 +162,6 @@ var agentsStopAgentStopCmd = &cobra.Command{
 		c := client.NewClient(baseURL, token)
 		pathParams := map[string]string{}
 		queryParams := map[string]string{}
-		if err := validate.AgentName("agent", agentsStopAgentStopCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}); err != nil {
-			return err
-		}
-		if cmd.Flags().Changed("outcome") {
-			if err := validate.Enum("outcome", agentsStopAgentStopCmd_outcome, []string{"completed", "blocked", "rejected"}); err != nil {
-				return err
-			}
-		}
 		if agentsStopAgentStopCmdBodyFile != "" {
 			fileData, err := os.ReadFile(agentsStopAgentStopCmdBodyFile)
 			if err != nil {
@@ -212,6 +204,17 @@ var agentsStopAgentStopCmd = &cobra.Command{
 			}
 			resp, apiErr = c.Do("POST", "/api/agents/stop", pathParams, queryParams, bodyObj)
 		} else {
+			if err := validate.RequireFlags(cmd, "agent", "itemId", "summary"); err != nil {
+				return err
+			}
+			if err := validate.AgentName("agent", agentsStopAgentStopCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}); err != nil {
+				return err
+			}
+			if cmd.Flags().Changed("outcome") {
+				if err := validate.Enum("outcome", agentsStopAgentStopCmd_outcome, []string{"completed", "blocked", "rejected"}); err != nil {
+					return err
+				}
+			}
 			bodyMap := map[string]interface{}{}
 			bodyMap["agent"] = agentsStopAgentStopCmd_agent
 			bodyMap["advance"] = agentsStopAgentStopCmd_advance
@@ -290,7 +293,7 @@ func init() {
 	})
 	agentsStopAgentStopCmd.Flags().StringVar(&agentsStopAgentStopCmd_returnTo, "return-to", "", "Stage to return item to when outcome=rejected (ready|testing|implementing|review|probing)")
 	agentsStopAgentStopCmd.Flags().StringVar(&agentsStopAgentStopCmd_summary, "summary", "", "")
-	agentsStopAgentStopCmd.MarkFlagRequired("agent")
-	agentsStopAgentStopCmd.MarkFlagRequired("itemId")
-	agentsStopAgentStopCmd.MarkFlagRequired("summary")
+	// NOTE: required-flag enforcement is done in RunE via validate.RequireFlags
+	// so that --body / --body-file can be used as an alternative to individual
+	// flags. Cobra's MarkFlagRequired runs before RunE and cannot be bypassed.
 }

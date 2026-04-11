@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"ateam/internal/client"
 	"ateam/internal/output"
+	"ateam/internal/validate"
 )
 
 var (
@@ -58,6 +59,9 @@ var missionsPrecheckMissionPrecheckCmd = &cobra.Command{
 			}
 			return nil
 		}
+		if err := validate.RequireFlags(cmd, "passed"); err != nil {
+			return err
+		}
 		bodyMap := map[string]interface{}{}
 		bodyMap["passed"] = missionsPrecheckMissionPrecheckCmd_passed
 		if cmd.Flags().Changed("blockers") {
@@ -97,5 +101,7 @@ func init() {
 	missionsPrecheckMissionPrecheckCmd.Flags().StringArrayVar(&missionsPrecheckMissionPrecheckCmd_blockers, "blockers", nil, "")
 	missionsPrecheckMissionPrecheckCmd.Flags().StringVar(&missionsPrecheckMissionPrecheckCmd_output, "output", "", "")
 	missionsPrecheckMissionPrecheckCmd.Flags().BoolVar(&missionsPrecheckMissionPrecheckCmd_passed, "passed", false, "")
-	missionsPrecheckMissionPrecheckCmd.MarkFlagRequired("passed")
+	// NOTE: required-flag enforcement is done in RunE via validate.RequireFlags
+	// so that --body / --body-file can be used as an alternative to individual
+	// flags. Cobra's MarkFlagRequired runs before RunE and cannot be bypassed.
 }

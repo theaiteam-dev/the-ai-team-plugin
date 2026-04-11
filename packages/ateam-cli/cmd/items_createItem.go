@@ -37,8 +37,6 @@ var itemsCreateItemCmd = &cobra.Command{
 		c := client.NewClient(baseURL, token)
 		pathParams := map[string]string{}
 		queryParams := map[string]string{}
-		if err := validate.Enum("priority", itemsCreateItemCmd_priority, []string{"critical", "high", "medium", "low"}); err != nil { return err }
-		if err := validate.Enum("type", itemsCreateItemCmd_type, []string{"feature", "bug", "enhancement", "task"}); err != nil { return err }
 		if itemsCreateItemCmdBodyFile != "" {
 			fileData, err := os.ReadFile(itemsCreateItemCmdBodyFile)
 			if err != nil {
@@ -70,6 +68,11 @@ var itemsCreateItemCmd = &cobra.Command{
 			}
 			return nil
 		}
+		if err := validate.RequireFlags(cmd, "objective", "acceptance", "context", "priority", "title", "type"); err != nil {
+			return err
+		}
+		if err := validate.Enum("priority", itemsCreateItemCmd_priority, []string{"critical", "high", "medium", "low"}); err != nil { return err }
+		if err := validate.Enum("type", itemsCreateItemCmd_type, []string{"feature", "bug", "enhancement", "task"}); err != nil { return err }
 		bodyMap := map[string]interface{}{}
 		if len(itemsCreateItemCmd_acceptance) > 0 {
 			bodyMap["acceptance"] = itemsCreateItemCmd_acceptance
@@ -82,7 +85,7 @@ var itemsCreateItemCmd = &cobra.Command{
 		if itemsCreateItemCmd_objective != "" {
 			bodyMap["objective"] = itemsCreateItemCmd_objective
 		}
-		{
+		if cmd.Flags().Changed("outputs.impl") {
 			_parts := strings.Split("outputs.impl", ".")
 			_cur := bodyMap
 			for _, _p := range _parts[:len(_parts)-1] {
@@ -93,7 +96,7 @@ var itemsCreateItemCmd = &cobra.Command{
 			}
 			_cur[_parts[len(_parts)-1]] = itemsCreateItemCmd_outputsImpl
 		}
-		{
+		if cmd.Flags().Changed("outputs.test") {
 			_parts := strings.Split("outputs.test", ".")
 			_cur := bodyMap
 			for _, _p := range _parts[:len(_parts)-1] {
@@ -104,7 +107,7 @@ var itemsCreateItemCmd = &cobra.Command{
 			}
 			_cur[_parts[len(_parts)-1]] = itemsCreateItemCmd_outputsTest
 		}
-		{
+		if cmd.Flags().Changed("outputs.types") {
 			_parts := strings.Split("outputs.types", ".")
 			_cur := bodyMap
 			for _, _p := range _parts[:len(_parts)-1] {
@@ -156,10 +159,7 @@ func init() {
 	itemsCreateItemCmd.RegisterFlagCompletionFunc("type", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return []string{"feature", "bug", "enhancement", "task"}, cobra.ShellCompDirectiveNoFileComp
 	})
-	itemsCreateItemCmd.MarkFlagRequired("objective")
-	itemsCreateItemCmd.MarkFlagRequired("acceptance")
-	itemsCreateItemCmd.MarkFlagRequired("context")
-	itemsCreateItemCmd.MarkFlagRequired("priority")
-	itemsCreateItemCmd.MarkFlagRequired("title")
-	itemsCreateItemCmd.MarkFlagRequired("type")
+	// NOTE: required-flag enforcement is done in RunE via validate.RequireFlags
+	// so that --body / --body-file can be used as an alternative to individual
+	// flags. Cobra's MarkFlagRequired runs before RunE and cannot be bypassed.
 }

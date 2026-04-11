@@ -269,10 +269,11 @@ export async function PATCH(
       updateData.priority = body.priority;
     }
     if (body.outputs !== undefined) {
-      // Update outputs - use null for undefined values to clear them
-      updateData.outputTest = body.outputs.test ?? null;
-      updateData.outputImpl = body.outputs.impl ?? null;
-      updateData.outputTypes = body.outputs.types ?? null;
+      // Update outputs - normalize undefined/null/empty-string to null so the
+      // collision detector never sees a shared empty-string path.
+      updateData.outputTest = body.outputs.test || null;
+      updateData.outputImpl = body.outputs.impl || null;
+      updateData.outputTypes = body.outputs.types || null;
     }
 
     // Handle dependency updates in a transaction

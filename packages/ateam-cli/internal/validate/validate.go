@@ -4,7 +4,32 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/spf13/cobra"
 )
+
+// RequireFlags checks that each named flag was explicitly set on the command.
+// This is used in place of cobra's MarkFlagRequired for commands that also
+// accept --body / --body-file as an alternative to individual flags: cobra's
+// built-in required-flag enforcement runs before RunE and cannot be bypassed,
+// so --body-file alone is rejected with "required flag(s) not set" even
+// though the body file provides those values. Call this helper from RunE
+// after the body/body-file branch has been handled.
+//
+// The error message mirrors cobra's native format so users see consistent
+// output regardless of which path flagged the missing values.
+func RequireFlags(cmd *cobra.Command, names ...string) error {
+	var missing []string
+	for _, name := range names {
+		if !cmd.Flags().Changed(name) {
+			missing = append(missing, fmt.Sprintf("%q", name))
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("required flag(s) %s not set", strings.Join(missing, ", "))
+	}
+	return nil
+}
 
 // Enum checks that val is one of the allowed values.
 // Returns nil if val is empty (flag not set). Call only after cmd.Flags().Changed().

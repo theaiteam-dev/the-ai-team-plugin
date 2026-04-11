@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"ateam/internal/client"
 	"ateam/internal/output"
+	"ateam/internal/validate"
 )
 
 var (
@@ -56,6 +57,9 @@ var hooksEventsPruneHookEventsCmd = &cobra.Command{
 			}
 			return nil
 		}
+		if err := validate.RequireFlags(cmd, "olderThan"); err != nil {
+			return err
+		}
 		bodyMap := map[string]interface{}{}
 		bodyMap["olderThan"] = hooksEventsPruneHookEventsCmd_olderThan
 		resp, err := c.Do("POST", "/api/hooks/events/prune", pathParams, queryParams, bodyMap)
@@ -80,5 +84,7 @@ func init() {
 	hooksEventsPruneHookEventsCmd.Flags().StringVar(&hooksEventsPruneHookEventsCmdBody, "body", "", "Raw JSON body (overrides individual flags)")
 	hooksEventsPruneHookEventsCmd.Flags().StringVar(&hooksEventsPruneHookEventsCmdBodyFile, "body-file", "", "Path to JSON file to use as request body")
 	hooksEventsPruneHookEventsCmd.Flags().StringVar(&hooksEventsPruneHookEventsCmd_olderThan, "olderThan", "", "")
-	hooksEventsPruneHookEventsCmd.MarkFlagRequired("olderThan")
+	// NOTE: required-flag enforcement is done in RunE via validate.RequireFlags
+	// so that --body / --body-file can be used as an alternative to individual
+	// flags. Cobra's MarkFlagRequired runs before RunE and cannot be bypassed.
 }
