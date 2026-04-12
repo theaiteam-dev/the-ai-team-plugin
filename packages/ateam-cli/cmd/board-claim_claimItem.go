@@ -61,7 +61,7 @@ var boardClaimClaimItemCmd = &cobra.Command{
 		if err := validate.RequireFlags(cmd, "agent", "itemId"); err != nil {
 			return err
 		}
-		if err := validate.Enum("agent", boardClaimClaimItemCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}); err != nil { return err }
+		if err := validate.Enum("agent", boardClaimClaimItemCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Tawnia"}); err != nil { return err }
 		bodyMap := map[string]interface{}{}
 		bodyMap["agent"] = boardClaimClaimItemCmd_agent
 		bodyMap["itemId"] = boardClaimClaimItemCmd_itemId

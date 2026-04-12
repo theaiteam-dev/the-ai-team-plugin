@@ -153,17 +153,17 @@ SendMessage({ to: "lynch", message: "ACK: {itemId}", summary: "ACK {itemId}" })
 
 ### Lynch → Murdock or B.A. (REJECTED path)
 
-After `ateam agents-stop agentStop --advance=false` (rejected), notify the responsible agent directly — no ACK required, but always send FYI to Hannibal afterwards:
+After `ateam agents-stop agentStop --outcome rejected --return-to <stage>`, notify the responsible agent directly, then send FYI to Hannibal:
 
 ```javascript
-// To Murdock (test issues):
+// To Murdock (test issues, --return-to testing):
 SendMessage({
   to: "murdock",
   message: "REJECTED: {itemId} - {specific issues}. Required fixes: {fix list}",
   summary: "REJECTED {itemId}"
 })
 
-// To B.A. (implementation issues):
+// To B.A. (implementation issues, --return-to implementing):
 SendMessage({
   to: "ba",
   message: "REJECTED: {itemId} - {specific issues}. Required fixes: {fix list}",
@@ -171,14 +171,16 @@ SendMessage({
 })
 ```
 
-Wait up to 20 seconds for ACK, then send FYI to Hannibal regardless:
+Then send FYI to Hannibal:
 ```javascript
 SendMessage({
   to: "hannibal",
-  message: "FYI: {itemId} - REJECTED. Sent rejection directly to {Murdock/B.A.}. {ACK received / no ACK after 20s}.",
+  message: "FYI: {itemId} - REJECTED, returned to {stage}. Sent rejection to {Murdock/B.A.}.",
   summary: "Rejection sent for {itemId}"
 })
 ```
+
+Note: Rejection messages are fire-and-forget — the rejected agent picks up the returned item from the board when it's next idle. No ACK is required or expected.
 
 ### Amy → Hannibal (terminal — no downstream)
 

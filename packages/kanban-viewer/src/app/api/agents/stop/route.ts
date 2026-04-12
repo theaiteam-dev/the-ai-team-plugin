@@ -194,7 +194,7 @@ export async function POST(
 
     const txResult: TxResult = await prisma.$transaction(async (tx) => {
       // Always release the claim — the work happened regardless of what comes next
-      await tx.agentClaim.delete({
+      const deleted = await tx.agentClaim.deleteMany({
         where: { itemId: body.itemId },
       });
 

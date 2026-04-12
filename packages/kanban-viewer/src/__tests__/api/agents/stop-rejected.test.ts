@@ -31,6 +31,7 @@ const mockPrisma = {
   agentClaim: {
     findFirst: vi.fn(),
     delete: vi.fn(),
+    deleteMany: vi.fn(),
   },
   workLog: {
     create: vi.fn(),
@@ -107,7 +108,7 @@ function setupSuccessfulReject(agent: AgentName, stageId: string, rejectionCount
 
   mockPrisma.item.findFirst.mockResolvedValue(item);
   mockPrisma.agentClaim.findFirst.mockResolvedValue(claim);
-  mockPrisma.agentClaim.delete.mockResolvedValue(claim);
+  mockPrisma.agentClaim.deleteMany.mockResolvedValue({ count: 1 });
   mockPrisma.workLog.create.mockResolvedValue(workLog);
   mockPrisma.item.update.mockResolvedValue({
     ...item,
@@ -316,7 +317,7 @@ describe('POST /api/agents/stop — outcome=rejected', () => {
 
       await POST(request);
 
-      expect(mockPrisma.agentClaim.delete).toHaveBeenCalledWith(
+      expect(mockPrisma.agentClaim.deleteMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { itemId: 'WI-001' } })
       );
     });

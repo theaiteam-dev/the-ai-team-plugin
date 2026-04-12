@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { createServerError, createValidationError } from '@/lib/errors';
 import { getAndValidateProjectId } from '@/lib/project-utils';
+import type { ApiError } from '@/types/api';
 import { computeDepGraphMaxPerStage } from '@ai-team/shared';
 import { computeMemoryBudget } from '@ai-team/shared';
 import { computeAdaptiveScaling } from '@ai-team/shared';
@@ -25,10 +26,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     const projectValidation = getAndValidateProjectId(request.headers);
     if (!projectValidation.valid) {
-      return NextResponse.json(
-        { success: false, error: { code: projectValidation.error.code, message: 'X-Project-ID header is required' } },
-        { status: 400 }
-      );
+      const errorResponse: ApiError = {
+        success: false,
+        error: projectValidation.error,
+      };
+      return NextResponse.json(errorResponse, { status: 400 });
     }
     const projectId = projectValidation.projectId;
 

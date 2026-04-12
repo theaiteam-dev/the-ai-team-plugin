@@ -29,6 +29,7 @@ const mockPrisma = {
   agentClaim: {
     findFirst: vi.fn(),
     delete: vi.fn(),
+    deleteMany: vi.fn(),
   },
   workLog: {
     create: vi.fn(),
@@ -282,7 +283,7 @@ describe('POST /api/agents/stop', () => {
 
       mockPrisma.item.findFirst.mockResolvedValue(item);
       mockPrisma.agentClaim.findFirst.mockResolvedValue(claim);
-      mockPrisma.agentClaim.delete.mockResolvedValue(claim);
+      mockPrisma.agentClaim.deleteMany.mockResolvedValue({ count: 1 });
       mockPrisma.workLog.create.mockResolvedValue(workLog);
       mockPrisma.item.update.mockResolvedValue({ ...item, assignedAgent: null });
     }
@@ -398,7 +399,7 @@ describe('POST /api/agents/stop', () => {
 
       mockPrisma.item.findFirst.mockResolvedValue(item);
       mockPrisma.agentClaim.findFirst.mockResolvedValue(claim);
-      mockPrisma.agentClaim.delete.mockResolvedValue(claim);
+      mockPrisma.agentClaim.deleteMany.mockResolvedValue({ count: 1 });
       mockPrisma.workLog.create.mockResolvedValue(createMockWorkLog());
       mockPrisma.item.update.mockResolvedValue({ ...item, assignedAgent: null });
 
@@ -412,7 +413,7 @@ describe('POST /api/agents/stop', () => {
       const response = await POST(request);
       expect(response.status).toBe(200);
 
-      expect(mockPrisma.agentClaim.delete).toHaveBeenCalledWith(
+      expect(mockPrisma.agentClaim.deleteMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { itemId: 'WI-001' } })
       );
       expect(mockPrisma.item.update).toHaveBeenCalledWith(
@@ -428,7 +429,7 @@ describe('POST /api/agents/stop', () => {
 
       mockPrisma.item.findFirst.mockResolvedValue(item);
       mockPrisma.agentClaim.findFirst.mockResolvedValue(claim);
-      mockPrisma.agentClaim.delete.mockResolvedValue(claim);
+      mockPrisma.agentClaim.deleteMany.mockResolvedValue({ count: 1 });
       mockPrisma.workLog.create.mockResolvedValue(createMockWorkLog());
       mockPrisma.item.update.mockResolvedValue({ ...item, assignedAgent: null });
 
@@ -460,7 +461,7 @@ describe('POST /api/agents/stop', () => {
 
       mockPrisma.item.findFirst.mockResolvedValue(item);
       mockPrisma.agentClaim.findFirst.mockResolvedValue(claim);
-      mockPrisma.agentClaim.delete.mockResolvedValue(claim);
+      mockPrisma.agentClaim.deleteMany.mockResolvedValue({ count: 1 });
       mockPrisma.workLog.create.mockResolvedValue(workLog);
       mockPrisma.item.update.mockResolvedValue({ ...item, assignedAgent: null });
 
@@ -517,7 +518,7 @@ describe('POST /api/agents/stop', () => {
 
       mockPrisma.item.findFirst.mockResolvedValue(item);
       mockPrisma.agentClaim.findFirst.mockResolvedValue(claim);
-      mockPrisma.agentClaim.delete.mockResolvedValue(claim);
+      mockPrisma.agentClaim.deleteMany.mockResolvedValue({ count: 1 });
       mockPrisma.workLog.create.mockResolvedValue(createMockWorkLog());
       mockPrisma.item.update.mockResolvedValue({ ...item, stageId: 'implementing', assignedAgent: null });
       mockPrisma.stage.findUnique.mockResolvedValue({ id: 'implementing', name: 'implementing', order: 0, wipLimit: 3 });
@@ -537,7 +538,7 @@ describe('POST /api/agents/stop', () => {
 
       // All three write operations must have flowed through the transaction
       expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
-      expect(mockPrisma.agentClaim.delete).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.agentClaim.deleteMany).toHaveBeenCalledTimes(1);
       expect(mockPrisma.workLog.create).toHaveBeenCalledTimes(1);
       expect(mockPrisma.item.update).toHaveBeenCalledTimes(1);
 
@@ -555,7 +556,7 @@ describe('POST /api/agents/stop', () => {
 
       mockPrisma.item.findFirst.mockResolvedValue(item);
       mockPrisma.agentClaim.findFirst.mockResolvedValue(claim);
-      mockPrisma.agentClaim.delete.mockResolvedValue(claim);
+      mockPrisma.agentClaim.deleteMany.mockResolvedValue({ count: 1 });
       mockPrisma.workLog.create.mockResolvedValue(createMockWorkLog());
       mockPrisma.item.update.mockResolvedValue({ ...item, assignedAgent: null });
       mockPrisma.stage.findUnique.mockResolvedValue({ id: 'implementing', name: 'implementing', order: 0, wipLimit: 3 });
@@ -573,7 +574,7 @@ describe('POST /api/agents/stop', () => {
       const data = await response.json();
 
       // Claim was still released
-      expect(mockPrisma.agentClaim.delete).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.agentClaim.deleteMany).toHaveBeenCalledTimes(1);
       // Work log was still written
       expect(mockPrisma.workLog.create).toHaveBeenCalledTimes(1);
 
@@ -594,7 +595,7 @@ describe('POST /api/agents/stop', () => {
 
       mockPrisma.item.findFirst.mockResolvedValue(item);
       mockPrisma.agentClaim.findFirst.mockResolvedValue(claim);
-      mockPrisma.agentClaim.delete.mockResolvedValue(claim);
+      mockPrisma.agentClaim.deleteMany.mockResolvedValue({ count: 1 });
       // Force the work log write inside the transaction to fail
       mockPrisma.workLog.create.mockRejectedValue(new Error('simulated DB failure'));
 
@@ -628,7 +629,7 @@ describe('POST /api/agents/stop', () => {
 
       mockPrisma.item.findFirst.mockResolvedValue(item);
       mockPrisma.agentClaim.findFirst.mockResolvedValue(claim);
-      mockPrisma.agentClaim.delete.mockResolvedValue(claim);
+      mockPrisma.agentClaim.deleteMany.mockResolvedValue({ count: 1 });
       mockPrisma.workLog.create.mockResolvedValue(createMockWorkLog());
       mockPrisma.item.update.mockResolvedValue({ ...item, stageId: 'implementing', assignedAgent: null });
       mockPrisma.stage.findUnique.mockResolvedValue({ id: 'implementing', name: 'implementing', order: 0, wipLimit: null });

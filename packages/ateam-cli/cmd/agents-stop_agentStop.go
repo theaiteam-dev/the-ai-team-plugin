@@ -178,11 +178,6 @@ var agentsStopAgentStopCmd = &cobra.Command{
 
 		// agentName/outcome/advance used for pool management — resolved from flags or --body
 		agentName := agentsStopAgentStopCmd_agent
-
-		// Always release pool slot on exit — even if the API call fails.
-		// Without this, API errors (e.g. NOT_CLAIMED when agentStart was skipped)
-		// leave orphaned .busy files that permanently block the pool slot.
-		defer poolSelfRelease(agentName)
 		outcome := agentsStopAgentStopCmd_outcome
 		advance := agentsStopAgentStopCmd_advance
 
@@ -226,6 +221,13 @@ var agentsStopAgentStopCmd = &cobra.Command{
 			bodyMap["summary"] = agentsStopAgentStopCmd_summary
 			resp, apiErr = c.Do("POST", "/api/agents/stop", pathParams, queryParams, bodyMap)
 		}
+
+		// Always release pool slot on exit — even if the API call fails.
+		// Registered here (after both --body and flags paths have resolved agentName)
+		// so the closure captures the final value, not the empty pre-parse value.
+		defer func() {
+			poolSelfRelease(agentName)
+		}()
 
 		if apiErr != nil {
 			// defer poolSelfRelease runs on exit — pool slot is always released

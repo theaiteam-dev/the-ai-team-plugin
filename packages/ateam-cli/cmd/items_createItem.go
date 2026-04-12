@@ -68,11 +68,16 @@ var itemsCreateItemCmd = &cobra.Command{
 			}
 			return nil
 		}
-		if err := validate.RequireFlags(cmd, "objective", "acceptance", "context", "priority", "title", "type"); err != nil {
+		if err := validate.RequireFlags(cmd, "description", "objective", "acceptance", "context", "priority", "title", "type"); err != nil {
 			return err
 		}
 		if err := validate.Enum("priority", itemsCreateItemCmd_priority, []string{"critical", "high", "medium", "low"}); err != nil { return err }
 		if err := validate.Enum("type", itemsCreateItemCmd_type, []string{"feature", "bug", "enhancement", "task"}); err != nil { return err }
+		if !cmd.Flags().Changed("outputs.impl") &&
+			!cmd.Flags().Changed("outputs.test") &&
+			!cmd.Flags().Changed("outputs.types") {
+			return fmt.Errorf("at least one outputs.* flag is required (outputs.impl, outputs.test, or outputs.types)")
+		}
 		bodyMap := map[string]interface{}{}
 		if len(itemsCreateItemCmd_acceptance) > 0 {
 			bodyMap["acceptance"] = itemsCreateItemCmd_acceptance
