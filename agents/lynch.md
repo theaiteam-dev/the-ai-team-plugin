@@ -86,15 +86,15 @@ Review them as a cohesive unit, not separately.
 
 **When rejecting, reference specific unmet acceptance criteria by text** (e.g., "AC 'Returns 401 on invalid password' is not covered by any test"). This gives Murdock/B.A. precise guidance on what to fix.
 
-### Step 2: Run Typecheck and Tests FIRST (before reading code)
+### Step 2: Run Typecheck and This Item's Tests FIRST (before reading code)
 
 **This step comes before reading any source files.** Running tests first establishes ground truth — if tests pass, the code works. Do not predict test outcomes from reading code; that leads to false rejections based on stale reads or incorrect assumptions.
 
-- Run `bun run typecheck` (or project equivalent like `pnpm typecheck`, `tsc --noEmit`) — **reject immediately on type errors**. This catches cross-item type breakage (e.g., a stub wired into App.tsx that breaks when the real component lands with required props).
-- Run the full test suite **once** — **reject immediately on test failures** with specific failing test names. Do not debug.
-- If both pass, proceed to code review. If either fails, reject with specific errors — do not read the code to try to diagnose why.
-- For follow-up checks later in the review, use **targeted test runs** (`pnpm test <specific-file>`)
-- Do not re-run the full suite after reading each file
+- Run `bun run typecheck` (or project equivalent like `pnpm typecheck`, `tsc --noEmit`) **project-wide** — **reject immediately on type errors**. Typecheck catches cross-item type breakage (e.g., a stub wired into App.tsx that breaks when the real component lands with required props) and is safe to run project-wide.
+- Run **only this item's test file** (the path from `outputs.test`) — e.g. `bun run test src/__tests__/order.test.ts`. **Reject immediately on test failures** with specific failing test names. Do not debug.
+- **Do NOT run the full test suite.** In pipeline-parallel mode, sibling items are often in TDD-red state (Murdock wrote their tests, B.A. hasn't implemented them yet). A full-suite run will surface those as failures and mislead you into rejecting this item for a pre-existing red test you don't own. Stockwell runs the full suite at mission end — that's the cross-item integration gate, not this step.
+- If typecheck and the item's tests both pass, proceed to code review. If either fails, reject with specific errors — do not read the code to try to diagnose why.
+- For follow-up checks later in the review, use additional **targeted test runs** (`pnpm test <specific-file>`) — never broaden to the whole suite.
 
 ### Step 3: Read ALL Output Files Together
 - Test file

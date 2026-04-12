@@ -240,6 +240,67 @@ import { FEATURE_FLAGS } from '../config';
 expect(Object.keys(routes)).toHaveLength(Object.keys(FEATURE_FLAGS).length);
 ```
 
+### 12. Stubbing the Children of a Composition (BANNED)
+
+When the component under test IS a composition — a shell, layout, page, or container whose job is to assemble children — replacing those children with `vi.spyOn(...).mockImplementation(...)`, `vi.spyOn(...).mockReturnValue(...)`, or `vi.mock('./Child', ...)` leaves nothing real to verify. The composition's observable behavior *is* the rendered subtree. Stubbing the subtree yields "state-bookkeeping coverage" that passes even when the shell is broken from a user's perspective.
+
+This is the same rule as Ban #2 (Mocking Your Own Subject), applied to the case where the subject is the seam between its children. For a shell component, the children are part of the subject.
+
+```typescript
+// BAD: App's only job is composing TodoList / CreateTodoForm / EmptyState / ErrorBanner.
+// This test replaces all four with prop-capturing stubs and asserts on the captured props.
+let captured: TodoListProps;
+vi.spyOn(TodoListModule, 'TodoList').mockImplementation((props) => {
+  captured = props; return null;
+});
+vi.spyOn(CreateTodoFormModule, 'CreateTodoForm').mockImplementation(() => null);
+// ...etc
+render(<App />);
+expect(captured.onDelete).toBeDefined();  // tautological — captured references the mock's args
+
+// Failure modes this test cannot catch:
+//   - App wires `onDelete` to the wrong prop name on the real component
+//   - App never imports TodoList at all (replaced with an inline <div>)
+//   - The real TodoList requires props App doesn't pass
+//   - A broken render in a grandchild (TodoItem, ErrorBanner body, etc.)
+```
+
+```typescript
+// GOOD: render the real children, mock only the outermost I/O (the API client)
+vi.mock('../lib/api', () => ({
+  fetchTodos: vi.fn(),
+  createTodo: vi.fn(),
+  deleteTodo: vi.fn(),
+  updateTodo: vi.fn(),
+}));
+import { fetchTodos, deleteTodo } from '../lib/api';
+
+it('deletes a todo when the user confirms', async () => {
+  (fetchTodos as Mock).mockResolvedValue([
+    { id: '1', title: 'Walk dog', completed: false, createdAt: '2024-01-01' },
+  ]);
+  (deleteTodo as Mock).mockResolvedValue(undefined);
+  render(<App />);
+  await user.click(await screen.findByRole('button', { name: /delete walk dog/i }));
+  await user.click(screen.getByRole('button', { name: /confirm/i }));
+  expect(deleteTodo).toHaveBeenCalledWith('1');
+  expect(screen.queryByText('Walk dog')).not.toBeInTheDocument();
+});
+```
+
+**Rule:** For composition components (App, pages, layouts, containers, providers whose responsibility is wiring children together), render the full subtree with real children and mock only external boundaries (API, network, timers, `Date.now`). If you find yourself stubbing an immediate child to "focus on the shell's concerns," the shell's concerns ARE the children — there is nothing left to test once they're gone.
+
+This rule applies to **all** forms of replacement, not just `vi.mock()`:
+
+- `vi.mock('./ChildComponent', ...)`
+- `vi.spyOn(ChildModule, 'Child').mockImplementation(...)`
+- `vi.spyOn(ChildModule, 'Child').mockReturnValue(...)`
+- Passing a stub via React Context to swap a child by indirection
+
+A **bare** `vi.spyOn(ChildModule, 'Child')` with no `.mockImplementation` / `.mockReturnValue` is acceptable — it observes the call without replacing behavior, so the real child still renders. That is the module-spy pattern from the Integration Item Wiring Tests section below, and it's the only spy form allowed on children of the SUT.
+
+**Red flag for reviewers:** if a test file for a composition contains `captured = props` or `let captured: XProps;` patterns, it is almost certainly this anti-pattern — the test is capturing props off a mock instead of verifying observable output.
+
 ---
 
 ## What Makes a Good Test
@@ -338,8 +399,9 @@ it('renders the real EmptyState component when no todos', () => {
 
 **Rules for integration test files:**
 - Do NOT `vi.mock()` any component listed in the work item's dependencies — render them for real
+- Do NOT call `.mockImplementation(...)` or `.mockReturnValue(...)` on a spy of any wired component — that replaces the real component with a stub and defeats the purpose of the spy. See Ban #12 above.
 - Mock only external boundaries (API calls, timers, network)
-- Include at least one module spy per wired component to verify it was actually used
+- Include at least one module spy per wired component to verify it was actually used. The spy must be **bare** — observe only, do not replace behavior.
 - Behavioral assertions (text, roles, interactions) are still valuable — use them alongside spies, not instead of
 
 ### Accessibility Testing
@@ -448,6 +510,7 @@ For every test file, verify:
 8. No functions are redefined locally instead of imported.
 9. Scaffold/task items have at least one test verifying build output, not just file existence.
 10. Every AC with "only/never/exclusively" has both a positive and negative test.
+11. For composition components (shells, layouts, pages, containers), no immediate child is replaced via `vi.mock`, `.mockImplementation`, or `.mockReturnValue`. Children render for real; only external boundaries (API, network, timers) are mocked.
 
 See `references/testing-anti-patterns.md` for extended examples of each banned pattern.
 See `references/testing-good-patterns.md` for positive examples of behavior-focused testing.

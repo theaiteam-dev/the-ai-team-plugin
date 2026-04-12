@@ -224,6 +224,40 @@ expect(order.id).toMatch(/^ord_[a-z0-9]{8,}$/);
 
 **Rule:** Never use `toBeTruthy()` or `toBeDefined()` to assert a critical computed value — totals, IDs, statuses, transformed data. Use `toBe`, `toEqual`, `toMatch`, or `toStrictEqual` with the precise expected value. `toBeTruthy`/`toBeDefined` are acceptable only for confirming a side-effect occurred (e.g., a spy was called) when the exact value is genuinely unknowable.
 
+### Ban 7: Stubbing the Children of a Composition
+
+When writing tests for a **shell** component — App, pages, layouts, containers, providers, anything whose job is to compose children — render the real children and mock only external boundaries (API, timers, network). Stubbing immediate children with `vi.mock`, `.mockImplementation`, or `.mockReturnValue` leaves nothing real to test: the composition's observable behavior *is* the rendered subtree.
+
+```ts
+// BAD: App composes TodoList + CreateTodoForm + EmptyState + ErrorBanner.
+// These stubs turn every test into "App passes some object to a fake component."
+let captured: TodoListProps;
+vi.spyOn(TodoListModule, 'TodoList').mockImplementation((props) => {
+  captured = props; return null;
+});
+vi.spyOn(CreateTodoFormModule, 'CreateTodoForm').mockImplementation(() => null);
+render(<App />);
+expect(captured.onDelete).toBeDefined(); // tautological, and passes even if App imports a fake TodoList
+```
+
+```ts
+// GOOD: render the full subtree, mock only ../lib/api
+vi.mock('../lib/api', () => ({
+  fetchTodos: vi.fn().mockResolvedValue([{ id: '1', title: 'Walk dog', completed: false, createdAt: '2024-01-01' }]),
+  deleteTodo: vi.fn().mockResolvedValue(undefined),
+  createTodo: vi.fn(),
+  updateTodo: vi.fn(),
+}));
+it('deletes a todo when the user confirms', async () => {
+  render(<App />);
+  await user.click(await screen.findByRole('button', { name: /delete walk dog/i }));
+  await user.click(screen.getByRole('button', { name: /confirm/i }));
+  expect(screen.queryByText('Walk dog')).not.toBeInTheDocument();
+});
+```
+
+**Rule:** When the SUT is a composition, its children are part of the SUT. Never replace an immediate child with a stub in any form — `vi.mock`, `.mockImplementation`, `.mockReturnValue`, or context-based swap. A **bare** `vi.spyOn(ChildModule, 'Child')` with no `.mockImplementation` is allowed (it observes the call without replacing behavior) — that's the module-spy pattern. If your test file has a `captured: XProps` variable or a `.mockImplementation((props) => { captured = props; return null })` pattern, you're writing this anti-pattern — rewrite it to drive the component by user interaction and assert on the rendered result. See Ban 12 in the `test-writing` skill for the full write-up.
+
 ## Handling NO_TEST_NEEDED Items
 
 If you receive a work item with `NO_TEST_NEEDED` in the description and `outputs.test` is empty:

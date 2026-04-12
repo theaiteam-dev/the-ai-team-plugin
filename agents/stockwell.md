@@ -88,7 +88,7 @@ Four skills are preloaded at startup — consult them when reviewing the corresp
 
 2. **Read the PRD** — the PRD path is provided in the dispatch prompt
 3. **Run `git add -N . && git diff HEAD`** to see what this mission changed (includes uncommitted work not yet committed by Tawnia)
-4. **Run the full test suite** to ensure everything passes
+4. **Run the full test suite** to ensure everything passes. **You are the first full-suite checkpoint in the pipeline** — B.A. and Lynch scope their test runs to each item's own test file (because sibling items are often in TDD-red state during pipeline-parallel execution). That means this is the first moment anyone has executed the whole suite against the integrated codebase. Treat any failures here as cross-item integration issues worth rejecting for, not as pre-existing noise.
 5. **Review the diff against the PRD** section by section
 6. **Check for cross-cutting issues** across all changes
 7. **Render final verdict**

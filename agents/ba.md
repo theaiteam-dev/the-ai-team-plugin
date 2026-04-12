@@ -130,11 +130,12 @@ You receive a feature item that has already been through the testing stage:
    - Don't over-engineer
    - Handle errors appropriately
 
-9. **Run full test suite and typecheck**
-   - Run the **full project test suite** (`bun run test` / `pnpm test`), not just your file — your changes may break other tests
-   - Run `bun run typecheck` (or `pnpm typecheck` / `tsc --noEmit`) — no type errors
+9. **Run THIS item's tests and full typecheck**
+   - Run **only this item's test file** — the path from `outputs.test`. Example: `bun run test src/__tests__/order.test.ts` (or `pnpm test <file>`).
+   - **Do NOT run the full test suite.** In pipeline-parallel mode, sibling items are often in TDD-red state (Murdock wrote their tests, B.A. hasn't implemented yet). A full-suite run will fail on those and mislead you into thinking your change broke them. Stockwell runs the full suite at mission end — that's the gate for cross-item integration.
+   - Run `bun run typecheck` (or `pnpm typecheck` / `tsc --noEmit`) **project-wide** — typecheck doesn't have the sibling-red problem and catches cross-item type breakage.
    - No skipped tests, no "it.only" left behind
-   - If either fails, **fix before proceeding** — do not hand off broken code
+   - If your item's tests fail or typecheck fails, **fix before proceeding** — do not hand off broken code
 
 10. **Refactor for clarity**
    - Only if needed
@@ -334,8 +335,8 @@ Before calling this done, verify:
 ### Before Calling ateam agents-stop agentStop
 
 You MUST verify before marking work complete:
-1. Run `pnpm test` (or project equivalent) — **all tests must pass**
-2. Run `pnpm typecheck` (if available) — **no type errors**
+1. Run **only this item's test file** (e.g. `bun run test <outputs.test path>`) — all tests in that file must pass. Do NOT run the full project suite; sibling items may be in TDD-red and their failures are not yours to fix. Stockwell runs the full suite at mission end.
+2. Run `pnpm typecheck` (if available) **project-wide** — **no type errors**
 3. **AC reconciliation** (see below)
 4. If any of the above fail, **keep working** — do NOT call `ateam agents-stop agentStop` with failing tests or uncovered ACs
 
