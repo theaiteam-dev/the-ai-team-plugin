@@ -28,7 +28,6 @@ var boardMoveMoveItemCmd = &cobra.Command{
 		c := client.NewClient(baseURL, token)
 		pathParams := map[string]string{}
 		queryParams := map[string]string{}
-		if err := validate.Enum("toStage", boardMoveMoveItemCmd_toStage, []string{"briefings", "ready", "testing", "implementing", "review", "probing", "done", "blocked"}); err != nil { return err }
 		if boardMoveMoveItemCmdBodyFile != "" {
 			fileData, err := os.ReadFile(boardMoveMoveItemCmdBodyFile)
 			if err != nil {
@@ -60,6 +59,10 @@ var boardMoveMoveItemCmd = &cobra.Command{
 			}
 			return nil
 		}
+		if err := validate.RequireFlags(cmd, "itemId", "toStage"); err != nil {
+			return err
+		}
+		if err := validate.Enum("toStage", boardMoveMoveItemCmd_toStage, []string{"briefings", "ready", "testing", "implementing", "review", "probing", "done", "blocked"}); err != nil { return err }
 		bodyMap := map[string]interface{}{}
 		bodyMap["force"] = boardMoveMoveItemCmd_force
 		bodyMap["itemId"] = boardMoveMoveItemCmd_itemId
@@ -91,6 +94,7 @@ func init() {
 	boardMoveMoveItemCmd.RegisterFlagCompletionFunc("toStage", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return []string{"briefings", "ready", "testing", "implementing", "review", "probing", "done", "blocked"}, cobra.ShellCompDirectiveNoFileComp
 	})
-	boardMoveMoveItemCmd.MarkFlagRequired("itemId")
-	boardMoveMoveItemCmd.MarkFlagRequired("toStage")
+	// NOTE: required-flag enforcement is done in RunE via validate.RequireFlags
+	// so that --body / --body-file can be used as an alternative to individual
+	// flags. Cobra's MarkFlagRequired runs before RunE and cannot be bypassed.
 }

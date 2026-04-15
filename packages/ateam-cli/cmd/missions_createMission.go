@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"ateam/internal/client"
 	"ateam/internal/output"
+	"ateam/internal/validate"
 )
 
 var (
@@ -15,6 +16,7 @@ var (
 	missionsCreateMissionCmd_force bool
 	missionsCreateMissionCmd_name string
 	missionsCreateMissionCmd_prdPath string
+	missionsCreateMissionCmd_concurrency int
 )
 
 var missionsCreateMissionCmd = &cobra.Command{
@@ -58,10 +60,22 @@ var missionsCreateMissionCmd = &cobra.Command{
 			}
 			return nil
 		}
+		if err := validate.RequireFlags(cmd, "name", "prdPath"); err != nil {
+			return err
+		}
+		concurrencySet := cmd.Flags().Changed("concurrency")
+		concurrencyValue := missionsCreateMissionCmd_concurrency
+
+		if concurrencySet && concurrencyValue < 1 {
+			return fmt.Errorf("--concurrency must be >= 1 when provided, got %d", concurrencyValue)
+		}
 		bodyMap := map[string]interface{}{}
 		bodyMap["force"] = missionsCreateMissionCmd_force
 		bodyMap["name"] = missionsCreateMissionCmd_name
 		bodyMap["prdPath"] = missionsCreateMissionCmd_prdPath
+		if concurrencySet {
+			bodyMap["concurrencyOverride"] = concurrencyValue
+		}
 		resp, err := c.Do("POST", "/api/missions", pathParams, queryParams, bodyMap)
 		if err != nil {
 			return err
@@ -86,6 +100,8 @@ func init() {
 	missionsCreateMissionCmd.Flags().BoolVar(&missionsCreateMissionCmd_force, "force", false, "")
 	missionsCreateMissionCmd.Flags().StringVar(&missionsCreateMissionCmd_name, "name", "", "")
 	missionsCreateMissionCmd.Flags().StringVar(&missionsCreateMissionCmd_prdPath, "prdPath", "", "")
-	missionsCreateMissionCmd.MarkFlagRequired("name")
-	missionsCreateMissionCmd.MarkFlagRequired("prdPath")
+	missionsCreateMissionCmd.Flags().IntVar(&missionsCreateMissionCmd_concurrency, "concurrency", 0, "Override adaptive scaling with a fixed instance count (must be >= 1)")
+	// NOTE: required-flag enforcement is done in RunE via validate.RequireFlags
+	// so that --body / --body-file can be used as an alternative to individual
+	// flags. Cobra's MarkFlagRequired runs before RunE and cannot be bypassed.
 }

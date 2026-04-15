@@ -1,3 +1,8 @@
+---
+name: ateam-cli
+description: ateam CLI reference for all A(i)-Team API interactions. Consult this skill when running any ateam command, piping ateam output to python/jq/shell, reading item or mission data programmatically, or unsure which flag or subcommand to use.
+---
+
 # ateam CLI Skill
 
 The `ateam` binary is a Go CLI generated from the A(i)-Team OpenAPI spec. It provides direct access to every API endpoint without needing `curl` or raw HTTP.
@@ -28,6 +33,22 @@ ateam --json board getBoard
 ateam --json items listItems | jq '.[] | .title'
 ```
 
+## The --json Rule
+
+**Always use `--json` when piping or parsing ateam output programmatically.** Without it, the CLI outputs a human-readable table that cannot be parsed as JSON.
+
+```bash
+# WRONG — json.load() / jq will fail, table output is not JSON
+ateam items getItem --id WI-109 | python3 -c "import json,sys; d=json.load(sys.stdin)..."
+ateam board getBoard | jq '.data'
+
+# CORRECT — always add --json when consuming output in code
+ateam items getItem --id WI-109 --json | python3 -c "import json,sys; d=json.load(sys.stdin)..."
+ateam board getBoard --json | jq '.data'
+```
+
+**Rule:** If your next step after `ateam` is a pipe (`|`) or variable capture (`$()`), you need `--json`. No exceptions.
+
 ## The --help Rule
 
 **If you're unsure about any command or flag, run `--help` first.** Every command and subcommand has help text generated directly from the OpenAPI spec, including required parameters, optional flags, and descriptions.
@@ -57,13 +78,13 @@ This is always faster than guessing flag names.
 ateam board getBoard
 
 # Move an item to a new stage
-ateam board-move moveItem --item-id WI-001 --stage implementing
+ateam board-move moveItem --itemId WI-001 --toStage implementing
 
 # Claim an item for an agent
-ateam board-claim claimItem --item-id WI-001 --agent Murdock
+ateam board-claim claimItem --itemId WI-001 --agent Murdock
 
 # Release a claim
-ateam board-release releaseItem --item-id WI-001
+ateam board-release releaseItem --itemId WI-001
 ```
 
 ### Items
@@ -154,18 +175,72 @@ Agents use `ateam` via `Bash` for all API operations. Here is the complete mappi
 | Get item details | `ateam items getItem --id <id> --json` |
 | List all items | `ateam items listItems --json` |
 | Update item | `ateam items updateItem --id <id> [flags]` |
-| Reject item (pipeline rework) | `ateam items rejectItem --id <id>` |
 | Render item as markdown | `ateam items renderItem --id <id>` |
 | Signal agent start | `ateam agents-start agentStart --itemId <id> --agent <name>` |
-| Signal agent completion | `ateam agents-stop agentStop --itemId <id> --agent <name> --status success --summary "..."` |
+| Signal agent completion | `ateam --json agents-stop agentStop --itemId <id> --agent <name> --outcome completed --summary "..."` |
+| Reject item (pipeline rework) | `ateam --json agents-stop agentStop --itemId <id> --agent <name> --outcome rejected --return-to <stage> --advance=false --summary "..."` |
+| Release claim without advancing | `ateam --json agents-stop agentStop --itemId <id> --agent <name> --outcome completed --summary "..." --advance=false` |
 | Initialize mission | `ateam missions createMission [flags]` |
 | Get active mission | `ateam missions-current getCurrentMission --json` |
-| Submit precheck results | `ateam missions-precheck missionPrecheck --passed true/false [flags]` |
+| Submit precheck results | see missionPrecheck rules below |
 | Submit postcheck | `ateam missions-postcheck missionPostcheck --json` |
+| Final mission review (read) | `ateam missions-final-review getFinalReview --json` |
+| Final mission review (write) | `ateam missions-final-review writeFinalReview [flags]` |
 | Archive mission | `ateam missions-archive archiveMission --json` |
+| Compute scaling plan | `ateam scaling compute --json` |
+| Update stage config | `ateam stages updateStage --stage <stage> [flags]` |
 | Check dep readiness | `ateam deps-check checkDeps --json` |
 | Log activity message | `ateam activity createActivityEntry --agent <name> --message "..." --level info` |
 | View activity log | `ateam activity listActivity --json` |
+
+## agents-stop — Pool Handoff & Rejection
+
+The `agents-stop agentStop` command is the single entry point for completion, rejection, and WIP handling. Key rules:
+
+- **Always pass `--json` on the root command.** The JSON response carries `data.claimedNext` (the next pipeline instance the CLI auto-claimed from the pool), `data.poolAlert` (set when no idle next-stage instance is available), and `data.wipExceeded` (set when the target stage is at WIP capacity — work is logged and claim released, but the item does NOT advance).
+- **Multi-instance naming.** Under the native teams dispatch mode, `--agent` takes an instance name such as `murdock-1`, `ba-2`, `lynch-1`, `amy-3`. When N=1, the suffix is omitted (`murdock`, `ba`, `lynch`, `amy`).
+- **`--outcome rejected` requires `--return-to <stage>`.** Valid stages: `ready | testing | implementing | review | probing`. There is **no `ateam items rejectItem` command** — rejection is a first-class outcome of `agentStop`. The API increments `rejectionCount` and auto-escalates to `blocked` at 2 rejections.
+- **`--advance=false`** releases the claim and logs work without moving the item. Use it for rejections (paired with `--outcome rejected --return-to`) or when you need to release on a known-full stage without triggering the WIP error path.
+
+For detailed flag semantics, summary writing guidance, and the REJECTED peer-message flow, see the `agent-lifecycle` skill.
+
+## missionPrecheck — Flag Rules
+
+`--passed` is a **boolean flag**, not a string argument. Common mistakes:
+
+```bash
+# WRONG — "true" is parsed as an unknown subcommand
+ateam missions-precheck missionPrecheck --passed true
+
+# CORRECT — bare flag = true
+ateam missions-precheck missionPrecheck --passed
+
+# CORRECT — explicit false
+ateam missions-precheck missionPrecheck --passed=false
+```
+
+`--output` expects a **JSON string that parses to an object**:
+
+```bash
+# WRONG — raw JSON object passed directly
+ateam missions-precheck missionPrecheck --passed --output {"unit":"7 tests passed"}
+
+# CORRECT — JSON string
+ateam missions-precheck missionPrecheck --passed --output '{"unit":"7 tests passed","stderr":""}'
+```
+
+`--blockers` must be **omitted entirely when empty** — do not pass `--blockers '[]'`:
+
+```bash
+# WRONG — empty array causes validation error
+ateam missions-precheck missionPrecheck --passed --blockers '[]'
+
+# CORRECT — omit --blockers when there are none
+ateam missions-precheck missionPrecheck --passed --output '{"unit":"7 tests passed"}'
+
+# CORRECT — only include --blockers when there are actual blockers
+ateam missions-precheck missionPrecheck --passed=false --blockers "lint failed" --blockers "type errors"
+```
 
 **Note on `plugin_root`:** This was an MCP tool that returned the plugin directory path. It is no longer needed — use `${CLAUDE_PLUGIN_ROOT}` directly in Bash commands instead.
 

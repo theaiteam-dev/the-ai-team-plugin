@@ -70,6 +70,50 @@ if connection refused or timeout:
 
 If all checks pass, continue silently.
 
+## Pre-Flight: WIP Limit Check
+
+Read the board to see current per-stage WIP limits and apply the `--wip` argument if provided.
+
+```bash
+# Get current board state (includes wip_limits)
+${CLAUDE_PLUGIN_ROOT}/bin/ateam board getBoard --json
+```
+
+Extract `wip_limits` from the response. Display current limits to the user:
+
+```text
+[Hannibal] Per-stage WIP limits:
+  testing:       {N}
+  implementing:  {N}
+  review:        {N}
+  probing:       {N}
+```
+
+**If `--wip N` was provided**, update each pipeline stage's WIP limit to N via the API.
+The pipeline stages to update are: `testing`, `implementing`, `review`, `probing`.
+
+For each stage, call:
+```bash
+curl -s -X PATCH "${ATEAM_API_URL:-http://localhost:3000}/api/stages/{stageId}" \
+  -H "Content-Type: application/json" \
+  -H "X-Project-ID: ${ATEAM_PROJECT_ID}" \
+  -d '{"wipLimit": N}'
+```
+
+After updating, display the new limits:
+```text
+[Hannibal] Updated per-stage WIP limits to {N}:
+  testing:       {N}
+  implementing:  {N}
+  review:        {N}
+  probing:       {N}
+```
+
+**IMPORTANT:** WIP limits are **per stage** (per column), NOT global across the pipeline.
+Each stage independently caps how many items can be in that stage simultaneously.
+An idle agent instance should ALWAYS be dispatched work if its stage has capacity —
+do not block dispatch because other stages are full.
+
 ## Pre-Flight: Model Check
 
 Before doing anything else, check your current model. Your system prompt contains your model ID (e.g., "You are powered by the model named Opus 4.6").
@@ -100,7 +144,7 @@ briefings → ready → testing → implementing → review → probing → done
                                                                   ▼
                                                         ┌─────────────────┐
                                                         │  Final Review   │
-                                                        │    (Lynch)      │
+                                                        │  (Stockwell)    │
                                                         └────────┬────────┘
                                                                  │
                                                                  ▼
@@ -138,7 +182,7 @@ Feature 002:      [testing]  →  [implementing]  →  [review]  →  [probing]
 Feature 003:            [testing]  →  [implementing]  →  [review]
 ```
 
-WIP limit controls how many features are in-flight (not in briefings, ready, or done stages).
+WIP limits are **per stage** — each pipeline column independently caps how many items can be in it. An idle agent should always get work if its stage has capacity.
 
 ## Behavior
 
@@ -241,16 +285,20 @@ WIP limit controls how many features are in-flight (not in briefings, ready, or 
    dispatch patterns, and completion detection.
    - Use `ateam board-move moveItem` to advance items between stages
    - Use `ateam deps-check checkDeps` to find items ready to move from briefings → ready
-   - Start new features if under WIP limit
+   - Start new features if per-stage WIP limits allow (check instance availability, not global count)
 
-6. **Final Mission Review:**
-   - When ALL items reach `done` stage, trigger final review
-   - Lynch reviews entire codebase for cross-cutting issues
-   - Focus: readability, security, race conditions, code quality
+6. **Final Mission Review (Stockwell):**
+   - When ALL items reach `done` stage, dispatch Stockwell for final review
+   - Stockwell reviews PRD + diff for cross-cutting issues
+   - Focus: PRD compliance, consistency, security, integration
    - If FINAL APPROVED → proceed to post-checks
    - If FINAL REJECTED → specified items return to pipeline
 
 7. **Post-Mission Checks:**
+   **GATE: Stockwell's Final Mission Review MUST have completed before running postchecks.**
+   If Stockwell was not dispatched or did not return a verdict, STOP and dispatch Stockwell first.
+   This is not optional — postchecks without a final review means cross-cutting issues go undetected.
+
    Run checks via Bash first (like precheck), then call `ateam missions-postcheck missionPostcheck` with results.
 
    Read `ateam.config.json` to get the list of check names (`config.postcheck`) and their commands

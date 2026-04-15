@@ -55,7 +55,7 @@ briefings → ready → testing → implementing → review → probing → done
 
 **Note on transition enforcement:** The transition matrix enforces the linear pipeline: `testing` advances to `implementing` (not directly to `review`); `implementing` advances to `review`; `review` can send an item back to `testing` or `implementing` for rework, or forward to `probing`; `probing` advances to `done` or can send back to `ready`. See `packages/shared/src/stages.ts` for the full `TRANSITION_MATRIX`.
 
-Each feature flows through stages sequentially. Different features can be at different stages simultaneously (pipeline parallelism). WIP limits control how many features are in-flight.
+Each feature flows through stages sequentially. Different features can be at different stages simultaneously (**pipeline parallelism** — the assembly-line model). Within each stage, up to N items can be processed concurrently by N agent instances (**stage concurrency**), where N is guided by `ateam scaling compute`. WIP limits are **per stage** (per column) — each stage independently caps how many items can be in it. An idle agent should always be dispatched work if its stage has capacity, regardless of how many items are in other stages.
 
 **Two-Level Orchestration:**
 1. **Dependency waves** - Items wait in `briefings` until deps reach `done` (correct waiting)
@@ -142,6 +142,8 @@ The `outputs` field is critical - without it, Murdock and B.A. don't know where 
 **Legacy mode / Hannibal:** Use `ateam board-move moveItem` for all stage transitions. The command validates the transition, enforces WIP limits, logs the activity, and returns success/error.
 
 **Native teams mode (pipeline workers):** Call `ateam agents-stop agentStop --advance` (default `true`) — this advances the item to the next stage atomically. If the target stage is at WIP capacity, the API returns `WIP_LIMIT_EXCEEDED` (409); use `--advance=false` to release the claim without advancing, then send an ALERT to Hannibal to handle re-dispatch when capacity opens.
+
+**Rejections (Lynch / Stockwell):** Rejection is expressed through `agentStop` with `--outcome rejected --return-to <stage>`. This replaces the old `ateam items rejectItem` command (which has been removed). The API moves the item back to the target stage (`testing` or `implementing`), increments `rejection_count`, and records the rejection summary in `work_log`. Items that hit the rejection cap transition to `blocked`.
 
 ## Key Conventions
 
@@ -247,16 +249,19 @@ Usage: `ateam <resource> <command> [flags]`
 | Get item | `ateam items getItem --id <id>` |
 | List items | `ateam items listItems --json` |
 | Update item | `ateam items updateItem --id <id> [flags]` |
-| Reject item | `ateam items rejectItem --id <id>` |
 | Render item | `ateam items renderItem --id <id>` |
 | Agent start | `ateam agents-start agentStart --itemId <id> --agent <name>` |
 | Agent stop | `ateam agents-stop agentStop --itemId <id> --agent <name> --outcome completed --summary "..."` |
 | Agent stop (no advance) | `ateam agents-stop agentStop --itemId <id> --agent <name> --outcome completed --summary "..." --advance=false` |
+| Reject item (via agent) | `ateam agents-stop agentStop --itemId <id> --agent <name> --outcome rejected --return-to <stage> --summary "..."` |
 | Create mission | `ateam missions createMission [flags]` |
 | Current mission | `ateam missions-current getCurrentMission --json` |
 | Pre-check | `ateam missions-precheck missionPrecheck --json` |
 | Post-check | `ateam missions-postcheck missionPostcheck --json` |
 | Archive mission | `ateam missions-archive archiveMission --json` |
+| Get final review | `ateam missions-final-review getFinalReview --missionId <id> --json` |
+| Write final review | `ateam missions-final-review writeFinalReview --missionId <id> --report "..." --json` |
+| Compute scaling | `ateam scaling compute [--concurrency N] [--memory N] --json` |
 | Check deps | `ateam deps-check checkDeps --json` |
 | Log activity | `ateam activity createActivityEntry --agent <name> --message "..." --level info` |
 | List activity | `ateam activity listActivity --json` |
@@ -285,6 +290,7 @@ ateam agents-stop agentStop \
 - Clears `assigned_agent` from the item
 - Appends work summary to `work_log` array
 - In native teams mode, advances item to the next stage (default `--advance=true`). Use `--advance=false` to release the claim without advancing (e.g., when WIP_LIMIT_EXCEEDED).
+- **Rejection flow:** Pass `--outcome rejected --return-to <stage>` to send an item backward through the pipeline (e.g., Lynch returning to `testing` or `implementing`). The API validates the target stage, increments `rejection_count`, and records the rejection summary. This replaces the removed `ateam items rejectItem` command.
 
 ### Observability: Hook Events & Token Usage
 

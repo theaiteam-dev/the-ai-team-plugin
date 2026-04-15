@@ -256,7 +256,7 @@ export function validateOutputCollisions(
       item.outputs.impl,
       item.outputs.test,
       item.outputs.types,
-    ].filter((path): path is string => path !== undefined && path !== null);
+    ].filter((path): path is string => path !== undefined && path !== null && path !== '');
 
     for (const path of outputPaths) {
       const existing = outputToItems.get(path) ?? [];

@@ -70,17 +70,18 @@ function getById(id: string): User {
 
 ## Work Item Ordering
 
-The A(i)-Team enforces TDD through work item ordering:
+The A(i)-Team enforces TDD through its pipeline stages. Each work item flows through stages in strict order:
 
 ```
-001-user-types.md       (interface)  ← First: Define the contract
-010-user-tests.md       (test)       ← Second: Write tests against contract
-020-user-impl.md        (implementation) ← Third: Implement to pass tests
+briefings → ready → testing (Murdock) → implementing (B.A.) → review (Lynch) → probing (Amy) → done
 ```
 
-Dependencies ensure this order:
-- Tests depend on interfaces
-- Implementations depend on tests AND interfaces
+The pipeline enforces the TDD contract:
+- Murdock writes tests and types first (RED phase)
+- B.A. implements to pass those tests (GREEN phase)
+- B.A. refactors for clarity (REFACTOR phase)
+- Lynch verifies tests + implementation as a cohesive unit
+- Amy probes for bugs that tests missed
 
 ## Benefits of TDD in A(i)-Team
 
@@ -129,18 +130,25 @@ After tests pass, B.A. can improve code knowing tests catch regressions.
 
 ### Scaffolding Work (`type: "task"`)
 
-Scaffolding items need minimal testing. Test the outcome, not the structure.
+Scaffolding items need minimal testing — but the tests must verify the **toolchain works end-to-end**, not just that files exist on disk.
+
+**The TDD cycle for scaffolds:**
+- **RED:** The build produces nothing (no project exists yet)
+- **GREEN:** The build produces expected artifacts (non-zero CSS, JS, dev server starts)
+- **REFACTOR:** Clean up config, remove unnecessary defaults
 
 **Good tests for scaffolding:**
-- "Does it compile/run without errors?"
-- "Does the integration work end-to-end?"
+- "Does the build produce non-zero output?" (CSS, JS, assets)
+- "Does the dev server start without errors?"
+- "Does typecheck pass?"
 - "Can I import and use the types?"
 
 ```typescript
-// GOOD: Testing that types work together
-it('types are importable and usable', () => {
-  const order: Order = { id: '123', items: [], total: 0 };
-  expect(order.id).toBe('123');
+// GOOD: Verifies the build toolchain works
+it('build produces CSS and JS output', async () => {
+  const result = execSync('bun run build', { encoding: 'utf-8' });
+  expect(glob.sync('dist/**/*.css').length).toBeGreaterThan(0);
+  expect(glob.sync('dist/**/*.js').length).toBeGreaterThan(0);
 });
 
 // GOOD: Testing that config loads and works
@@ -150,6 +158,8 @@ it('loads valid configuration', () => {
   expect(config.version).toMatch(/^\d+\.\d+\.\d+$/);
 });
 ```
+
+**Bad tests for scaffolding:** File-existence checks (`fs.existsSync('vite.config.ts')`) that pass even when config files are orphaned and the build produces zero output. See Ban 10 in the `test-writing` skill.
 
 ### Feature Work (`type: "feature"`)
 

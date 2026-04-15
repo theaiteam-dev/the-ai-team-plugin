@@ -27,7 +27,6 @@ var boardClaimClaimItemCmd = &cobra.Command{
 		c := client.NewClient(baseURL, token)
 		pathParams := map[string]string{}
 		queryParams := map[string]string{}
-		if err := validate.Enum("agent", boardClaimClaimItemCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}); err != nil { return err }
 		if boardClaimClaimItemCmdBodyFile != "" {
 			fileData, err := os.ReadFile(boardClaimClaimItemCmdBodyFile)
 			if err != nil {
@@ -59,6 +58,10 @@ var boardClaimClaimItemCmd = &cobra.Command{
 			}
 			return nil
 		}
+		if err := validate.RequireFlags(cmd, "agent", "itemId"); err != nil {
+			return err
+		}
+		if err := validate.Enum("agent", boardClaimClaimItemCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Tawnia"}); err != nil { return err }
 		bodyMap := map[string]interface{}{}
 		bodyMap["agent"] = boardClaimClaimItemCmd_agent
 		bodyMap["itemId"] = boardClaimClaimItemCmd_itemId
@@ -88,6 +91,7 @@ func init() {
 		return []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	boardClaimClaimItemCmd.Flags().StringVar(&boardClaimClaimItemCmd_itemId, "itemId", "", "")
-	boardClaimClaimItemCmd.MarkFlagRequired("agent")
-	boardClaimClaimItemCmd.MarkFlagRequired("itemId")
+	// NOTE: required-flag enforcement is done in RunE via validate.RequireFlags
+	// so that --body / --body-file can be used as an alternative to individual
+	// flags. Cobra's MarkFlagRequired runs before RunE and cannot be bypassed.
 }

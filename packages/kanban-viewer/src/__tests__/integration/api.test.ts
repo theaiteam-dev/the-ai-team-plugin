@@ -784,66 +784,6 @@ describe('Item Endpoints Integration', () => {
     });
   });
 
-  describe('POST /api/items/[id]/reject - Reject item', () => {
-    it('should increment rejection count when rejecting item in review', async () => {
-      const mockItem = createMockItem({ id: 'WI-001', rejectionCount: 0, stageId: 'review' });
-      const rejectedItem = { ...mockItem, rejectionCount: 1 };
-
-      mockPrisma.item.findFirst.mockResolvedValue(mockItem);
-      // $transaction with array returns array of results
-      mockPrisma.$transaction.mockResolvedValue([
-        rejectedItem,
-        { id: 1, itemId: 'WI-001', agent: 'Lynch', action: 'rejected', summary: 'Needs fixes', timestamp: new Date() },
-      ]);
-
-      const { POST } = await import('@/app/api/items/[id]/reject/route');
-      const request = new NextRequest('http://localhost:3000/api/items/WI-001/reject', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Project-ID': 'kanban-viewer',
-        },
-        body: JSON.stringify({ reason: 'Needs fixes', agent: 'Lynch' }),
-      });
-
-      const response = await POST(request, { params: Promise.resolve({ id: 'WI-001' }) });
-      expect(response.status).toBe(200);
-
-      const data = await response.json();
-      expect(data.success).toBe(true);
-      expect(data.data.rejectionCount).toBe(1);
-    });
-
-    it('should escalate to blocked after multiple rejections', async () => {
-      const mockItem = createMockItem({ id: 'WI-001', rejectionCount: 2, stageId: 'review' });
-      const escalatedItem = { ...mockItem, rejectionCount: 3, stageId: 'blocked' };
-
-      mockPrisma.item.findFirst.mockResolvedValue(mockItem);
-      // $transaction with array returns array of results
-      mockPrisma.$transaction.mockResolvedValue([
-        escalatedItem,
-        { id: 1, itemId: 'WI-001', agent: 'Lynch', action: 'rejected', summary: 'Still broken', timestamp: new Date() },
-      ]);
-
-      const { POST } = await import('@/app/api/items/[id]/reject/route');
-      const request = new NextRequest('http://localhost:3000/api/items/WI-001/reject', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Project-ID': 'kanban-viewer',
-        },
-        body: JSON.stringify({ reason: 'Still broken', agent: 'Lynch' }),
-      });
-
-      const response = await POST(request, { params: Promise.resolve({ id: 'WI-001' }) });
-      expect(response.status).toBe(200);
-
-      const data = await response.json();
-      expect(data.data.rejectionCount).toBe(3);
-      expect(data.data.escalated).toBe(true);
-    });
-  });
-
   describe('GET /api/items/[id]/render - Render item as markdown', () => {
     it('should return rendered markdown for item', async () => {
       const mockItem = createMockItem({

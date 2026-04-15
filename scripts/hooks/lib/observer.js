@@ -14,6 +14,7 @@ import { readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { resolveAgent } from './resolve-agent.js';
 
 const AGENT_MAP_DIR = join(tmpdir(), 'ateam-agent-map');
 
@@ -80,9 +81,8 @@ function readHookInput() {
 function buildObserverPayload(hookInput, agentNameArg) {
   const toolName = hookInput.tool_name || '';
   const sessionId = hookInput.session_id || '';
-  // Try: CLI arg → stdin agent_type → session agent map → fallback to hannibal
-  // All plugin hooks fire in the main session, which is Hannibal (orchestrator)
-  const agentName = agentNameArg || hookInput.agent_type || lookupAgent(sessionId) || 'hannibal';
+  // Try: CLI arg → resolve from stdin (agent_type/teammate_name) → session agent map → fallback to hannibal
+  const agentName = agentNameArg || resolveAgent(hookInput) || lookupAgent(sessionId) || 'hannibal';
   const hookEventName = hookInput.hook_event_name || '';
 
   // Map Claude Code hook event names to our event types

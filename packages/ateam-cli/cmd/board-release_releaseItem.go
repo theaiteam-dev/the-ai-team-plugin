@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"ateam/internal/client"
 	"ateam/internal/output"
+	"ateam/internal/validate"
 )
 
 var (
@@ -56,6 +57,9 @@ var boardReleaseReleaseItemCmd = &cobra.Command{
 			}
 			return nil
 		}
+		if err := validate.RequireFlags(cmd, "itemId"); err != nil {
+			return err
+		}
 		bodyMap := map[string]interface{}{}
 		bodyMap["itemId"] = boardReleaseReleaseItemCmd_itemId
 		resp, err := c.Do("POST", "/api/board/release", pathParams, queryParams, bodyMap)
@@ -80,5 +84,7 @@ func init() {
 	boardReleaseReleaseItemCmd.Flags().StringVar(&boardReleaseReleaseItemCmdBody, "body", "", "Raw JSON body (overrides individual flags)")
 	boardReleaseReleaseItemCmd.Flags().StringVar(&boardReleaseReleaseItemCmdBodyFile, "body-file", "", "Path to JSON file to use as request body")
 	boardReleaseReleaseItemCmd.Flags().StringVar(&boardReleaseReleaseItemCmd_itemId, "itemId", "", "")
-	boardReleaseReleaseItemCmd.MarkFlagRequired("itemId")
+	// NOTE: required-flag enforcement is done in RunE via validate.RequireFlags
+	// so that --body / --body-file can be used as an alternative to individual
+	// flags. Cobra's MarkFlagRequired runs before RunE and cannot be bypassed.
 }

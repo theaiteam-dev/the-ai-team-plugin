@@ -24,14 +24,26 @@ const mockPrisma = {
   item: {
     findFirst: vi.fn(),
     update: vi.fn(),
+    count: vi.fn(),
   },
   agentClaim: {
     findFirst: vi.fn(),
     delete: vi.fn(),
+    deleteMany: vi.fn(),
   },
   workLog: {
     create: vi.fn(),
   },
+  stage: {
+    findUnique: vi.fn(),
+  },
+  missionItem: {
+    findFirst: vi.fn(),
+    findMany: vi.fn(),
+  },
+  $transaction: vi.fn(async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => {
+    return callback(mockPrisma);
+  }),
 };
 
 vi.mock('@/lib/db', () => ({
@@ -271,7 +283,7 @@ describe('POST /api/agents/stop', () => {
 
       mockPrisma.item.findFirst.mockResolvedValue(item);
       mockPrisma.agentClaim.findFirst.mockResolvedValue(claim);
-      mockPrisma.agentClaim.delete.mockResolvedValue(claim);
+      mockPrisma.agentClaim.deleteMany.mockResolvedValue({ count: 1 });
       mockPrisma.workLog.create.mockResolvedValue(workLog);
       mockPrisma.item.update.mockResolvedValue({ ...item, assignedAgent: null });
     }
@@ -387,7 +399,7 @@ describe('POST /api/agents/stop', () => {
 
       mockPrisma.item.findFirst.mockResolvedValue(item);
       mockPrisma.agentClaim.findFirst.mockResolvedValue(claim);
-      mockPrisma.agentClaim.delete.mockResolvedValue(claim);
+      mockPrisma.agentClaim.deleteMany.mockResolvedValue({ count: 1 });
       mockPrisma.workLog.create.mockResolvedValue(createMockWorkLog());
       mockPrisma.item.update.mockResolvedValue({ ...item, assignedAgent: null });
 
@@ -401,7 +413,7 @@ describe('POST /api/agents/stop', () => {
       const response = await POST(request);
       expect(response.status).toBe(200);
 
-      expect(mockPrisma.agentClaim.delete).toHaveBeenCalledWith(
+      expect(mockPrisma.agentClaim.deleteMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { itemId: 'WI-001' } })
       );
       expect(mockPrisma.item.update).toHaveBeenCalledWith(
@@ -417,7 +429,7 @@ describe('POST /api/agents/stop', () => {
 
       mockPrisma.item.findFirst.mockResolvedValue(item);
       mockPrisma.agentClaim.findFirst.mockResolvedValue(claim);
-      mockPrisma.agentClaim.delete.mockResolvedValue(claim);
+      mockPrisma.agentClaim.deleteMany.mockResolvedValue({ count: 1 });
       mockPrisma.workLog.create.mockResolvedValue(createMockWorkLog());
       mockPrisma.item.update.mockResolvedValue({ ...item, assignedAgent: null });
 
@@ -449,7 +461,7 @@ describe('POST /api/agents/stop', () => {
 
       mockPrisma.item.findFirst.mockResolvedValue(item);
       mockPrisma.agentClaim.findFirst.mockResolvedValue(claim);
-      mockPrisma.agentClaim.delete.mockResolvedValue(claim);
+      mockPrisma.agentClaim.deleteMany.mockResolvedValue({ count: 1 });
       mockPrisma.workLog.create.mockResolvedValue(workLog);
       mockPrisma.item.update.mockResolvedValue({ ...item, assignedAgent: null });
 
@@ -487,6 +499,152 @@ describe('POST /api/agents/stop', () => {
       expect(response.status).toBe(500);
       const data = await response.json();
       expect(data.error.code).toBe('DATABASE_ERROR');
+    });
+  });
+
+  /**
+   * Tests for the transactional boundary around claim-release + WIP-check + item-update.
+   *
+   * The race we are guarding against: two agents call stop at the same time, both see a
+   * count below the WIP limit, both advance their item, and the target stage ends up
+   * over capacity. Wrapping the claim delete, WIP check, work log creation and item
+   * update in prisma.$transaction closes that window — the database serializes the three
+   * reads+writes so only one of the concurrent callers can observe capacity.
+   */
+  describe('transactional atomicity', () => {
+    it('happy path: claim delete, work log, and item update all run inside $transaction', async () => {
+      const item = createMockItem({ stageId: 'testing' });
+      const claim = createMockClaim();
+
+      mockPrisma.item.findFirst.mockResolvedValue(item);
+      mockPrisma.agentClaim.findFirst.mockResolvedValue(claim);
+      mockPrisma.agentClaim.deleteMany.mockResolvedValue({ count: 1 });
+      mockPrisma.workLog.create.mockResolvedValue(createMockWorkLog());
+      mockPrisma.item.update.mockResolvedValue({ ...item, stageId: 'implementing', assignedAgent: null });
+      mockPrisma.stage.findUnique.mockResolvedValue({ id: 'implementing', name: 'implementing', order: 0, wipLimit: 3 });
+      mockPrisma.item.count.mockResolvedValue(1); // under WIP limit
+
+      const { POST } = await import('@/app/api/agents/stop/route');
+      const request = createRequest({
+        itemId: 'WI-001',
+        agent: 'Murdock',
+        summary: 'Tests written',
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.data.nextStage).toBe('implementing');
+
+      // All three write operations must have flowed through the transaction
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.agentClaim.deleteMany).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.workLog.create).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.item.update).toHaveBeenCalledTimes(1);
+
+      // And the item update must include the stage advance
+      expect(mockPrisma.item.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ stageId: 'implementing', assignedAgent: null }),
+        })
+      );
+    });
+
+    it('wip-exceeded path: releases claim and records work log but does NOT advance item', async () => {
+      const item = createMockItem({ stageId: 'testing' });
+      const claim = createMockClaim();
+
+      mockPrisma.item.findFirst.mockResolvedValue(item);
+      mockPrisma.agentClaim.findFirst.mockResolvedValue(claim);
+      mockPrisma.agentClaim.deleteMany.mockResolvedValue({ count: 1 });
+      mockPrisma.workLog.create.mockResolvedValue(createMockWorkLog());
+      mockPrisma.item.update.mockResolvedValue({ ...item, assignedAgent: null });
+      mockPrisma.stage.findUnique.mockResolvedValue({ id: 'implementing', name: 'implementing', order: 0, wipLimit: 3 });
+      mockPrisma.item.count.mockResolvedValue(3); // AT wip limit — no room
+
+      const { POST } = await import('@/app/api/agents/stop/route');
+      const request = createRequest({
+        itemId: 'WI-001',
+        agent: 'Murdock',
+        summary: 'Tests written',
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+      const data = await response.json();
+
+      // Claim was still released
+      expect(mockPrisma.agentClaim.deleteMany).toHaveBeenCalledTimes(1);
+      // Work log was still written
+      expect(mockPrisma.workLog.create).toHaveBeenCalledTimes(1);
+
+      // Item update did NOT include a stage change — item stays in testing
+      const updateCall = mockPrisma.item.update.mock.calls[0];
+      expect(updateCall[0].data.stageId).toBeUndefined();
+      expect(updateCall[0].data.assignedAgent).toBeNull();
+
+      // Response signals WIP was exceeded and the blocked stage
+      expect(data.data.wipExceeded).toBe(true);
+      expect(data.data.blockedStage).toBe('implementing');
+      expect(data.data.nextStage).toBe('testing');
+    });
+
+    it('rolls everything back when a write inside the transaction throws', async () => {
+      const item = createMockItem({ stageId: 'testing' });
+      const claim = createMockClaim();
+
+      mockPrisma.item.findFirst.mockResolvedValue(item);
+      mockPrisma.agentClaim.findFirst.mockResolvedValue(claim);
+      mockPrisma.agentClaim.deleteMany.mockResolvedValue({ count: 1 });
+      // Force the work log write inside the transaction to fail
+      mockPrisma.workLog.create.mockRejectedValue(new Error('simulated DB failure'));
+
+      const { POST } = await import('@/app/api/agents/stop/route');
+      const request = createRequest({
+        itemId: 'WI-001',
+        agent: 'Murdock',
+        summary: 'Tests written',
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(500);
+      const data = await response.json();
+      expect(data.error.code).toBe('DATABASE_ERROR');
+
+      // The transaction callback threw, so item.update must NOT have been called —
+      // in a real DB the tx would be rolled back; in the mock we simply assert that
+      // downstream writes never ran.
+      expect(mockPrisma.item.update).not.toHaveBeenCalled();
+    });
+
+    it('uses tx.stage.findUnique (no optional chaining) inside the transaction', async () => {
+      // Regression guard for Issue #4: the pre-fix code used `prisma.stage?.findUnique(...)`
+      // with an unnecessary optional chain on a Prisma delegate. If the route regresses to
+      // calling a bare `prisma.stage.findUnique` outside the transaction, our mock still
+      // records the call but the tx.stage.findUnique spy on the tx handle passed to the
+      // callback would NOT. We use the same object for both so the assertion just ensures
+      // the lookup happened exactly once per stop (i.e. it wasn't dropped).
+      const item = createMockItem({ stageId: 'testing' });
+      const claim = createMockClaim();
+
+      mockPrisma.item.findFirst.mockResolvedValue(item);
+      mockPrisma.agentClaim.findFirst.mockResolvedValue(claim);
+      mockPrisma.agentClaim.deleteMany.mockResolvedValue({ count: 1 });
+      mockPrisma.workLog.create.mockResolvedValue(createMockWorkLog());
+      mockPrisma.item.update.mockResolvedValue({ ...item, stageId: 'implementing', assignedAgent: null });
+      mockPrisma.stage.findUnique.mockResolvedValue({ id: 'implementing', name: 'implementing', order: 0, wipLimit: null });
+
+      const { POST } = await import('@/app/api/agents/stop/route');
+      const request = createRequest({
+        itemId: 'WI-001',
+        agent: 'Murdock',
+        summary: 'Tests written',
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      expect(mockPrisma.stage.findUnique).toHaveBeenCalledWith({ where: { id: 'implementing' } });
     });
   });
 });

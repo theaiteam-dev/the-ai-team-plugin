@@ -12,7 +12,7 @@
  *   { session_id, hook_event_name: "TaskCompleted", task_id, task_subject, teammate_name, team_name, ... }
  */
 
-import { readHookInput, sendObserverEvent } from './lib/observer.js';
+import { readHookInput, sendObserverEvent, registerAgent } from './lib/observer.js';
 
 try {
   const hookInput = readHookInput();
@@ -26,6 +26,11 @@ try {
   let summary = '';
 
   if (hookEventName === 'TeammateIdle') {
+    // Register teammate session so PreToolUse/PostToolUse hooks can attribute
+    // tool calls to the correct agent via lookupAgent(sessionId)
+    if (sessionId && teammateName !== 'unknown') {
+      registerAgent(sessionId, teammateName);
+    }
     eventType = 'teammate_idle';
     status = 'idle';
     summary = `${teammateName} went idle`;

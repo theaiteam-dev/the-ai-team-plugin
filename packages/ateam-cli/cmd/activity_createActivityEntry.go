@@ -60,6 +60,9 @@ var activityCreateActivityEntryCmd = &cobra.Command{
 			}
 			return nil
 		}
+		if err := validate.RequireFlags(cmd, "message"); err != nil {
+			return err
+		}
 		bodyMap := map[string]interface{}{}
 		bodyMap["agent"] = activityCreateActivityEntryCmd_agent
 		bodyMap["level"] = activityCreateActivityEntryCmd_level
@@ -91,5 +94,7 @@ func init() {
 		return []string{"info", "warn", "error"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	activityCreateActivityEntryCmd.Flags().StringVar(&activityCreateActivityEntryCmd_message, "message", "", "")
-	activityCreateActivityEntryCmd.MarkFlagRequired("message")
+	// NOTE: required-flag enforcement is done in RunE via validate.RequireFlags
+	// so that --body / --body-file can be used as an alternative to individual
+	// flags. Cobra's MarkFlagRequired runs before RunE and cannot be bypassed.
 }

@@ -6,6 +6,7 @@ import { Activity, Check, Clock, Target, History } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { ProjectSelector } from "./project-selector";
 import { MissionHistoryPanel } from "./MissionHistoryPanel";
+import { ScalingRationaleModal } from "./scaling-rationale-modal";
 import { cn } from "@/lib/utils";
 import type { Mission } from "@/types";
 import type { Project } from "@/types/api";
@@ -257,6 +258,9 @@ export function HeaderBar({
           />
         )}
       </div>
+
+      {/* Scaling rationale */}
+      <ScalingRationaleModal scalingRationale={mission.scalingRationale} />
 
       {/* History button */}
       <button

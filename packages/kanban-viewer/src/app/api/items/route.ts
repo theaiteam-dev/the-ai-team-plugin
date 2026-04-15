@@ -284,13 +284,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         },
       });
 
-      // Build items array for collision validation including the new item
+      // Build items array for collision validation including the new item.
+      // Normalize empty strings to undefined so legacy rows stored as "" (from
+      // an older CLI that serialized unset fields as empty strings) are not
+      // treated as a shared output path.
       const itemsForCollisionCheck: OutputCollisionItem[] = existingItems.map((item) => ({
         id: item.id,
         outputs: {
-          impl: item.outputImpl ?? undefined,
-          test: item.outputTest ?? undefined,
-          types: item.outputTypes ?? undefined,
+          impl: item.outputImpl || undefined,
+          test: item.outputTest || undefined,
+          types: item.outputTypes || undefined,
         },
         dependencies: item.dependsOn.map((d) => d.dependsOnId),
       }));
@@ -300,9 +303,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       itemsForCollisionCheck.push({
         id: tempNewItemId,
         outputs: {
-          impl: newItemOutputs.impl,
-          test: newItemOutputs.test,
-          types: newItemOutputs.types,
+          impl: newItemOutputs.impl || undefined,
+          test: newItemOutputs.test || undefined,
+          types: newItemOutputs.types || undefined,
         },
         dependencies: dependencies,
       });
@@ -351,9 +354,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         objective: body.objective,
         acceptance: JSON.stringify(body.acceptance),
         context: body.context,
-        outputTest: body.outputs?.test ?? null,
-        outputImpl: body.outputs?.impl ?? null,
-        outputTypes: body.outputs?.types ?? null,
+        outputTest: body.outputs?.test || null,
+        outputImpl: body.outputs?.impl || null,
+        outputTypes: body.outputs?.types || null,
         dependsOn: dependencies.length > 0
           ? {
               create: dependencies.map((depId) => ({

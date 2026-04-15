@@ -127,9 +127,11 @@ model Mission {
   completedAt DateTime?
   archivedAt  DateTime?
 
-  precheckBlockers String?                   // JSON array of blocker strings
-  precheckOutput   String?                   // JSON blob: MissionPrecheckOutput
-  retroReport      String?                   // Markdown retrospective report
+  precheckBlockers  String?                   // JSON array of blocker strings
+  precheckOutput    String?                   // JSON blob: MissionPrecheckOutput
+  retroReport       String?                   // Markdown retrospective report
+  finalReview       String?                   // Markdown final review report (Stockwell)
+  scalingRationale  String?                   // JSON blob: ScalingRationale
 
   items       MissionItem[]
   activities  ActivityLog[]

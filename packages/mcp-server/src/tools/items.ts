@@ -6,7 +6,6 @@
  * - item_update: Update an existing work item
  * - item_get: Retrieve a single item by ID
  * - item_list: List items with optional filtering
- * - item_reject: Record rejection with reason
  * - item_render: Get markdown representation
  */
 
@@ -98,15 +97,6 @@ export const ItemListInputSchema = z.object({
 });
 
 /**
- * Schema for item_reject tool input.
- */
-export const ItemRejectInputSchema = z.object({
-  id: z.string().min(1),
-  reason: z.string().min(1),
-  agent: z.string().optional(),
-});
-
-/**
  * Schema for item_render tool input.
  */
 export const ItemRenderInputSchema = z.object({
@@ -121,7 +111,6 @@ type ItemCreateInput = z.infer<typeof ItemCreateInputSchema>;
 type ItemUpdateInput = z.infer<typeof ItemUpdateInputSchema>;
 type ItemGetInput = z.infer<typeof ItemGetInputSchema>;
 type ItemListInput = z.infer<typeof ItemListInputSchema>;
-type ItemRejectInput = z.infer<typeof ItemRejectInputSchema>;
 type ItemRenderInput = z.infer<typeof ItemRenderInputSchema>;
 
 interface WorkItem {
@@ -138,11 +127,6 @@ interface WorkItem {
     impl: string;
     types?: string;
   };
-}
-
-interface RejectResult {
-  item: WorkItem;
-  escalated: boolean;
 }
 
 interface RenderResult {
@@ -257,27 +241,6 @@ export async function itemList(
 }
 
 /**
- * Records a rejection with reason.
- */
-export async function itemReject(
-  input: ItemRejectInput
-): Promise<ToolResponse<RejectResult> | McpErrorResponse> {
-  const handler = async (args: ItemRejectInput) => {
-    const { id, ...rejectData } = args;
-    const result = await client.post<RejectResult>(
-      `/api/items/${id}/reject`,
-      rejectData
-    );
-    return {
-      content: [{ type: 'text' as const, text: JSON.stringify(result.data) }],
-      data: result.data,
-    };
-  };
-
-  return withErrorBoundary(handler)(input);
-}
-
-/**
  * Returns markdown representation of an item.
  */
 export async function itemRender(
@@ -330,13 +293,6 @@ export const itemTools = [
     inputSchema: zodToJsonSchema(ItemListInputSchema),
     zodSchema: ItemListInputSchema,
     handler: itemList,
-  },
-  {
-    name: 'item_reject',
-    description: 'Record a rejection for a work item with reason. Handles escalation after max rejections.',
-    inputSchema: zodToJsonSchema(ItemRejectInputSchema),
-    zodSchema: ItemRejectInputSchema,
-    handler: itemReject,
   },
   {
     name: 'item_render',

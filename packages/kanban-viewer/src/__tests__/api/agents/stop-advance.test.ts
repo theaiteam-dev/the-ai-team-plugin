@@ -23,6 +23,7 @@ const mockPrisma = {
   agentClaim: {
     findFirst: vi.fn(),
     delete: vi.fn(),
+    deleteMany: vi.fn(),
   },
   workLog: {
     create: vi.fn(),
@@ -103,7 +104,7 @@ function setupMocksForSuccessfulStop(agentName = 'Murdock', stageId = 'testing')
 
   mockPrisma.item.findFirst.mockResolvedValue(item);
   mockPrisma.agentClaim.findFirst.mockResolvedValue(claim);
-  mockPrisma.agentClaim.delete.mockResolvedValue(claim);
+  mockPrisma.agentClaim.deleteMany.mockResolvedValue({ count: 1 });
   mockPrisma.workLog.create.mockResolvedValue(workLog);
   mockPrisma.item.update.mockResolvedValue({ ...item, assignedAgent: null });
 
@@ -137,7 +138,7 @@ describe('POST /api/agents/stop — advance flag', () => {
       expect(response.status).toBe(200);
 
       // Claim must be released
-      expect(mockPrisma.agentClaim.delete).toHaveBeenCalledWith(
+      expect(mockPrisma.agentClaim.deleteMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { itemId: 'WI-001' } })
       );
 
@@ -221,7 +222,7 @@ describe('POST /api/agents/stop — advance flag', () => {
       );
 
       // Claim must still be released
-      expect(mockPrisma.agentClaim.delete).toHaveBeenCalledWith(
+      expect(mockPrisma.agentClaim.deleteMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { itemId: 'WI-001' } })
       );
 

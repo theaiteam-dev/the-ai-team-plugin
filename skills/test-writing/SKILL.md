@@ -179,7 +179,51 @@ expect(items).toHaveLength(3);
 expect(result).toEqual({ id: '1', status: 'active' });
 ```
 
-### 10. Hardcoded Counts (FRAGILE)
+### 10. Scaffold File-Existence-Only Tests (BANNED)
+
+Tests that verify scaffold files exist or have non-empty content, but never check that the toolchain produces working output. Config files, build plugins, and entry points can all exist yet be completely unwired — producing zero output at build time.
+
+```typescript
+// BAD: Every file exists, but nothing proves the build works
+it('has a tailwind config', () => {
+  expect(fs.existsSync('tailwind.config.ts')).toBe(true);
+});
+it('has a vite config', () => {
+  expect(fs.existsSync('vite.config.ts')).toBe(true);
+});
+it('has a CSS entry point', () => {
+  expect(fs.existsSync('src/index.css')).toBe(true);
+});
+// All three pass even if Tailwind is never wired into Vite
+// and the build produces zero CSS bytes.
+
+// GOOD: Verify the build toolchain produces expected artifacts
+it('build produces non-zero CSS output', async () => {
+  const result = await $`bun run build`;
+  const cssFiles = glob.sync('dist/**/*.css');
+  expect(cssFiles.length).toBeGreaterThan(0);
+  const cssSize = fs.statSync(cssFiles[0]).size;
+  expect(cssSize).toBeGreaterThan(0);
+});
+
+it('build produces non-zero JS output', async () => {
+  const result = await $`bun run build`;
+  const jsFiles = glob.sync('dist/**/*.js');
+  expect(jsFiles.length).toBeGreaterThan(0);
+});
+
+// ALSO GOOD: Verify the dev server starts without errors
+it('dev server starts cleanly', async () => {
+  const proc = spawn('bun', ['run', 'dev']);
+  const output = await collectUntil(proc.stderr, 'ready in', 5000);
+  expect(output).not.toMatch(/error/i);
+  proc.kill();
+});
+```
+
+**Rule:** For scaffold/task items that set up a build toolchain, at least one test must verify the build produces expected output — not just that config files exist. "Configured" means "the build uses it and produces output," not "the file is on disk."
+
+### 11. Hardcoded Counts (FRAGILE)
 
 `toHaveLength(22)` breaks when features are added. Test structural properties or derive the count from the source of truth.
 
@@ -196,6 +240,67 @@ import { FEATURE_FLAGS } from '../config';
 expect(Object.keys(routes)).toHaveLength(Object.keys(FEATURE_FLAGS).length);
 ```
 
+### 12. Stubbing the Children of a Composition (BANNED)
+
+When the component under test IS a composition — a shell, layout, page, or container whose job is to assemble children — replacing those children with `vi.spyOn(...).mockImplementation(...)`, `vi.spyOn(...).mockReturnValue(...)`, or `vi.mock('./Child', ...)` leaves nothing real to verify. The composition's observable behavior *is* the rendered subtree. Stubbing the subtree yields "state-bookkeeping coverage" that passes even when the shell is broken from a user's perspective.
+
+This is the same rule as Ban #2 (Mocking Your Own Subject), applied to the case where the subject is the seam between its children. For a shell component, the children are part of the subject.
+
+```typescript
+// BAD: App's only job is composing TodoList / CreateTodoForm / EmptyState / ErrorBanner.
+// This test replaces all four with prop-capturing stubs and asserts on the captured props.
+let captured: TodoListProps;
+vi.spyOn(TodoListModule, 'TodoList').mockImplementation((props) => {
+  captured = props; return null;
+});
+vi.spyOn(CreateTodoFormModule, 'CreateTodoForm').mockImplementation(() => null);
+// ...etc
+render(<App />);
+expect(captured.onDelete).toBeDefined();  // tautological — captured references the mock's args
+
+// Failure modes this test cannot catch:
+//   - App wires `onDelete` to the wrong prop name on the real component
+//   - App never imports TodoList at all (replaced with an inline <div>)
+//   - The real TodoList requires props App doesn't pass
+//   - A broken render in a grandchild (TodoItem, ErrorBanner body, etc.)
+```
+
+```typescript
+// GOOD: render the real children, mock only the outermost I/O (the API client)
+vi.mock('../lib/api', () => ({
+  fetchTodos: vi.fn(),
+  createTodo: vi.fn(),
+  deleteTodo: vi.fn(),
+  updateTodo: vi.fn(),
+}));
+import { fetchTodos, deleteTodo } from '../lib/api';
+
+it('deletes a todo when the user confirms', async () => {
+  (fetchTodos as Mock).mockResolvedValue([
+    { id: '1', title: 'Walk dog', completed: false, createdAt: '2024-01-01' },
+  ]);
+  (deleteTodo as Mock).mockResolvedValue(undefined);
+  render(<App />);
+  await user.click(await screen.findByRole('button', { name: /delete walk dog/i }));
+  await user.click(screen.getByRole('button', { name: /confirm/i }));
+  expect(deleteTodo).toHaveBeenCalledWith('1');
+  expect(screen.queryByText('Walk dog')).not.toBeInTheDocument();
+});
+```
+
+**Rule:** For composition components (App, pages, layouts, containers, providers whose responsibility is wiring children together), render the full subtree with real children and mock only external boundaries (API, network, timers, `Date.now`). If you find yourself stubbing an immediate child to "focus on the shell's concerns," the shell's concerns ARE the children — there is nothing left to test once they're gone.
+
+This rule applies to **all** forms of replacement, not just `vi.mock()`:
+
+- `vi.mock('./ChildComponent', ...)`
+- `vi.spyOn(ChildModule, 'Child').mockImplementation(...)`
+- `vi.spyOn(ChildModule, 'Child').mockReturnValue(...)`
+- Passing a stub via React Context to swap a child by indirection
+
+A **bare** `vi.spyOn(ChildModule, 'Child')` with no `.mockImplementation` / `.mockReturnValue` is acceptable — it observes the call without replacing behavior, so the real child still renders. That is the module-spy pattern from the Integration Item Wiring Tests section below, and it's the only spy form allowed on children of the SUT.
+
+**Red flag for reviewers:** if a test file for a composition contains `captured = props` or `let captured: XProps;` patterns, it is almost certainly this anti-pattern — the test is capturing props off a mock instead of verifying observable output.
+
 ---
 
 ## What Makes a Good Test
@@ -208,6 +313,170 @@ A valid test:
 - **Would NOT fail on a safe refactor** -- renaming internals or reordering code does not break it
 - **Has clear arrange-act-assert structure** -- setup, one action, focused assertions
 - **Covers a real scenario** -- a bug, an edge case, a business rule, or a user interaction
+
+---
+
+## Interaction, Integration, and Accessibility Testing
+
+### Full Interaction Paths
+
+When acceptance criteria specify multiple ways to trigger the same action, test **every** trigger end-to-end. Don't just test that a handler function exists — verify the full path from user action to outcome.
+
+```typescript
+// BAD: Tests the handler exists, not that the trigger works
+it('has a keydown handler', () => {
+  const component = render(<EditableItem {...props} />);
+  expect(component.container.querySelector('[onkeydown]')).toBeTruthy();
+});
+
+// GOOD: Tests the full interaction path for each trigger
+it('activates edit mode on double-click', async () => {
+  render(<EditableItem {...props} />);
+  await user.dblClick(screen.getByText('Item title'));
+  expect(screen.getByRole('textbox')).toHaveValue('Item title');
+});
+
+it('activates edit mode via keyboard shortcut', async () => {
+  render(<EditableItem {...props} />);
+  const title = screen.getByText('Item title');
+  title.focus();
+  await user.keyboard('{Enter}');
+  expect(screen.getByRole('textbox')).toHaveValue('Item title');
+});
+```
+
+If an element must be reachable for an interaction to work (focusable, enabled, visible), assert that precondition — JSDOM and similar test environments are often more permissive than real runtimes.
+
+### Consumer Wiring
+
+When a module's `context` field says it is consumed by another module, include at least one test that imports the **real** dependency and verifies the integration point. Don't just mock everything away.
+
+```typescript
+// BAD: Mocks the dependency this test is supposed to verify wiring for
+vi.mock('../api/orders');
+it('calls createOrder', async () => { /* tests the mock, not the wiring */ });
+
+// GOOD: Uses the real module, mocks only the outermost I/O
+vi.mock('../lib/http-client'); // mock network, keep real module wiring
+import { checkout } from '../services/checkout';
+import { httpClient } from '../lib/http-client';
+it('calls the order API with cart contents', async () => {
+  httpClient.post.mockResolvedValue({ id: 'ord_123' });
+  const result = await checkout(cartWithTwoItems);
+  expect(result.orderId).toBe('ord_123');
+  expect(httpClient.post).toHaveBeenCalledWith('/api/orders', expect.objectContaining({
+    items: expect.arrayContaining([expect.objectContaining({ sku: 'WIDGET' })]),
+  }));
+});
+```
+
+### Integration Item Wiring Tests (Module Spy Pattern)
+
+**For items that wire multiple components into a parent (integration/assembly items),** text-matching tests are insufficient — they pass whether the real component or an inline reimplementation is used. Use module spies to verify the real component was invoked.
+
+```typescript
+// BAD: Passes with inline <p>No todos yet</p> — doesn't verify real component
+it('shows empty state', () => {
+  render(<App />);
+  expect(screen.getByText(/no todos yet/i)).toBeInTheDocument();
+});
+
+// GOOD: Fails if App doesn't import and render the real EmptyState
+import * as EmptyStateModule from '../components/EmptyState';
+
+it('renders the real EmptyState component when no todos', () => {
+  const spy = vi.spyOn(EmptyStateModule, 'EmptyState');
+  render(<App />);
+  expect(spy).toHaveBeenCalled();
+  spy.mockRestore();
+});
+```
+
+**When to use this pattern:**
+- The work item's ACs say "imports and renders [Component] from [WI-NNN]"
+- The item wires 2+ components into a shared parent
+- The item is typed as an integration/assembly item
+
+**Rules for integration test files:**
+- Do NOT `vi.mock()` any component listed in the work item's dependencies — render them for real
+- Do NOT call `.mockImplementation(...)` or `.mockReturnValue(...)` on a spy of any wired component — that replaces the real component with a stub and defeats the purpose of the spy. See Ban #12 above.
+- Mock only external boundaries (API calls, timers, network)
+- Include at least one module spy per wired component to verify it was actually used. The spy must be **bare** — observe only, do not replace behavior.
+- Behavioral assertions (text, roles, interactions) are still valuable — use them alongside spies, not instead of
+
+### Accessibility Testing
+
+When acceptance criteria mention user-facing behavior — form inputs, error messages, interactive controls, status indicators — test using semantic queries and roles, not CSS selectors or test IDs.
+
+**Principles (framework-agnostic):**
+- **Query by role, not by class or ID.** Roles (`button`, `textbox`, `alert`, `status`, `checkbox`) reflect what the user (or assistive technology) sees. CSS classes and test IDs don't.
+- **Assert labels exist.** Every interactive control should have a human-readable name. A form input without a label is a test failure, not a style issue.
+- **Test keyboard paths when the AC says so.** If the criteria say "can be activated via keyboard," verify the element is focusable and the keypress produces the expected outcome.
+- **Verify dynamic status announcements.** Error messages, loading indicators, and confirmation banners should have appropriate roles (`alert`, `status`) so they are announced to assistive technology.
+
+```typescript
+// GOOD: Semantic queries that reflect what the user sees
+render(<LoginForm />);
+const emailInput = screen.getByRole('textbox', { name: /email/i });
+const submitButton = screen.getByRole('button', { name: /sign in/i });
+
+// GOOD: Error message uses appropriate role
+await user.click(submitButton); // submit without filling in email
+expect(screen.getByRole('alert')).toHaveTextContent(/email is required/i);
+
+// GOOD: Loading state uses status role
+render(<DataTable loading={true} />);
+expect(screen.getByRole('status')).toBeInTheDocument();
+```
+
+These patterns apply to any framework with a testing library that supports role-based queries (Testing Library, Playwright, Cypress). In non-UI contexts (CLI tools, APIs), the equivalent is testing the user-facing contract: help text, error messages, exit codes.
+
+---
+
+## "Only/Never" Qualifier Tests
+
+When an acceptance criterion contains exclusionary language — "only," "never," "exclusively," "must not" — it implies two test cases, not one:
+
+1. **Positive test:** The thing happens when expected (Y → X)
+2. **Negative test:** The thing does NOT happen when the condition is absent (¬Y → ¬X)
+
+Testing only the positive case is the most common way to "cover" an AC while missing a real bug.
+
+```typescript
+// AC: "EmptyState is shown ONLY after loading completes successfully with zero results"
+
+// Insufficient: Tests the positive case only
+it('shows EmptyState after successful empty load', async () => {
+  mockGetTodos.mockResolvedValue([]);
+  render(<App />);
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/no todos/i));
+});
+
+// REQUIRED: Negative test — the "only" qualifier demands it
+it('does NOT show EmptyState after failed load', async () => {
+  mockGetTodos.mockRejectedValue(new Error('Network error'));
+  render(<App />);
+  await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+  // Dismiss the error
+  await user.click(screen.getByLabelText('Dismiss error'));
+  // EmptyState must NOT appear — load never succeeded
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+});
+```
+
+**How to check:** After your 1:1 AC reconciliation, scan each criterion for "only," "never," "exclusively," "must not," or "should not." For each match, verify you have both the positive and negative test. If you only have one, add the other.
+
+---
+
+## AC Cross-Product Testing
+
+After mapping each acceptance criterion 1:1 to a test, scan for AC *combinations* that imply untested paths. When one AC defines a trigger and another defines a guard or constraint, their cross-product is a test case.
+
+**Example:** AC-A says "submits via Enter key" and AC-B says "submit disabled during in-flight request." Each has a test individually. But the *combination* — "Enter key blocked during in-flight" — is a distinct scenario that neither test covers alone. If you have tests for A and B individually but not A×B, add the combined test.
+
+**How to check:** After your 1:1 reconciliation pass, identify all "trigger" ACs (user actions: click, keypress, form submit) and all "constraint" ACs (guards, validation, disabled states, loading states). For each trigger × constraint pair, ask: "Is there a test that exercises this trigger while the constraint is active?" If not, add one.
+
+This catches the most common review rejection pattern: guards that only protect one interaction path.
 
 ---
 
@@ -239,6 +508,9 @@ For every test file, verify:
 6. No assertion is trivially true (`toBeDefined()` on a known value, `>= 0` on a length).
 7. No source files are read as strings for regex matching.
 8. No functions are redefined locally instead of imported.
+9. Scaffold/task items have at least one test verifying build output, not just file existence.
+10. Every AC with "only/never/exclusively" has both a positive and negative test.
+11. For composition components (shells, layouts, pages, containers), no immediate child is replaced via `vi.mock`, `.mockImplementation`, or `.mockReturnValue`. Children render for real; only external boundaries (API, network, timers) are mocked.
 
 See `references/testing-anti-patterns.md` for extended examples of each banned pattern.
 See `references/testing-good-patterns.md` for positive examples of behavior-focused testing.

@@ -105,7 +105,7 @@ export async function agentStop(input) {
         const body = {
             itemId: input.itemId,
             agent: input.agent,
-            status: input.status,
+            outcome: input.status === 'failed' ? 'blocked' : 'completed',
             summary: input.summary,
         };
         if (input.files_created) {

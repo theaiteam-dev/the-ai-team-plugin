@@ -1,3 +1,8 @@
+---
+name: perspective-test
+description: Three-layer verification (static analysis, wiring trace, browser check) for catching integration gaps that unit tests miss. Loaded by Amy and Stockwell.
+---
+
 # User Perspective Test
 
 Test features from a real user's perspective by combining static code analysis with browser-based verification.

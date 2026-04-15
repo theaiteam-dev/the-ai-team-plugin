@@ -111,31 +111,31 @@ describe('Observer Hook - Payload Construction', () => {
   it('should generate a valid payload for subagent_start events', () => {
     const hookInput: ObserverHookInput = {
       hook_event_name: 'SubagentStart',
-      agent_type: 'Lynch',
+      agent_type: 'ai-team:lynch',
     };
 
     const payload = buildObserverPayload(hookInput);
 
     expect(payload).not.toBeNull();
     expect(payload?.eventType).toBe('subagent_start');
-    expect(payload?.agentName).toBe('Lynch');
+    expect(payload?.agentName).toBe('lynch');
     expect(payload?.status).toBe('started');
-    expect(payload?.summary).toBe('Lynch started');
+    expect(payload?.summary).toBe('lynch started');
   });
 
   it('should generate a valid payload for subagent_stop events', () => {
     const hookInput: ObserverHookInput = {
       hook_event_name: 'SubagentStop',
-      agent_type: 'Amy',
+      agent_type: 'ai-team:amy',
     };
 
     const payload = buildObserverPayload(hookInput);
 
     expect(payload).not.toBeNull();
     expect(payload?.eventType).toBe('subagent_stop');
-    expect(payload?.agentName).toBe('Amy');
+    expect(payload?.agentName).toBe('amy');
     expect(payload?.status).toBe('completed');
-    expect(payload?.summary).toBe('Amy completed');
+    expect(payload?.summary).toBe('amy completed');
   });
 
   it('should generate a valid payload for stop events', () => {
@@ -189,6 +189,46 @@ describe('Observer Hook - Payload Construction', () => {
 
     expect(payload).not.toBeNull();
     expect(payload?.agentName).toBe('hannibal');
+  });
+
+  it('should resolve agent from teammate_name when no CLI arg or agent_type', () => {
+    // Native teams mode: teammates send teammate_name in stdin, not agent_type
+    const hookInput = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      teammate_name: 'murdock-1',
+    };
+
+    const payload = buildObserverPayload(hookInput);
+
+    expect(payload).not.toBeNull();
+    expect(payload?.agentName).toBe('murdock');
+  });
+
+  it('should resolve agent from teammate_name with ai-team: prefix', () => {
+    const hookInput = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      teammate_name: 'ai-team:ba-2',
+    };
+
+    const payload = buildObserverPayload(hookInput);
+
+    expect(payload).not.toBeNull();
+    expect(payload?.agentName).toBe('ba');
+  });
+
+  it('should prefer CLI arg over teammate_name', () => {
+    const hookInput = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      teammate_name: 'murdock-1',
+    };
+
+    const payload = buildObserverPayload(hookInput, 'face');
+
+    expect(payload).not.toBeNull();
+    expect(payload?.agentName).toBe('face');
   });
 
   it('should handle tool_input as object (not JSON string)', () => {

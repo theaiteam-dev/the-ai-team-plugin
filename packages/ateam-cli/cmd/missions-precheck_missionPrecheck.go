@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"ateam/internal/client"
 	"ateam/internal/output"
+	"ateam/internal/validate"
 )
 
 var (
@@ -58,10 +59,24 @@ var missionsPrecheckMissionPrecheckCmd = &cobra.Command{
 			}
 			return nil
 		}
+		if err := validate.RequireFlags(cmd, "passed"); err != nil {
+			return err
+		}
 		bodyMap := map[string]interface{}{}
-		bodyMap["blockers"] = missionsPrecheckMissionPrecheckCmd_blockers
-		bodyMap["output"] = missionsPrecheckMissionPrecheckCmd_output
 		bodyMap["passed"] = missionsPrecheckMissionPrecheckCmd_passed
+		if cmd.Flags().Changed("blockers") {
+			bodyMap["blockers"] = missionsPrecheckMissionPrecheckCmd_blockers
+		}
+		if cmd.Flags().Changed("output") {
+			var outputObj interface{}
+			if err := json.Unmarshal([]byte(missionsPrecheckMissionPrecheckCmd_output), &outputObj); err != nil {
+				return fmt.Errorf("--output must be valid JSON: %w", err)
+			}
+			if outputMap, ok := outputObj.(map[string]interface{}); !ok || outputMap == nil {
+				return fmt.Errorf("--output must be a JSON object, not an array or primitive")
+			}
+			bodyMap["output"] = outputObj
+		}
 		resp, err := c.Do("POST", "/api/missions/precheck", pathParams, queryParams, bodyMap)
 		if err != nil {
 			return err
@@ -86,5 +101,7 @@ func init() {
 	missionsPrecheckMissionPrecheckCmd.Flags().StringArrayVar(&missionsPrecheckMissionPrecheckCmd_blockers, "blockers", nil, "")
 	missionsPrecheckMissionPrecheckCmd.Flags().StringVar(&missionsPrecheckMissionPrecheckCmd_output, "output", "", "")
 	missionsPrecheckMissionPrecheckCmd.Flags().BoolVar(&missionsPrecheckMissionPrecheckCmd_passed, "passed", false, "")
-	missionsPrecheckMissionPrecheckCmd.MarkFlagRequired("passed")
+	// NOTE: required-flag enforcement is done in RunE via validate.RequireFlags
+	// so that --body / --body-file can be used as an alternative to individual
+	// flags. Cobra's MarkFlagRequired runs before RunE and cannot be bypassed.
 }

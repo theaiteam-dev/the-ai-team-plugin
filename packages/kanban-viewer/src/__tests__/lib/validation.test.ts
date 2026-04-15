@@ -760,6 +760,35 @@ describe('validateOutputCollisions', () => {
       expect(result.collisions).toHaveLength(0);
     });
 
+    it('should ignore empty-string output paths (regression: M-20260410-001)', () => {
+      // Legacy CLI serialized unset --outputs.types as "" which was persisted
+      // to the DB and then treated as a shared empty-string path by the
+      // collision detector, causing spurious 400 OUTPUT_COLLISION errors on
+      // every 4th work item a mission tried to create. Empty strings must be
+      // treated the same as undefined.
+      const items: OutputCollisionItem[] = [
+        {
+          id: 'WI-001',
+          outputs: { impl: 'src/a.ts', test: 'src/__tests__/a.test.ts', types: '' },
+          dependencies: [],
+        },
+        {
+          id: 'WI-002',
+          outputs: { impl: 'src/b.ts', test: 'src/__tests__/b.test.ts', types: '' },
+          dependencies: [],
+        },
+        {
+          id: 'WI-003',
+          outputs: { impl: 'src/c.ts', test: 'src/__tests__/c.test.ts', types: '' },
+          dependencies: [],
+        },
+      ];
+
+      const result = validateOutputCollisions(items);
+      expect(result.valid).toBe(true);
+      expect(result.collisions).toHaveLength(0);
+    });
+
     it('should return valid for empty item list', () => {
       const result = validateOutputCollisions([]);
       expect(result.valid).toBe(true);

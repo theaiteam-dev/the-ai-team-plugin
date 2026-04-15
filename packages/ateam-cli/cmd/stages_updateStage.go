@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"ateam/internal/client"
 	"ateam/internal/output"
+	"ateam/internal/validate"
 )
 
 var (
@@ -57,6 +58,9 @@ var stagesUpdateStageCmd = &cobra.Command{
 			}
 			return nil
 		}
+		if err := validate.RequireFlags(cmd, "wipLimit"); err != nil {
+			return err
+		}
 		bodyMap := map[string]interface{}{}
 		bodyMap["wipLimit"] = stagesUpdateStageCmd_wipLimit
 		resp, err := c.Do("PATCH", "/api/stages/{id}", pathParams, queryParams, bodyMap)
@@ -81,5 +85,7 @@ func init() {
 	stagesUpdateStageCmd.Flags().StringVar(&stagesUpdateStageCmdBody, "body", "", "Raw JSON body (overrides individual flags)")
 	stagesUpdateStageCmd.Flags().StringVar(&stagesUpdateStageCmdBodyFile, "body-file", "", "Path to JSON file to use as request body")
 	stagesUpdateStageCmd.Flags().IntVar(&stagesUpdateStageCmd_wipLimit, "wipLimit", 0, "")
-	stagesUpdateStageCmd.MarkFlagRequired("wipLimit")
+	// NOTE: required-flag enforcement is done in RunE via validate.RequireFlags
+	// so that --body / --body-file can be used as an alternative to individual
+	// flags. Cobra's MarkFlagRequired runs before RunE and cannot be bypassed.
 }

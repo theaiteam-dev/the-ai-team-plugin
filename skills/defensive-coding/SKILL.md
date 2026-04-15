@@ -1,6 +1,6 @@
 ---
 name: defensive-coding
-description: Defensive coding patterns for AI agents. Covers guard-before-operate, async error recovery, input validation consistency, URL encoding, resource cleanup, transient state clearing, functional state updates, and network request hygiene (AbortController, path encoding, consistent error shapes) — with language-agnostic pseudocode examples.
+description: Defensive coding patterns for AI agents. Covers guard-before-operate, async error recovery, input validation consistency, URL encoding, resource cleanup, transient state clearing, functional state updates, network request hygiene (AbortController, path encoding, consistent error shapes), and never-weaken-safety-nets — with language-agnostic pseudocode examples.
 ---
 
 # Defensive Coding Skill
@@ -267,6 +267,75 @@ async function request(url, options):
 
 ---
 
+## 9. Import, Don't Redefine
+
+When a type, interface, constant, or utility already exists in the project — whether from a dependency item, a shared module, or a prior implementation — import it. Never redefine it locally. Local copies drift from the source of truth, causing subtle type mismatches, missing fields, and review rejections.
+
+```
+// BAD: redefines a type that already exists in the project
+// file: todoItem.ts
+interface Todo {
+  id: string
+  text: string
+  completed: boolean
+}
+// Missing `createdAt` field that the real type in api.ts has — silent bug
+
+// GOOD: import the canonical type
+// file: todoItem.ts
+import { Todo } from "./api"       // single source of truth
+```
+
+Before defining any type or utility, search the project for existing definitions. If a dependency item's `outputs.types` defines the type you need, import from there.
+
+---
+
+## 10. Verify Wiring, Don't Reimplement
+
+When an acceptance criterion says "imports/uses/renders [X from WI-NNN]" or "integrates with [module]," the requirement is to wire the **real** dependency — not to reimplement its behavior inline. An inline reimplementation may produce identical output and pass all tests, but it violates the AC and creates a maintenance divergence.
+
+```
+// BAD: AC says "Renders EmptyState component from WI-179" but reimplements inline
+function App():
+  if todos.length == 0:
+    return <p>No todos yet</p>           // passes text-matching tests, violates AC
+
+// GOOD: import and render the real component
+import { EmptyState } from "./EmptyState"
+function App():
+  if todos.length == 0:
+    return <EmptyState />                 // satisfies the AC — real dependency wired
+```
+
+**Before marking work complete:** For every AC that names a specific module or component, `grep` or search for the import in your implementation file. If the import doesn't exist, the AC is not satisfied — even if tests pass.
+
+---
+
+## 11. Never Weaken Safety Nets
+
+When your code fails a compiler check, linter rule, or strict config flag, fix your code — don't disable the check. Removing a strict flag to silence an error trades a visible failure for an invisible class of bugs.
+
+```
+// BAD: unused import in test file causes noUnusedLocals error
+//   "Fix": remove noUnusedLocals from tsconfig.json
+//   Result: all unused variables across the entire project are now silent — regressions hide
+
+// GOOD: fix the source issue
+//   Remove the unused import from the test file
+//   If you can't edit that file (boundary constraint), escalate to the responsible agent
+
+// BAD: eslint rule flags unsafe pattern
+//   "Fix": add eslint-disable comment or remove rule from config
+//   Result: the pattern is no longer flagged anywhere in the project
+
+// GOOD: fix the code to satisfy the rule
+//   If the rule is genuinely wrong for this project, that's a team decision — not a solo workaround
+```
+
+**Applies to:** tsconfig strict flags (`noUnusedLocals`, `noUnusedParameters`, `strict`, `noImplicitAny`), eslint/biome rules, build-time warnings-as-errors, pre-commit hooks. If you can't fix the root cause due to agent boundaries, message Hannibal — don't widen the blast radius.
+
+---
+
 ## Self-Check Before Submitting
 
 For every function or module you write, verify:
@@ -281,3 +350,6 @@ For every function or module you write, verify:
 8. Fetch calls in effects are aborted on cleanup — no setState on unmounted components.
 9. All API client functions throw errors in a consistent shape.
 10. Path parameters are encoded with `encodeURIComponent` before interpolation.
+11. Every type, interface, and utility is imported from its canonical location — no local redefinitions.
+12. Every AC that names a specific module/component is satisfied by a real import — no inline reimplementations.
+13. No strict flags, linter rules, or safety checks were disabled or weakened to make the code compile — fix the code, not the config.

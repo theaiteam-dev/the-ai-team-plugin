@@ -77,6 +77,36 @@ jobs:
         working-directory: .
       - run: bunx tsc --noEmit
 
+  dist-freshness-check:
+    name: dist freshness check
+    needs: [changes]
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.shared == 'true' || needs.changes.outputs.mcp-server == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - name: Build shared package
+        run: bun run build
+        working-directory: packages/shared
+      - name: Build mcp-server package (tsc)
+        run: bun run build
+        working-directory: packages/mcp-server
+      - name: Bundle mcp-server (esbuild)
+        run: bun run bundle
+        working-directory: packages/mcp-server
+      - name: Check dist is up-to-date
+        run: |
+          if ! git diff --exit-code packages/shared/dist/ packages/mcp-server/dist/; then
+            echo "::error::dist/ is out of date. Run 'bun run build' in packages/shared and packages/mcp-server (and 'bun run bundle' in packages/mcp-server), then commit the result."
+            exit 1
+          fi
+          if [ -n "$(git ls-files --others --exclude-standard -- packages/shared/dist packages/mcp-server/dist)" ]; then
+            echo "::error::dist/ contains untracked generated files. Run 'bun run build' and commit the result."
+            git ls-files --others --exclude-standard -- packages/shared/dist packages/mcp-server/dist
+            exit 1
+          fi
+
   kanban-viewer:
     name: Kanban Viewer
     needs: [changes]

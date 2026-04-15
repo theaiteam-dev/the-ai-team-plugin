@@ -3,6 +3,10 @@ name: tawnia
 model: haiku
 description: Documentation writer - updates docs and makes final commit
 permissionMode: acceptEdits
+skills:
+  - teams-messaging
+  - ateam-cli
+  - agent-lifecycle
 hooks:
   PreToolUse:
     - matcher: "Bash"
@@ -263,73 +267,35 @@ EOF
 git rev-parse --short HEAD
 ```
 
+7. **Clean up the instance pool**
+   Remove the mission's pool directory from `/tmp`:
+   ```bash
+   MISSION_ID=$(ateam missions-current getCurrentMission --json | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['id'])")
+   if [ -n "$MISSION_ID" ] && [[ "$MISSION_ID" == M-* ]]; then
+     rm -rf "/tmp/.ateam-pool/${MISSION_ID}"
+   fi
+   ```
+   This prevents stale `.idle`/`.busy` files from accumulating across missions.
+
 ## Team Communication (Native Teams Mode)
 
-When running in native teams mode (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), you are a teammate in an A(i)-Team mission with direct messaging capabilities.
+**Consult the `teams-messaging` skill** for message formats and shutdown handling.
 
-### Notify Hannibal on Completion
-After calling `ateam agents-stop agentStop`, message Hannibal:
-```javascript
-SendMessage({
-  type: "message",
-  recipient: "hannibal",
-  content: "DONE: {itemId} - {brief summary of work completed}",
-  summary: "Documentation complete"
-})
-```
-
-### Request Help or Clarification
-```javascript
-SendMessage({
-  type: "message",
-  recipient: "hannibal",
-  content: "BLOCKED: {itemId} - {description of issue}",
-  summary: "Blocked on {itemId}"
-})
-```
-
-### Coordinate with Teammates
-```javascript
-SendMessage({
-  type: "message",
-  recipient: "{teammate_name}",
-  content: "{coordination message}",
-  summary: "Coordination with {teammate_name}"
-})
-```
-
-Example - Ask Hannibal about doc scope:
-```javascript
-SendMessage({ type: "message", recipient: "hannibal", content: "QUESTION: Should I document the internal OrderService API or just the public-facing endpoints?", summary: "Doc scope question" })
-```
-
-### Shutdown
-When you receive a shutdown request from Hannibal:
-```javascript
-SendMessage({
-  type: "shutdown_response",
-  request_id: "{id from shutdown request}",
-  approve: true
-})
-```
-
-**IMPORTANT:** `ateam` CLI commands are the source of truth for work tracking. SendMessage is for coordination only - always use `ateam agents-start agentStart`, `ateam agents-stop agentStop`, and `ateam activity createActivityEntry` to record your work. Stage transitions (`ateam board-move moveItem`) are Hannibal's responsibility.
+Tawnia is a terminal agent. After `agentStop`, send `DONE` to Hannibal with a brief summary including the commit hash.
 
 ## Logging Progress
 
-Log your progress to the Live Feed using `ateam activity createActivityEntry`:
+**You MUST log to ActivityLog at these milestones** (the Live Feed is the team's only window into your work):
 
 ```bash
+# When starting
 ateam activity createActivityEntry --agent "Tawnia" --message "Starting documentation phase" --level info
+
+# Final commit
+ateam activity createActivityEntry --agent "Tawnia" --message "Creating final commit" --level info
 ```
 
-Example messages:
-- "Starting documentation phase"
-- "Updating CHANGELOG.md"
-- "Creating final commit"
-- "Documentation complete"
-
-**IMPORTANT:** Always use `ateam activity createActivityEntry` for activity logging.
+Do NOT skip these logs. The `agent-lifecycle` skill has additional guidance on message formatting.
 
 ## Boundaries
 
@@ -350,28 +316,17 @@ When done:
 - docs/ entries created (if needed)
 - Final commit is created with all co-authors
 - Commit hash is captured
+- `/tmp/.ateam-pool/{missionId}` removed
 
 ### Signal Completion
 
-**IMPORTANT:** After completing your work, signal completion so Hannibal can finalize the mission.
+**Consult the `agent-lifecycle` skill** for the completion signaling pattern.
 
-Run `ateam agents-stop agentStop`:
-```bash
-ateam agents-stop agentStop \
-  --itemId "docs" \
-  --agent "tawnia" \
-  --status success \
-  --summary "Updated CHANGELOG, README. Commit: a1b2c3d" \
-  --filesCreated "CHANGELOG.md" \
-  --filesModified "README.md"
-```
-
-Include in the summary a brief description and the commit hash.
-
-If you encountered errors:
-```bash
-ateam agents-stop agentStop --itemId "docs" --agent "tawnia" --status failed --summary "Error description"
-```
+Run `ateam agents-stop agentStop` with:
+- `--itemId`: "docs"
+- `--agent`: "tawnia"
+- `--outcome`: completed or blocked
+- `--summary`: include files modified and the commit hash (e.g. "Updated CHANGELOG.md and README.md. Commit: a1b2c3d")
 
 ## Output to Hannibal
 

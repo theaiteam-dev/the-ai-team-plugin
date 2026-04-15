@@ -22,4 +22,21 @@ rm -f "$PLUGIN_JSON.bak"
 sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" "$MARKETPLACE_JSON"
 rm -f "$MARKETPLACE_JSON.bak"
 
+# Bump minCliVersion if packages/ateam-cli/ changed since last tag
+LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+if [ -n "$LAST_TAG" ]; then
+  CLI_CHANGED=$(git diff --name-only "$LAST_TAG"..HEAD -- packages/ateam-cli/ | head -1)
+else
+  # No previous tag — treat as CLI change (first release)
+  CLI_CHANGED="first-release"
+fi
+
+if [ -n "$CLI_CHANGED" ]; then
+  sed -i.bak "s/\"minCliVersion\": \"[^\"]*\"/\"minCliVersion\": \"$VERSION\"/" "$PLUGIN_JSON"
+  rm -f "$PLUGIN_JSON.bak"
+  echo "Bumped minCliVersion to $VERSION (CLI changes detected)"
+else
+  echo "minCliVersion unchanged (no CLI changes)"
+fi
+
 echo "Bumped plugin.json and marketplace.json to $VERSION"

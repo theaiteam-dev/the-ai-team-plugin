@@ -6,7 +6,6 @@
  * - item_update: Update an existing work item
  * - item_get: Retrieve a single item by ID
  * - item_list: List items with optional filtering
- * - item_reject: Record rejection with reason
  * - item_render: Get markdown representation
  */
 import { z } from 'zod';
@@ -82,14 +81,6 @@ export const ItemGetInputSchema = z.object({
 export const ItemListInputSchema = z.object({
     status: z.string().optional(),
     stage: z.string().optional(),
-    agent: z.string().optional(),
-});
-/**
- * Schema for item_reject tool input.
- */
-export const ItemRejectInputSchema = z.object({
-    id: z.string().min(1),
-    reason: z.string().min(1),
     agent: z.string().optional(),
 });
 /**
@@ -188,20 +179,6 @@ export async function itemList(input) {
     return withErrorBoundary(handler)(input);
 }
 /**
- * Records a rejection with reason.
- */
-export async function itemReject(input) {
-    const handler = async (args) => {
-        const { id, ...rejectData } = args;
-        const result = await client.post(`/api/items/${id}/reject`, rejectData);
-        return {
-            content: [{ type: 'text', text: JSON.stringify(result.data) }],
-            data: result.data,
-        };
-    };
-    return withErrorBoundary(handler)(input);
-}
-/**
  * Returns markdown representation of an item.
  */
 export async function itemRender(input) {
@@ -249,13 +226,6 @@ export const itemTools = [
         inputSchema: zodToJsonSchema(ItemListInputSchema),
         zodSchema: ItemListInputSchema,
         handler: itemList,
-    },
-    {
-        name: 'item_reject',
-        description: 'Record a rejection for a work item with reason. Handles escalation after max rejections.',
-        inputSchema: zodToJsonSchema(ItemRejectInputSchema),
-        zodSchema: ItemRejectInputSchema,
-        handler: itemReject,
     },
     {
         name: 'item_render',
