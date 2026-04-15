@@ -628,6 +628,55 @@ Render the component and test the behavior. If you need to verify animation clas
 
 ---
 
+## Anti-Pattern 13: Shell Component Child Stubbing
+
+**Severity:** BANNED — never write these
+
+Tests that stub immediate children of shell/layout components (App, page, layout) to test in isolation. This creates a mock sandwich that tests nothing.
+
+### What it looks like
+
+```tsx
+// BAD — stubbing every child of the shell
+vi.mock('./Header', () => ({ Header: () => <div data-testid="header" /> }));
+vi.mock('./Sidebar', () => ({ Sidebar: () => <div data-testid="sidebar" /> }));
+vi.mock('./Footer', () => ({ Footer: () => <div data-testid="footer" /> }));
+
+it('should render header, sidebar, and footer', () => {
+  render(<AppLayout />);
+  expect(screen.getByTestId('header')).toBeInTheDocument();
+  expect(screen.getByTestId('sidebar')).toBeInTheDocument();
+  expect(screen.getByTestId('footer')).toBeInTheDocument();
+});
+```
+
+### Why it's worthless
+
+- You stubbed every child and then tested that the stubs render. This proves JSX composition works — not that your app works.
+- The real Header, Sidebar, and Footer are never imported. They could be completely broken.
+- Shell components are compositional by definition — their value IS their children. Stubbing the children removes the thing being tested.
+
+### What to write instead
+
+Test the **children themselves** in their own test files. If you need to test layout behavior (e.g., sidebar collapses on mobile), use Playwright with viewport resizing.
+
+If a shell component has its own logic (auth gates, error boundaries, data providers), test **that logic** with real children or a minimal subset — never stub everything away.
+
+---
+
+## A(i)-Team Test Scoping
+
+When working within the A(i)-Team pipeline, test scope is intentionally limited per agent:
+
+- **Murdock** writes tests scoped to a single work item. Tests live at the path specified in `outputs.test`.
+- **B.A.** runs only the item's test file (`outputs.test`), NOT the full suite. Sibling items may be in TDD-red state (Murdock wrote their tests, B.A. hasn't implemented yet). Running the full suite produces false failures.
+- **Lynch** runs only the item's test file for the same reason.
+- **Stockwell** is the first full-suite checkpoint. He runs the entire test suite at mission end to catch cross-item integration issues.
+
+This scoping is critical for pipeline parallelism — multiple items flow through stages simultaneously, and each item's tests must be independent.
+
+---
+
 ## Summary: The One Rule
 
 **Every test must exercise real application code and assert on an observable outcome (rendered content, function return value, side effect, or thrown error).**

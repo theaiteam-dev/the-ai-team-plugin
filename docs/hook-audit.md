@@ -298,19 +298,21 @@ To measure tool duration:
 
 **Implementation:**
 ```javascript
+const { readFileSync, appendFileSync } = require('fs');
+
 // PreToolUse hook (record-tool-start.js)
-const input = JSON.parse(process.env.TOOL_INPUT || '{}');
+const input = JSON.parse(readFileSync(0, 'utf8'));
 const record = {
   tool_use_id: input.tool_use_id,
   start_time: Date.now(),
   tool_name: input.tool_name
 };
-fs.appendFileSync('/tmp/tool-timings.jsonl', JSON.stringify(record) + '\n');
+appendFileSync('/tmp/tool-timings.jsonl', JSON.stringify(record) + '\n');
 process.exit(0);
 
 // PostToolUse hook (record-tool-end.js)
-const input = JSON.parse(process.env.TOOL_INPUT || '{}');
-const timings = fs.readFileSync('/tmp/tool-timings.jsonl', 'utf-8')
+const input = JSON.parse(readFileSync(0, 'utf8'));
+const timings = readFileSync('/tmp/tool-timings.jsonl', 'utf-8')
   .split('\n')
   .filter(Boolean)
   .map(JSON.parse);
@@ -324,7 +326,7 @@ if (start) {
     duration_ms,
     success: true
   };
-  fs.appendFileSync('/tmp/tool-telemetry.jsonl', JSON.stringify(telemetry) + '\n');
+  appendFileSync('/tmp/tool-telemetry.jsonl', JSON.stringify(telemetry) + '\n');
 }
 process.exit(0);
 ```
@@ -478,27 +480,34 @@ PostToolUseFailure provides:
 
 ---
 
-## Environment Variables
+## Hook Input: stdin JSON
 
-### All Hooks
-- `TOOL_INPUT`: JSON string of tool input (PreToolUse hooks in existing codebase use this)
+**IMPORTANT:** Claude Code sends hook context via **stdin as JSON**, NOT as environment variables. All hook scripts must read from stdin:
 
-### SessionStart Only
-- `CLAUDE_ENV_FILE`: Path to file for persisting environment variables across Bash commands
-  - Write `export VAR=value` statements to this file
-  - Variables persist for the entire session
+```javascript
+const { readFileSync } = require('fs');
+const input = JSON.parse(readFileSync(0, 'utf8'));
+```
 
-### All Hook Scripts
+The stdin JSON contains fields like `tool_name`, `tool_input`, `hook_event_name`, `session_id`, `cwd`, etc.
+
+### Environment Variables
+
+The only env vars available are:
 - `CLAUDE_PROJECT_DIR`: Project root directory
 - `CLAUDE_PLUGIN_ROOT`: Plugin root directory (for plugin hooks)
 - `CLAUDE_CODE_REMOTE`: "true" in remote web environments, unset in CLI
+- Settings from `settings.local.json` (e.g., `ATEAM_API_URL`, `ATEAM_PROJECT_ID`)
+
+### SessionStart Only
+- `CLAUDE_ENV_FILE`: Path to file for persisting environment variables across Bash commands
 
 **Example (from existing codebase):**
 ```javascript
 // scripts/hooks/block-raw-echo-log.js
-const toolInput = process.env.TOOL_INPUT || '{}';
-let input = JSON.parse(toolInput);
-const command = input.command || '';
+const { readFileSync } = require('fs');
+const input = JSON.parse(readFileSync(0, 'utf8'));
+const command = (input.tool_input && input.tool_input.command) || '';
 ```
 
 ---
@@ -602,47 +611,78 @@ const command = input.command || '';
 
 ## Implementation Recommendations for PRD-0005
 
-### Minimal Viable Telemetry (Phase 1)
+### Current Telemetry Implementation
 
-**Hooks to Implement:**
-1. **PostToolUse** - Record tool success, input/output, duration (via manual timing)
-2. **PostToolUseFailure** - Record tool failures, error types
-3. **SubagentStop** - Record subagent completion, session-scoped counters
+The observer hooks now post telemetry events directly to the API via `scripts/hooks/lib/observer.js`:
 
-**Timing Strategy:**
-- PreToolUse: Write `{ tool_use_id, start_time }` to `/tmp/claude-tool-timings-{session_id}.jsonl`
-- PostToolUse: Read timings file, calculate duration, append telemetry
+**Implemented Hooks:**
+1. **PreToolUse** (`observe-pre-tool-use.js`) - Records every tool call with agent, tool name, input
+2. **PostToolUse** (`observe-post-tool-use.js`) - Records tool results and response data
+3. **Stop** (`observe-stop.js`) - Records agent stop events
+4. **SubagentStart/Stop** (`observe-subagent.js`) - Records subagent lifecycle in legacy mode
+5. **TeammateIdle/TaskCompleted** (`observe-teammate.js`) - Records agent lifecycle in native teams mode
 
-**Error Classification:**
-- Parse `PostToolUseFailure.error` for: permission denied, timeout, non-zero exit, other
-
-### Extended Telemetry (Phase 2)
-
-**Additional Hooks:**
-4. **PreToolUse** - Record tool attempts (before approval/denial)
-5. **PermissionRequest** - Track permission prompts shown to user
-6. **SubagentStart** - Track subagent spawns, provide agent context injection
-
-**Advanced Features:**
-- Async PostToolUse hook for non-blocking telemetry writes
-- Agent-based Stop hook for completion criteria verification
-- Tool input modification via PreToolUse `updatedInput` for guardrails
+**Data Flow:**
+- Observer hooks POST structured events to `POST /api/hooks/events` with `X-Project-ID` header
+- Events include: agent name, tool name, event type, timestamps, token counts, model
+- Token usage is aggregated per-mission via `POST /api/missions/{id}/token-usage`
 
 ### File Structure
 
 ```
 scripts/hooks/
-├── telemetry/
-│   ├── record-tool-start.js       # PreToolUse: timing + attempt logging
-│   ├── record-tool-success.js     # PostToolUse: duration + output logging
-│   ├── record-tool-failure.js     # PostToolUseFailure: error classification
-│   ├── record-subagent-stop.js    # SubagentStop: session counters
-│   └── lib/
-│       ├── telemetry-writer.js    # Shared JSONL writer
-│       └── timing-store.js        # Shared timing correlation
-├── enforce-completion-log.js      # Existing SubagentStop hook
-└── block-*.js                     # Existing PreToolUse hooks
+├── lib/
+│   ├── observer.js              # Shared observer: POST events to API
+│   ├── resolve-agent.js         # Agent identity resolution (resolveAgent, isKnownAgent)
+│   └── send-denied-event.js     # Fire-and-forget denied event recording
+├── observe-*.js                 # Telemetry observers (pre/post tool use, stop, subagent, teammate)
+├── enforce-*.js                 # Completion/lifecycle enforcement hooks
+├── block-*.js                   # Boundary enforcement hooks (PreToolUse)
+├── lint-test-quality.js         # Test anti-pattern linter (B.A.)
+├── track-browser-usage.js       # Browser tool tracker (Amy)
+└── diagnostic-hook.js           # Debug/diagnostic hook
 ```
+
+---
+
+## Pool Enforcement Hooks (Pipeline Parallelism)
+
+The pipeline parallelism feature introduced pool-based multi-instance agents and two new enforcement hooks:
+
+### `enforce-agent-start.js`
+
+**Type:** PreToolUse (global, registered in `hooks/hooks.json`)
+**Purpose:** Blocks pipeline workers from performing work before calling `ateam agents-start agentStart`.
+**Behavior:** Checks the transcript for evidence of a successful `agentStart` call. Fails open for unknown agents.
+
+### `enforce-handoff.js`
+
+**Type:** Stop (per-agent, registered in frontmatter for Murdock, B.A., Lynch, Amy)
+**Purpose:** Validates that pipeline workers complete the full lifecycle before stopping:
+1. Called `ateam agents-stop agentStop`
+2. Sent a peer handoff message (START to the next agent, or ALERT to Hannibal)
+**Behavior:** Parses the transcript for both the `agentStop` call and the `SendMessage` handoff. If either is missing, blocks the Stop with an error message explaining what's missing.
+
+**Note:** Terminal agents (Tawnia, Stockwell) use `enforce-completion-log.js` instead — they complete without forwarding to a next agent.
+
+### Pool Management Responses
+
+When agents call `ateam agents-stop agentStop --advance`, the CLI may return special responses:
+
+| Response | Meaning | Agent Action |
+|----------|---------|-------------|
+| `claimedNext` in JSON | Next agent instance claimed successfully | Send START to `claimedNext` instance, FYI to Hannibal |
+| `poolAlert` in JSON | No idle agent instances available | Send ALERT to Hannibal for manual re-dispatch |
+| HTTP 409 `WIP_LIMIT_EXCEEDED` | Target stage at capacity | Use `--advance=false` to release claim without advancing, ALERT Hannibal |
+
+### Native Teams Lifecycle Events
+
+In native teams mode, `TeammateIdle` and `TaskCompleted` hooks fire alongside `SubagentStop`:
+
+- **TeammateIdle**: Fires when a teammate is about to go idle. Used by `observe-teammate.js` to track agent lifecycle.
+- **TaskCompleted**: Fires when a task completes. Can block to prevent premature completion.
+
+These complement SubagentStart/SubagentStop (which fire in legacy dispatch mode). In native teams mode, prefer TeammateIdle for tracking agent completion.
 
 ---
 

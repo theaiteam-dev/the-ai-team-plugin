@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Concurrent-execution guards in B.A. and Murdock prompts:** Agent instructions now explicitly describe pool-aware behavior (no shared scratch files, idempotent test/impl writes, safe re-entry after rejection).
 - **Agent quality skill ecosystem:** Consolidated defensive coding, security input validation, and code pattern references into three reusable skills: `skills/defensive-coding/SKILL.md`, `skills/security-input/SKILL.md` (migrated from agents/references), and `skills/code-patterns/SKILL.md` (consolidated from 3 prior references). Agents now reference these by skill name instead of inline examples.
 - **Enhanced agent prompts with quality skills:** Updated 6 agent instructions (B.A., Lynch, Murdock, Amy, Stockwell, Face/Tawnia) to include quality skill references, expanded defensive-coding checklists, adversarial review steps, and integration test requirements.
+- **Per-item test scoping:** B.A. and Lynch now run only the work item's own test file (`outputs.test`) instead of the full suite. Sibling items in TDD-red state (Murdock wrote tests, B.A. hasn't implemented yet) caused false failures when running the full suite. Stockwell is now the first full-suite checkpoint at mission end, catching cross-item integration issues.
+- **Shell-composition child stubbing ban (Ban #12):** New test-writing anti-pattern banning stubs of immediate children of shell/layout components (App, page, layout). Stubbing all children creates a mock sandwich that tests JSX composition, not application behavior.
 - **Mission retrospective system:** Complete retro reporting for missions with Prisma schema migration, API endpoints (`POST/GET /api/missions/{id}/retro`), Go CLI commands (`ateam missions-retro writeRetro/getRetro`), React UI component (`RetroReport.tsx`), and slash command (`/retro`).
 - **Agents/references deprecation:** Removed 5 agent reference files (`agents/references/{api-and-data, code-quality, security, testing, type-safety}.md`) — functionality migrated to reusable skills.
 
@@ -40,6 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Critical: agentStop defer pool release bug:** `defer poolSelfRelease(agentName)` captured the pre-`--body` value of `agentName` (often empty string), orphaning pool slots and permanently reducing available concurrency. Fixed with closure-based defer after body resolution.
+- **Idempotent concurrent agent stop:** `agentClaim.delete` threw Prisma P2025 when two concurrent stop requests raced. Changed to `agentClaim.deleteMany` which returns `{ count: 0 }` safely.
+- **createItem validation:** `ateam items createItem` now requires `--description` and at least one `outputs.*` flag. Previously, items could be created without these fields, causing downstream agent failures.
+- **Sosa removed from claimable-agent enum:** Sosa is a requirements critic dispatched as a subagent, not a pipeline worker that claims board items. Removed from `board-claim claimItem` validation.
+- **Output collision in Face breakdown:** Fixed false-positive output collision errors when Face created work items with shared output paths during dependency-aware decomposition.
+- **`--body-file` flag for large CLI payloads:** Fixed `ateam agents-stop agentStop --body-file` path that wasn't populating `agentName` before pool release, causing orphaned slots.
+- **finalReview column migration:** Added missing Prisma migration for `Mission.finalReview` TEXT column. 29 tests across 7 files were failing with `SQLITE_ERROR: no such column: main.Mission.finalReview`.
+- **Rejection path in teams-messaging skill:** Updated from `--advance=false` (which only releases the claim) to `--outcome rejected --return-to <stage>` (which records the rejection). Removed contradictory "no ACK required" / "wait 20s for ACK" text.
+- **Scaling route error response:** Replaced hand-rolled error payload in `POST /api/scaling/compute` with standard `ApiError` pattern using `projectValidation.error`.
 - **Stripped Tailwind CSS class assertions** from 21 UI component test files. Removed `toHaveClass` checks on utility classes (`bg-green-500`, `rounded-full`, `w-8`, etc.) while preserving all behavioral assertions.
 - **Replaced Prisma query-shape assertions** in 5 API route test files with HTTP response-level assertions. Tests now verify status codes and response bodies instead of internal ORM call shapes.
 - **Fixed conditional assertions in MCP server tests** (`tools/items.test.ts`, `tools/missions.test.ts`). Replaced `if ('message' in result)` guards with unconditional assertions that will actually fail when error handling breaks.

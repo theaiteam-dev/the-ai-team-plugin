@@ -73,22 +73,43 @@ ai-team/
 │   ├── murdock.md           # QA Engineer (PreToolUse + PostToolUse + Stop hooks)
 │   ├── ba.md                # Implementer (PreToolUse + PostToolUse + Stop hooks)
 │   ├── lynch.md             # Reviewer - per-feature (PreToolUse + PostToolUse + Stop hooks)
-│   ├── lynch-final.md       # Reviewer - Final Mission Review (PreToolUse + PostToolUse + Stop hooks)
+│   ├── stockwell.md         # Reviewer - Final Mission Review (PreToolUse + PostToolUse + Stop hooks)
 │   ├── amy.md               # Investigator (PreToolUse + PostToolUse + Stop hooks)
 │   ├── tawnia.md            # Documentation writer (PreToolUse + PostToolUse + Stop hooks)
+│   ├── retro.md             # Retrospective agent (post-mission analysis)
 │   └── __tests__/           # Agent hook contract tests
 ├── commands/                # Slash command definitions
 │   ├── setup.md, plan.md, run.md, status.md, resume.md, unblock.md
 │   └── perspective-test.md  # Standalone user perspective testing
 ├── skills/
 │   ├── test-writing/
-│   │   ├── SKILL.md                          # Test quality rules (5 banned categories)
+│   │   ├── SKILL.md                          # Test quality rules (12 banned categories)
 │   │   └── references/
 │   │       └── testing-anti-patterns.md      # Detailed anti-pattern catalog
 │   ├── tdd-workflow/
 │   │   └── SKILL.md                          # TDD cycle and test granularity
-│   └── perspective-test/
-│       └── SKILL.md                          # User perspective testing methodology
+│   ├── perspective-test/
+│   │   └── SKILL.md                          # User perspective testing methodology
+│   ├── teams-messaging/
+│   │   └── SKILL.md                          # Native teams START/ACK/FYI/ALERT patterns
+│   ├── pool-handoff/
+│   │   └── SKILL.md                          # Pool slot management (.idle/.busy) and peer handoff
+│   ├── agent-lifecycle/
+│   │   └── SKILL.md                          # agentStart/agentStop lifecycle patterns
+│   ├── ateam-cli/
+│   │   └── SKILL.md                          # CLI usage reference for agents
+│   ├── work-breakdown/
+│   │   └── SKILL.md                          # Face decomposition guidelines
+│   ├── defensive-coding/
+│   │   └── SKILL.md                          # Guard patterns, async safety, resource cleanup
+│   ├── security-input/
+│   │   └── SKILL.md                          # URL encoding, injection prevention
+│   ├── code-patterns/
+│   │   └── SKILL.md                          # Type safety, async patterns, API patterns
+│   ├── a11y/
+│   │   └── SKILL.md                          # Accessibility requirements
+│   └── write-prd/
+│       └── SKILL.md                          # PRD authoring guidelines
 ├── scripts/                 # Hook enforcement scripts (for internal use)
 │   ├── vitest.config.ts     # Test configuration for hook scripts
 │   └── hooks/               # Agent lifecycle hooks
@@ -122,11 +143,14 @@ ai-team/
 │       ├── block-ba-bash-restrictions.js # Block dev server/git stash (B.A.)
 │       ├── block-amy-writes.js          # Block all project writes (Amy)
 │       ├── block-amy-test-writes.js     # Block test file writes (Amy)
-│       ├── block-lynch-browser.js       # Block Playwright (Lynch + Lynch-Final)
-│       ├── block-lynch-writes.js        # Block file writes (Lynch + Lynch-Final)
+│       ├── block-lynch-browser.js       # Block Playwright (Lynch + Stockwell)
+│       ├── block-lynch-writes.js        # Block file writes (Lynch)
 │       ├── block-sosa-writes.js         # Block all writes (Sosa)
 │       ├── block-worker-board-move.js   # Block board_move (workers)
 │       ├── block-worker-board-claim.js  # Block board_claim (workers)
+│       ├── enforce-agent-start.js       # Require agentStart before work (workers)
+│       ├── enforce-handoff.js           # Require agentStop + peer handoff (pipeline workers)
+│       ├── lint-test-quality.js         # Lint test writes against anti-patterns (B.A.)
 │       └── diagnostic-hook.js           # Debug/diagnostic hook
 └── docs/
     ├── hook-audit.md
@@ -174,23 +198,25 @@ These hooks fire for all sessions where the plugin is enabled:
 - **SubagentStart/Stop** (no matcher): `observe-subagent.js` — logs subagent lifecycle events
 - **TeammateIdle/TaskCompleted** (no matcher): `observe-teammate.js` — logs native teams events
 
-### Shared Working Agent Hooks (Murdock, B.A., Lynch, Lynch-Final, Amy, Tawnia)
+### Shared Working Agent Hooks (Murdock, B.A., Lynch, Stockwell, Amy, Tawnia)
 
 All working agents share these hooks in their frontmatter:
 
 - **PreToolUse(Bash)** → `block-raw-echo-log.js`: Forces `ateam activity createActivityEntry` instead of raw echo
-- **PreToolUse(board_move)** → `block-worker-board-move.js`: Stage transitions are Hannibal's responsibility
+- **PreToolUse(board_move)** → `block-worker-board-move.js`: Stage transitions handled by `agentStop --advance`
 - **PreToolUse(board_claim)** → `block-worker-board-claim.js`: Item claims go through `ateam agents-start agentStart`
 - **PreToolUse(no matcher)** → `observe-pre-tool-use.js {agent}`: Telemetry
 - **PostToolUse(no matcher)** → `observe-post-tool-use.js {agent}`: Telemetry
-- **Stop** → `enforce-completion-log.js`: Requires `agent_stop` before finishing
 - **Stop** → `observe-stop.js {agent}`: Telemetry
+
+Pipeline workers (Murdock, B.A., Lynch, Amy) use `enforce-handoff.js` as their Stop hook — it validates both `agentStop` lifecycle AND peer-to-peer handoff routing. Terminal agents (Tawnia, Stockwell) use `enforce-completion-log.js` instead — they complete without forwarding.
 
 ### Per-Agent Unique Hooks
 
 **Murdock**: `block-murdock-impl-writes.js` — prevents writing implementation files
-**B.A.**: `block-ba-bash-restrictions.js` + `block-ba-test-writes.js` — prevents test writes and restricted bash
-**Lynch / Lynch-Final**: `block-lynch-writes.js` + `block-lynch-browser.js` — prevents file writes and browser tools
+**B.A.**: `block-ba-bash-restrictions.js` + `block-ba-test-writes.js` + `lint-test-quality.js` — prevents test writes, restricted bash, and lints test quality
+**Lynch**: `block-lynch-writes.js` + `block-lynch-browser.js` — prevents file writes and browser tools
+**Stockwell**: `block-lynch-browser.js` — prevents browser tools (read-only reviewer)
 **Amy**: `block-amy-writes.js` + `track-browser-usage.js` + `enforce-browser-verification.js`
 **Sosa**: `block-sosa-writes.js` + `enforce-sosa-coverage.js`
 **Hannibal**: `block-hannibal-writes.js` + `block-raw-mv.js` + `enforce-final-review.js`
