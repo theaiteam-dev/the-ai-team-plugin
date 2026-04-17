@@ -42,21 +42,27 @@ try {
   const command = toolInput.command || '';
   const sessionId = hookInput.session_id || '';
 
-  // Only check Bash calls that invoke ateam CLI
-  if (toolName !== 'Bash' || !command.includes('ateam')) {
+  // Match the ateam CLI being invoked with a subcommand — not just any
+  // substring "ateam" in a path. `\bateam\s+[a-z-]+` requires a word
+  // boundary before `ateam`, whitespace, then a subcommand token, so
+  // `ls packages/ateam-cli/...` and `grep ateam-cli` are ignored.
+  const ATEAM_CLI = /\bateam\s+[a-z-]+/;
+  const ATEAM_AGENTS_START = /\bateam\s+agents-start\b/;
+  const ATEAM_NEEDS_START = /\bateam\s+(agents-stop|activity)\b/;
+
+  if (toolName !== 'Bash' || !ATEAM_CLI.test(command)) {
     process.exit(0);
   }
 
   // Allow agents-start itself through (that's what creates the marker)
-  if (command.includes('agents-start')) {
+  if (ATEAM_AGENTS_START.test(command)) {
     process.exit(0);
   }
 
   // Only enforce on commands that require a prior agentStart:
   // - agents-stop (will fail with NOT_CLAIMED without it)
   // - activity log (sign of skipped lifecycle setup)
-  const needsStart = command.includes('agents-stop') || command.includes('activity');
-  if (!needsStart) {
+  if (!ATEAM_NEEDS_START.test(command)) {
     process.exit(0);
   }
 
