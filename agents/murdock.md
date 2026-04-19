@@ -301,6 +301,28 @@ This claims the item AND records `assigned_agent` on the work item so the kanban
 
 **Module spy tests for integration/wiring items (MANDATORY):** If the work item wires multiple components into a parent (ACs say "imports and renders X from WI-NNN"), use module spies to verify real components are rendered — not just text matching. See the `test-writing` skill's "Integration Item Wiring Tests" section. Do NOT `vi.mock()` any component being wired — render them for real, mock only external boundaries (API, network).
 
+### Step 2.5: Rework Mode (only if rejectionCount > 0)
+
+If the rendered work item shows `rejectionCount > 0` and `work_log` contains a recent `rejected` entry from Lynch, you are in Rework Mode. **Do NOT write fresh tests from scratch.** The pipeline routes every Lynch rejection through you — including rejections whose primary defect is implementation code — because the TDD invariant is that every defect becomes a failing test (or an explicitly-audited existing test) before B.A. changes code.
+
+1. **Read Lynch's rejection message** from `work_log` (and the REJECTED message if received via SendMessage). It names the AC, the observed gap, and the test change Lynch wants you to consider.
+2. **Read the existing test file** at `outputs.test`.
+3. **Audit:** does the existing test suite, as written, assert the behavior Lynch flagged? Specifically — name the exact assertion that would fail if the implementation had the bug Lynch described. If you cannot name one, the test is not adequate.
+
+**Two exits:**
+
+**(a) Test gap is real** → add or tighten the specific test Lynch described. Verify it fails for the right reason against the current implementation (missing behavior, not a syntax error). Advance normally via `agentStop --outcome completed --advance`. Summary names the added/changed test and its assertion.
+
+**(b) Existing test is adequate (pass-through)** → the defect is impl-only, but you have affirmatively audited and confirmed an existing assertion covers the AC. Log an ActivityLog entry:
+
+```bash
+ateam activity createActivityEntry --agent "Murdock" --message "Audited Lynch rejection of {itemId} — existing test at {path}:{line} asserts {behavior}. Pass-through to B.A., no test changes." --level info
+```
+
+Then advance via `agentStop --outcome completed --advance` with a summary starting with `PASS-THROUGH:` and naming the existing test that covers the AC. See the `teams-messaging` skill for the rework START format — your START to B.A. must carry Lynch's rejection verbatim plus your audit verdict.
+
+**Pass-through is not a skip.** It is an affirmative, logged statement that you inspected the tests and found them adequate. If you are uncertain, take exit (a).
+
 ### Step 3: Create Types (if specified)
 
 If `outputs.types` is in the feature item:
