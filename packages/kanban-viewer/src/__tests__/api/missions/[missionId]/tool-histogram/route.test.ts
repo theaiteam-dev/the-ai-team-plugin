@@ -293,13 +293,13 @@ describe('GET /api/missions/[missionId]/tool-histogram', () => {
         eventType: 'pre_tool_use',
       });
     }
-    // Project B events that share the missionId coincidentally (no FK
-    // link since the mission belongs to A, but hypothetical rows must
-    // not leak). Seed without missionId FK so we don't violate schema.
+    // Project B events that share the SAME missionId — must not leak
+    // into project A's response. Sharing missionId ensures the
+    // projectId filter is what excludes them, not the missionId filter.
     for (let i = 0; i < 5; i++) {
       await seedEvent({
         projectId: PROJECT_B,
-        missionId: null,
+        missionId: MISSION_ID,
         agentName: 'murdock',
         toolName: 'Read',
         eventType: 'pre_tool_use',

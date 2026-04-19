@@ -168,7 +168,7 @@ function buildObserverPayload(hookInput, agentNameArg) {
     }
     if (toolName === 'Skill') {
       payloadData.skill_name = toolInput.skill;
-      payloadData.args_hash = hashArgs(toolInput.args || '');
+      payloadData.args_hash = hashArgs(toolInput.args ?? '');
     }
     const payload = Object.keys(payloadData).length > 0 ? JSON.stringify(payloadData) : '{}';
 

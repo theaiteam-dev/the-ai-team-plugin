@@ -47,21 +47,21 @@ try {
   // boundary before `ateam`, whitespace, then a subcommand token, so
   // `ls packages/ateam-cli/...` and `grep ateam-cli` are ignored.
   const ATEAM_CLI = /\bateam\s+[a-z-]+/;
-  const ATEAM_AGENTS_START = /\bateam\s+agents-start\b/;
   const ATEAM_NEEDS_START = /\bateam\s+(agents-stop|activity)\b/;
 
   if (toolName !== 'Bash' || !ATEAM_CLI.test(command)) {
     process.exit(0);
   }
 
-  // Allow agents-start itself through (that's what creates the marker)
-  if (ATEAM_AGENTS_START.test(command)) {
-    process.exit(0);
-  }
-
   // Only enforce on commands that require a prior agentStart:
   // - agents-stop (will fail with NOT_CLAIMED without it)
   // - activity log (sign of skipped lifecycle setup)
+  //
+  // Pure `ateam agents-start` invocations naturally fall through here
+  // (they don't match ATEAM_NEEDS_START) and exit 0. We deliberately do
+  // NOT short-circuit on a substring match for `agents-start` — a composed
+  // command like `printf 'ateam agents-start'; ateam agents-stop ...`
+  // would otherwise bypass the marker check on the real agents-stop call.
   if (!ATEAM_NEEDS_START.test(command)) {
     process.exit(0);
   }

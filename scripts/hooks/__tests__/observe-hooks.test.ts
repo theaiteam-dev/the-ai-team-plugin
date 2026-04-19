@@ -388,6 +388,35 @@ describe('Observer Hook - Payload Construction', () => {
       expect(parsed.args_hash).toBe(parsed2.args_hash);
     });
 
+    it('should produce distinct args_hash for falsy-but-distinct args (0 vs empty string)', () => {
+      // Regression: `||` collapses falsy values (0, false, '') to '' before
+      // hashing, conflating distinct invocations. Use `??` so only
+      // null/undefined fall through to the empty-string default.
+      const base: ObserverHookInput = {
+        tool_name: 'Skill',
+        hook_event_name: 'PreToolUse',
+      };
+
+      const pZero = buildObserverPayload(
+        { ...base, tool_input: { skill: 'teams-messaging', args: 0 as unknown as string } },
+        'Murdock'
+      );
+      const pEmpty = buildObserverPayload(
+        { ...base, tool_input: { skill: 'teams-messaging', args: '' } },
+        'Murdock'
+      );
+
+      const hZero = JSON.parse(pZero!.payload as string).args_hash;
+      const hEmpty = JSON.parse(pEmpty!.payload as string).args_hash;
+
+      expect(hZero).toMatch(/^[0-9a-f]{12}$/);
+      expect(hEmpty).toMatch(/^[0-9a-f]{12}$/);
+      // Empty string SHA-256 prefix is e3b0c44298fc; numeric 0 stringifies
+      // to "0" which hashes to a different value.
+      expect(hEmpty).toBe('e3b0c44298fc');
+      expect(hZero).not.toBe(hEmpty);
+    });
+
     it('should surface the skill name in the summary field', () => {
       const hookInput: ObserverHookInput = {
         tool_input: { skill: 'teams-messaging', args: 'x' },

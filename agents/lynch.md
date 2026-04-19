@@ -2,6 +2,7 @@
 name: lynch
 model: sonnet
 description: Reviewer - reviews tests and implementation together
+permissionMode: acceptEdits
 skills:
   - test-writing
   - defensive-coding
@@ -30,6 +31,10 @@ hooks:
       hooks:
         - type: command
           command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/block-lynch-browser.js"
+    - matcher: "Write|Edit"
+      hooks:
+        - type: command
+          command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/block-lynch-writes.js"
     - hooks:
         - type: command
           command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/observe-pre-tool-use.js lynch"

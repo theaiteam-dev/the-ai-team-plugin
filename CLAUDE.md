@@ -53,7 +53,7 @@ briefings → ready → testing → implementing → review → probing → done
                                                         └─────────────────┘
 ```
 
-**Note on transition enforcement:** The transition matrix enforces the linear pipeline: `testing` advances to `implementing` (not directly to `review`); `implementing` advances to `review`; `review` can send an item back to `testing` or `implementing` for rework, or forward to `probing`; `probing` advances to `done` or can send back to `ready`. See `packages/shared/src/stages.ts` for the full `TRANSITION_MATRIX`.
+**Note on transition enforcement:** The transition matrix enforces the linear pipeline: `testing` advances to `implementing` (not directly to `review`); `implementing` advances to `review`; `review` can send an item back to `testing` or `implementing` for rework, or forward to `probing`; `probing` advances to `done` or can send back to `ready`. **Lynch rejections always use `--return-to testing`** so Murdock audits test coverage before B.A. reworks the implementation; Stockwell (final review) may rework to either stage. See `packages/shared/src/stages.ts` for the full `TRANSITION_MATRIX`.
 
 Each feature flows through stages sequentially. Different features can be at different stages simultaneously (**pipeline parallelism** — the assembly-line model). Within each stage, up to N items can be processed concurrently by N agent instances (**stage concurrency**), where N is guided by `ateam scaling compute`. WIP limits are **per stage** (per column) — each stage independently caps how many items can be in it. An idle agent should always be dispatched work if its stage has capacity, regardless of how many items are in other stages.
 

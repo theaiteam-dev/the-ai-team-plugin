@@ -361,11 +361,13 @@ describe('GET /api/missions/[missionId]/skill-usage', () => {
       skillName: 'teams-messaging',
       argsHash: 'aaaaaaaaaaaa',
     });
-    // Project B rows — must not leak into project A's response.
+    // Project B rows tied to the SAME missionId — must not leak into
+    // project A's response. Sharing missionId ensures the projectId
+    // filter is what excludes them, not the missionId filter.
     for (let i = 0; i < 4; i++) {
       await seedSkillEvent({
         projectId: PROJECT_B,
-        missionId: null,
+        missionId: MISSION_ID,
         agentName: 'murdock',
         skillName: 'teams-messaging',
         argsHash: `bbbbbbbbbbb${i}`,

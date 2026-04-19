@@ -133,6 +133,37 @@ describe('enforce-agent-start', () => {
     });
   });
 
+  describe('regression: composed-command bypass (CodeRabbit PR #35)', () => {
+    // Previously, a composed command that mentioned `ateam agents-start`
+    // anywhere in the string (e.g. via printf/echo) would short-circuit
+    // the early-exit branch, letting the actual `agents-stop` invocation
+    // skip the marker check and fail downstream with NOT_CLAIMED.
+    it('blocks composed bypass: printf "ateam agents-start"; ateam agents-stop ... (exit 2)', () => {
+      const result = runHook({
+        session_id: SESSION_WITHOUT_START,
+        tool_name: 'Bash',
+        tool_input: {
+          command:
+            "printf 'ateam agents-start'; ateam agents-stop agentStop --itemId WI-001 --agent Murdock --outcome completed --summary done",
+        },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/agentStart/i);
+    });
+
+    it('still allows pure `ateam agents-start` after the early-exit is removed (exit 0)', () => {
+      const result = runHook({
+        session_id: SESSION_WITHOUT_START,
+        tool_name: 'Bash',
+        tool_input: {
+          command: 'ateam agents-start agentStart --itemId WI-001 --agent murdock',
+        },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
   describe('regression: false-positive on file paths or grep patterns', () => {
     it('does NOT block `git log` on a path containing "agents-stop" (exit 0)', () => {
       const result = runHook({
