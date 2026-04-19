@@ -261,6 +261,8 @@ Usage: `ateam <resource> <command> [flags]`
 | Archive mission | `ateam missions-archive archiveMission --json` |
 | Get final review | `ateam missions-final-review getFinalReview --missionId <id> --json` |
 | Write final review | `ateam missions-final-review writeFinalReview --missionId <id> --report "..." --json` |
+| Tool histogram | `ateam missions getToolHistogram <missionId> --json` |
+| Skill usage | `ateam missions getSkillUsage <missionId> --json` |
 | Compute scaling | `ateam scaling compute [--concurrency N] [--memory N] --json` |
 | Check deps | `ateam deps-check checkDeps --json` |
 | Log activity | `ateam activity createActivityEntry --agent <name> --message "..." --level info` |
@@ -322,7 +324,11 @@ Returns per-agent breakdown with model, token counts, and estimated cost:
 - `GET /api/missions/current` — get active mission
 - `GET /api/items` — get work items (board state)
 - `POST /api/missions/{id}/token-usage` — aggregate and return token costs
+- `GET /api/missions/{id}/tool-histogram` — per-agent tool-call counts grouped by tool name
+- `GET /api/missions/{id}/skill-usage` — per-agent skill invocations with counts and `distinctArgs`
 - `POST /api/hooks/events` — store hook events (called by observer hooks, not manually)
+
+**Skill activations** are captured on the `HookEvent` `payload` column: when `toolName === 'Skill'`, observer hooks record `skill_name` and a 12-char SHA-256 `args_hash` so repeated invocations with the same args are identifiable without storing the args themselves.
 
 Token pricing is loaded from `ateam.config.json` at runtime (see `packages/kanban-viewer/src/lib/token-cost.ts`).
 
