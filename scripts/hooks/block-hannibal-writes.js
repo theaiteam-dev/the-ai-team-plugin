@@ -34,6 +34,14 @@ try {
   const toolInput = hookInput.tool_input || {};
   const filePath = toolInput.file_path || '';
 
+  // Only gate write-capable tools. Reads, searches, and execs are unrelated
+  // to this hook's intent ("hannibal writes") — Hannibal must read source
+  // files to orchestrate and report status.
+  const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+  if (!WRITE_TOOLS.has(toolName)) {
+    process.exit(0);
+  }
+
   // Block writes to src/ directory (handle both absolute and relative paths)
   if (filePath.includes('/src/') || filePath.startsWith('src/')) {
     sendDeniedEvent({ agentName: agent, toolName, reason: `BLOCKED: Hannibal cannot write to ${filePath}. Implementation code must be delegated to B.A.` });

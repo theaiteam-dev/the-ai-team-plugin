@@ -55,7 +55,7 @@ try {
   }
 
   // Allow writes to /tmp/ (throwaway scripts, debugging artifacts)
-  if (filePath.startsWith('/tmp/') || filePath.startsWith('/var/')) {
+  if (filePath.startsWith('/tmp/')) {
     process.exit(0);
   }
 
