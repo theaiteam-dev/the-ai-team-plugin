@@ -280,6 +280,114 @@ describe('enforce-agent-start', () => {
     });
   });
 
+  describe('regression: over-broad component match (Finding #3)', () => {
+    // Previously the needs-start check was a substring regex
+    // `\bateam\s+(agents-stop|activity)\b` over the FULL command string.
+    // That false-blocked commands that merely *mentioned* the substring
+    // inside an `echo`/`printf` argument or a leading comment line, even
+    // when the actual invoked command was `ateam agents-start ...` (or
+    // some other innocent verb).
+    //
+    // The fix splits the command on `;`, `&&`, `||`, and newlines and
+    // checks whether the FIRST verb of any component is `ateam` followed
+    // by a needs-start subcommand. Bypass attempts where the real
+    // `agents-stop` IS the first verb of a later component still fail
+    // closed.
+    describe('bypass attempts still fail closed', () => {
+      it("blocks `printf 'ateam agents-start'; ateam agents-stop ...` (exit 2)", () => {
+        const result = runHook({
+          session_id: SESSION_WITHOUT_START,
+          tool_name: 'Bash',
+          tool_input: {
+            command:
+              "printf 'ateam agents-start' ; ateam agents-stop --itemId WI-001 --agent murdock --outcome completed --summary x",
+          },
+        });
+        expect(result.exitCode).toBe(2);
+        expect(result.stderr).toMatch(/BLOCKED/i);
+        expect(result.stderr).toMatch(/agentStart/i);
+      });
+
+      it("blocks `echo 'ateam agents-start' && ateam activity create...` (exit 2)", () => {
+        const result = runHook({
+          session_id: SESSION_WITHOUT_START,
+          tool_name: 'Bash',
+          tool_input: {
+            command:
+              "echo 'ateam agents-start' && ateam activity createActivityEntry --agent murdock --message hi",
+          },
+        });
+        expect(result.exitCode).toBe(2);
+        expect(result.stderr).toMatch(/BLOCKED/i);
+        expect(result.stderr).toMatch(/activity/i);
+      });
+    });
+
+    describe('legitimate compound commands are no longer false-blocked', () => {
+      it("does NOT block `echo 'next step: ateam agents-stop' && ateam agents-start ...` (exit 0)", () => {
+        const result = runHook({
+          session_id: SESSION_WITHOUT_START,
+          tool_name: 'Bash',
+          tool_input: {
+            command:
+              "echo 'next step: ateam agents-stop' && ateam agents-start --itemId WI-001 --agent murdock",
+          },
+        });
+        expect(result.exitCode).toBe(0);
+      });
+
+      it('does NOT block a `# comment ... agents-stop` followed by `ateam agents-start` (exit 0)', () => {
+        const result = runHook({
+          session_id: SESSION_WITHOUT_START,
+          tool_name: 'Bash',
+          tool_input: {
+            command:
+              '# comment: ateam agents-stop is the next call\nateam agents-start --itemId WI-001 --agent murdock',
+          },
+        });
+        expect(result.exitCode).toBe(0);
+      });
+
+      it("does NOT block `printf 'ateam activity ...' && ateam agents-start ...` (exit 0)", () => {
+        const result = runHook({
+          session_id: SESSION_WITHOUT_START,
+          tool_name: 'Bash',
+          tool_input: {
+            command:
+              "printf 'ateam activity createActivityEntry' && ateam agents-start --itemId WI-001 --agent murdock",
+          },
+        });
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
+    describe('plain valid invocations still work', () => {
+      it('allows plain `ateam agents-stop` with marker (exit 0)', () => {
+        const result = runHook({
+          session_id: SESSION_WITH_START,
+          tool_name: 'Bash',
+          tool_input: {
+            command:
+              'ateam agents-stop --itemId WI-001 --agent murdock --outcome completed --summary done',
+          },
+        });
+        expect(result.exitCode).toBe(0);
+      });
+
+      it('allows plain `ateam activity createActivityEntry` with marker (exit 0)', () => {
+        const result = runHook({
+          session_id: SESSION_WITH_START,
+          tool_name: 'Bash',
+          tool_input: {
+            command:
+              'ateam activity createActivityEntry --agent murdock --message "hello"',
+          },
+        });
+        expect(result.exitCode).toBe(0);
+      });
+    });
+  });
+
   describe('fail-open on malformed input', () => {
     it('exits 0 when stdin is not valid JSON', () => {
       try {
