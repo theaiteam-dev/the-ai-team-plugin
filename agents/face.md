@@ -178,9 +178,13 @@ Examples of design work PRDs commonly specify:
 - Header/footer design and branding
 
 **Integration work items:**
-Components built in isolation deliver zero user value until wired into the application. **Use shell-first decomposition** (see `work-breakdown` skill) when a PRD describes pages assembled from 3+ components: create the integration shell as a scaffold item with real imports pointing to stub components, then create component items that fill in the stubs. This eliminates big-bang integration items that consistently fail.
+Components built in isolation deliver zero user value until wired into the application. **Use integration-last decomposition** (see `work-breakdown` skill) when a PRD describes pages assembled from 3+ components: the scaffold item creates project structure (Vite, Tailwind, types, API client, test setup) but **does NOT create the integration parent file** (`App.tsx`, root layout, page shell). Component items run in parallel writing only their own files. A final integration item (after all components reach `done`) creates the parent from scratch, importing the real components.
 
-If shell-first doesn't apply (1-2 components, or components are independent), create integration work items for:
+This avoids the shared-seam race that breaks shell-first: when the parent exists during the parallel wave, every component contract change has to flow back into the parent's call sites, and Lynch's project-wide typecheck of sibling N catches contract drift from sibling M before its parent-side patch propagates. Integration-last eliminates the seam entirely.
+
+To prevent the integration item from reimagining interfaces, its `context` field MUST list each component's `outputs.impl` path AND the prop signature derived from that component's ACs. See the `work-breakdown` skill's "Integration-Last Decomposition" section for the full pattern, including the hard rule that scaffold items may not reference sibling-wave component output paths.
+
+If integration-last doesn't apply (1-2 components, or components are independent), create integration work items for:
 - Replacing stock/template content with built components in route files
 - Assembling page layouts from individual components
 - Wiring providers, context, or subscribers into root layouts

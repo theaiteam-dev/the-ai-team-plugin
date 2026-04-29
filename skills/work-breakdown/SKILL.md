@@ -107,39 +107,40 @@ When an item is too big, use one of these named patterns to find the natural sea
 - Each item generates a test file, and 40 test files for one PRD is excessive
 - Horizontal slicing: "Create todo UI", "Create todo API", "Create todo DB migration" (should be one item)
 
-### Shell-First Decomposition for Integration-Heavy PRDs
+### Integration-Last Decomposition for Integration-Heavy PRDs
 
-When a PRD describes a page or app assembled from multiple components, **create the integration shell first** as a scaffold item, then create component items that fill in the stubs:
+When a PRD describes a page or app assembled from multiple components, the integration parent file (e.g. `App.tsx`, `_app.tsx`, root layout) is a **shared seam**: every component item that introduces or changes a prop contract has to flow that change back into the parent's call sites. If multiple component items run in the same wave and the parent already exists from the scaffold, those parallel edits collide on the parent file and produce phantom typecheck failures during review (a sibling's contract change has landed but its parent-side patch has not yet propagated to the reviewer).
+
+**The rule:** the scaffold item does NOT create the integration parent file. A dedicated integration item (the final wave) creates the parent from scratch, importing the real components.
 
 ```
-WI-001: App shell with stubs (scaffold — creates App.tsx with real imports, stub components)
-WI-002: EmptyState component (replaces stub with real implementation)
-WI-003: TodoList component (replaces stub with real implementation)
-WI-004: CreateTodo component (replaces stub with real implementation)
+WI-001: Scaffold (Vite + TS + Tailwind + test setup + types + API client) — does NOT create App.tsx
+WI-002: ErrorBanner component                       ┐
+WI-003: EmptyState component                        │ all in parallel; none touch App.tsx
+WI-004: CreateTodo component                        │
+WI-005: TodoItem component                          │
+WI-006: TodoList component                          ┘
+WI-007: App integration — creates App.tsx from scratch, imports the five real components
 ```
 
-WI-001 creates:
-```tsx
-// App.tsx — shell with real imports, stub components exist as empty exports
-import { EmptyState } from './components/EmptyState';
-import { TodoList } from './components/TodoList';
-import { CreateTodo } from './components/CreateTodo';
-// ... real wiring with real imports, components are initially stubs
-```
+**Why this works:**
 
-Each subsequent item replaces its stub with the real implementation. The imports and wiring are correct from day one — no "big-bang integration item" at the end that tries to wire 4+ components at once.
+- **No shared seam during the parallel wave.** Component items only write their own files (`components/EmptyState.tsx`, `components/EmptyState.test.tsx`). Lynch's project-wide typecheck for sibling N can't fail on contract drift in a shared parent, because the parent doesn't exist yet.
+- **No big-bang integration failure.** By the time WI-007 runs, every component already exists at a known path with a known prop contract. The integration agent imports real components (no reimagining interfaces) and wires them per the parent's own ACs. WI-007 has no in-flight siblings, so its full-project typecheck reflects reality.
 
-**Why this works:** Integration items fail because the implementing agent reimagines component interfaces instead of importing real ones. Shell-first eliminates the problem — the wiring exists before the components do, and B.A. only needs to flesh out each component to match its already-wired interface.
+**To prevent the integration item from reimagining interfaces** (the failure mode the old shell-first pattern was guarding against): the integration item's `context` field must list each component's `outputs.impl` path AND the prop signature derived from that component's acceptance criteria. The integration agent reads those imports as the authoritative interface. If an interface is ambiguous from the AC, surface that as a Sosa question rather than letting the integration agent guess.
 
-**When to use shell-first:**
+**When to use integration-last:**
 - PRD describes a page composed of 3+ distinct components
 - Multiple components need to be wired into a shared parent
 - The parent manages shared state consumed by children
 
-**When NOT to use shell-first:**
+**When NOT to use integration-last:**
 - Components are independent (no shared parent wiring needed)
 - PRD is primarily API/backend work with no page assembly
-- Only 1-2 components to wire (a single integration item is fine)
+- Only 1-2 components to wire (those can land directly with the integration item)
+
+**Hard rule for scaffold items:** the scaffold may create config files, type definitions, an API client, and an empty `index.html` / entry point that mounts a placeholder, but the scaffold MUST NOT import any sibling-wave component or define a parent that will be edited by sibling items. If the scaffold needs to mount *something* (so the dev server boots), mount a single inline placeholder element inside the entry file (`<div>Loading…</div>` in `main.tsx` is fine) — never a `<ComponentName />` reference that points at a sibling's output path.
 
 ### Over-splitting Consolidation
 
