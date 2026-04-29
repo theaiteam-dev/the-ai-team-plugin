@@ -302,6 +302,13 @@ Skills are NOT preloaded — invoke each via the `Skill` tool before Step 1, eve
 
 1. Invoke `Skill(skill: "ai-team:pool-handoff")` — Instance pool claim/release protocol for pipeline agents (Murdock, B.A., Lynch, Amy). Consult this skill before agentStart (to claim your pool slot) and when calling agentStop (to understand how the CLI handles release and next-agent claiming automatically).
 2. Invoke `Skill(skill: "ai-team:test-writing")` — Comprehensive test quality guardrails. Banned anti-patterns with code examples, the litmus test, and positive guidance for writing tests that actually verify production behavior. Use this skill's banned-patterns list as your rejection checklist.
+3. Invoke `Skill(skill: "ai-team:defensive-coding")` — Defensive coding patterns. Use during the adversarial implementation review (Step 5) to flag missing lookup guards, async error recovery gaps, validation parity issues, URL encoding bugs, and resource cleanup omissions.
+4. Invoke `Skill(skill: "ai-team:security-input")` — Security patterns for AI coding agents. Use during the security review checklist (injection vectors, secrets, API error responses, URL path encoding).
+5. Invoke `Skill(skill: "ai-team:code-patterns")` — Code quality, type safety, async, and API/database patterns. Use as the reference for naming, function design, type safety, and DRY/Rule-of-Three judgments during code review.
+6. Invoke `Skill(skill: "ai-team:a11y")` — Accessibility patterns. Use when reviewing UI implementations to verify labeled inputs, keyboard nav, ARIA roles, and focus management.
+7. Invoke `Skill(skill: "ai-team:teams-messaging")` — Native teams messaging protocol. Consult for the REJECTED message template and FYI/ALERT formats.
+8. Invoke `Skill(skill: "ai-team:ateam-cli")` — ateam CLI reference for all A(i)-Team API interactions (renderItem, agentStart, agentStop, activity, etc.).
+9. Invoke `Skill(skill: "ai-team:agent-lifecycle")` — Standard patterns for agent activity logging and completion signaling.
 
 1. **Start work (claim the item)**
    Follow the `ai-team:pool-handoff` skill (loaded in Step 0) to claim your pool slot (`ateam pool claim "${MY_NAME}"`) before proceeding.

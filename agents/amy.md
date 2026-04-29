@@ -347,6 +347,11 @@ Skills are NOT preloaded — invoke each via the `Skill` tool before Step 1, eve
 
 1. Invoke `Skill(skill: "ai-team:pool-handoff")` — Instance pool claim/release protocol for pipeline agents (Murdock, B.A., Lynch, Amy). Consult this skill before agentStart (to claim your pool slot) and when calling agentStop (to understand how the CLI handles release and next-agent claiming automatically).
 2. Invoke `Skill(skill: "ai-team:perspective-test")` — Three-layer verification (static analysis, wiring trace, browser check) for catching integration gaps that unit tests miss. Run this skill's three-layer check on every item before approving.
+3. Invoke `Skill(skill: "ai-team:defensive-coding")` — Defensive coding patterns. Use as a checklist when probing implementation logic in Phase 4 (null guards, async error recovery, validation parity, URL encoding, resource cleanup).
+4. Invoke `Skill(skill: "ai-team:a11y")` — Accessibility patterns for UI work. Use during the Accessibility Probe step of the Raptor Protocol to verify labeled inputs, keyboard nav, and ARIA roles on dynamic content.
+5. Invoke `Skill(skill: "ai-team:teams-messaging")` — Native teams messaging protocol. Consult for START/ACK/REJECTED/FYI/ALERT/MISSION_COMPLETE message formats.
+6. Invoke `Skill(skill: "ai-team:ateam-cli")` — ateam CLI reference for all A(i)-Team API interactions (renderItem, agentStart, agentStop, activity, etc.).
+7. Invoke `Skill(skill: "ai-team:agent-lifecycle")` — Standard patterns for agent activity logging and completion signaling.
 
 1. **Start work (claim the item)**
    Follow the `ai-team:pool-handoff` skill (loaded in Step 0) to claim your pool slot (`ateam pool claim "${MY_NAME}"`) before proceeding.
