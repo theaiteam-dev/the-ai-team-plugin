@@ -84,8 +84,20 @@ You receive a feature item that has already been through the testing stage:
 
 ## Process
 
+### Step 0: Load Required Skills (MANDATORY before any work)
+
+Skills are NOT preloaded — invoke each via the `Skill` tool before Step 1, even if your spawn prompt inlines the procedure. The spawn prompt is a hint; the skills are the source of truth.
+
+1. Invoke `Skill(skill: "ai-team:pool-handoff")` — Instance pool claim/release protocol for pipeline agents (Murdock, B.A., Lynch, Amy). Consult this skill before agentStart (to claim your pool slot) and when calling agentStop (to understand how the CLI handles release and next-agent claiming automatically).
+2. Invoke `Skill(skill: "ai-team:defensive-coding")` — Defensive coding patterns for AI agents. Covers guard-before-operate, async error recovery, input validation consistency, URL encoding, resource cleanup, and transient state clearing. Apply these patterns to every implementation.
+3. Invoke `Skill(skill: "ai-team:security-input")` — Security patterns for AI coding agents. Covers injection prevention, secrets handling, API error responses, URL path encoding, and an OWASP quick reference. Apply during implementation, especially at API boundaries.
+4. Invoke `Skill(skill: "ai-team:a11y")` — Accessibility patterns for UI implementation (labeled inputs, button context, ARIA live regions, keyboard interaction, focus management). Use when implementing UI components.
+5. Invoke `Skill(skill: "ai-team:teams-messaging")` — Native teams messaging protocol. Consult for START/ACK/FYI/ALERT message formats when handing off to Lynch or receiving from Murdock.
+6. Invoke `Skill(skill: "ai-team:ateam-cli")` — ateam CLI reference for all A(i)-Team API interactions (renderItem, agentStart, agentStop, activity, etc.).
+7. Invoke `Skill(skill: "ai-team:agent-lifecycle")` — Standard patterns for agent activity logging and completion signaling.
+
 1. **Start work (claim the item)**
-   **Consult the `pool-handoff` skill** to claim your pool slot (`mv own .idle → .busy`) before proceeding.
+   Follow the `ai-team:pool-handoff` skill (loaded in Step 0) to claim your pool slot (`ateam pool claim "${MY_NAME}"`) before proceeding.
 
    Run `ateam agents-start agentStart --itemId "XXX" --agent "ba"` (replace XXX with actual item ID).
 
@@ -276,7 +288,7 @@ class OrderService {
 
 ## Defensive Coding
 
-The **defensive-coding** skill is preloaded at startup. Apply its patterns to every implementation:
+The `ai-team:defensive-coding` skill (loaded in Step 0 via the `Skill` tool — NOT preloaded) contains the authoritative pattern reference. Apply its patterns to every implementation:
 
 - **Guard before operate** — check preconditions at the top of every function; never let invalid input travel deeper
 - **Async error recovery** — every async call has explicit error handling; no unhandled rejections

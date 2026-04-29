@@ -55,9 +55,11 @@ it('calculates total with tax', () => {
 });
 ```
 
-### 3. Tailwind CSS Class Assertions (BANNED)
+### 3. Utility-Class Assertions and Class-List Diffs (BANNED)
 
-`toHaveClass` with Tailwind utilities tests styling strings, not behavior. JSDOM does not compute CSS. These pass on broken layouts and fail on harmless refactors.
+Asserting on utility-class strings (`toHaveClass('bg-green-500 ...')`) tests styling tokens, not behavior. Headless test environments don't compute CSS — these pass on broken layouts and fail on harmless refactors.
+
+The same rule applies to *diffing* class lists across states (e.g., capturing the class set on render A, then on render B, and asserting the delta matches a hardcoded regex). Multiple class tokens are no more behavioral than one. If the only thing the test checks is "this set of style tokens changed," it's brittle — any styling refactor breaks it without any user-visible change.
 
 ```typescript
 // BAD: Tests a class name string, not behavior
@@ -65,10 +67,23 @@ render(<StatusBadge status="active" />);
 const badge = screen.getByText('Active');
 expect(badge).toHaveClass('bg-green-500 rounded-full text-white');
 
-// GOOD: Test behavior and accessibility
+// ALSO BAD: Diffs class lists across states with hardcoded patterns
+const before = element.className.split(/\s+/);
+await user.click(toggle);
+const after = element.className.split(/\s+/);
+const added = after.filter((c) => !before.includes(c));
+expect(added).toEqual(expect.arrayContaining([/line-through/, /text-gray-/]));
+// Passes only as long as those exact tokens are used. Any styling refactor breaks it.
+
+// GOOD: Test the user-visible effect
 render(<StatusBadge status="active" />);
 expect(screen.getByText('Active')).toBeInTheDocument();
 expect(screen.getByRole('status')).toHaveAccessibleName('Active');
+
+// GOOD: For state changes, assert the user-observable change
+await user.click(toggle);
+expect(screen.getByRole('checkbox', { name: /walk dog/i })).toBeChecked();
+// (or: assert content/role/aria changed — not which tokens did)
 ```
 
 ### 4. Source File Regex Matching (BANNED)
@@ -159,10 +174,24 @@ expect(['pending', 'processing', 'shipped']).toContain(status);
 const label = getLabel() ?? 'fallback';
 expect(label).toBe('fallback'); // hides the fact that getLabel() returned undefined
 
+// also BAD: query union — same anti-pattern in disguise
+// Test passes whether the impl renders role=alert OR role=status.
+// If the AC or accessibility convention demands one specific role
+// (validation errors → role="alert"), pin that role directly.
+const alert = screen.queryByRole('alert');
+const status = screen.queryByRole('status');
+const messageNode = alert ?? status;
+expect(messageNode).not.toBeNull();
+
 // GOOD: Pin the exact expected value
 const status = getOrderStatus(completedOrder);
 expect(status).toBe('shipped');
+
+// GOOD: Pin the exact role required by the AC
+expect(screen.getByRole('alert')).toHaveTextContent(/required/i);
 ```
+
+**Rule of thumb:** if you're combining two `query*` calls with `??` or `||`, you're letting the implementation pick which assertion runs. The implementation should not be choosing what the test asserts.
 
 ### 9. No-Op Assertions (BANNED)
 
@@ -300,6 +329,33 @@ This rule applies to **all** forms of replacement, not just `vi.mock()`:
 A **bare** `vi.spyOn(ChildModule, 'Child')` with no `.mockImplementation` / `.mockReturnValue` is acceptable — it observes the call without replacing behavior, so the real child still renders. That is the module-spy pattern from the Integration Item Wiring Tests section below, and it's the only spy form allowed on children of the SUT.
 
 **Red flag for reviewers:** if a test file for a composition contains `captured = props` or `let captured: XProps;` patterns, it is almost certainly this anti-pattern — the test is capturing props off a mock instead of verifying observable output.
+
+### 13. Render-Count and Call-Order Assertions (BANNED)
+
+Asserting on how many times a component rendered, the order in which effects fired, or the order in which mocked dependencies were invoked. Components legitimately re-render — extra renders, batched effects, and reordered initialization are not bugs unless they produce a wrong outcome. Tests that pin those internals fail on safe refactors and miss real bugs that produce the wrong outcome through the "right" sequence.
+
+```typescript
+// BAD: Asserts on the number of renders
+const renderSpy = vi.fn();
+function Probe() { renderSpy(); return null; }
+render(<App><Probe /></App>);
+await user.click(screen.getByRole('button', { name: /load/i }));
+expect(renderSpy).toHaveBeenCalledTimes(3); // breaks on any legitimate re-render
+
+// BAD: Asserts on the order spies were invoked
+const spyA = vi.spyOn(ModuleA, 'init');
+const spyB = vi.spyOn(ModuleB, 'init');
+render(<App />);
+expect(spyA.mock.invocationCallOrder[0]).toBeLessThan(spyB.mock.invocationCallOrder[0]);
+
+// GOOD: Assert on the outcome the user/system observes
+render(<App />);
+await user.click(screen.getByRole('button', { name: /load/i }));
+expect(await screen.findByText(/3 results/i)).toBeInTheDocument();
+expect(httpClient.get).toHaveBeenCalledWith('/api/results');
+```
+
+**Exception:** asserting on the *arguments* a mock received, or that it was called *exactly once* when re-entrancy matters (see "Re-entrancy" below), is fine. The ban is on render counts and call-order timing as proxies for correctness.
 
 ---
 
@@ -480,6 +536,203 @@ This catches the most common review rejection pattern: guards that only protect 
 
 ---
 
+## Coverage Hygiene (Avoiding Redundancy)
+
+A passing test suite isn't free — every test is code that must be read, maintained, and re-run. Tests that re-cover ground already covered elsewhere add maintenance load without adding signal. Aim for *one* good test per behavior at the *right* level.
+
+### Test invariants once, at the highest meaningful scope
+
+If you want to verify a global property (e.g., "no component ships pure-black or pure-white colors", "every page has a single H1", "no form submits without a submit button"), scan once at the highest level that exercises it — typically a page-level or app-level test, or a dedicated invariant suite. Repeating the same scan in every component file produces N copies of the same signal and N places to update when the rule changes.
+
+```typescript
+// BAD: Same color-invariant scan repeated in every component test file
+// EmptyState.test.tsx, ErrorBanner.test.tsx, CreateTodo.test.tsx, TodoItem.test.tsx, App.test.tsx
+it('uses no pure black or white colors', () => {
+  render(<EmptyState />);
+  const styles = getComputedStyleTokens(document.body);
+  expect(styles).not.toContain('rgb(0, 0, 0)');
+  expect(styles).not.toContain('rgb(255, 255, 255)');
+});
+
+// GOOD: One scan at app level, exercised against the whole rendered tree
+// App.test.tsx
+it('no component renders pure-black or pure-white colors (all states)', () => {
+  for (const state of ['empty', 'loading', 'error', 'list', 'modal-open']) {
+    render(<App initialState={state} />);
+    expect(getComputedStyleTokens(document.body)).not.toMatchAny([/rgb\(0, 0, 0\)/, /rgb\(255, 255, 255\)/]);
+    cleanup();
+  }
+});
+```
+
+### Don't re-cover behaviors at every layer
+
+If `<TextInput>` already verifies trim-then-submit, the parent form does *not* need to re-verify trimming. The parent's responsibility is *wiring* — that it passes the user's input to the child and handles the child's output. Each behavior gets tested at its lowest correct scope, and parents test their own contribution (composition, wiring, layout choices) on top.
+
+```typescript
+// BAD: Trim-then-submit asserted in 3 places
+// TextInput.test.tsx: asserts trim-then-submit on the button
+// TextInput.test.tsx: asserts trim-then-submit on Enter
+// CreateTodoForm.test.tsx: asserts trim-then-submit again (same TextInput)
+// App.test.tsx: asserts trim-then-submit a fourth time end-to-end
+
+// GOOD: Test the behavior where it lives, test wiring at parents
+// TextInput.test.tsx: asserts trim-then-submit (button + Enter)
+// CreateTodoForm.test.tsx: asserts the form invokes onSubmit with the trimmed value
+// (does NOT re-test trimming itself)
+// App.test.tsx: asserts the new todo appears in the list after submit (wiring)
+```
+
+**Heuristic:** if a parent test fails because of a bug in a child's internal behavior, the bug should have been caught by the child's own tests. The parent's tests should fail because of *wiring* breakage (wrong prop passed, wrong event handler, missing import).
+
+### Parametrize close variants
+
+Multiple tests that differ only in input or expected value should collapse into one parametrized test. Three tests for "rejects empty / whitespace-only / tab-only" is one table-driven test with three rows. The rows describe the cases; the test body describes the contract.
+
+```typescript
+// BAD: Four near-identical tests
+it('rejects empty submission', () => { /* "" */ });
+it('rejects whitespace-only submission', () => { /* "   " */ });
+it('rejects tab-only submission', () => { /* "\t\t" */ });
+it('rejects newline-only submission', () => { /* "\n" */ });
+
+// GOOD: One parametrized test, four rows
+it.each([
+  ['empty', ''],
+  ['whitespace', '   '],
+  ['tabs', '\t\t'],
+  ['newlines', '\n'],
+])('rejects %s submission', async (_label, input) => {
+  render(<CreateTodo onSubmit={vi.fn()} />);
+  await user.type(screen.getByRole('textbox'), input);
+  await user.click(screen.getByRole('button', { name: /add/i }));
+  expect(screen.getByRole('alert')).toHaveTextContent(/required/i);
+});
+```
+
+The same applies to language-agnostic test runners — Go's table tests, pytest's `parametrize`, Rust's `rstest`, JUnit's parameterized tests. The rule is universal.
+
+### One canonical test per acceptance criterion
+
+After mapping ACs 1:1 to tests, scan for two tests that share the same arrange and the same query — they're testing the same thing. Merge them. If you have three tests that all say `render(<Component />); expect(getByRole('status')).toBeInTheDocument()` with different titles ("renders", "renders with no props", "shows the empty state"), keep one.
+
+### Prefer behavior queries over spies when both detect the same thing
+
+If `screen.queryByText('Walk dog')` and `expect(realChildSpy).toHaveBeenCalled()` both fail when the feature breaks, the query is the better assertion — it survives module reorganization, named-export renames, and refactors that the spy doesn't. Use module spies (Ban #12 / Integration Wiring section) when behavior queries can't distinguish a real child from an inline reimplementation. Otherwise, query.
+
+---
+
+## Coverage Holes from Symmetry (Assumed-by-Similarity Gaps)
+
+The most common kind of *missing* coverage comes from assuming a tested path covers its untested siblings. A handler that 5 methods route through is not "covered" because one method's error path was tested. A function that takes a parameter is not "covered for hostile inputs" because a benign input passed.
+
+### Shared handlers need per-entry-point tests
+
+When multiple operations route through one error handler, response parser, or transform, each entry point needs its own smoke test for the shared path. Asymmetric coverage hides bugs where one entry point bypasses the shared code path entirely (forgets to await, forgets to pass the response through the handler, etc.).
+
+```typescript
+// BAD: Five API methods share a handleResponse() helper.
+// Only listTodos has a 500-error test.
+it('listTodos throws on 500', async () => { /* ... */ });
+// createTodo, updateTodo, deleteTodo, getTodo all share handleResponse,
+// but if any of them forgets to call it, no test catches it.
+
+// GOOD: Each entry point has its own error-path test
+it.each([
+  ['listTodos',   () => listTodos()],
+  ['createTodo',  () => createTodo({ title: 'x' })],
+  ['updateTodo',  () => updateTodo('1', { completed: true })],
+  ['deleteTodo',  () => deleteTodo('1')],
+  ['getTodo',     () => getTodo('1')],
+])('%s rejects on non-OK response', async (_name, call) => {
+  server.use(http.all('*', () => HttpResponse.json({ error: 'x' }, { status: 500 })));
+  await expect(call()).rejects.toThrow(/server error/i);
+});
+```
+
+### Boundary transformations need hostile inputs
+
+If your code encodes, escapes, sanitizes, or normalizes input before crossing a boundary (URL, SQL, HTML, shell, JSON), test it with input that *requires* the transformation. Benign inputs make encoders look correct even when the encoder is missing entirely. The transformation is only observable on inputs that would produce a different result without it.
+
+```typescript
+// BAD: All test inputs are benign — encoder is never observed firing
+it('builds the update URL', () => {
+  expect(buildUpdateUrl('abc123')).toBe('/api/items/abc123');
+});
+
+// GOOD: Use an input that requires encoding
+it.each([
+  ['/',       '/api/items/%2F'],
+  [' a b ',   '/api/items/%20a%20b%20'],
+  ['é',       '/api/items/%C3%A9'],
+  ['?q=1',    '/api/items/%3Fq%3D1'],
+])('encodes %j into the URL path', (id, expected) => {
+  expect(buildUpdateUrl(id)).toBe(expected);
+});
+```
+
+The same applies to HTML escaping (test with `<script>`), SQL parameterization (test with `'); DROP TABLE`), shell quoting (test with `$(rm -rf /)`), and JSON serialization (test with control characters and surrogate pairs).
+
+### Test contracts at the level that owns them, not only end-to-end
+
+A contract like "if onSubmit rejects, the form preserves the user's input" belongs to the form component. Verifying it only through an end-to-end app test means: (1) the form has no isolated test of the contract; (2) when the contract breaks, the failing test is far from the cause; (3) the form is shipped with no record of the contract in its own suite. Test contracts at the unit that owns them, then test wiring at the parent.
+
+```typescript
+// BAD: The "rejection preserves input" contract only appears in an end-to-end App test.
+// CreateTodo.test.tsx never proves CreateTodo holds the contract.
+
+// GOOD: Test the contract in CreateTodo.test.tsx, where it lives
+it('preserves input when onSubmit rejects', async () => {
+  const onSubmit = vi.fn().mockRejectedValue(new Error('network'));
+  render(<CreateTodo onSubmit={onSubmit} />);
+  await user.type(screen.getByRole('textbox'), 'Walk dog');
+  await user.click(screen.getByRole('button', { name: /add/i }));
+  await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+  expect(screen.getByRole('textbox')).toHaveValue('Walk dog');
+});
+```
+
+### Async submitters need re-entrancy tests
+
+Anywhere a user can fire an async action twice (double-click submit, mash Enter, click while a request is in flight), test the in-flight guard. "It works on the happy path" doesn't prove the second click is dropped — and "we exposed a `submitting` prop" doesn't prove the parent reads it. Test that the action is invoked *exactly once* when fired multiple times during one in-flight request.
+
+```typescript
+// GOOD: Re-entrancy guard
+it('drops repeated submits while a request is in flight', async () => {
+  const onSubmit = vi.fn().mockImplementation(() => new Promise((r) => setTimeout(r, 50)));
+  render(<CreateTodo onSubmit={onSubmit} />);
+  await user.type(screen.getByRole('textbox'), 'Walk dog');
+  const button = screen.getByRole('button', { name: /add/i });
+  await user.click(button);
+  await user.click(button); // second click during in-flight
+  await user.click(button); // third click during in-flight
+  expect(onSubmit).toHaveBeenCalledTimes(1);
+});
+```
+
+### Verify exposed props/state are actually consumed
+
+If a component exposes a state hook (`submitting`, `loading`, `disabled`) for parents to read, the integration test must verify the parent *consumes* it — not just that it's rendered. A prop that isn't wired to anything observable is dead weight, and "the child renders" isn't the same as "the parent uses what the child exposed."
+
+```typescript
+// BAD: Verifies CreateTodo renders, but not that App actually wires `submitting` anywhere
+it('renders the form', () => {
+  render(<App />);
+  expect(screen.getByRole('textbox', { name: /todo/i })).toBeInTheDocument();
+});
+
+// GOOD: Asserts the consumer-visible effect of the exposed state
+it('disables the submit button while a create is in flight', async () => {
+  (createTodo as Mock).mockImplementation(() => new Promise((r) => setTimeout(r, 50)));
+  render(<App />);
+  await user.type(screen.getByRole('textbox', { name: /todo/i }), 'Walk dog');
+  await user.click(screen.getByRole('button', { name: /add/i }));
+  expect(screen.getByRole('button', { name: /add/i })).toBeDisabled();
+});
+```
+
+---
+
 ## The Litmus Test
 
 For every test, ask:
@@ -511,6 +764,16 @@ For every test file, verify:
 9. Scaffold/task items have at least one test verifying build output, not just file existence.
 10. Every AC with "only/never/exclusively" has both a positive and negative test.
 11. For composition components (shells, layouts, pages, containers), no immediate child is replaced via `vi.mock`, `.mockImplementation`, or `.mockReturnValue`. Children render for real; only external boundaries (API, network, timers) are mocked.
+12. No assertion depends on render count, effect-firing order, or mock invocation order. Asserting on mock *arguments* and "called exactly once" for re-entrancy guards is fine; asserting on relative timing is not.
+13. No utility-class string is asserted directly, and no test diffs class-token sets across states. Assert on user-visible output (text, role, aria, content swap).
+14. No two tests in the suite share the same arrange + query — duplicates are merged or parametrized.
+15. No global invariant (color rule, layout rule, "every page has X") is scanned in more than one file. Pick the highest meaningful scope and put the scan there.
+16. A behavior tested at a child component is not re-tested at parent components. Parents test wiring (the right value flows through), not the wired behavior itself.
+17. Each entry point that funnels through a shared helper (response handler, transform, validator) has its own happy-path and error-path test — coverage of one entry point doesn't cover the others.
+18. Inputs that must be encoded, escaped, sanitized, or normalized are tested with values that *require* the transformation (special chars, unicode, quotes, slashes), not only benign inputs.
+19. Async contracts owned by a unit (rejection preserves state, in-flight guard, retry on transient error) are tested at that unit's own suite, not only end-to-end.
+20. Async submitters have an explicit re-entrancy test asserting the action fires exactly once when triggered multiple times during one in-flight request.
+21. Exposed state/props (`submitting`, `loading`, `disabled`) are verified at the consumer level via observable effects, not just by checking the producer renders.
 
 See `references/testing-anti-patterns.md` for extended examples of each banned pattern.
 See `references/testing-good-patterns.md` for positive examples of behavior-focused testing.

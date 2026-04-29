@@ -253,6 +253,57 @@ describe('block-amy-writes — agent guards', () => {
     });
     expect(result.exitCode).toBe(0);
   });
+
+  // ---------------------------------------------------------------------------
+  // Regression: hook is named *-WRITES but currently also blocks Reads/Glob/Grep.
+  // Amy must be able to read source files to investigate bugs and probe
+  // behavior. Mirror of the Murdock M-20260428-003 over-blocking bug.
+  // ---------------------------------------------------------------------------
+  it('allows amy reading src/services/auth.ts (exit 0)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'amy',
+      tool_name: 'Read',
+      tool_input: { file_path: 'src/services/auth.ts' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('allows amy reading src/components/Foo.tsx (exit 0)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'amy',
+      tool_name: 'Read',
+      tool_input: { file_path: 'src/components/Foo.tsx' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('allows amy Glob-ing src/**/*.ts (exit 0)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'amy',
+      tool_name: 'Glob',
+      tool_input: { pattern: 'src/**/*.ts' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('allows amy Grep-ing src/** (exit 0)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'amy',
+      tool_name: 'Grep',
+      tool_input: { pattern: 'export', path: 'src/' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('still blocks amy Write to src/services/auth.ts (exit 2, regression guard)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'amy',
+      tool_name: 'Write',
+      tool_input: { file_path: 'src/services/auth.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
 });
 
 // =============================================================================
@@ -355,6 +406,81 @@ describe('block-murdock-impl-writes — agent guards', () => {
       tool_input: { file_path: 'src/__tests__/auth.test.ts' },
     });
     expect(result.exitCode).toBe(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Regression: hook is named *-impl-WRITES but currently also blocks Reads.
+  // Murdock must be able to read implementation source files to write tests
+  // against them (TDD). Repro from mission M-20260428-003 / WI-272 where
+  // Murdock-1 was blocked reading CreateTodo.tsx, TodoItem.tsx, EmptyState.tsx,
+  // ErrorBanner.tsx, and todosApi.ts before writing App integration tests.
+  // ---------------------------------------------------------------------------
+  it('allows murdock reading src/services/auth.ts (exit 0)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'murdock',
+      tool_name: 'Read',
+      tool_input: { file_path: 'src/services/auth.ts' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('allows murdock reading src/components/Button.tsx (exit 0)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'murdock',
+      tool_name: 'Read',
+      tool_input: { file_path: 'src/components/Button.tsx' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('allows murdock reading src/components/CreateTodo.tsx (exit 0, M-20260428-003 repro)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'murdock',
+      tool_name: 'Read',
+      tool_input: { file_path: 'src/components/CreateTodo.tsx' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('allows murdock reading src/api/todosApi.ts (exit 0, M-20260428-003 repro)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'murdock',
+      tool_name: 'Read',
+      tool_input: { file_path: 'src/api/todosApi.ts' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('allows murdock Glob-ing impl files (exit 0)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'murdock',
+      tool_name: 'Glob',
+      tool_input: { pattern: 'src/**/*.ts' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('allows murdock Grep-ing impl source (exit 0)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'murdock',
+      tool_name: 'Grep',
+      tool_input: { pattern: 'export function', path: 'src/services/auth.ts' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Consider #14: drop the /var/ allowlist. Only /tmp/ is a true throwaway dir.
+  // Writes to /var/log/* should be blocked just like any other impl path.
+  // ---------------------------------------------------------------------------
+  it('blocks murdock writing to /var/log/foo.ts (exit 2, /var/ no longer allowlisted)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'murdock',
+      tool_name: 'Write',
+      tool_input: { file_path: '/var/log/foo.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
   });
 });
 
@@ -756,6 +882,57 @@ describe('block-hannibal-writes — agent guards', () => {
       tool_input: { file_path: 'ateam.config.json' },
     });
     expect(result.exitCode).toBe(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Regression: hook is named *-WRITES but currently also blocks Reads/Glob/Grep.
+  // Hannibal must be able to read source files to orchestrate and report
+  // status. Mirror of the Murdock M-20260428-003 over-blocking bug.
+  // ---------------------------------------------------------------------------
+  it('allows hannibal reading src/services/auth.ts (exit 0)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'hannibal',
+      tool_name: 'Read',
+      tool_input: { file_path: 'src/services/auth.ts' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('allows hannibal reading any src/** file (exit 0)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'hannibal',
+      tool_name: 'Read',
+      tool_input: { file_path: 'src/components/Button.tsx' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('allows hannibal Glob-ing src/**/*.ts (exit 0)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'hannibal',
+      tool_name: 'Glob',
+      tool_input: { pattern: 'src/**/*.ts' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('allows hannibal Grep-ing src/** (exit 0)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'hannibal',
+      tool_name: 'Grep',
+      tool_input: { pattern: 'export', path: 'src/' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('still blocks hannibal Write to src/whatever.ts (exit 2, regression guard)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'hannibal',
+      tool_name: 'Write',
+      tool_input: { file_path: 'src/whatever.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
   });
 });
 

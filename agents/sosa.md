@@ -145,6 +145,7 @@ Example consolidation instruction:
 - Are dependencies on external systems/APIs noted?
 - Is the dependency direction correct?
 - **Dep graph width check:** Is there a non-scaffold item depended on by 2+ items that is just thin infrastructure (fetch wrapper, types file, config)? If so, flag it: "WI-XXX is a bottleneck dep — consider folding into scaffold to widen fan-out." See the `work-breakdown` skill's "Optimizing Dependency Depth" section.
+- **Integration-last context check (CRITICAL):** For any item whose `dependencies` field lists 3+ items that produce `outputs.impl` (i.e. an integration parent assembling sibling components), verify the `context` field references each dependency's `outputs.impl` path explicitly AND describes the prop signature derived from each dependency's acceptance criteria. The integration agent reads those imports as the authoritative interface — without them it will reimagine prop contracts and Lynch will reject. Flag as CRITICAL if missing: list each dependency whose impl path is not named in the context. See the `work-breakdown` skill's "Integration-Last Decomposition" section for the underlying rule.
 
 ### 7. Output Paths (Critical for A(i)-Team)
 See the `work-breakdown` skill for output path conventions. Check:

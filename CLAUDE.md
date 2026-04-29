@@ -53,7 +53,7 @@ briefings → ready → testing → implementing → review → probing → done
                                                         └─────────────────┘
 ```
 
-**Note on transition enforcement:** The transition matrix enforces the linear pipeline: `testing` advances to `implementing` (not directly to `review`); `implementing` advances to `review`; `review` can send an item back to `testing` or `implementing` for rework, or forward to `probing`; `probing` advances to `done` or can send back to `ready`. See `packages/shared/src/stages.ts` for the full `TRANSITION_MATRIX`.
+**Note on transition enforcement:** The transition matrix enforces the linear pipeline: `testing` advances to `implementing` (not directly to `review`); `implementing` advances to `review`; `review` can send an item back to `testing` or `implementing` for rework, or forward to `probing`; `probing` advances to `done` or can send back to `ready`. **Lynch rejections always use `--return-to testing`** so Murdock audits test coverage before B.A. reworks the implementation; Stockwell (final review) may rework to either stage. See `packages/shared/src/stages.ts` for the full `TRANSITION_MATRIX`.
 
 Each feature flows through stages sequentially. Different features can be at different stages simultaneously (**pipeline parallelism** — the assembly-line model). Within each stage, up to N items can be processed concurrently by N agent instances (**stage concurrency**), where N is guided by `ateam scaling compute`. WIP limits are **per stage** (per column) — each stage independently caps how many items can be in it. An idle agent should always be dispatched work if its stage has capacity, regardless of how many items are in other stages.
 
@@ -261,6 +261,8 @@ Usage: `ateam <resource> <command> [flags]`
 | Archive mission | `ateam missions-archive archiveMission --json` |
 | Get final review | `ateam missions-final-review getFinalReview --missionId <id> --json` |
 | Write final review | `ateam missions-final-review writeFinalReview --missionId <id> --report "..." --json` |
+| Tool histogram | `ateam missions getToolHistogram <missionId> --json` |
+| Skill usage | `ateam missions getSkillUsage <missionId> --json` |
 | Compute scaling | `ateam scaling compute [--concurrency N] [--memory N] --json` |
 | Check deps | `ateam deps-check checkDeps --json` |
 | Log activity | `ateam activity createActivityEntry --agent <name> --message "..." --level info` |
@@ -322,7 +324,11 @@ Returns per-agent breakdown with model, token counts, and estimated cost:
 - `GET /api/missions/current` — get active mission
 - `GET /api/items` — get work items (board state)
 - `POST /api/missions/{id}/token-usage` — aggregate and return token costs
+- `GET /api/missions/{id}/tool-histogram` — per-agent tool-call counts grouped by tool name
+- `GET /api/missions/{id}/skill-usage` — per-agent skill invocations with counts and `distinctArgs`
 - `POST /api/hooks/events` — store hook events (called by observer hooks, not manually)
+
+**Skill activations** are captured on the `HookEvent` `payload` column: when `toolName === 'Skill'`, observer hooks record `skill_name` and a 12-char SHA-256 `args_hash` so repeated invocations with the same args are identifiable without storing the args themselves.
 
 Token pricing is loaded from `ateam.config.json` at runtime (see `packages/kanban-viewer/src/lib/token-cost.ts`).
 

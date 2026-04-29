@@ -39,6 +39,7 @@ interface HookEventPayload {
   toolName?: string;
   status: string;
   summary: string;
+  payload?: string;
   correlationId: string;
   timestamp: string;
 }
@@ -231,6 +232,31 @@ describe('Observer Hook - Payload Construction', () => {
     expect(payload?.agentName).toBe('face');
   });
 
+  it('should return null (not throw) when hookInput is malformed', () => {
+    // tool_input as a string instead of an object — accessing properties
+    // on a string is harmless, but iterating/calling .skill etc could blow
+    // up in future variants. Verify the top-level guard catches anything.
+    const stringHookInput = {
+      tool_input: 'not-an-object',
+      tool_name: 'Bash',
+      hook_event_name: 'PreToolUse',
+    } as unknown as ObserverHookInput;
+
+    let payload: HookEventPayload | null | undefined;
+    expect(() => {
+      payload = buildObserverPayload(stringHookInput, 'Murdock');
+    }).not.toThrow();
+    // payload may be a valid object here (string is benign) — the key
+    // assertion is no-throw. Now exercise a definitely-malformed input:
+    expect(() => {
+      // hookInput entirely missing — accessing .tool_name on null throws
+      buildObserverPayload(null as unknown as ObserverHookInput, 'Murdock');
+    }).not.toThrow();
+
+    const result = buildObserverPayload(null as unknown as ObserverHookInput, 'Murdock');
+    expect(result).toBeNull();
+  });
+
   it('should handle tool_input as object (not JSON string)', () => {
     // In the actual hook, tool_input comes as a parsed object from stdin,
     // not a JSON string
@@ -244,6 +270,167 @@ describe('Observer Hook - Payload Construction', () => {
 
     expect(payload).not.toBeNull();
     expect(payload?.summary).toBe('Bash: npm test');
+  });
+
+  // ================================================================
+  // Skill activation tracking
+  //
+  // When tool_name === 'Skill', the observer should extract the skill
+  // name and a SHA-256 hash (first 12 hex chars) of the args, and
+  // include them in the payload JSON so the API can aggregate
+  // per-agent skill usage. The summary should also mention the skill
+  // so it is human-readable in the live feed.
+  // ================================================================
+  describe('Skill tool activation', () => {
+    it('should include skill_name and a 12-char hex args_hash in payload for Skill tool calls', () => {
+      const hookInput: ObserverHookInput = {
+        tool_input: { skill: 'teams-messaging', args: 'some args' },
+        tool_name: 'Skill',
+        hook_event_name: 'PreToolUse',
+      };
+
+      const payload = buildObserverPayload(hookInput, 'Murdock');
+
+      expect(payload).not.toBeNull();
+      expect(payload?.toolName).toBe('Skill');
+      expect(payload?.payload).toBeDefined();
+
+      const parsed = JSON.parse(payload!.payload as string);
+      expect(parsed.skill_name).toBe('teams-messaging');
+      expect(typeof parsed.args_hash).toBe('string');
+      expect(parsed.args_hash).toMatch(/^[0-9a-f]{12}$/);
+    });
+
+    it('should still populate skill_name and args_hash when args is omitted (hash of empty string)', () => {
+      const hookInput: ObserverHookInput = {
+        tool_input: { skill: 'retro' },
+        tool_name: 'Skill',
+        hook_event_name: 'PreToolUse',
+      };
+
+      const payload = buildObserverPayload(hookInput, 'hannibal');
+
+      expect(payload).not.toBeNull();
+      const parsed = JSON.parse(payload!.payload as string);
+      expect(parsed.skill_name).toBe('retro');
+      // args_hash should always be present — hash of empty string — so
+      // downstream aggregation can always bucket on the field.
+      expect(typeof parsed.args_hash).toBe('string');
+      expect(parsed.args_hash).toMatch(/^[0-9a-f]{12}$/);
+
+      // Sanity: SHA-256 of empty string is
+      // e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+      // so first 12 hex chars must be e3b0c44298fc.
+      expect(parsed.args_hash).toBe('e3b0c44298fc');
+    });
+
+    it('should produce deterministic args_hash for the same args', () => {
+      const hookInput: ObserverHookInput = {
+        tool_input: { skill: 'teams-messaging', args: 'deterministic args' },
+        tool_name: 'Skill',
+        hook_event_name: 'PreToolUse',
+      };
+
+      const p1 = buildObserverPayload(hookInput, 'Murdock');
+      const p2 = buildObserverPayload(hookInput, 'Murdock');
+
+      const h1 = JSON.parse(p1!.payload as string).args_hash;
+      const h2 = JSON.parse(p2!.payload as string).args_hash;
+
+      // Guard against vacuous equality of two undefineds — the hash
+      // must be a real string AND the two must match.
+      expect(typeof h1).toBe('string');
+      expect(h1).toMatch(/^[0-9a-f]{12}$/);
+      expect(h1).toBe(h2);
+    });
+
+    it('should produce distinct args_hash for different args on the same skill', () => {
+      const base: ObserverHookInput = {
+        tool_name: 'Skill',
+        hook_event_name: 'PreToolUse',
+      };
+
+      const p1 = buildObserverPayload(
+        { ...base, tool_input: { skill: 'teams-messaging', args: 'alpha' } },
+        'Murdock'
+      );
+      const p2 = buildObserverPayload(
+        { ...base, tool_input: { skill: 'teams-messaging', args: 'beta' } },
+        'Murdock'
+      );
+
+      const h1 = JSON.parse(p1!.payload as string).args_hash;
+      const h2 = JSON.parse(p2!.payload as string).args_hash;
+
+      expect(h1).not.toBe(h2);
+    });
+
+    it('should not throw when args is a non-string value (object) and produce a stable 12-char hex hash', () => {
+      const hookInput: ObserverHookInput = {
+        tool_input: { skill: 'teams-messaging', args: { foo: 'bar' } as unknown as string },
+        tool_name: 'Skill',
+        hook_event_name: 'PreToolUse',
+      };
+
+      let payload: HookEventPayload | null = null;
+      expect(() => {
+        payload = buildObserverPayload(hookInput, 'Murdock');
+      }).not.toThrow();
+
+      expect(payload).not.toBeNull();
+      const parsed = JSON.parse(payload!.payload as string);
+      expect(parsed.skill_name).toBe('teams-messaging');
+      expect(parsed.args_hash).toMatch(/^[0-9a-f]{12}$/);
+
+      // Determinism: same object shape produces the same hash
+      const payload2 = buildObserverPayload(hookInput, 'Murdock');
+      const parsed2 = JSON.parse(payload2!.payload as string);
+      expect(parsed.args_hash).toBe(parsed2.args_hash);
+    });
+
+    it('should produce distinct args_hash for falsy-but-distinct args (0 vs empty string)', () => {
+      // Regression: `||` collapses falsy values (0, false, '') to '' before
+      // hashing, conflating distinct invocations. Use `??` so only
+      // null/undefined fall through to the empty-string default.
+      const base: ObserverHookInput = {
+        tool_name: 'Skill',
+        hook_event_name: 'PreToolUse',
+      };
+
+      const pZero = buildObserverPayload(
+        { ...base, tool_input: { skill: 'teams-messaging', args: 0 as unknown as string } },
+        'Murdock'
+      );
+      const pEmpty = buildObserverPayload(
+        { ...base, tool_input: { skill: 'teams-messaging', args: '' } },
+        'Murdock'
+      );
+
+      const hZero = JSON.parse(pZero!.payload as string).args_hash;
+      const hEmpty = JSON.parse(pEmpty!.payload as string).args_hash;
+
+      expect(hZero).toMatch(/^[0-9a-f]{12}$/);
+      expect(hEmpty).toMatch(/^[0-9a-f]{12}$/);
+      // Empty string SHA-256 prefix is e3b0c44298fc; numeric 0 stringifies
+      // to "0" which hashes to a different value.
+      expect(hEmpty).toBe('e3b0c44298fc');
+      expect(hZero).not.toBe(hEmpty);
+    });
+
+    it('should surface the skill name in the summary field', () => {
+      const hookInput: ObserverHookInput = {
+        tool_input: { skill: 'teams-messaging', args: 'x' },
+        tool_name: 'Skill',
+        hook_event_name: 'PreToolUse',
+      };
+
+      const payload = buildObserverPayload(hookInput, 'Murdock');
+
+      expect(payload).not.toBeNull();
+      // Summary should include the skill name so the activity feed
+      // shows "Skill: teams-messaging" rather than a bare "Skill:".
+      expect(payload?.summary).toContain('teams-messaging');
+    });
   });
 });
 

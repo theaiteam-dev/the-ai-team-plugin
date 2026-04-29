@@ -165,13 +165,15 @@ POOL_DIR="/tmp/.ateam-pool/${MISSION_ID}"
 
 **Directory creation (Hannibal, before pre-warming):**
 ```bash
-POOL_DIR="/tmp/.ateam-pool/${MISSION_ID}"
-mkdir -p "${POOL_DIR}"
+ateam pool init
+# Resolves /tmp/.ateam-pool/${ATEAM_MISSION_ID} from the env var, idempotent.
 # .idle files are created per-lane after READY confirmation — see Agent Pre-Warming
 ```
 
-> **CRITICAL: Hannibal MUST NOT touch pool files after initialization.**
-> After creating `.idle` files for a lane, Hannibal does not `touch`, `mv`, `rm`, or modify any file in `POOL_DIR`. Only the pipeline agents (Murdock, B.A., Lynch, Amy) manage their own `.idle`/`.busy` state. Hannibal manipulating pool files will contaminate the state and break peer-to-peer handoffs.
+> **CRITICAL: Hannibal MUST NOT touch pool files via raw `mv`/`touch`/`rm` after initialization.**
+> After creating `.idle` files for a lane, Hannibal does not shell out to `touch`, `mv`, `rm`, or otherwise hand-edit any file in `POOL_DIR`. Only the pipeline agents (Murdock, B.A., Lynch, Amy) manage their own `.idle`/`.busy` state during normal operation. Hannibal hand-editing pool files will contaminate state and break peer-to-peer handoffs.
+>
+> **Hannibal MAY use the validated `ateam pool` verbs** — `ateam pool init`, `ateam pool destroy`, `ateam pool mark-idle <instance>`, and `ateam pool release <instance>` — because they are deterministic, refuse on conflict, and are scoped to `$ATEAM_MISSION_ID`. They are the supported way to manage the pool's lifecycle around pre-warming, dispatch-timeout recovery, and mission shutdown.
 >
 > **Exception — ALERT recovery only:** If an agent sends an ALERT because the pool is in a bad state (e.g. orphaned `.busy` files from a crashed agent), Hannibal may `ls` the pool directory to diagnose the issue and fix it. This is reactive only — never preemptive. Query first (`ls`), fix only what's broken, then respond to the agent.
 
@@ -183,11 +185,16 @@ At mission start, create a team:
 TeamCreate(team_name: "mission-{missionId}", description: "A(i)-Team mission: {mission name}")
 ```
 
-## Agent Pre-Warming
+## Agent Pre-Warming (Lazy)
 
-Spawn instances **one lane at a time**. Each lane is the complete pipeline quartet for a single concurrency slot: `murdock-N`, `ba-N`, `lynch-N`, `amy-N`. Spawning 4 at once keeps the tmux pane count per window at exactly 4 — the tmux `after-split-window` hook breaks any 5th pane into a new window, so each lane lands in its own tmux window automatically.
+Spawn instances **lazily, lane by lane, only when the pipeline actually needs them.** Each lane is the complete pipeline quartet for a single concurrency slot: `murdock-N`, `ba-N`, `lynch-N`, `amy-N`. Spawning 4 at once keeps the tmux pane count per window at exactly 4 — the tmux `after-split-window` hook breaks any 5th pane into a new window, so each lane lands in its own tmux window automatically.
 
-**Wait for all 4 agents in a lane to register as `.idle` before spawning the next lane.** This prevents pane creation bursts and ensures the pool directory reflects reality before the next batch starts.
+**Why lazy:** Eagerly spawning all N lanes at mission start over-provisions for DAG-shaped missions. A typical mission has a Wave 1 scaffold (1 item), then a fan-out wave, then a fan-in. Pre-warming all 4 lanes upfront leaves 3 lanes idle for Wave 1 and burns context budget on agents that may never receive work. Lazy spawning keeps the pool sized to actual demand.
+
+**Spawn rules:**
+- **At mission start:** spawn lane 1 only.
+- **On every Phase 3 dispatch attempt:** if `findIdleInstance("murdock") == null` AND `next_lane_to_spawn <= N`, spawn the next lane *before* falling back to "all instances busy". This is the trigger condition — Hannibal needs more capacity right now.
+- **Wait for all 4 agents in a lane to send READY before creating their `.idle` files.** Same `wait_for_lane_ready` semantics as before.
 
 ```
 # agentType → subagent_type map:
@@ -196,9 +203,22 @@ Spawn instances **one lane at a time**. Each lane is the complete pipeline quart
 #   lynch   → "ai-team:lynch"
 #   amy     → "ai-team:amy"
 
-for lane_number in 1..N:
+# Track lane spawn cursor (initialized to 1 at mission start)
+# Hannibal's orchestration loop is sequential — `next_lane_to_spawn` is cursor
+# state, not shared mutable state. Do not parallelize Phase 1b drain with
+# Phase 3 fill without revisiting this invariant (a concurrent reader could
+# observe a stale cursor and respawn an already-spawned lane).
+next_lane_to_spawn = 1
+failed_lanes      = set()  # lanes that exhausted spawn retries — see wait_for_lane_ready
+
+function spawn_lane(lane_number):
+    if lane_number > N:
+        return  # nothing to spawn — pool is at max
+
     lane_instances = instance_pool filtered to lane_number
     # lane_instances = [murdock-N, ba-N, lynch-N, amy-N]
+
+    Bash("ateam activity createActivityEntry --agent hannibal --message 'Spawning lane {lane_number} (lazy pre-warm triggered by capacity demand)' --level info")
 
     for instance in lane_instances:
         Task(
@@ -222,15 +242,61 @@ for lane_number in 1..N:
         )
 
     # Wait for READY messages from all 4 agents in this lane before continuing.
-    # Hannibal then creates their .idle files and proceeds to spawn the next lane.
-    wait_for_lane_ready(lane_number)
+    ready_count = wait_for_lane_ready(lane_number)
+
+    if ready_count < 4:
+        # Lane is degraded (timeout or partial respawn failure). In LAZY mode there
+        # are no remaining lanes to fall back to — retrying spawn_lane(lane_number)
+        # would just re-hit the same timeout. Mark the lane as failed and advance
+        # the cursor past it so Phase 3 stops asking for it.
+        failed_lanes.add(lane_number)
+        Bash("ateam activity createActivityEntry --agent hannibal --message 'Lane {lane_number} FAILED to start ({ready_count}/4 ready) — marking failed, will not retry' --level error")
+        next_lane_to_spawn = lane_number + 1
+        return
 
     # Create .idle files for this lane now that agents are confirmed alive
     for instance in lane_instances:
-        touch "${POOL_DIR}/${instance.name}.idle"
+        Bash("ateam pool mark-idle {instance.name}")
+
+    next_lane_to_spawn = lane_number + 1
+
+# === Mission startup: spawn lane 1 only ===
+spawn_lane(1)
 ```
 
-**`wait_for_lane_ready(lane_number)`**: Block on incoming `SendMessage` until all 4 expected READY messages arrive, with a **60-second timeout per lane**:
+**Phase 3 integration (called from the orchestration loop):**
+
+```
+# In Phase 3, before claimInstance("murdock") returns null and we stop filling.
+# Skip lanes that previously failed to start — retrying just re-burns the 60s timeout.
+while ready stage not empty:
+    claimed = claimInstance("murdock")
+    if claimed is null:
+        # Advance cursor past any already-failed lanes
+        while next_lane_to_spawn <= N AND next_lane_to_spawn in failed_lanes:
+            next_lane_to_spawn += 1
+        # No idle Murdock — try lazy pre-warm before giving up
+        if next_lane_to_spawn <= N:
+            spawn_lane(next_lane_to_spawn)            # may add to failed_lanes
+            claimed = claimInstance("murdock")        # retry after spawn
+        if claimed is null:
+            break  # truly at capacity (all spawnable lanes either busy or failed)
+    # ... rest of dispatch
+```
+
+**Mission BLOCKED on capacity exhaustion.** If every lane in `1..N` is in `failed_lanes`
+AND items remain in `ready` AND no in-flight items will free a Murdock slot
+(`active_instances` empty), Hannibal stops retrying, surfaces a single ALERT,
+and transitions the mission to a blocked state — do NOT spin retrying spawn:
+
+```
+if len(failed_lanes) == N AND ready stage not empty AND active_instances is empty:
+    Bash("ateam activity createActivityEntry --agent hannibal --message 'Mission BLOCKED on capacity exhaustion — all {N} lanes failed to start. {len(ready_items)} items stuck in ready. Operator intervention required (likely env / Task spawn / message bus issue).' --level error")
+    # Do NOT loop back into Phase 3 — exit the orchestration loop and report.
+    break
+```
+
+**`wait_for_lane_ready(lane_number)`**: Block on incoming `SendMessage` until all 4 expected READY messages arrive, with a **60-second timeout per lane**. Returns the final `len(ready)` so the caller (`spawn_lane`) can detect a degraded lane and mark it failed:
 
 ```
 lane_agents = {"murdock-{N}", "ba-{N}", "lynch-{N}", "amy-{N}"}
@@ -271,28 +337,31 @@ if ready != lane_agents:
         still_missing = lane_agents - ready
         for agent in still_missing:
             Bash("ateam activity createActivityEntry --agent hannibal --message 'DEGRADED: {agent} failed to start after respawn — lane {lane_number} is degraded' --level error")
-        # Continue with remaining lanes — degraded agents will be skipped during dispatch
+        # Caller (spawn_lane) sees ready_count < 4 and marks the lane failed.
+        # Do NOT create .idle files for this lane — partial agents would route work into a black hole.
+
+return len(ready)
 ```
 
 **Do NOT use tmux pane liveness as a health check.** A pane can exist with a dead Claude Code process inside it. The only reliable signal that an agent is alive is a READY message. Silence after dispatch is a red flag, not a sign the agent is busy.
 
-**Example with N=2:**
+**Example with N=2 (lazy):**
 ```
-# Lane 1 — spawn 4 together, wait for all 4 READY messages, create .idle files
-Task(team_name: "mission-M1", name: "murdock-1", subagent_type: "ai-team:murdock", ...)
-Task(team_name: "mission-M1", name: "ba-1",      subagent_type: "ai-team:ba",      ...)
-Task(team_name: "mission-M1", name: "lynch-1",   subagent_type: "ai-team:lynch",   ...)
-Task(team_name: "mission-M1", name: "amy-1",     subagent_type: "ai-team:amy",     ...)
-# → receive READY from murdock-1, ba-1, lynch-1, amy-1
-# → touch murdock-1.idle, ba-1.idle, lynch-1.idle, amy-1.idle
+# Mission start — spawn lane 1 only
+spawn_lane(1)
+# → Task spawn for murdock-1, ba-1, lynch-1, amy-1
+# → receive READY from all 4
+# → ateam pool mark-idle murdock-1 (then ba-1, lynch-1, amy-1)
+# → next_lane_to_spawn = 2
 
-# Lane 2 — spawned only after lane 1 is confirmed alive
-Task(team_name: "mission-M1", name: "murdock-2", subagent_type: "ai-team:murdock", ...)
-Task(team_name: "mission-M1", name: "ba-2",      subagent_type: "ai-team:ba",      ...)
-Task(team_name: "mission-M1", name: "lynch-2",   subagent_type: "ai-team:lynch",   ...)
-Task(team_name: "mission-M1", name: "amy-2",     subagent_type: "ai-team:amy",     ...)
-# → receive READY from murdock-2, ba-2, lynch-2, amy-2
-# → touch murdock-2.idle, ba-2.idle, lynch-2.idle, amy-2.idle
+# Wave 1 has 1 item (scaffold) — Phase 3 dispatches WI-001 to murdock-1
+# Lane 2 stays unspawned. No wasted context.
+
+# Wave 2 has 4 items — Phase 3 attempts:
+#   claim murdock → murdock-1 already busy → null
+#   next_lane_to_spawn (2) <= N (2) → spawn_lane(2)
+#   claim murdock → murdock-2 (newly idle)
+# Lane 2 spawned exactly when needed.
 ```
 
 Tawnia and Stockwell are NOT pre-warmed (each runs once at mission end — caching won't help).
@@ -301,25 +370,27 @@ Tawnia and Stockwell are NOT pre-warmed (each runs once at mission end — cachi
 
 Hannibal uses these helpers for Phase 3 (filling from ready) and resume recovery. Pipeline agents use the file-based pool directory for peer-to-peer handoffs (see "Peer-to-Peer Pool Handoffs" below).
 
+**Always go through the `ateam pool` CLI — never `ls` or `mv` pool files manually.** Raw shell access to `${POOL_DIR}` is reserved for ALERT recovery (see the "Hannibal MUST NOT touch pool files" callout above).
+
 ```
 function findIdleInstance(agentType):
-    # Read pool directory — an .idle file means the instance is available
-    # Glob matches both "ba.idle" (N=1) and "ba-1.idle", "ba-2.idle" (N>1)
-    idle_files = ls ${POOL_DIR}/${agentType}.idle ${POOL_DIR}/${agentType}-*.idle 2>/dev/null
-    if idle_files is empty: return null
-    return first match (parse instance name from filename)
+    # Inspect via CLI — returns JSON {idle:[...], busy:[...], byType:{...}}
+    state = Bash("ateam pool status --json")
+    matches = state.idle filtered to entries that match agentType (exact name or "agentType-N")
+    if matches is empty: return null
+    return matches[0]
 
 function claimInstance(agentType):
-    # Atomically claim an idle instance via mv (race-safe)
-    # Glob matches both "ba.idle" (N=1) and "ba-1.idle", "ba-2.idle" (N>1)
-    for idle_file in ls ${POOL_DIR}/${agentType}.idle ${POOL_DIR}/${agentType}-*.idle 2>/dev/null:
-        basename = filename without .idle extension
-        result = mv "${idle_file}" "${POOL_DIR}/${basename}.busy" 2>/dev/null
-        if result == success:
-            return basename   # won the race
-        # else: lost race (ENOENT), try next file
-    return null  # no idle instance available
+    # Hannibal does NOT mv pool files. Claiming is the dispatched agent's
+    # first action (see pool-handoff skill, Step 1).
+    # Hannibal only needs to know whether an idle slot exists and which one
+    # to dispatch to. The chosen agent runs the mv itself when it starts.
+    candidate = findIdleInstance(agentType)
+    if candidate is null: return null
+    return candidate
 ```
+
+**Why no `mv` here:** the dispatched agent claims its own slot during the `pool-handoff` skill's Step 1 (`mv ${MY_NAME}.idle ${MY_NAME}.busy`). If Hannibal pre-claims, the slot is `.busy` before the agent boots, the skill's atomic claim fails, and the pool can't tell whether the agent is alive. Pre-warming a fresh agent? It claims on its READY-then-work step. Reusing a live idle agent? Same — its next agentStart triggers the claim via the skill.
 
 ## The Orchestration Loop
 
@@ -334,12 +405,12 @@ If mission state is `precheck_failure`:
 - ALERT handling: Queuing items when no idle instance is available
 
 **Hannibal MUST NOT:**
-- Touch any file in `POOL_DIR` after initialization (no `touch`, `mv`, `rm` on `.idle`/`.busy` files)
+- Touch any file in `POOL_DIR` via raw `mv`/`touch`/`rm` after initialization. Hannibal MAY use the validated `ateam pool init`/`destroy`/`mark-idle`/`release` verbs — they are deterministic and refuse on conflict.
 - Pre-claim pool instances for upcoming work
 - "Help" by moving pool files to what he thinks is the correct state
 - Call `board-move` for items that are in the peer-to-peer pipeline (Murdock → B.A. → Lynch → Amy)
 
-**Hannibal MAY** query pool state (`ls $POOL_DIR`) and fix pool files **only** when an agent explicitly requests help via an ALERT message. Diagnose first, fix only what's broken, then respond to the requesting agent.
+**Hannibal MAY** query pool state via `ateam pool status --json` (and, only when ALERT recovery requires it, fall back to raw `ls $POOL_DIR` to inspect filesystem details the CLI doesn't expose). Fix pool files **only** when an agent explicitly requests help via an ALERT message. Diagnose first, fix only what's broken, then respond to the requesting agent.
 
 **Loop structure:**
 
@@ -446,16 +517,27 @@ LOOP CONTINUOUSLY:
     # Subsequent handoffs are peer-to-peer via pool directory.
     while ready stage not empty:
         claimed = claimInstance("murdock")
-        if claimed is null: break  # all Murdock instances busy
+        if claimed is null:
+            # Advance cursor past any lanes already in failed_lanes
+            while next_lane_to_spawn <= N AND next_lane_to_spawn in failed_lanes:
+                next_lane_to_spawn += 1
+            # Try lazy pre-warm before giving up — see "Agent Pre-Warming (Lazy)"
+            if next_lane_to_spawn <= N:
+                spawn_lane(next_lane_to_spawn)        # may add to failed_lanes
+                claimed = claimInstance("murdock")
+            if claimed is null:
+                break  # truly at capacity (all spawnable lanes busy or failed)
 
         item_id = pick next item from ready stage
-        result = Bash("ateam agents-start agentStart --itemId {item_id} --agent {claimed}")
-        if result is WIP error:
-            # Release the claim — put .idle file back
-            mv "${POOL_DIR}/${claimed}.busy" "${POOL_DIR}/${claimed}.idle"
-            break
+        # NOTE: Hannibal does NOT call agentStart here — the dispatched agent
+        # owns agentStart (and the .idle → .busy mv) as its first action.
         dispatch(claimed, item_id)
         active_instances[item_id] = claimed
+
+    # Capacity-exhaustion exit: every lane failed, items stuck, no in-flight work to free a slot.
+    if len(failed_lanes) == N AND ready stage not empty AND active_instances is empty:
+        Bash("ateam activity createActivityEntry --agent hannibal --message 'Mission BLOCKED on capacity exhaustion — all {N} lanes failed. Operator intervention required.' --level error")
+        break  # exit orchestration loop — do not spin retrying spawn
 
     # ═══════════════════════════════════════════════════════════
     # PHASE 4: COMPLETION DETECTION (FALLBACK)
@@ -538,8 +620,11 @@ function dispatch_with_timeout(instance, item_id):
     # Timeout — agent is presumed crashed
     Bash("ateam activity createActivityEntry --agent hannibal --message 'TIMEOUT: {instance.name} did not acknowledge WI-{item_id} within 60s — respawning' --level warning")
 
-    # Release the dead agent's pool claim so it doesn't block handoffs
-    mv "${POOL_DIR}/${instance.name}.busy" "${POOL_DIR}/${instance.name}.idle" 2>/dev/null
+    # Release the dead agent's pool claim so it doesn't block handoffs.
+    # The agent that owned the slot is presumed dead, so no one else will
+    # release it. `pool release` ALWAYS prints a POOL_WARN to stderr —
+    # this is intentional, the warning is the audit trail.
+    Bash("ateam pool release {instance.name}")
 
     # Respawn and redispatch
     SendMessage(type: "shutdown_request", recipient: instance.name, content: "No ACK — shutting down for respawn")
@@ -731,6 +816,30 @@ Task(
 )
 ```
 
+### Dispatching Retro (mission retrospective)
+
+**MANDATORY** — runs after Tawnia's DONE message confirms the final commit. Retro pulls token-usage, tool-histogram, skill-usage, and work-log data from the API to produce the structured retrospective report. **Without this step, MissionTokenUsage is never aggregated** (the retro subagent's POST is what triggers materialization) and no `retroReport` is written.
+
+```
+Task(
+  team_name: "mission-{missionId}",
+  name: "retro",
+  subagent_type: "ai-team:retro",
+  description: "Retro: Mission retrospective",
+  prompt: "You are the Retro agent. Analyze mission {missionId} per agents/retro.md.
+
+  Mission ID: {missionId}
+
+  Pull all mission data (items, activity, token-usage, tool-histogram, skill-usage),
+  produce the structured markdown report, and persist it via:
+    ateam missions-retro writeRetro --missionId {missionId} --report \"...\"
+
+  When done, run `ateam agents-stop agentStop --json`, then send DONE to Hannibal."
+)
+```
+
+Hannibal must wait for retro's DONE message before proceeding to shutdown. Do not run retro and shutdown in parallel — retro reads activity/token-usage data that the API will not aggregate after the team is torn down.
+
 ## Completion Message Parsing
 
 With CLI-automated pool handoffs, Hannibal receives **FYI** (successful handoff) or **ALERT** (no idle instance) messages from pipeline agents, not DONE. Hannibal only needs to act on ALERTs.
@@ -757,6 +866,7 @@ With CLI-automated pool handoffs, Hannibal receives **FYI** (successful handoff)
 
 - Use `ateam deps-check checkDeps --json` in the orchestration loop
 - Run `ateam board getBoard --json` only at loop start and after wave completion
+- Use `ateam pool status --json` (not `ls $POOL_DIR | grep .idle`) for pool inspection — single-line JSON beats multiline shell output for cache reuse
 - Track state from completion messages between board reads
 - With N instances, the pipeline can have up to N×4 items in flight — avoid full board reads every cycle
 
@@ -881,7 +991,7 @@ ateam agents-start agentStart --itemId "WI-005" --agent "${MY_INSTANCE_NAME}"
 
 **Mission end:** Hannibal removes the entire pool directory during team shutdown:
 ```bash
-rm -rf "/tmp/.ateam-pool/${MISSION_ID}"
+ateam pool destroy
 ```
 
 **Crash recovery:** On resume, Hannibal recreates the pool directory from scratch (see Resume Recovery). Stale pool directories from crashed missions are harmless — they contain only empty marker files in `/tmp/`.
@@ -927,13 +1037,13 @@ Setup:
 
 ```
 T=0s    HANNIBAL:
-        mkdir -p /tmp/.ateam-pool/M1/
+        ateam pool init                              # creates /tmp/.ateam-pool/M1/
 
         Pre-warm lane 1: spawn murdock-1, ba-1, lynch-1, amy-1
-        Wait for READY from all 4 → create murdock-1.idle, ba-1.idle, lynch-1.idle, amy-1.idle
+        Wait for READY from all 4 → ateam pool mark-idle murdock-1 (etc. for ba-1, lynch-1, amy-1)
 
         Pre-warm lane 2: spawn murdock-2, ba-2, lynch-2, amy-2
-        Wait for READY from all 4 → create murdock-2.idle, ba-2.idle, lynch-2.idle, amy-2.idle
+        Wait for READY from all 4 → ateam pool mark-idle murdock-2 (etc. for ba-2, lynch-2, amy-2)
 
         deps-check → readyItems: [001, 002, 003]
         board-move 001 → ready, board-move 002 → ready, board-move 003 → ready
@@ -992,22 +1102,24 @@ T=65s   MURDOCK-1 finishes WI-003:
 
 ## Team Shutdown
 
-When the mission is complete:
+When the mission is complete (Tawnia DONE received), run these in order — **retro must complete before shutdown**:
 
-1. **Shutdown all pre-warmed instances:**
+1. **Dispatch Retro and wait for DONE.** See "Dispatching Retro" above. Retro's POST to `/api/missions/{id}/token-usage` is what materializes `MissionTokenUsage`; if you skip retro, the database is left without aggregated cost data and the kanban viewer shows `$0.00` for the mission.
+
+2. **Shutdown all pre-warmed instances:**
 ```
 for instance in instance_pool:
     SendMessage(type: "shutdown_request", recipient: instance.name, content: "Mission complete")
 ```
 
-2. **Wait for shutdown approvals** (teammates auto-approve unless busy)
+3. **Wait for shutdown approvals** (teammates auto-approve unless busy)
 
-3. **Clean up pool directory:**
+4. **Clean up pool directory:**
 ```bash
-rm -rf "/tmp/.ateam-pool/${MISSION_ID}"
+ateam pool destroy
 ```
 
-4. **Delete the team:**
+5. **Delete the team:**
 ```
 TeamDelete()
 ```
@@ -1034,12 +1146,11 @@ Native teams are ephemeral — they don't survive session restarts. On resume:
 
 5. **Recreate pool directory from scratch:**
    ```bash
-   rm -rf "/tmp/.ateam-pool/${MISSION_ID}"
-   mkdir -p "/tmp/.ateam-pool/${MISSION_ID}"
+   ateam pool destroy && ateam pool init
    # Create .idle files for ALL instances — agents being re-spawned below
    # will have their files moved to .busy as part of dispatch
    for instance in instance_pool:
-       touch "/tmp/.ateam-pool/${MISSION_ID}/${instance.name}.idle"
+       Bash("ateam pool mark-idle {instance.name}")
    ```
 
 6. **Read board state and re-spawn at current stages:**

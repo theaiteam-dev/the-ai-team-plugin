@@ -72,16 +72,27 @@ opus
 
 ## Skill Reference
 
-Four skills are preloaded at startup — consult them when reviewing the corresponding concern:
+Skills are NOT preloaded — invoke each via the `Skill` tool in Step 0 below before reviewing. Each skill maps to a review concern:
 
-- **Security & URL encoding**: `security-input` skill
-- **Type safety, async patterns & error handling**: `code-patterns` skill
-- **Database & API patterns**: `code-patterns` skill
-- **Code quality & naming**: `code-patterns` skill
-- **Testing quality & anti-patterns**: `test-writing` skill
-- **Defensive coding (guards, cleanup, validation parity)**: `defensive-coding` skill
+- **Security & URL encoding**: `ai-team:security-input`
+- **Type safety, async patterns, error handling, database & API patterns, code quality & naming**: `ai-team:code-patterns`
+- **Testing quality & anti-patterns**: `ai-team:test-writing`
+- **Defensive coding (guards, cleanup, validation parity)**: `ai-team:defensive-coding`
 
 ## Process
+
+### Step 0: Load Required Skills (MANDATORY before any review)
+
+Skills are NOT preloaded — invoke each via the `Skill` tool before Step 1.
+
+1. Invoke `Skill(skill: "ai-team:security-input")` — Security patterns for AI coding agents. Covers injection prevention, secrets handling, API error responses, URL path encoding, and an OWASP quick reference.
+2. Invoke `Skill(skill: "ai-team:code-patterns")` — Code quality, type safety, async, and API/database patterns for AI coding agents.
+3. Invoke `Skill(skill: "ai-team:test-writing")` — Comprehensive test quality guardrails. Banned anti-patterns with code examples, the litmus test, and positive guidance for writing tests that actually verify production behavior.
+4. Invoke `Skill(skill: "ai-team:defensive-coding")` — Defensive coding patterns for AI agents (guards, cleanup, validation parity).
+5. Invoke `Skill(skill: "ai-team:perspective-test")` — Three-layer verification (static analysis, wiring trace, browser check) for catching integration gaps that unit tests miss.
+6. Invoke `Skill(skill: "ai-team:teams-messaging")` — Native teams messaging protocol. Consult for DONE message format when signaling FINAL APPROVED / FINAL REJECTED to Hannibal.
+7. Invoke `Skill(skill: "ai-team:ateam-cli")` — ateam CLI reference for all A(i)-Team API interactions (renderItem, listItems, agentStop, writeFinalReview, getCurrentMission, etc.).
+8. Invoke `Skill(skill: "ai-team:agent-lifecycle")` — Standard patterns for agent activity logging and completion signaling.
 
 1. **Start work (claim the review)**
    Run `ateam agents-start agentStart --itemId "FINAL-REVIEW" --agent "stockwell"` (or use the itemId as provided).

@@ -42,12 +42,20 @@ try {
   const toolInput = hookInput.tool_input || {};
   const filePath = toolInput.file_path || '';
 
+  // Only gate write-capable tools. Reads, searches, and execs are unrelated
+  // to this hook's intent ("impl writes") — Murdock must read implementation
+  // sources to write tests against them (TDD).
+  const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+  if (!WRITE_TOOLS.has(toolName)) {
+    process.exit(0);
+  }
+
   if (!filePath) {
     process.exit(0);
   }
 
   // Allow writes to /tmp/ (throwaway scripts, debugging artifacts)
-  if (filePath.startsWith('/tmp/') || filePath.startsWith('/var/')) {
+  if (filePath.startsWith('/tmp/')) {
     process.exit(0);
   }
 

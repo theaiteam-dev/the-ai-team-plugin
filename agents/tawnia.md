@@ -79,6 +79,14 @@ At this point, all the code is complete, reviewed, and verified. Your job is to 
 
 ## Process
 
+### Step 0: Load Required Skills (MANDATORY before any work)
+
+Skills are NOT preloaded — invoke via the `Skill` tool before Step 1.
+
+1. Invoke `Skill(skill: "ai-team:agent-lifecycle")` — Standard patterns for agent activity logging and completion signaling. Consult this skill when logging progress milestones with `ateam activity createActivityEntry` and when calling `agentStop` with the completion summary.
+2. Invoke `Skill(skill: "ai-team:teams-messaging")` — Native teams messaging protocol. Consult for the DONE message format when reporting back to Hannibal with the commit hash.
+3. Invoke `Skill(skill: "ai-team:ateam-cli")` — ateam CLI reference for all A(i)-Team API interactions (board getBoard, items listItems, agentStart, agentStop, pool destroy, etc.).
+
 1. **Start work (claim the docs task)**
    Run `ateam agents-start agentStart --itemId "docs" --agent "tawnia"`.
 
@@ -268,14 +276,11 @@ git rev-parse --short HEAD
 ```
 
 7. **Clean up the instance pool**
-   Remove the mission's pool directory from `/tmp`:
+   Remove the mission's pool directory via the CLI — it resolves the path from `ATEAM_MISSION_ID` and refuses to run if unset:
    ```bash
-   MISSION_ID=$(ateam missions-current getCurrentMission --json | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['id'])")
-   if [ -n "$MISSION_ID" ] && [[ "$MISSION_ID" == M-* ]]; then
-     rm -rf "/tmp/.ateam-pool/${MISSION_ID}"
-   fi
+   ateam pool destroy
    ```
-   This prevents stale `.idle`/`.busy` files from accumulating across missions.
+   This prevents stale `.idle`/`.busy` files from accumulating across missions. Do NOT use raw `rm -rf` on the pool directory — `ateam pool destroy` is the validated path.
 
 ## Team Communication (Native Teams Mode)
 

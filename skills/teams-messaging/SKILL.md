@@ -151,36 +151,44 @@ After `ateam agents-stop agentStop --advance` (approved):
 SendMessage({ to: "lynch", message: "ACK: {itemId}", summary: "ACK {itemId}" })
 ```
 
-### Lynch → Murdock or B.A. (REJECTED path)
+### Lynch → Murdock (REJECTED path)
 
-After `ateam agents-stop agentStop --outcome rejected --return-to <stage>`, notify the responsible agent directly, then send FYI to Hannibal:
+**All Lynch rejections return to `testing` and route through Murdock** — there is no Lynch → B.A. path. See `agents/lynch.md` "Rejection Flow" and `agents/murdock.md` Step 2.5 for the rationale (TDD invariant: every defect becomes a failing test before code changes).
+
+After `ateam agents-stop agentStop --outcome rejected --return-to testing --advance=false`, notify Murdock directly, then send FYI to Hannibal. The message must be actionable without Lynch in the loop: name the AC, the observed gap, the test change to consider, and the code fix B.A. will need.
 
 ```javascript
-// To Murdock (test issues, --return-to testing):
 SendMessage({
   to: "murdock",
-  message: "REJECTED: {itemId} - {specific issues}. Required fixes: {fix list}",
-  summary: "REJECTED {itemId}"
-})
-
-// To B.A. (implementation issues, --return-to implementing):
-SendMessage({
-  to: "ba",
-  message: "REJECTED: {itemId} - {specific issues}. Required fixes: {fix list}",
+  message: "REJECTED: {itemId} - AC {n} {ac text}. Observed gap: {what's broken}. Test to add/tighten: {specific assertion}. Code fix required: {what B.A. must change}.",
   summary: "REJECTED {itemId}"
 })
 ```
 
-Then send FYI to Hannibal:
+Then FYI to Hannibal:
 ```javascript
 SendMessage({
   to: "hannibal",
-  message: "FYI: {itemId} - REJECTED, returned to {stage}. Sent rejection to {Murdock/B.A.}.",
+  message: "FYI: {itemId} - REJECTED, returned to testing. Sent rejection to Murdock.",
   summary: "Rejection sent for {itemId}"
 })
 ```
 
-Note: Rejection messages are fire-and-forget — the rejected agent picks up the returned item from the board when it's next idle. No ACK is required or expected.
+Note: Rejection messages are fire-and-forget — Murdock picks up the returned item from the board when next idle. No ACK is required or expected.
+
+### Murdock → B.A. (rework pass-through START)
+
+When Murdock enters Rework Mode (rejectionCount > 0) and audits existing tests as adequate (see `agents/murdock.md` Step 2.5 exit (b)), the START to B.A. must carry Lynch's rejection verbatim plus Murdock's audit verdict — so B.A. fixes the impl without ambiguity about what Lynch wants:
+
+```javascript
+SendMessage({
+  to: "ba",
+  message: "START: {itemId} — REWORK (pass-through). Lynch rejection: {verbatim rejection}. Test audit: existing test at {path}:{line} asserts {behavior} — will fail once you apply {specific fix}. Impl change only, no test changes.",
+  summary: "START {itemId} rework"
+})
+```
+
+If Murdock's audit finds the test gap real (exit (a) — tests were added or tightened), use the normal START format from the top of this document.
 
 ### Amy → Hannibal (terminal — no downstream)
 

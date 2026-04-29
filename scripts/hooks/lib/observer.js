@@ -11,12 +11,34 @@
  */
 
 import { readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { resolveAgent } from './resolve-agent.js';
 
 const AGENT_MAP_DIR = join(tmpdir(), 'ateam-agent-map');
+
+function hashArgs(args) {
+  const input = typeof args === 'string' ? args : JSON.stringify(args ?? '');
+  return createHash('sha256').update(input).digest('hex').slice(0, 12);
+}
+
+const SUMMARY_FIELDS = {
+  Bash: 'command',
+  Read: 'file_path',
+  Edit: 'file_path',
+  Write: 'file_path',
+  Grep: 'pattern',
+  Glob: 'pattern',
+  WebSearch: 'query',
+  WebFetch: 'url',
+  Skill: 'skill',
+};
+
+function summarizeToolInput(toolName, toolInput) {
+  const field = SUMMARY_FIELDS[toolName];
+  return field ? (toolInput[field] || '') : '';
+}
 
 /**
  * Registers an active agent for a session. Called by observe-subagent.js
@@ -79,81 +101,91 @@ function readHookInput() {
  * @returns {Object|null} Payload object or null if invalid
  */
 function buildObserverPayload(hookInput, agentNameArg) {
-  const toolName = hookInput.tool_name || '';
-  const sessionId = hookInput.session_id || '';
-  // Try: CLI arg → resolve from stdin (agent_type/teammate_name) → session agent map → fallback to hannibal
-  const agentName = agentNameArg || resolveAgent(hookInput) || lookupAgent(sessionId) || 'hannibal';
-  const hookEventName = hookInput.hook_event_name || '';
+  try {
+    const toolName = hookInput.tool_name || '';
+    const sessionId = hookInput.session_id || '';
+    // Try: CLI arg → resolve from stdin (agent_type/teammate_name) → session agent map → fallback to hannibal
+    const agentName = agentNameArg || resolveAgent(hookInput) || lookupAgent(sessionId) || 'hannibal';
+    const hookEventName = hookInput.hook_event_name || '';
 
-  // Map Claude Code hook event names to our event types
-  let eventType = '';
-  if (hookEventName === 'PreToolUse') {
-    eventType = 'pre_tool_use';
-  } else if (hookEventName === 'PostToolUse') {
-    eventType = 'post_tool_use';
-  } else if (hookEventName === 'Stop') {
-    eventType = 'stop';
-  } else if (hookEventName === 'SubagentStop') {
-    eventType = 'subagent_stop';
-  } else if (hookEventName === 'SubagentStart') {
-    eventType = 'subagent_start';
-  } else if (hookEventName) {
-    eventType = hookEventName.toLowerCase();
-  }
+    // Map Claude Code hook event names to our event types
+    let eventType = '';
+    if (hookEventName === 'PreToolUse') {
+      eventType = 'pre_tool_use';
+    } else if (hookEventName === 'PostToolUse') {
+      eventType = 'post_tool_use';
+    } else if (hookEventName === 'Stop') {
+      eventType = 'stop';
+    } else if (hookEventName === 'SubagentStop') {
+      eventType = 'subagent_stop';
+    } else if (hookEventName === 'SubagentStart') {
+      eventType = 'subagent_start';
+    } else if (hookEventName) {
+      eventType = hookEventName.toLowerCase();
+    }
 
-  // If no event type, nothing to log
-  if (!eventType) {
+    // If no event type, nothing to log
+    if (!eventType) {
+      return null;
+    }
+
+    // Tool input comes as an object from stdin, not a JSON string
+    const toolInput = hookInput.tool_input || {};
+
+    // Generate summary based on event type
+    let summary = '';
+    let status = 'pending';
+
+    if (eventType === 'pre_tool_use') {
+      status = 'pending';
+      summary = `${toolName}: ${summarizeToolInput(toolName, toolInput)}`.substring(0, 200).trim();
+    } else if (eventType === 'post_tool_use') {
+      status = 'success';
+      summary = `${toolName}: ${summarizeToolInput(toolName, toolInput)} (completed)`.substring(0, 200).trim();
+    } else if (eventType === 'post_tool_use_failure') {
+      status = 'failed';
+      summary = `${toolName}: ${summarizeToolInput(toolName, toolInput)} (failed)`.substring(0, 200).trim();
+    } else if (eventType === 'subagent_start') {
+      status = 'started';
+      summary = `${agentName} started`;
+    } else if (eventType === 'subagent_stop') {
+      status = 'completed';
+      summary = `${agentName} completed`;
+    } else if (eventType === 'stop') {
+      status = 'stopped';
+      summary = `${agentName} stopped`;
+    } else {
+      summary = `${eventType}: ${agentName}`;
+    }
+
+    // Generate a correlation ID (UUID v4)
+    const correlationId = randomUUID();
+
+    // Include session_id in payload for grouping events by agent session
+    const payloadData = {};
+    if (sessionId) {
+      payloadData.session_id = sessionId;
+    }
+    if (toolName === 'Skill') {
+      payloadData.skill_name = toolInput.skill;
+      payloadData.args_hash = hashArgs(toolInput.args ?? '');
+    }
+    const payload = Object.keys(payloadData).length > 0 ? JSON.stringify(payloadData) : '{}';
+
+    return {
+      eventType,
+      agentName,
+      toolName: toolName || undefined,
+      status,
+      summary,
+      payload,
+      correlationId,
+      timestamp: new Date().toISOString(),
+    };
+  } catch (err) {
+    console.error(`[observer] buildObserverPayload failed: ${err.message}`);
     return null;
   }
-
-  // Tool input comes as an object from stdin, not a JSON string
-  const toolInput = hookInput.tool_input || {};
-
-  // Generate summary based on event type
-  let summary = '';
-  let status = 'pending';
-
-  if (eventType === 'pre_tool_use') {
-    status = 'pending';
-    const command = toolInput.command || toolInput.file_path || toolInput.pattern || toolInput.query || '';
-    summary = `${toolName}: ${command}`.substring(0, 200).trim();
-  } else if (eventType === 'post_tool_use') {
-    status = 'success';
-    const command = toolInput.command || toolInput.file_path || toolInput.pattern || toolInput.query || '';
-    summary = `${toolName}: ${command} (completed)`.substring(0, 200).trim();
-  } else if (eventType === 'post_tool_use_failure') {
-    status = 'failed';
-    const command = toolInput.command || toolInput.file_path || '';
-    summary = `${toolName}: ${command} (failed)`.substring(0, 200).trim();
-  } else if (eventType === 'subagent_start') {
-    status = 'started';
-    summary = `${agentName} started`;
-  } else if (eventType === 'subagent_stop') {
-    status = 'completed';
-    summary = `${agentName} completed`;
-  } else if (eventType === 'stop') {
-    status = 'stopped';
-    summary = `${agentName} stopped`;
-  } else {
-    summary = `${eventType}: ${agentName}`;
-  }
-
-  // Generate a correlation ID (UUID v4)
-  const correlationId = randomUUID();
-
-  // Include session_id in payload for grouping events by agent session
-  const payload = sessionId ? JSON.stringify({ session_id: sessionId }) : '{}';
-
-  return {
-    eventType,
-    agentName,
-    toolName: toolName || undefined,
-    status,
-    summary,
-    payload,
-    correlationId,
-    timestamp: new Date().toISOString(),
-  };
 }
 
 /**
