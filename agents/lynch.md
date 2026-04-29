@@ -120,7 +120,7 @@ This is a full code review of the test file, not just a green-light check. Ask y
 
 **Known Anti-Patterns (flag immediately):**
 
-The **test-writing** skill is preloaded at startup and contains full examples for each banned pattern. The patterns to flag are:
+The `ai-team:test-writing` skill (loaded in Step 0 via the `Skill` tool — NOT preloaded) contains full examples for each banned pattern. The patterns to flag are:
 
 - *Tautological mock-call assertions* — asserting `toHaveBeenCalledWith` on a pre-configured mock proves nothing about the real result
 - *Conditional fallback test paths* — `if/else` inside a test where the fallback silently passes when the expected element is missing
@@ -296,8 +296,15 @@ This enforces the TDD invariant: every defect becomes a failing test — or an e
 
 ## Process
 
+### Step 0: Load Required Skills (MANDATORY before any work)
+
+Skills are NOT preloaded — invoke each via the `Skill` tool before Step 1, even if your spawn prompt inlines the procedure. The spawn prompt is a hint; the skills are the source of truth.
+
+1. Invoke `Skill(skill: "ai-team:pool-handoff")` — Instance pool claim/release protocol for pipeline agents (Murdock, B.A., Lynch, Amy). Consult this skill before agentStart (to claim your pool slot) and when calling agentStop (to understand how the CLI handles release and next-agent claiming automatically).
+2. Invoke `Skill(skill: "ai-team:test-writing")` — Comprehensive test quality guardrails. Banned anti-patterns with code examples, the litmus test, and positive guidance for writing tests that actually verify production behavior. Use this skill's banned-patterns list as your rejection checklist.
+
 1. **Start work (claim the item)**
-   **Consult the `pool-handoff` skill** to claim your pool slot (`mv own .idle → .busy`) before proceeding.
+   Follow the `ai-team:pool-handoff` skill (loaded in Step 0) to claim your pool slot (`ateam pool claim "${MY_NAME}"`) before proceeding.
 
    Run `ateam agents-start agentStart --itemId "XXX" --agent "lynch"` (replace XXX with actual item ID).
 
