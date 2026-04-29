@@ -26,8 +26,8 @@ already existed (false). Either case exits 0.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		missionID := os.Getenv("ATEAM_MISSION_ID")
-		if missionID == "" {
-			return fmt.Errorf("ATEAM_MISSION_ID is not set — pool state is per-mission")
+		if err := validateMissionID(missionID); err != nil {
+			return err
 		}
 		poolDir := filepath.Join("/tmp", ".ateam-pool", missionID)
 

@@ -9,7 +9,18 @@ Pipeline agents (Murdock → B.A. → Lynch → Amy) coordinate via a file-based
 
 **The `agentStop` CLI handles all pool management automatically** — self-release and next-agent claiming are done by the CLI, not by agents manually. The only manual pool operation agents perform is claiming their own slot on startup (Step 1 below).
 
-**Note:** If your slot was pre-claimed by the `agentStop` of the upstream agent (i.e., it's already `.busy` when you start), `ateam pool claim` will exit non-zero with `already claimed` — that is the expected pre-claimed case, not a failure. Treat it as success and proceed to `agentStart`. Any other non-zero exit (no such instance, corrupted state, missing pool dir) is a real failure: send ALERT to Hannibal and do not proceed.
+**Exit code contract for `ateam pool claim` (stable; do NOT match on the message text):**
+
+| Exit | Meaning | Treat as |
+|------|---------|----------|
+| `0` | Slot claimed (you won) | Success — proceed to `agentStart` |
+| `2` | Already claimed (upstream `agentStop` pre-claimed your slot) | Success — proceed to `agentStart` |
+| `3` | No such instance (.idle and .busy both missing) | Real failure — ALERT Hannibal |
+| `4` | Corrupted state (both .idle and .busy present with distinct inodes) | Real failure — ALERT Hannibal |
+| `5` | Pool dir does not exist (mission not initialized) | Real failure — ALERT Hannibal |
+| `1` | Generic / unexpected (permission, EIO, malformed env, etc.) | Real failure — ALERT Hannibal |
+
+Match on the exit code — `$?` after the call — not on substrings of the message. The error string is human-readable and may be reworded across releases; the exit code is the contract.
 
 ---
 
@@ -22,15 +33,22 @@ When you receive a START message and are about to begin work, claim your slot be
 # ATEAM_MISSION_ID must be set in the environment.
 
 ateam pool claim "${MY_NAME}"
+RC=$?
+
+case "$RC" in
+  0|2)
+    # 0 = we won, 2 = upstream pre-claimed it for us. Both mean
+    # the slot is now .busy in our name. Proceed to agentStart.
+    ;;
+  *)
+    # 1, 3, 4, 5 — real failure. Send ALERT to Hannibal and stop.
+    # Do not call agentStart without owning your slot.
+    exit "$RC"
+    ;;
+esac
 ```
 
-The CLI handles all conflict checking — already-claimed, missing slot, corrupted state (both `.idle` and `.busy` present), missing pool dir — and exits non-zero with a distinct message for each.
-
-Outcomes:
-
-- **Exit 0** — your slot is now `.busy`. Proceed to `agentStart`.
-- **`already claimed`** — expected if the upstream agent's `agentStop` pre-claimed your slot. Treat as success and proceed to `agentStart`.
-- **Any other non-zero exit** (`no such instance`, `corrupted state`, `pool dir does not exist`) — real failure. Send ALERT to Hannibal and do not proceed without owning your slot.
+The CLI distinguishes each failure mode via its exit code (see the table above). Branch on `$?` — never grep the message text.
 
 ---
 
@@ -99,7 +117,7 @@ RESULT=$(ateam agents-stop agentStop \
 
 - `ATEAM_MISSION_ID` must be set in the environment — without it, pool management is skipped silently
 - Step 1 is `ateam pool claim` — do NOT manually `mv`, `touch`, `cp`, or `rm` pool files at any point (Step 1 or after)
-- If `ateam pool claim` fails with anything other than `already claimed`, send ALERT — never proceed without owning your slot
+- Branch on the `ateam pool claim` exit code (0 or 2 = success, anything else = ALERT). Never grep the error message — the text is human-readable and not a contract
 
 ---
 

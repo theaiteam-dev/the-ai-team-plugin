@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -13,8 +14,15 @@ var rootCmd = &cobra.Command{
 }
 
 // Execute is the conventional cobra entry point called from main.
+//
+// Pool verbs return a *PoolError when they need a specific exit code (see
+// pool.go for the contract). Any other error falls through to exit code 1.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
+		var poolErr *PoolError
+		if errors.As(err, &poolErr) {
+			os.Exit(poolErr.ExitCode)
+		}
 		os.Exit(1)
 	}
 }

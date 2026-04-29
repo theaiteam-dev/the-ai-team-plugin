@@ -28,8 +28,8 @@ or was already gone (false). Either case exits 0.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		missionID := os.Getenv("ATEAM_MISSION_ID")
-		if missionID == "" {
-			return fmt.Errorf("ATEAM_MISSION_ID is not set — refusing to remove unscoped pool path")
+		if err := validateMissionID(missionID); err != nil {
+			return err
 		}
 		poolDir := filepath.Join("/tmp", ".ateam-pool", missionID)
 

@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -180,6 +183,98 @@ func TestPoolClaimJSONOutput(t *testing.T) {
 	}
 }
 
+// TestPoolClaimExitCodes asserts that each error path returns a *PoolError
+// carrying the documented exit code. The pool-handoff skill consumes these
+// codes (specifically code 2 = already claimed = success), so the contract
+// is load-bearing — substring matching on error messages is fragile.
+func TestPoolClaimExitCodes(t *testing.T) {
+	cases := []struct {
+		name string
+		// setup runs in a fresh per-test pool dir; the dir is created for you
+		// unless skipMkdir is true (used for the "no pool dir" case).
+		setup     func(t *testing.T, poolDir string)
+		skipMkdir bool
+		argv      []string
+		wantExit  int
+	}{
+		{
+			name: "happy path returns 0",
+			setup: func(t *testing.T, poolDir string) {
+				if err := os.WriteFile(filepath.Join(poolDir, "murdock-1.idle"), nil, 0644); err != nil {
+					t.Fatalf("seed: %v", err)
+				}
+			},
+			argv:     []string{"pool", "claim", "murdock-1"},
+			wantExit: PoolExitOK,
+		},
+		{
+			name:      "missing pool dir returns 5",
+			skipMkdir: true,
+			argv:      []string{"pool", "claim", "murdock-1"},
+			wantExit:  PoolExitPoolDirMissing,
+		},
+		{
+			name: "already claimed returns 2",
+			setup: func(t *testing.T, poolDir string) {
+				if err := os.WriteFile(filepath.Join(poolDir, "murdock-1.busy"), nil, 0644); err != nil {
+					t.Fatalf("seed: %v", err)
+				}
+			},
+			argv:     []string{"pool", "claim", "murdock-1"},
+			wantExit: PoolExitAlreadyClaimed,
+		},
+		{
+			name:     "no such instance returns 3",
+			setup:    func(t *testing.T, poolDir string) {},
+			argv:     []string{"pool", "claim", "murdock-1"},
+			wantExit: PoolExitNoSuchInstance,
+		},
+		{
+			name: "corrupted state returns 4",
+			setup: func(t *testing.T, poolDir string) {
+				_ = os.WriteFile(filepath.Join(poolDir, "murdock-1.idle"), nil, 0644)
+				_ = os.WriteFile(filepath.Join(poolDir, "murdock-1.busy"), nil, 0644)
+			},
+			argv:     []string{"pool", "claim", "murdock-1"},
+			wantExit: PoolExitCorruptedState,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, poolDir := withTempPoolRoot(t, "claim-codes-"+strings.ReplaceAll(tc.name, " ", "-"))
+			_ = os.RemoveAll(poolDir)
+			if !tc.skipMkdir {
+				if err := os.MkdirAll(poolDir, 0755); err != nil {
+					t.Fatalf("mkdir: %v", err)
+				}
+			}
+			if tc.setup != nil {
+				tc.setup(t, poolDir)
+			}
+
+			_, err := runPoolCmd(t, tc.argv...)
+
+			if tc.wantExit == PoolExitOK {
+				if err != nil {
+					t.Fatalf("expected exit 0, got err: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error with exit code %d, got nil", tc.wantExit)
+			}
+			var pe *PoolError
+			if !errors.As(err, &pe) {
+				t.Fatalf("expected *PoolError, got %T: %v", err, err)
+			}
+			if pe.ExitCode != tc.wantExit {
+				t.Errorf("expected exit code %d, got %d (msg: %s)", tc.wantExit, pe.ExitCode, pe.Message)
+			}
+		})
+	}
+}
+
 func TestPoolClaimRaceSafety(t *testing.T) {
 	_, poolDir := withTempPoolRoot(t, "claim-race")
 	if err := os.MkdirAll(poolDir, 0755); err != nil {
@@ -194,6 +289,12 @@ func TestPoolClaimRaceSafety(t *testing.T) {
 	// We bypass runPoolCmd because cobra's rootCmd is not goroutine-safe
 	// (shared buffer + SetArgs). Instead, replicate the verb's atomic step
 	// — os.Rename — which is what the production code must rely on.
+	//
+	// NOTE: This test only verifies os.Rename's atomicity — a known-good
+	// primitive. The cross-process race test below
+	// (TestPoolClaimCrossProcessRace) is the load-bearing one: it spawns
+	// the actual built binary so the stat-then-rename window in pool_claim.go
+	// is exercised under contention.
 	missionID := os.Getenv("ATEAM_MISSION_ID")
 	if missionID == "" {
 		t.Fatal("missionID empty — withTempPoolRoot didn't set it")
@@ -228,5 +329,130 @@ func TestPoolClaimRaceSafety(t *testing.T) {
 	}
 	if _, statErr := os.Stat(src); !os.IsNotExist(statErr) {
 		t.Errorf("expected %s to be gone after race, stat err=%v", src, statErr)
+	}
+}
+
+// buildPoolBinaryOnce builds the ateam binary once per test process and
+// returns its path. Subsequent callers reuse the cached binary.
+//
+// Cross-process race tests spawn this binary in real subprocesses, which is
+// the only way to exercise pool_claim.go's stat-then-rename window under
+// concurrent contention — in-process goroutines hit cobra's shared rootCmd
+// buffer.
+//
+// We build into os.MkdirTemp (NOT t.TempDir) so the binary survives across
+// `-count=N` re-runs of the same test. testing.T cleans up t.TempDir after
+// each Run; the sync.Once would refuse to rebuild on the second iteration.
+var (
+	poolBinaryOnce sync.Once
+	poolBinaryPath string
+	poolBinaryErr  error
+)
+
+func buildPoolBinary(t *testing.T) string {
+	t.Helper()
+	poolBinaryOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "ateam-pool-claim-bin-")
+		if err != nil {
+			poolBinaryErr = fmt.Errorf("mktemp: %w", err)
+			return
+		}
+		bin := filepath.Join(dir, "ateam-test-bin")
+		// Build the package this test lives in. cmd is package main's only
+		// dependency, but the binary entry point is at the parent module
+		// root (../main.go from cmd/). go build with the module path picks
+		// up main automatically.
+		cmd := exec.Command("go", "build", "-o", bin, "..")
+		cmd.Dir = "."
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			poolBinaryErr = fmt.Errorf("go build failed: %v\n%s", err, out)
+			return
+		}
+		poolBinaryPath = bin
+	})
+	if poolBinaryErr != nil {
+		t.Fatalf("build pool binary: %v", poolBinaryErr)
+	}
+	if poolBinaryPath == "" {
+		t.Fatal("pool binary path empty after build")
+	}
+	return poolBinaryPath
+}
+
+// TestPoolClaimCrossProcessRace exercises the production verb under real
+// concurrent contention. Two child processes race to claim the same .idle
+// file; exactly one must exit 0 and the other must exit 2 (already claimed).
+//
+// We run the race many iterations to shake out timing-dependent flakes —
+// the stat-then-rename window in pool_claim.go is small but real, and a
+// single-iteration test could pass by luck.
+func TestPoolClaimCrossProcessRace(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping cross-process race in -short mode")
+	}
+	bin := buildPoolBinary(t)
+
+	const iterations = 50
+	for i := 0; i < iterations; i++ {
+		missionID := fmt.Sprintf("M-test-cross-race-%d", i)
+		poolDir := filepath.Join("/tmp/.ateam-pool", missionID)
+		if err := os.MkdirAll(poolDir, 0755); err != nil {
+			t.Fatalf("iter %d: mkdir: %v", i, err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(poolDir) })
+
+		idleFile := filepath.Join(poolDir, "murdock-1.idle")
+		if err := os.WriteFile(idleFile, nil, 0644); err != nil {
+			t.Fatalf("iter %d: seed idle: %v", i, err)
+		}
+
+		var wg sync.WaitGroup
+		var exits [2]int
+		for j := 0; j < 2; j++ {
+			wg.Add(1)
+			go func(slot int) {
+				defer wg.Done()
+				cmd := exec.Command(bin, "pool", "claim", "murdock-1")
+				cmd.Env = append(os.Environ(), "ATEAM_MISSION_ID="+missionID)
+				err := cmd.Run()
+				if err == nil {
+					exits[slot] = 0
+					return
+				}
+				var ee *exec.ExitError
+				if errors.As(err, &ee) {
+					exits[slot] = ee.ExitCode()
+					return
+				}
+				t.Errorf("iter %d slot %d: unexpected error: %v", i, slot, err)
+				exits[slot] = -1
+			}(j)
+		}
+		wg.Wait()
+
+		zeros := 0
+		twos := 0
+		for _, code := range exits {
+			switch code {
+			case 0:
+				zeros++
+			case PoolExitAlreadyClaimed:
+				twos++
+			}
+		}
+		if zeros != 1 || twos != 1 {
+			t.Fatalf("iter %d: expected exactly one exit=0 and one exit=%d, got %v",
+				i, PoolExitAlreadyClaimed, exits)
+		}
+
+		// Filesystem invariant: .busy exists, .idle is gone.
+		busyFile := filepath.Join(poolDir, "murdock-1.busy")
+		if _, err := os.Stat(busyFile); err != nil {
+			t.Errorf("iter %d: expected %s to exist, got: %v", i, busyFile, err)
+		}
+		if _, err := os.Stat(idleFile); !os.IsNotExist(err) {
+			t.Errorf("iter %d: expected %s to be gone, got stat: %v", i, idleFile, err)
+		}
 	}
 }

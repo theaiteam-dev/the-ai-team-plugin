@@ -7,13 +7,17 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	flag "github.com/spf13/pflag"
 )
 
 // runPoolCmd executes the rootCmd with the given args and returns combined
 // stdout/stderr (cobra writes both to the configured Out/Err) plus any error.
-// Each call resets buffers so tests don't bleed into each other.
+// Each call resets buffers and persistent flags so tests don't bleed into
+// each other (cobra retains parsed flag values between Execute() calls).
 func runPoolCmd(t *testing.T, args ...string) (string, error) {
 	t.Helper()
+	resetPersistentFlags(t)
 	var buf bytes.Buffer
 	rootCmd.SetOut(&buf)
 	rootCmd.SetErr(&buf)
@@ -22,12 +26,39 @@ func runPoolCmd(t *testing.T, args ...string) (string, error) {
 	return buf.String(), err
 }
 
+// resetPersistentFlags rolls every persistent flag on rootCmd back to its
+// declared default. Without this, --json from a previous test leaks into
+// the next one.
+func resetPersistentFlags(t *testing.T) {
+	t.Helper()
+	rootCmd.PersistentFlags().VisitAll(func(f *flag.Flag) {
+		_ = f.Value.Set(f.DefValue)
+		f.Changed = false
+	})
+}
+
 // withTempPoolRoot redirects /tmp/.ateam-pool/<missionId> to a per-test temp
 // dir by setting ATEAM_MISSION_ID to a unique value and returning the
 // resulting pool dir path. Caller is responsible for any cleanup of /tmp.
 func withTempPoolRoot(t *testing.T, prefix string) (missionID, poolDir string) {
 	t.Helper()
-	missionID = "M-test-" + prefix + "-" + strings.ReplaceAll(t.Name(), "/", "_")
+	// Build a mission ID that satisfies validateMissionID (matches
+	// ^[A-Za-z0-9_.-]+$). Test names can contain '=', '/', spaces, etc.,
+	// from t.Run subtest labels, so squash anything outside the allowed set.
+	raw := "M-test-" + prefix + "-" + t.Name()
+	var b strings.Builder
+	for _, r := range raw {
+		switch {
+		case r >= 'A' && r <= 'Z',
+			r >= 'a' && r <= 'z',
+			r >= '0' && r <= '9',
+			r == '-', r == '.', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	missionID = b.String()
 	poolDir = filepath.Join("/tmp/.ateam-pool", missionID)
 	t.Setenv("ATEAM_MISSION_ID", missionID)
 	t.Cleanup(func() {
