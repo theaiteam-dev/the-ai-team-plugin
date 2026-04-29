@@ -204,7 +204,12 @@ Spawn instances **lazily, lane by lane, only when the pipeline actually needs th
 #   amy     → "ai-team:amy"
 
 # Track lane spawn cursor (initialized to 1 at mission start)
+# Hannibal's orchestration loop is sequential — `next_lane_to_spawn` is cursor
+# state, not shared mutable state. Do not parallelize Phase 1b drain with
+# Phase 3 fill without revisiting this invariant (a concurrent reader could
+# observe a stale cursor and respawn an already-spawned lane).
 next_lane_to_spawn = 1
+failed_lanes      = set()  # lanes that exhausted spawn retries — see wait_for_lane_ready
 
 function spawn_lane(lane_number):
     if lane_number > N:
@@ -237,7 +242,17 @@ function spawn_lane(lane_number):
         )
 
     # Wait for READY messages from all 4 agents in this lane before continuing.
-    wait_for_lane_ready(lane_number)
+    ready_count = wait_for_lane_ready(lane_number)
+
+    if ready_count < 4:
+        # Lane is degraded (timeout or partial respawn failure). In LAZY mode there
+        # are no remaining lanes to fall back to — retrying spawn_lane(lane_number)
+        # would just re-hit the same timeout. Mark the lane as failed and advance
+        # the cursor past it so Phase 3 stops asking for it.
+        failed_lanes.add(lane_number)
+        Bash("ateam activity createActivityEntry --agent hannibal --message 'Lane {lane_number} FAILED to start ({ready_count}/4 ready) — marking failed, will not retry' --level error")
+        next_lane_to_spawn = lane_number + 1
+        return
 
     # Create .idle files for this lane now that agents are confirmed alive
     for instance in lane_instances:
@@ -252,20 +267,36 @@ spawn_lane(1)
 **Phase 3 integration (called from the orchestration loop):**
 
 ```
-# In Phase 3, before claimInstance("murdock") returns null and we stop filling:
+# In Phase 3, before claimInstance("murdock") returns null and we stop filling.
+# Skip lanes that previously failed to start — retrying just re-burns the 60s timeout.
 while ready stage not empty:
     claimed = claimInstance("murdock")
     if claimed is null:
+        # Advance cursor past any already-failed lanes
+        while next_lane_to_spawn <= N AND next_lane_to_spawn in failed_lanes:
+            next_lane_to_spawn += 1
         # No idle Murdock — try lazy pre-warm before giving up
         if next_lane_to_spawn <= N:
-            spawn_lane(next_lane_to_spawn)
-            claimed = claimInstance("murdock")  # retry after spawn
+            spawn_lane(next_lane_to_spawn)            # may add to failed_lanes
+            claimed = claimInstance("murdock")        # retry after spawn
         if claimed is null:
-            break  # truly at capacity
+            break  # truly at capacity (all spawnable lanes either busy or failed)
     # ... rest of dispatch
 ```
 
-**`wait_for_lane_ready(lane_number)`**: Block on incoming `SendMessage` until all 4 expected READY messages arrive, with a **60-second timeout per lane**:
+**Mission BLOCKED on capacity exhaustion.** If every lane in `1..N` is in `failed_lanes`
+AND items remain in `ready` AND no in-flight items will free a Murdock slot
+(`active_instances` empty), Hannibal stops retrying, surfaces a single ALERT,
+and transitions the mission to a blocked state — do NOT spin retrying spawn:
+
+```
+if len(failed_lanes) == N AND ready stage not empty AND active_instances is empty:
+    Bash("ateam activity createActivityEntry --agent hannibal --message 'Mission BLOCKED on capacity exhaustion — all {N} lanes failed to start. {len(ready_items)} items stuck in ready. Operator intervention required (likely env / Task spawn / message bus issue).' --level error")
+    # Do NOT loop back into Phase 3 — exit the orchestration loop and report.
+    break
+```
+
+**`wait_for_lane_ready(lane_number)`**: Block on incoming `SendMessage` until all 4 expected READY messages arrive, with a **60-second timeout per lane**. Returns the final `len(ready)` so the caller (`spawn_lane`) can detect a degraded lane and mark it failed:
 
 ```
 lane_agents = {"murdock-{N}", "ba-{N}", "lynch-{N}", "amy-{N}"}
@@ -306,7 +337,10 @@ if ready != lane_agents:
         still_missing = lane_agents - ready
         for agent in still_missing:
             Bash("ateam activity createActivityEntry --agent hannibal --message 'DEGRADED: {agent} failed to start after respawn — lane {lane_number} is degraded' --level error")
-        # Continue with remaining lanes — degraded agents will be skipped during dispatch
+        # Caller (spawn_lane) sees ready_count < 4 and marks the lane failed.
+        # Do NOT create .idle files for this lane — partial agents would route work into a black hole.
+
+return len(ready)
 ```
 
 **Do NOT use tmux pane liveness as a health check.** A pane can exist with a dead Claude Code process inside it. The only reliable signal that an agent is alive is a READY message. Silence after dispatch is a red flag, not a sign the agent is busy.
@@ -484,18 +518,26 @@ LOOP CONTINUOUSLY:
     while ready stage not empty:
         claimed = claimInstance("murdock")
         if claimed is null:
+            # Advance cursor past any lanes already in failed_lanes
+            while next_lane_to_spawn <= N AND next_lane_to_spawn in failed_lanes:
+                next_lane_to_spawn += 1
             # Try lazy pre-warm before giving up — see "Agent Pre-Warming (Lazy)"
             if next_lane_to_spawn <= N:
-                spawn_lane(next_lane_to_spawn)
+                spawn_lane(next_lane_to_spawn)        # may add to failed_lanes
                 claimed = claimInstance("murdock")
             if claimed is null:
-                break  # truly at capacity (all lanes spawned and busy)
+                break  # truly at capacity (all spawnable lanes busy or failed)
 
         item_id = pick next item from ready stage
         # NOTE: Hannibal does NOT call agentStart here — the dispatched agent
         # owns agentStart (and the .idle → .busy mv) as its first action.
         dispatch(claimed, item_id)
         active_instances[item_id] = claimed
+
+    # Capacity-exhaustion exit: every lane failed, items stuck, no in-flight work to free a slot.
+    if len(failed_lanes) == N AND ready stage not empty AND active_instances is empty:
+        Bash("ateam activity createActivityEntry --agent hannibal --message 'Mission BLOCKED on capacity exhaustion — all {N} lanes failed. Operator intervention required.' --level error")
+        break  # exit orchestration loop — do not spin retrying spawn
 
     # ═══════════════════════════════════════════════════════════
     # PHASE 4: COMPLETION DETECTION (FALLBACK)
