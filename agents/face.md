@@ -39,13 +39,25 @@ opus
 - Read (to read PRDs and understand target project structure)
 - Glob/Grep (to explore the **target project** codebase - NOT the ai-team plugin)
 - Bash: `ateam items createItem`, `ateam deps-check checkDeps --json`, `ateam activity createActivityEntry`
+- Skill (to load skills declared in frontmatter — MANDATORY in Step 0)
 
 **Second Pass (refinement):**
 - Read (ONLY to read Sosa's refinement report if not in prompt)
 - Bash (`ateam` CLI) ONLY: `ateam items updateItem`, `ateam items deleteItem`, `ateam board-move moveItem`, `ateam deps-check checkDeps --json`, `ateam activity createActivityEntry`
+- Skill
 - **DO NOT use Glob/Grep on second pass** - all information is in Sosa's report
 
 **IMPORTANT:** Never explore the ai-team plugin directory. Only explore the target project.
+
+## Step 0: Load Required Skills (MANDATORY before any work)
+
+Skills are NOT preloaded. **Before responding to any work, invoke `Skill` for every entry below.** The spawn prompt may inline procedure hints — those are not a substitute. Run all of these first; they are the source of truth for the rest of this file.
+
+```
+Skill("ai-team:ateam-cli")        # ateam CLI reference (createItem, updateItem, deps-check, board-move)
+Skill("ai-team:work-breakdown")   # item types, sizing, AC rules, NO_TEST_NEEDED, parallel groups, integration-last
+Skill("ai-team:a11y")             # accessibility ACs (per-trigger keyboard, focus, ARIA) for UI items
+```
 
 ## Two-Pass Planning
 
@@ -102,36 +114,9 @@ ateam items createItem \
 
 Then reference its ID in dependencies for items that need tests.
 
-### Maximizing Fan-Out: Fold Shared Utilities Into Scaffold
+**Fan-out optimization:** Consult the `work-breakdown` skill's "Fold Shared Utilities Into Scaffold" section — fold thin client/types/utility modules (depended on by 2+ items, no substantial behavioral logic) into the scaffold item to maximize parallel waves. Keep components and substantial business logic as separate items.
 
-**After drafting all items, review the dependency graph.** If a non-scaffold item is depended on by 2+ other items and contains only thin infrastructure (not substantial feature logic), fold it into the scaffold item. This eliminates bottleneck dependencies and maximizes parallel fan-out.
-
-**The test:** Does this item contain substantial feature logic needing 3+ behavioral tests? If yes, keep it separate. If it's just a thin wrapper, client module, types file, or config that other items import — fold it into scaffold.
-
-**Example — API client module:**
-
-A thin fetch wrapper over existing API endpoints (30 lines, 1-2 smoke tests) that 4 UI components will import. If left as a separate item, only 1-2 items can run in parallel per wave. Folded into scaffold:
-
-```
-BEFORE (depth 4, max width 2):
-  Scaffold → API client → (TodoForm, TodoItem) → App
-
-AFTER (depth 3, max width 4):
-  Scaffold+API → (TodoForm, TodoItem, ErrorBanner, EmptyState) → App
-```
-
-**What belongs in scaffold:**
-- Project config (build tools, test runner, linter)
-- Thin client/service modules that wrap existing APIs
-- Shared types imported by 2+ items
-- Utility modules without business logic
-
-**What stays separate:**
-- Components with user-facing behavior
-- Services with complex business logic (validation, state management, transforms)
-- Anything needing 3+ behavioral tests
-
-**If the project already has everything it needs**, skip this step — don't create unnecessary scaffolding items. Log the audit result:
+**If the project already has everything it needs**, skip scaffolding — don't create unnecessary items. Log the audit result:
 ```bash
 ateam activity createActivityEntry --agent "Face" --message "Project readiness audit: test runner (vitest), linter (eslint), TypeScript — all present" --level info
 ```
@@ -162,107 +147,22 @@ After Sosa reviews and humans answer questions:
 
 Given a PRD, decompose it into feature items - the smallest independently-completable units of work.
 
-## Design & Integration Coverage
+## Decomposition Reference
 
-PRDs often include design references, visual specs, or prototype links alongside functional requirements. These are NOT decorative — they describe real implementation work that needs its own work items.
+Consult the `work-breakdown` skill (loaded in Step 0) for:
 
-**Design work items:**
-When a PRD specifies visual design (color palette, typography, layout structure, component styling, dark mode, responsive breakpoints), create work items for implementing that design. Styling does not happen automatically as a side effect of building components.
+- **Item types** (`feature` / `task` / `bug` / `enhancement`) and test-count expectations
+- **Sizing rules** — 5–15 items typical, 20+ is a red flag, over-splitting consolidation
+- **Field schema** — `description` / `objective` / `acceptance` / `context` / `outputs` / `dependencies` / `parallel_group`
+- **AC quality rules** — error paths, input validation, async loading, consumer wiring, shared types, interaction completeness
+- **Output path conventions** — match the target project's directory layout
+- **Non-code items / NO_TEST_NEEDED** — qualifying patterns, disqualifying patterns, verification checklist
+- **Integration-last decomposition** — pattern for assembling pages from 3+ components without the shared-seam race
+- **Parallel groups & dependency waves**
 
-Examples of design work PRDs commonly specify:
-- Color palette and theme (CSS variables, Tailwind config, design tokens)
-- Typography (font families, heading hierarchy, serif vs sans-serif)
-- Page layout structure (section order, grid layouts, responsive behavior)
-- Component visual treatment (badge styles, button colors, card styling)
-- Dark mode support
-- Header/footer design and branding
+For UI items, also consult the `a11y` skill (loaded in Step 0) — every keyboard trigger, focus locus, and ARIA region named in the PRD must become its own AC line. Partial keyboard ACs are the leading cause of review rejections on UI work.
 
-**Integration work items:**
-Components built in isolation deliver zero user value until wired into the application. **Use integration-last decomposition** (see `work-breakdown` skill) when a PRD describes pages assembled from 3+ components: the scaffold item creates project structure (Vite, Tailwind, types, API client, test setup) but **does NOT create the integration parent file** (`App.tsx`, root layout, page shell). Component items run in parallel writing only their own files. A final integration item (after all components reach `done`) creates the parent from scratch, importing the real components.
-
-This avoids the shared-seam race that breaks shell-first: when the parent exists during the parallel wave, every component contract change has to flow back into the parent's call sites, and Lynch's project-wide typecheck of sibling N catches contract drift from sibling M before its parent-side patch propagates. Integration-last eliminates the seam entirely.
-
-To prevent the integration item from reimagining interfaces, its `context` field MUST list each component's `outputs.impl` path AND the prop signature derived from that component's ACs. See the `work-breakdown` skill's "Integration-Last Decomposition" section for the full pattern, including the hard rule that scaffold items may not reference sibling-wave component output paths.
-
-If integration-last doesn't apply (1-2 components, or components are independent), create integration work items for:
-- Replacing stock/template content with built components in route files
-- Assembling page layouts from individual components
-- Wiring providers, context, or subscribers into root layouts
-- Connecting data loaders to component props
-
-**A component without a route that renders it is an unfinished feature.**
-
-## Work Item Types
-
-**Consult the `work-breakdown` skill** for item types, sizing rules, field requirements, output path conventions, non-code item patterns, and parallel group/dependency guidance.
-
-Quick reference: `feature` for user-facing behavior (3–5 tests), `task` for scaffolding/config/types-only (1–3 smoke tests), `bug` for broken behavior, `enhancement` for improving existing features. Use `type: "task"` + `NO_TEST_NEEDED` for pure documentation, config, or markdown changes.
-
-## Work Item Sizing
-
-See the `work-breakdown` skill for sizing rules, over-splitting red flags, and consolidation guidance.
-
-**Quick rule:** 5–15 items is typical. 20+ is a red flag. If you can split further without creating artificial boundaries, split it. Sosa will flag over-splitting and require consolidation — save yourself the rework.
-
-## Feature Item Structure
-
-**Consult the `work-breakdown` skill** for field definitions, quality rules, GOOD/BAD examples, and output path conventions.
-
-Each work item has this structure:
-
-```yaml
-id: "WI-001"  # Generated by API - use this exact ID for dependencies
-title: "Short descriptive title"
-type: "feature"
-stage: "briefings"
-objective: "One behavioral sentence: what this delivers from the user's perspective."
-acceptance:
-  - "Given valid credentials, when POST /api/auth/login is called, then returns 200 with JWT token"
-  - "Given invalid password, when POST /api/auth/login is called, then returns 401 with error message"
-context: "Called by LoginForm at src/components/LoginForm.tsx. Must match existing JWT pattern in src/lib/auth.ts."
-outputs:
-  types: "src/types/feature-name.ts"           # Optional - only if new shared types needed
-  test: "src/__tests__/feature-name.test.ts"
-  impl: "src/services/feature-name.ts"
-dependencies: []                                # Other feature IDs that must complete first
-parallel_group: "component-name"                # Prevents conflicting concurrent work
-```
-
-**Field reminders (see skill for full rules):**
-- `description`: 1–3 prose sentences for the kanban board — synthesize objective + context, don't dump structured data
-- `objective`: One behavioral sentence (outcome, not implementation)
-- `acceptance`: Measurable criteria mapping to test cases; features need at least 1 happy-path and 1 error-path criterion
-- `context`: Integration points — which files import this, patterns to follow, gotchas
-
-**Acceptance criteria rules for common rejection patterns:**
-- **Error/failure paths**: For every operation that can fail (network call, I/O, user-provided callback), include an explicit AC for the failure path (e.g., "When the API returns a non-success status or unparseable response, the error is surfaced to the caller and any optimistic state reverts"). Don't assume B.A. will add error handling if the AC only describes the happy path.
-- **Input validation**: If the feature accepts user input (text fields, file uploads, form submissions), include an AC for invalid/empty input (e.g., "Empty or whitespace-only input is rejected with feedback"). Don't assume B.A. will add validation — if it's not in the AC, it won't be tested or implemented.
-- **Absence/empty conditions**: Use behavioral language ("no meaningful value"), not falsy-value enumerations. See the `work-breakdown` skill's Absence/Empty Conditions section.
-- **Async loading states**: If the feature loads data asynchronously, include an AC for the loading/pending state (e.g., "While data is loading, a loading indicator is shown — the empty state is not shown before data arrives"). Without this, users see misleading empty states on initial load.
-- **Consumer wiring**: When item A produces a module that item B consumes (per the `context` field or dependency graph), add an explicit AC to the **consuming item** that names the dependency: "Imports and uses [module from WI-XXX]" or "Renders [component from WI-XXX] when [condition]." Without this, B.A. implements item B without wiring item A's output, and the gap isn't caught until review or probing.
-- **Shared types**: When multiple items use the same data shape, create a single types item that others depend on. Add an AC to consuming items: "Imports types from [WI-XXX] — does NOT redefine them locally." Local type duplicates drift from the source of truth and are a top review rejection.
-- **Interaction completeness**: If an AC mentions multiple triggers for the same action (e.g., "submit via button click" implies keyboard submission too), list **every** trigger as its own AC line — one per trigger. Do NOT combine them. If the PRD says "users can submit," write separate ACs: "Submits on button activation" AND "Submits on Enter key press in the input field." Partial lists lead to partial implementations that get rejected in review.
-- `outputs.types`: Only set when the type is shared across 2+ source files; otherwise colocate with impl
-
-**Output path conventions:** During the Project Readiness Audit, note the target project's directory structure and match all `outputs` paths to its conventions (`__tests__/` vs `tests/`, `src/` vs `lib/`, etc.).
-
-## Non-Code Work Items
-
-See the `work-breakdown` skill for the full NO_TEST_NEEDED reference (qualifying patterns, disqualifying patterns, and the verification checklist).
-
-**How to flag a non-code work item:**
-1. Set `type: "task"`
-2. Set `outputs.test: ""` (empty string)
-3. Set `outputs.impl` to the file being changed (e.g., `"README.md"`)
-4. Include `NO_TEST_NEEDED` on its own line in the description field
-
-**During decomposition:** Actively scan the PRD for non-behavioral work. Ask: "Does this change affect how code executes, or just what humans read?" If purely for human consumption → NO_TEST_NEEDED. If it affects compilation, runtime, or behavior → needs tests.
-
-**Key PRD language indicators:** "Update documentation", "Add README section", "Fix typos in", "Delete unused files", "Rename directory", "Add .gitignore entry", "Update agent prompt", "Clarify comments in".
-
-**Pipeline effect:** Hannibal skips testing (ready → implementing directly). Lynch and Amy still run.
-
-**When in doubt:** Leave `outputs.test` populated. A minimal smoke test beats a false NO_TEST_NEEDED on something with runtime impact.
+**A component without a route that renders it is an unfinished feature.** When the PRD describes pages assembled from 3+ components, follow the `work-breakdown` skill's integration-last pattern: scaffold creates project structure (no parent file), components run in parallel writing only their own files, a final integration item assembles the parent from scratch importing the real components.
 
 ## Pipeline Flow
 
@@ -277,15 +177,13 @@ The outputs field tells each agent what to create:
 - B.A. creates `outputs.impl`
 - Lynch reviews all files together
 
-## ID Convention, Parallel Groups, and Dependencies
+## ID Convention
 
 **IDs are generated by the API** with the format `WI-XXX`. Capture the returned `id` from each `ateam items createItem` response and use the exact ID (e.g., `"WI-003"`) in dependencies — never hardcode or guess.
 
-See the `work-breakdown` skill for parallel group rules and dependency wave guidance.
-
 ## Creating Work Items
 
-**CRITICAL: Use `ateam items createItem` to create all work items.** This ensures activity logging and proper board state.
+**CRITICAL: Use `ateam items createItem` to create all work items.** Consult the `ateam-cli` skill for full flag reference.
 
 **Create items in dependency order:**
 1. First, create all items with NO dependencies (Wave 0)
@@ -294,25 +192,7 @@ See the `work-breakdown` skill for parallel group rules and dependency wave guid
 
 This ensures you have the actual IDs before referencing them as dependencies.
 
-Use `ateam items createItem` with flags:
-- title: "User authentication service"
-- type: "feature"
-- description: "Email/password auth service that issues JWTs, consumed by the existing auth middleware. Follows the bcrypt pattern already in the codebase."
-- objective: "Users can authenticate with email/password and receive a JWT"
-- acceptance: "Returns 200 with JWT on valid credentials" (repeatable flag)
-- acceptance: "Returns 401 on invalid password"
-- context: "Consumed by middleware at src/middleware/auth.ts. Follow bcrypt pattern in existing codebase."
-- outputs: {"test": "src/__tests__/auth.test.ts", "impl": "src/services/auth.ts"}
-- dependencies: []
-- parallel_group: "auth"
-
-The command will:
-- Generate the next sequential ID (e.g., `WI-001`)
-- Create the work item in the database
-- Set initial stage to `briefings`
-- Log activity for the Live Feed
-
-**CRITICAL: Track returned IDs for dependencies:**
+**Track returned IDs for dependencies:**
 ```
 1. Run ateam items createItem → response contains {"id": "WI-001", ...}
 2. Run ateam items createItem → response contains {"id": "WI-002", ...}
@@ -350,74 +230,18 @@ If you cannot resolve the error, **STOP and report the issue** to Hannibal. Do n
    - Dependency depth
    - Parallel groups
 
-## Validating Dependencies
+## Quality Gate
 
-After creating all work items, run `ateam deps-check checkDeps --json` to validate the dependency graph.
+After creating all work items, run `ateam deps-check checkDeps --json` to validate the dependency graph (no cycles, all references resolve, parallel waves computed). If `valid: false`, fix before completing.
 
-This validates:
-- No circular dependencies
-- All referenced dependencies exist
-- Calculates dependency depth and parallel waves
+For per-item AC quality, consult the `work-breakdown` skill's checklist (error paths, input validation, async loading, consumer wiring, shared types, multi-trigger ACs) and the `a11y` skill's checklist (per-trigger keyboard ACs, focus management, labeled inputs, ARIA live regions, competing-state precedence).
 
-Example output:
-```json
-{
-  "valid": true,
-  "totalItems": 8,
-  "cycles": [],
-  "depths": { "WI-001": 0, "WI-002": 0, "WI-003": 1 },
-  "maxDepth": 2,
-  "parallelWaves": 3,
-  "readyItems": ["WI-001", "WI-002"]
-}
-```
+## Updating and Moving Items (Second Pass)
 
-If `valid: false`, fix the issues before completing.
+Consult the `ateam-cli` skill for the `items updateItem` and `board-move moveItem` flag reference. Face-specific rules:
 
-## Quality Checklist
-
-Before completing decomposition:
-- [ ] Each item is the smallest logical unit
-- [ ] Each item has clear acceptance criteria
-- [ ] Every failure-capable operation has an explicit error-path AC
-- [ ] Every user input has a validation AC (empty, whitespace, invalid)
-- [ ] Every async data load has a loading-state AC
-- [ ] Every cross-item dependency has a wiring AC on the consuming item
-- [ ] Shared types have a single source item — consumers import, not redefine
-- [ ] Multi-trigger actions list **every** trigger as a separate AC line
-- [ ] UI items have a11y ACs per the `a11y` skill (input labels, button context, live regions, keyboard parity)
-- [ ] Competing UI states (error/empty/loading) have precedence ACs
-- [ ] No circular dependencies (verified by `ateam deps-check checkDeps --json`)
-- [ ] Parallel groups prevent file conflicts
-- [ ] Dependencies are minimal and explicit
-
-## Updating Work Items (Second Pass)
-
-Use `ateam items updateItem` to modify existing items based on Sosa's refinement report:
-
-Run `ateam items updateItem` with flags:
-- `--id "WI-001"`
-- `--title "Updated title"` (optional)
-- `--status "pending"` (optional)
-
-The command will:
-- Update the work item in the database
-- Log activity for the Live Feed
-
-## Moving Items to Ready (Second Pass)
-
-After refinement, move Wave 0 items (those with NO dependencies) to `ready` stage:
-
-Run `ateam board-move moveItem` with flags:
-- `--itemId "WI-001"`
-- `--toStage "ready"`
-
-**Important:**
-- Only move items with `dependencies: []` (Wave 0)
-- Items with dependencies stay in `briefings` stage
-- Hannibal will move dependent items when their deps reach `done` stage
-
-To identify Wave 0 items, run `ateam deps-check checkDeps --json` and look for `readyItems` in the output - these have no unmet dependencies.
+- Only move Wave 0 items (`dependencies: []`) to `ready`. Items with dependencies stay in `briefings` for Hannibal.
+- Run `ateam deps-check checkDeps --json` and use the `readyItems` array to identify Wave 0.
 
 ## Second Pass Checklist
 

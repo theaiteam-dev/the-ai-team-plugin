@@ -228,6 +228,51 @@ SendMessage({
 })
 ```
 
+### Sosa → Hannibal (planning phase — terminal critique)
+
+Sosa runs during `/ai-team:plan`, not `/ai-team:run`. After reviewing every item in `briefings`, send the refinement report to Hannibal so Face can apply the recommendations on the second pass:
+
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "REVIEW COMPLETE: {APPROVED | APPROVED WITH WARNINGS | BLOCKED}\n\nCritical: {N}\nWarnings: {N}\nItems reviewed: {N}/{total}\n\n{full refinement report}",
+  summary: "Decomposition review: {verdict}"
+})
+```
+
+Sosa does **not** START Face directly. Face is re-invoked by the planning command, not via peer handoff. The verdict tells Hannibal whether the second pass should run.
+
+### Sosa → user (human-clarification questions)
+
+For QUESTION-level issues that only a human can resolve, use `AskUserQuestion` (NOT `SendMessage`) — these go to the user, not to a teammate:
+
+```javascript
+AskUserQuestion({
+  questions: [{
+    question: "Should email verification be required before login?",
+    header: "Email verification",
+    options: [
+      { label: "Required", description: "..." },
+      { label: "Optional", description: "..." },
+      { label: "Skip",     description: "..." }
+    ],
+    multiSelect: false
+  }]
+})
+```
+
+Batch all open questions into one `AskUserQuestion` call when possible. Block on the answers, then incorporate them into the report sent to Hannibal.
+
+If a question cannot be put in option form (open-ended business decision), escalate to Hannibal instead:
+
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "QUESTION: {description of ambiguity needing human input}",
+  summary: "Needs human input on {topic}"
+})
+```
+
 ---
 
 ## Ad-Hoc Peer Requests

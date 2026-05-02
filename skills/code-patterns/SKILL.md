@@ -76,6 +76,106 @@ async function deleteUser(userId: string, deletedBy: AdminUser): Promise<void> {
 
 ---
 
+## SOLID, DRY, and Coupling
+
+These principles operate above the function level — they shape how modules fit together. The patterns elsewhere in this skill (function design, type safety, immutability) are the building blocks; this section is how to assemble them.
+
+### Single Responsibility (S in SOLID)
+
+A module/class/function should have one reason to change. If two unrelated stakeholders would both ask you to change the same module for different reasons, it has more than one responsibility — split it.
+
+```typescript
+// BAD: ReportService changes when reporting logic changes AND when email format changes
+class ReportService {
+  generateReport() { /* ... */ }
+  emailReport() { /* SMTP details, template formatting */ }
+}
+
+// GOOD: separated by reason-to-change
+class ReportGenerator { generate() { /* ... */ } }
+class ReportMailer    { send(report: Report) { /* ... */ } }
+```
+
+### Open/Closed (O in SOLID)
+
+Modules should be open for extension, closed for modification. When adding a new variant of behavior, prefer adding a new implementation over editing an `if/else` chain that grows with each variant.
+
+### Dependency Inversion (D in SOLID)
+
+High-level modules should not depend on low-level details. Both should depend on interfaces. In practice for AI agents: pass dependencies as parameters (constructor, function args) rather than reaching for module-level singletons. This is what makes code testable.
+
+### DRY — apply the Rule of Three
+
+Two similar pieces of code is fine. **Three is the threshold for extraction.** Don't extract a helper at the second occurrence — you don't yet know what shape the abstraction should take, and premature abstraction is worse than duplication. Three occurrences gives you enough signal to extract a helper with the right interface.
+
+```typescript
+// At occurrence #2: leave the duplication. You'll know more soon.
+// At occurrence #3: extract — now you know what the variation point is.
+```
+
+**What is NOT DRY:** Two pieces of code that *look* the same but exist for different reasons (one for legacy callers, one for new ones; one synchronous, one async). Extracting them creates coupling between unrelated concerns. Apply Rule of Three to *the same logical concern*, not to surface similarity.
+
+### Coupling & Cohesion
+
+- **High cohesion** — code that changes together belongs together. If one file always changes alongside another for the same reason, they should likely be one module.
+- **Low coupling** — code that doesn't share a reason to change should not import each other deeply. If module A reaches into module B's internals, B can't be changed without A breaking.
+
+**What to flag:**
+- A module that imports from 10+ other modules — likely doing too much
+- Two modules that import each other — circular coupling, refactor or merge
+- A "utils" or "helpers" module collecting unrelated functions — split by domain
+
+---
+
+## Testability by Design
+
+Code is testable when its dependencies can be substituted, its inputs and outputs are pure, and its behavior is observable from the outside. Code that is hard to test is usually code that has hidden coupling — testability is a design signal, not a chore.
+
+### Pure functions over stateful methods
+
+A pure function `(input) => output` with no I/O and no mutation is the easiest thing to test: pass arguments, assert on the return value. Push impurity (DB calls, HTTP, time, randomness) to the edges; keep the core logic pure.
+
+```typescript
+// BAD: business logic tangled with I/O — must mock the DB to test
+async function applyDiscount(orderId: string) {
+  const order = await db.orders.findById(orderId);
+  const discount = order.total > 100 ? 0.1 : 0;
+  order.total = order.total * (1 - discount);
+  await db.orders.save(order);
+}
+
+// GOOD: pure core, I/O at the edge
+function calculateDiscount(total: number): number {
+  return total > 100 ? 0.1 : 0;
+}
+
+async function applyDiscount(orderId: string) {
+  const order = await db.orders.findById(orderId);
+  const discount = calculateDiscount(order.total);
+  order.total = order.total * (1 - discount);
+  await db.orders.save(order);
+}
+```
+
+### Inject dependencies, don't reach for them
+
+Code that calls `new DatabaseClient()` or imports `currentUser` from a module-level singleton can't be tested in isolation. Pass dependencies as parameters — the test can substitute a fake without touching the global environment.
+
+### Deterministic over time-dependent
+
+If a function's output depends on `Date.now()` or `Math.random()`, accept time/random as a parameter (or inject a clock). Tests that drift with wall-clock time are flaky.
+
+### Observable side effects
+
+When the function's job IS to cause a side effect (publish event, write file), expose the dispatch mechanism as a dependency so the test can assert on what was dispatched, without needing the real subsystem.
+
+**What to flag:**
+- A function with no return value and no injected dependency — its effect is invisible to tests
+- A test that has to mock `Date.now`, `fetch`, or a module global — the production code should accept those as parameters
+- A class with private state mutated by 5+ methods, exposing only a single public method — its branches can't be exercised individually
+
+---
+
 ## Immutability & Side Effects
 
 ### Bad

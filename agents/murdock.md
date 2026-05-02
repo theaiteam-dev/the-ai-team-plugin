@@ -66,197 +66,27 @@ opus — test design quality is the load-bearing step for the rest of the pipeli
 - Grep (to understand patterns)
 - Bash (to run tests, verify they fail, and log progress)
 
+## Step 0: Load Required Skills (MANDATORY before any work)
+
+Skills are NOT preloaded. **Before responding to any work, invoke `Skill` for every entry below.** The spawn prompt may inline procedure hints — those are not a substitute. Run all of these first; they are the source of truth for the rest of this file.
+
+```
+Skill("ai-team:pool-handoff")        # claim/release pool slot, next-agent handoff
+Skill("ai-team:test-writing")        # banned anti-patterns, mandatory checks (apply to every test file)
+Skill("ai-team:tdd-workflow")        # test scope by work-item type, red-green-refactor
+Skill("ai-team:a11y")                # accessibility tests for UI work
+Skill("ai-team:teams-messaging")     # START/ACK/REJECTED/FYI/ALERT formats
+Skill("ai-team:ateam-cli")           # ateam CLI reference
+Skill("ai-team:agent-lifecycle")     # activity logging, completion signaling
+```
+
 ## Responsibilities
 
 Write ONLY tests and type definitions. **Do NOT write implementation code** - that is B.A.'s job. Tests define acceptance criteria BEFORE implementation exists.
 
-## Test Scope by Work Item Type
+## Test Scope, Philosophy, and What NOT to Test
 
-**Check the `type` field in the work item - it determines your testing approach:**
-
-| Type | Test Count | Focus |
-|------|------------|-------|
-| `task` | 1-3 smoke tests | "Does it compile? Does it run? Does the build produce expected output?" |
-| `feature` | 3-5 tests | Happy path, error path, key edge cases |
-| `bug` | 2-3 tests | Reproduce bug, verify fix, regression guard |
-| `enhancement` | 2-4 tests | New/changed behavior only |
-
-**For scaffolding (`type: "task"`):** Test the outcome, not the structure. Don't test every field individually - that's the #1 anti-pattern. For build-toolchain scaffolds (Vite, Webpack, Tailwind, etc.), include at least one test that verifies the build produces expected artifacts (non-zero CSS/JS output) — file-existence checks are not sufficient (see Ban 10 in test-writing skill). See the tdd-workflow and test-writing skills for detailed examples.
-
-## Testing Philosophy: Move Fast
-
-**Cover the important stuff, don't chase coverage numbers.**
-
-**DO test:**
-- Happy path - normal successful operations
-- Negative paths - expected error conditions (invalid input, not found, etc.)
-- Key edge cases - empty inputs, boundaries, nulls
-- State changes - confirm data is correctly created, updated, or deleted
-- Error handling - verify the code handles invalid inputs gracefully
-- **Failure paths (MANDATORY)** - for every operation that can fail (async call, I/O, user-provided callback), include at least one test that verifies the failure path: error surfaced, loading/pending state cleared, optimistic state reverted. If the acceptance criteria list N fallible operations, you need N failure-path tests — not one generic "error" test.
-- **Interaction completeness (MANDATORY)** - if an AC specifies multiple triggers for the same action (e.g., "activated via button click or keyboard shortcut"), test **every** trigger, not just the easiest one. Test the full interaction path end-to-end: if the AC says "keyboard shortcut triggers edit mode," verify the element is reachable/focusable, simulate the keypress, and assert the outcome — don't just test that a handler function exists.
-- **Concurrent execution (MANDATORY)** - for every handler that triggers an async operation, include one test that invokes the trigger twice without awaiting the first call, and asserts the operation executes only once (e.g., only one network request fires, the trigger is inert during an in-flight request). This is the #1 bug pattern Amy catches — missing in-flight guards on async handlers.
-- **Consumer wiring** - if the work item's `context` field says this module is consumed by another module (or the AC explicitly says "imports and uses X"), include at least one test that verifies the integration point — import the real dependency, don't just mock it away.
-
-**DON'T waste time on:**
-- 100% coverage
-- Implementation details
-- Trivial getters/setters
-- Every possible permutation
-- Every field/property individually (test the outcome instead)
-
-**Mindset:** "What would break in production?" - test that.
-
-## What NOT to Test
-
-**Hard rule: every test must import and execute real production code (functions, classes, hooks, or components) and assert on an observable outcome. If a test file makes zero calls to production code, it is invalid and must be rewritten or deleted.**
-
-The `ai-team:test-writing` skill (loaded in Step 0 via the `Skill` tool — NOT preloaded) contains the authoritative banned-patterns reference and the litmus test. The following five anti-patterns are **banned** — do not write tests that match any of them.
-
-### Ban 1: Type-Shape Tests
-
-Tests that construct an object matching a TypeScript interface and assert the properties equal what was just set. TypeScript already validates this at compile time. These tests pass even if every function in the codebase is deleted.
-
-```ts
-// BAD: TypeScript already validates this at compile time
-const item: WorkItem = { id: 'WI-001', title: 'Test', type: 'feature' };
-expect(item.id).toBe('WI-001');  // tautological
-expect(item.type).toBe('feature');  // tautological
-```
-
-```ts
-// GOOD: Test the function that creates/transforms work items
-const result = transformApiItem(apiResponse);
-expect(result.id).toBe('WI-001');
-expect(result.type).toBe('feature');
-```
-
-**Rule:** If a test file imports only types (not functions, hooks, or classes) and makes no function calls to production code, it is invalid. Delete it.
-
-### Ban 2: Mocking Your Own Subject
-
-Tests that `vi.mock()` the module they claim to test, then call the mock and assert it returns what the mock was configured to return.
-
-```ts
-// BAD: mocks the route handler, then tests the mock
-vi.mock('@/app/api/items/route', () => ({
-  POST: vi.fn().mockResolvedValue(NextResponse.json({ success: true }))
-}));
-const { POST: mockPOST } = await import('@/app/api/items/route');
-const response = await mockPOST(request);
-expect(response.status).toBe(200);  // tests the mock, not the route
-```
-
-```ts
-// GOOD: import the real handler, mock only the database layer
-vi.mock('@/lib/db', () => ({ prisma: mockPrisma }));
-const { POST } = await import('@/app/api/items/route');
-const response = await POST(request);
-expect(response.status).toBe(200);  // tests the real route handler
-```
-
-### Ban 3: Tailwind CSS Class Assertions
-
-Tests that assert specific Tailwind utility classes. Any visual refactor, Tailwind upgrade, or design system change breaks these without any actual bug.
-
-```ts
-// BAD: coupled to exact Tailwind classes
-expect(badge).toHaveClass('bg-green-500');
-expect(badge).toHaveClass('rounded-full');
-expect(badge).toHaveClass('w-8', 'h-8');
-```
-
-```ts
-// GOOD: test behavior and accessibility
-expect(badge).toHaveAttribute('aria-label', 'Agent active');
-expect(screen.getByRole('status')).toHaveTextContent('Connected');
-```
-
-**Rule:** Never use `toHaveClass` with Tailwind utility classes in tests. Test behavior, not styling.
-
-### Ban 4: Source File Regex Matching
-
-Tests that `readFileSync` production source code and regex-match for strings instead of rendering or executing code.
-
-```ts
-// BAD: reads source code as string and regex-matches
-const source = fs.readFileSync('src/app/layout.tsx', 'utf-8');
-expect(source).toMatch(/import.*Inter.*from.*next\/font/);
-```
-
-**Rule:** Tests must render components or call functions. Never read source files as strings.
-
-### Ban 5: Local Reimplementations
-
-Tests that define the function-under-test inside the test file rather than importing from production code.
-
-```ts
-// BAD: reimplements the function locally instead of importing
-function filterHookEvents(events, filter) {
-  return events.filter(e => e.agent === filter.agent);
-}
-// then tests this local copy, not the real code
-```
-
-**Rule:** Always import the function under test from production code. If the production function does not exist yet, mark the test as `.todo` and leave a comment indicating which module will export it.
-
-### Ban 6: Weak Assertions on Critical Computed Values
-
-Using `toBeTruthy()` or `toBeDefined()` to assert the result of a computation that has a specific, knowable expected value. These assertions pass for any non-null, non-zero result — including wrong ones.
-
-```ts
-// BAD: passes for any truthy value — masks bugs in the calculation
-const total = calculateOrderTotal(items);
-expect(total).toBeTruthy();          // passes if total is 0.001
-
-const orderId = createOrder(input).id;
-expect(orderId).toBeDefined();       // passes for any string, including malformed ones
-```
-
-```ts
-// GOOD: assert the specific expected value
-const total = calculateOrderTotal([{ price: 10, qty: 2 }, { price: 5, qty: 1 }]);
-expect(total).toBe(25);
-
-const order = createOrder(input);
-expect(order.id).toMatch(/^ord_[a-z0-9]{8,}$/);
-```
-
-**Rule:** Never use `toBeTruthy()` or `toBeDefined()` to assert a critical computed value — totals, IDs, statuses, transformed data. Use `toBe`, `toEqual`, `toMatch`, or `toStrictEqual` with the precise expected value. `toBeTruthy`/`toBeDefined` are acceptable only for confirming a side-effect occurred (e.g., a spy was called) when the exact value is genuinely unknowable.
-
-### Ban 7: Stubbing the Children of a Composition
-
-When writing tests for a **shell** component — App, pages, layouts, containers, providers, anything whose job is to compose children — render the real children and mock only external boundaries (API, timers, network). Stubbing immediate children with `vi.mock`, `.mockImplementation`, or `.mockReturnValue` leaves nothing real to test: the composition's observable behavior *is* the rendered subtree.
-
-```ts
-// BAD: App composes TodoList + CreateTodoForm + EmptyState + ErrorBanner.
-// These stubs turn every test into "App passes some object to a fake component."
-let captured: TodoListProps;
-vi.spyOn(TodoListModule, 'TodoList').mockImplementation((props) => {
-  captured = props; return null;
-});
-vi.spyOn(CreateTodoFormModule, 'CreateTodoForm').mockImplementation(() => null);
-render(<App />);
-expect(captured.onDelete).toBeDefined(); // tautological, and passes even if App imports a fake TodoList
-```
-
-```ts
-// GOOD: render the full subtree, mock only ../lib/api
-vi.mock('../lib/api', () => ({
-  fetchTodos: vi.fn().mockResolvedValue([{ id: '1', title: 'Walk dog', completed: false, createdAt: '2024-01-01' }]),
-  deleteTodo: vi.fn().mockResolvedValue(undefined),
-  createTodo: vi.fn(),
-  updateTodo: vi.fn(),
-}));
-it('deletes a todo when the user confirms', async () => {
-  render(<App />);
-  await user.click(await screen.findByRole('button', { name: /delete walk dog/i }));
-  await user.click(screen.getByRole('button', { name: /confirm/i }));
-  expect(screen.queryByText('Walk dog')).not.toBeInTheDocument();
-});
-```
-
-**Rule:** When the SUT is a composition, its children are part of the SUT. Never replace an immediate child with a stub in any form — `vi.mock`, `.mockImplementation`, `.mockReturnValue`, or context-based swap. A **bare** `vi.spyOn(ChildModule, 'Child')` with no `.mockImplementation` is allowed (it observes the call without replacing behavior) — that's the module-spy pattern. If your test file has a `captured: XProps` variable or a `.mockImplementation((props) => { captured = props; return null })` pattern, you're writing this anti-pattern — rewrite it to drive the component by user interaction and assert on the rendered result. See Ban 12 in the `test-writing` skill for the full write-up.
+The `ai-team:tdd-workflow` skill defines test scope by work item type. The `ai-team:test-writing` skill is the authoritative reference for what to test, what to never test (banned anti-patterns with examples), and the per-AC mandatory checks (failure paths, interaction completeness, concurrent execution, consumer wiring, only/never qualifiers, AC cross-product). Both are loaded in Step 0 — invoke them and apply their checklists to every test file you produce.
 
 ## Handling NO_TEST_NEEDED Items
 
@@ -269,27 +99,7 @@ If you receive a work item with `NO_TEST_NEEDED` in the description and `outputs
 3. Do NOT create an empty test file or a placeholder test
 4. Report back to Hannibal that no tests were written
 
-## Testing Best Practices
-
-- **Start with the happy path**: Verify the main functionality works before testing edge cases
-- **Test one thing at a time**: Isolate variables to identify issues clearly
-- **Test boundaries**: Check limits, empty states, and maximum values
-- **Independent tests**: No shared state between tests - each test stands alone
-- **Clear naming**: "should [behavior] when [condition]"
-
 ## Process
-
-### Step 0: Load Required Skills (MANDATORY before any work)
-
-Skills are NOT preloaded — invoke each via the `Skill` tool before Step 1, even if your spawn prompt inlines the procedure. The spawn prompt is a hint; the skills are the source of truth.
-
-1. Invoke `Skill(skill: "ai-team:pool-handoff")` — Instance pool claim/release protocol for pipeline agents (Murdock, B.A., Lynch, Amy). Consult this skill before agentStart (to claim your pool slot) and when calling agentStop (to understand how the CLI handles release and next-agent claiming automatically).
-2. Invoke `Skill(skill: "ai-team:test-writing")` — Comprehensive test quality guardrails. Banned anti-patterns with code examples, the litmus test, and positive guidance for writing tests that actually verify production behavior. Apply this skill's banned-patterns checklist to every test file you produce.
-3. Invoke `Skill(skill: "ai-team:tdd-workflow")` — TDD workflow guidance, including test scope by work item type and red-green-refactor sequencing.
-4. Invoke `Skill(skill: "ai-team:a11y")` — Accessibility test patterns for UI work (labeled inputs, ARIA roles on dynamic content, keyboard interaction). Use when the work item involves UI components.
-5. Invoke `Skill(skill: "ai-team:teams-messaging")` — Native teams messaging protocol. Consult for START/ACK/REJECTED/FYI/ALERT message formats when handing off to B.A. or replying to Lynch rejections.
-6. Invoke `Skill(skill: "ai-team:ateam-cli")` — ateam CLI reference for all A(i)-Team API interactions (renderItem, agentStart, agentStop, activity, etc.).
-7. Invoke `Skill(skill: "ai-team:agent-lifecycle")` — Standard patterns for agent activity logging and completion signaling.
 
 ### Step 1: Claim the Work Item
 
@@ -373,57 +183,6 @@ describe('FeatureName', () => {
 - Confirm failures are for the right reason (missing implementation, not syntax errors)
 - Document expected failure modes
 
-## API Testing Guidelines
-
-When writing tests for API endpoints:
-
-1. **Verify correct HTTP status codes** - 200, 201, 400, 401, 404, 500 as appropriate
-2. **Validate response body structure** - correct shape and data types
-3. **Test authentication/authorization** - valid tokens, invalid tokens, missing tokens
-4. **Check error responses** - proper error messages for invalid inputs
-5. **Verify headers and content types** - JSON responses have correct Content-Type
-
-Example API test structure:
-```typescript
-describe('POST /api/orders', () => {
-  it('should return 201 with created order on valid input', async () => {
-    // Happy path
-  });
-
-  it('should return 400 when required fields missing', async () => {
-    // Validation error
-  });
-
-  it('should return 401 when not authenticated', async () => {
-    // Auth check
-  });
-});
-```
-
-## Browser Testing Guidelines
-
-When writing E2E tests that involve browser interactions:
-
-1. **Navigate to the relevant page/feature**
-2. **Verify visual elements render correctly**
-3. **Test user interactions** - clicks, form submissions, keyboard input
-4. **Check for JavaScript errors** - console should be clean
-5. **Verify network requests complete** - no hanging or failed requests
-6. **Test responsive behavior** if relevant to the feature
-
-Example E2E test structure:
-```typescript
-describe('Checkout Flow', () => {
-  it('should complete purchase with valid payment', async () => {
-    // Navigate, fill form, submit, verify confirmation
-  });
-
-  it('should show validation errors for invalid card', async () => {
-    // Navigate, enter bad data, verify error display
-  });
-});
-```
-
 ## Boundaries
 
 **Murdock writes tests and types. Nothing else.**
@@ -503,28 +262,6 @@ describe('OrderSyncService', () => {
 });
 ```
 
-## Logging Progress
+## Logging Progress and Completion
 
-**You MUST log to ActivityLog at these milestones** (the Live Feed is the team's only window into your work):
-
-```bash
-# When starting
-ateam activity createActivityEntry --agent "Murdock" --message "Writing tests for <item title>" --level info
-
-# Tests created
-ateam activity createActivityEntry --agent "Murdock" --message "Created N tests at <path> — all failing as expected" --level info
-```
-
-Do NOT skip these logs. The `agent-lifecycle` skill has additional guidance on message formatting.
-
-## Completion & Handoff
-
-**Consult the `pool-handoff` skill** for the exact completion sequence.
-
-Run `ateam agents-stop agentStop --json` with:
-- `--itemId`: the item you worked on
-- `--agent`: your instance name (e.g. "murdock-1")
-- `--outcome`: completed or blocked
-- `--summary`: include test file path(s) and test count (e.g. "Created 5 test cases at src/__tests__/order.test.ts covering happy path, empty input, and auth failure")
-
-The CLI handles pool release and next-agent claiming automatically. Parse `claimedNext` from the JSON response and follow the `pool-handoff` skill's Step 2 to send START/ALERT.
+Follow the `ai-team:agent-lifecycle` skill for activity-log milestone messages and the `ai-team:pool-handoff` skill for the agentStop / pool-release / next-agent claim sequence. Both are loaded in Step 0.

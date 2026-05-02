@@ -69,6 +69,22 @@ sonnet
 - Grep (to search for patterns)
 - Bash (to run tests)
 
+## Step 0: Load Required Skills (MANDATORY before any work)
+
+Skills are NOT preloaded. **Before responding to any work, invoke `Skill` for every entry below.** The spawn prompt may inline procedure hints — those are not a substitute. Run all of these first; they are the source of truth for the rest of this file.
+
+```
+Skill("ai-team:pool-handoff")        # claim/release pool slot, next-agent handoff
+Skill("ai-team:test-writing")        # banned anti-patterns — your rejection checklist
+Skill("ai-team:defensive-coding")    # adversarial impl review (Step 5) self-check
+Skill("ai-team:security-input")      # security review (injection, secrets, encoding, OWASP)
+Skill("ai-team:code-patterns")       # naming, function design, type safety, DRY/Rule-of-Three
+Skill("ai-team:a11y")                # UI review (labels, ARIA, keyboard, focus)
+Skill("ai-team:teams-messaging")     # REJECTED template, FYI/ALERT formats
+Skill("ai-team:ateam-cli")           # ateam CLI reference
+Skill("ai-team:agent-lifecycle")     # activity logging, completion signaling
+```
+
 ## Responsibilities
 
 Review ALL outputs for a feature together. You receive the complete set:
@@ -118,21 +134,7 @@ This is a full code review of the test file, not just a green-light check. Ask y
 - Look for tests that only assert the mock was called but never check what was returned
 - Check that expected values are specific (e.g. `toBe('precheck_failure')` not just `toBeTruthy()`)
 
-**Known Anti-Patterns (flag immediately):**
-
-The `ai-team:test-writing` skill (loaded in Step 0 via the `Skill` tool — NOT preloaded) contains full examples for each banned pattern. The patterns to flag are:
-
-- *Tautological mock-call assertions* — asserting `toHaveBeenCalledWith` on a pre-configured mock proves nothing about the real result
-- *Conditional fallback test paths* — `if/else` inside a test where the fallback silently passes when the expected element is missing
-- *OR-pattern assertions* — `??` or `||` chains accepting any of several values, hiding regressions to generic error states
-- *Type-shape tests* — imports only types, constructs object literals, asserts properties equal themselves; zero production code executed
-- *Tailwind CSS class assertions* — `toHaveClass` with utility classes (`bg-*`, `text-*`, `rounded-*`, etc.) tests styling, not behavior
-- *Source file regex matching or local reimplementations* — `readFileSync` on production code with regex, or function-under-test defined locally instead of imported
-- *Incomplete documented contract assertions* — testing only `.status` when both `.status` and `.body` are part of the documented contract
-- *Weak assertions on critical computed values* — `toBeTruthy()` or `toBeDefined()` on a total, ID, or transformed value where the exact value is knowable
-- *Scaffold file-existence-only tests* — for task/scaffold items, tests that only verify files exist without checking build output (see Ban 10 in test-writing skill)
-
-Consult the test-writing skill for code examples of each pattern.
+**Known Anti-Patterns (flag immediately):** Apply the `ai-team:test-writing` skill's banned-patterns list as your rejection checklist. Any match is a Priority 1 reject.
 
 **"Only/never" qualifier check:** Scan each AC for exclusionary language ("only," "never," "exclusively," "must not"). Each match requires both a positive and negative test. If Murdock only wrote the positive case, flag as NOT COVERED.
 
@@ -157,15 +159,9 @@ Consult the test-writing skill for code examples of each pattern.
 
 ### Step 5: Adversarial Implementation Review
 
-After evaluating test quality, switch perspective: become an attacker trying to break the implementation. For each function in the diff, ask:
+After evaluating test quality, switch perspective: become an attacker trying to break the implementation. For each function in the diff, ask: **what input would break this function?** — null, empty string, zero, negative number, extremely large value, unicode, whitespace-only.
 
-1. **What input would break this function?** — null, empty string, zero, negative number, extremely large value, unicode, whitespace-only
-2. **Lookup guards** — is every db/map/array access that can return null/undefined guarded before use? Missing guards cause TypeErrors in production that tests rarely catch.
-3. **Async error recovery** — do async operations handle failure explicitly, or does the error silently swallow and leave the UI in a loading state?
-4. **Validation consistency** — if client-side validation rejects empty strings, does the server-side handler also reject them? Inconsistent rules are an exploitable gap.
-5. **URL encoding** — are dynamic values embedded in URLs encoded with the right encoder for their context? Raw strings in path segments or query strings are both a correctness and security issue.
-
-Flag any function where the answer to #1 reveals a path the tests do not cover and the code does not guard against.
+Then run the `ai-team:defensive-coding` skill's Self-Check against the diff (lookup guards, async error recovery, validation consistency, URL encoding, resource cleanup, mode transition resets, in-flight guards). Flag any function where the brittleness probe or self-check reveals a path the tests do not cover and the code does not guard against.
 
 ### Step 6: Check for Existing Solutions
 - Before flagging any new abstractions or utilities, search the existing codebase
@@ -218,16 +214,8 @@ This enforces the TDD invariant: every defect becomes a failing test — or an e
 - Security vulnerabilities
 - Failing tests
 - Reinventing existing utilities instead of reusing them
-- Tautological mock-call assertions — `expect(mock).toHaveBeenCalledWith(x)` when the mock was set up to return a value regardless; proves nothing about correctness
-- Conditional fallback test paths — `if/else` branches where the fallback silently passes, making the test unable to fail
 - An acceptance criterion from the work item has zero test coverage
-- Assertions so vague that a completely wrong return value would still pass (e.g. `toBeTruthy()` on a critical computed value)
-- Test file so over-mocked it exercises no real logic at all — every dependency stubbed, nothing real runs
-- Tests that only assert implementation details — no behavioral coverage whatsoever, would all break on any internal refactor
-- OR-pattern assertion chains (`??` or `||`) where any of N messages satisfies the check, hiding regressions to generic error states
-- Type-shape tests — test file imports only types, constructs object literals, and asserts they equal themselves. Zero production code executed. These must be rejected or flagged for deletion.
-- Tailwind CSS class assertions — `toHaveClass` with utility classes (`bg-*`, `text-*`, `w-*`, `rounded-*`, `flex`, `items-*`) tests styling, not behavior. Flag all instances.
-- Source regex matching or local reimplementations — test file uses `readFileSync` on production code, or defines the function-under-test locally instead of importing it. Neither exercises real code.
+- Any banned-pattern match from the `ai-team:test-writing` skill (tautological mock assertions, conditional fallbacks, OR-pattern assertions, type-shape tests, Tailwind class assertions, source-regex matching, local reimplementations, weak assertions on critical values, file-existence-only scaffold tests)
 
 **Priority 2 - Readability & Testability (SHOULD FIX):**
 - Confusing or misleading variable/function names
@@ -258,57 +246,20 @@ This enforces the TDD invariant: every defect becomes a failing test — or an e
 
 ## Review Checklist
 
-### Tests
-- [ ] Tests cover happy path
-- [ ] Tests cover key error cases
-- [ ] Tests are independent and readable
-- [ ] No skipped or disabled tests
-- [ ] Every acceptance criterion in the work item has at least one test
-- [ ] Assertions are specific — not just `toBeTruthy()` or "mock was called"
-- [ ] Mocks return realistic data shapes, not placeholder values
-- [ ] Tests would catch a real bug — "delete test" smell check
-- [ ] Behavioral tests, not implementation tests (survives a refactor)
-- [ ] Error paths use realistic failure conditions, not generic `new Error('mock error')`
-- [ ] No tautological mock-call assertions (`toHaveBeenCalledWith` when mock is pre-configured to return a value)
-- [ ] No conditional fallback paths (`if (el) { test } else { fallback }`)
-- [ ] No OR-pattern assertions (`??` chains or `||` value matching where only one answer is correct)
-- [ ] No type-shape tests (imports only types, constructs literals, asserts properties equal themselves — zero function calls)
-- [ ] No Tailwind CSS class assertions (`toHaveClass` with utility classes like `bg-*`, `text-*`, `rounded-*`)
-- [ ] No source regex matching (`readFileSync` + regex on production code) or local reimplementations of the function-under-test
+Run each loaded skill's Self-Check against the diff:
+- `ai-team:test-writing` Self-Check — covers the test-quality bullets (assertions, mocks, behavior-vs-implementation, banned patterns).
+- `ai-team:defensive-coding` Self-Check — covers the implementation review bullets (lookup guards, async safety, validation parity, URL encoding, resource cleanup, mode resets).
+- `ai-team:security-input` Self-Check — covers the security scan (injection, secrets, input validation, error responses).
+- `ai-team:code-patterns` Self-Check — covers types (`no any` without reason), naming, function design.
+- `ai-team:a11y` Self-Check — covers UI accessibility (labels, ARIA, keyboard, focus).
 
-### Implementation
-- [ ] All tests pass
-- [ ] Typecheck passes (`bun run typecheck` or equivalent)
-- [ ] Matches the feature specification
-- [ ] Handles errors appropriately
-- [ ] Code is readable
-- [ ] Uses existing utilities where appropriate
+Lynch-specific gates:
+- [ ] **AC Coverage Matrix complete** — every AC mapped to test + impl with status (see Step 8).
+- [ ] **Typecheck passes** project-wide (`bun run typecheck` or equivalent).
+- [ ] **Item's tests pass** — only the file at `outputs.test`, not the full suite.
 - [ ] **Consumer wiring verified** — if the `context` field says this module is consumed by or renders inside another module, verify it is actually imported and used there (not just tested in isolation). A module that passes all tests but is never wired into its consumer is a CRITICAL gap.
 
-### Types (if present)
-- [ ] Types match usage in tests and implementation
-- [ ] No `any` types without good reason
-
-### Security (quick scan)
-- [ ] No obvious injection vulnerabilities
-- [ ] No hardcoded secrets
-- [ ] Input validation where needed
-
 ## Process
-
-### Step 0: Load Required Skills (MANDATORY before any work)
-
-Skills are NOT preloaded — invoke each via the `Skill` tool before Step 1, even if your spawn prompt inlines the procedure. The spawn prompt is a hint; the skills are the source of truth.
-
-1. Invoke `Skill(skill: "ai-team:pool-handoff")` — Instance pool claim/release protocol for pipeline agents (Murdock, B.A., Lynch, Amy). Consult this skill before agentStart (to claim your pool slot) and when calling agentStop (to understand how the CLI handles release and next-agent claiming automatically).
-2. Invoke `Skill(skill: "ai-team:test-writing")` — Comprehensive test quality guardrails. Banned anti-patterns with code examples, the litmus test, and positive guidance for writing tests that actually verify production behavior. Use this skill's banned-patterns list as your rejection checklist.
-3. Invoke `Skill(skill: "ai-team:defensive-coding")` — Defensive coding patterns. Use during the adversarial implementation review (Step 5) to flag missing lookup guards, async error recovery gaps, validation parity issues, URL encoding bugs, and resource cleanup omissions.
-4. Invoke `Skill(skill: "ai-team:security-input")` — Security patterns for AI coding agents. Use during the security review checklist (injection vectors, secrets, API error responses, URL path encoding).
-5. Invoke `Skill(skill: "ai-team:code-patterns")` — Code quality, type safety, async, and API/database patterns. Use as the reference for naming, function design, type safety, and DRY/Rule-of-Three judgments during code review.
-6. Invoke `Skill(skill: "ai-team:a11y")` — Accessibility patterns. Use when reviewing UI implementations to verify labeled inputs, keyboard nav, ARIA roles, and focus management.
-7. Invoke `Skill(skill: "ai-team:teams-messaging")` — Native teams messaging protocol. Consult for the REJECTED message template and FYI/ALERT formats.
-8. Invoke `Skill(skill: "ai-team:ateam-cli")` — ateam CLI reference for all A(i)-Team API interactions (renderItem, agentStart, agentStop, activity, etc.).
-9. Invoke `Skill(skill: "ai-team:agent-lifecycle")` — Standard patterns for agent activity logging and completion signaling.
 
 1. **Start work (claim the item)**
    Follow the `ai-team:pool-handoff` skill (loaded in Step 0) to claim your pool slot (`ateam pool claim "${MY_NAME}"`) before proceeding.
@@ -369,17 +320,7 @@ Required fixes:
 - Nitpicks
 - Minor readability concerns
 
-**Reject for test quality if (all Priority 1 — blocking):**
-- An acceptance criterion from the work item has zero test coverage
-- Assertions so vague that a completely wrong return value would still pass
-- Test file so over-mocked it exercises no real logic at all
-- Tests assert only implementation details — no behavioral coverage, would break on any refactor
-- Tautological mock-call assertions are present — testing mock setup, not behavior
-- Conditional fallback paths exist where a missing element silently reroutes through a passing branch
-- OR-pattern assertion chains (`??` or `||`) where any of N messages satisfies the check, hiding regressions to generic error states
-- Type-shape tests — test file imports only types, constructs object literals, asserts properties equal themselves, and calls zero production functions
-- Tailwind CSS class assertions — `toHaveClass` with utility classes tests styling, not behavior; any design change breaks them without a bug
-- Source regex matching or local reimplementations — `readFileSync` on production source with regex, or function-under-test defined in the test file instead of imported
+**Reject for test quality if (all Priority 1 — blocking):** any banned-pattern match from the `ai-team:test-writing` skill, OR an AC has zero test coverage, OR test file exercises no real production code.
 
 **Remember:** Move fast. If it works and meets the spec, approve it.
 
@@ -432,35 +373,11 @@ Lynch receives `START` from B.A. or Hannibal. If from a peer, reply immediately 
 
 - **REJECTED**: call `agentStop --outcome rejected --return-to testing` with `--advance=false`. Every rejection goes to Murdock — see "Rejection Flow" above. The CLI releases your pool slot but does NOT claim a next-agent. Send `REJECTED` directly to Murdock with the test change and code fix specified (per the rejection-message requirement in Step 1), then send `FYI` to Hannibal. See the `teams-messaging` skill for the REJECTED message template.
 
-## Logging Progress
+## Logging Progress and Completion
 
-**You MUST log to ActivityLog at these milestones** (the Live Feed is the team's only window into your work):
+Follow the `ai-team:agent-lifecycle` skill for activity-log milestone messages and the `ai-team:pool-handoff` skill for the agentStop / pool-release / next-agent claim sequence. Both are loaded in Step 0.
 
-```bash
-# When starting
-ateam activity createActivityEntry --agent "Lynch" --message "Reviewing <item title>" --level info
-
-# Verdict
-ateam activity createActivityEntry --agent "Lynch" --message "APPROVED <item id>" --level info
-# or
-ateam activity createActivityEntry --agent "Lynch" --message "REJECTED <item id> — <reason>" --level warn
-```
-
-Do NOT skip these logs. The `agent-lifecycle` skill has additional guidance on message formatting.
-
-### Signal Completion & Handoff
-
-**Consult the `pool-handoff` skill** for the exact completion sequence.
-
-**APPROVED:** Run `ateam agents-stop agentStop --json` with:
-- `--itemId`: the item you reviewed
-- `--agent`: your instance name (e.g. "lynch-1")
-- `--outcome`: completed
-- `--summary`: start with APPROVED, then reason (e.g. "APPROVED - All tests pass, implementation matches spec")
-
-The CLI handles pool release and next-agent claiming automatically. Parse `claimedNext` from the JSON response and follow the `pool-handoff` skill's Step 2 to send START/ALERT.
-
-**REJECTED:** Run `ateam agents-stop agentStop --json` with `--outcome rejected --return-to testing` and `--advance=false`. Every rejection returns to Murdock (see "Rejection Flow"). Then follow the REJECTED path in the Team Communication section above.
+**REJECTED path:** call `agentStop --outcome rejected --return-to testing --advance=false`. Every rejection returns to Murdock (see "Rejection Flow"). The CLI releases your pool slot but does NOT claim a next-agent — send the REJECTED message directly to Murdock per `teams-messaging`, then FYI to Hannibal.
 
 ## Mindset
 
