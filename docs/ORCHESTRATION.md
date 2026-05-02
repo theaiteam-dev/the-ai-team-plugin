@@ -155,8 +155,19 @@ ateam agents-stop agentStop \
 
 - The API atomically increments `rejectionCount`, moves the item back to the `--return-to` stage, and logs the rejection to the work log.
 - At `rejectionCount == 2` the item is escalated to `blocked`.
-- The working agent then sends a REJECTED peer message to the correct recipient (Murdock for test issues, B.A. for implementation issues) so the rework starts immediately — Hannibal is notified via FYI only.
+- The working agent then sends a REJECTED peer message to the correct recipient so the rework starts immediately — Hannibal is notified via FYI only.
 - `--advance=false` is required on rejection: the item is moving backward, not forward, so the default forward `--advance=true` pool claim must be skipped.
+
+**Valid rejection routes** (enforced by `scripts/hooks/enforce-handoff.js` REJECTION_TARGETS):
+
+| Rejector | --return-to | REJECTED recipient | Use case |
+|----------|-------------|--------------------|----------|
+| `lynch`  | `testing`       | `murdock-N` | Tests miss an AC or assert wrong behavior |
+| `lynch`  | `implementing`  | `ba-N`      | Tests OK; impl is wrong |
+| `amy`    | `implementing`  | `ba-N`      | Probing found a bug beyond test coverage |
+| `ba`     | `testing`       | `murdock-N` | TEST BUG only — test won't compile / throws on valid input / asserts impossible behavior. Summary must start with `TEST BUG:` |
+
+B.A.'s self-rejection is restricted to `--return-to testing` and uses the `TEST BUG:` summary prefix; any other rejection target from B.A. will be blocked by the handoff hook. This path exists to prevent the "B.A. blocks waiting for Hannibal to manually re-dispatch Murdock" stall pattern. See `agents/ba.md` "When the Test Is Wrong" for the narrow trigger criteria.
 
 ## Final Review Persistence
 

@@ -448,6 +448,63 @@ describe('enforce-handoff — rejection routing', () => {
     expect(parseOutput(result.stdout)).toEqual({});
   });
 
+  it('allows B.A. self-rejecting to testing → REJECTED to murdock instance (TEST BUG)', () => {
+    const transcriptPath = writeTranscript([
+      {
+        name: 'Bash',
+        input: { command: 'ateam agents-stop agentStop --itemId "WI-005" --agent "ba-1" --outcome rejected --return-to testing --advance=false --summary "TEST BUG: TodoItem.test.tsx:446 - user.type(input, \'\') throws on empty string" --json' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'murdock-1', content: 'REJECTED: WI-005 - TEST BUG at TodoItem.test.tsx:446' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'hannibal', content: 'FYI: WI-005 - rejected to testing (test bug)' },
+      },
+    ]);
+
+    const result = runHook({ agent_type: 'ai-team:ba-1', transcript_path: transcriptPath });
+    expect(result.exitCode).toBe(0);
+    expect(parseOutput(result.stdout)).toEqual({});
+  });
+
+  it('blocks B.A. rejecting to implementing (only testing is a valid BA rejection target)', () => {
+    const transcriptPath = writeTranscript([
+      {
+        name: 'Bash',
+        input: { command: 'ateam agents-stop agentStop --itemId "WI-005" --agent "ba-1" --outcome rejected --return-to implementing --summary "self-reject" --json' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'ba-2', content: 'REJECTED: WI-005 - self reject' },
+      },
+    ]);
+
+    const result = runHook({ agent_type: 'ai-team:ba-1', transcript_path: transcriptPath });
+    const output = parseOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(output.reason).toContain('murdock');
+  });
+
+  it('blocks B.A. rejecting to testing but sending START instead of REJECTED', () => {
+    const transcriptPath = writeTranscript([
+      {
+        name: 'Bash',
+        input: { command: 'ateam agents-stop agentStop --itemId "WI-005" --agent "ba-1" --outcome rejected --return-to testing --summary "TEST BUG: bad assert" --json' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'murdock-1', content: 'START: WI-005 - please look at this' },
+      },
+    ]);
+
+    const result = runHook({ agent_type: 'ai-team:ba-1', transcript_path: transcriptPath });
+    const output = parseOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(output.reason).toContain('REJECTED');
+  });
+
   it('falls back to any REJECTED when --return-to is not parseable', () => {
     const transcriptPath = writeTranscript([
       {

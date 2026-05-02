@@ -718,7 +718,9 @@ Task(
   Test file is at: {outputs.test}
   Create the implementation at: {outputs.impl}
 
-  When done, follow the pool-handoff skill: run `ateam agents-stop agentStop --json --itemId {itemId} --agent \"ba-1\" --outcome completed --summary \"...\"`, parse claimedNext from the response, and send START to the claimed Lynch instance (or ALERT to Hannibal if poolAlert is set)."
+  When done, follow the pool-handoff skill: run `ateam agents-stop agentStop --json --itemId {itemId} --agent \"ba-1\" --outcome completed --summary \"...\"`, parse claimedNext from the response, and send START to the claimed Lynch instance (or ALERT to Hannibal if poolAlert is set).
+
+  Self-rejection alternative (rare — only for genuine test bugs): if a test is broken (won't compile, throws on valid input, asserts impossible behavior), self-reject with `--outcome rejected --return-to testing --advance=false --summary \"TEST BUG: ...\"`, then SendMessage REJECTED to a Murdock instance. See `agents/ba.md` 'When the Test Is Wrong' for trigger criteria. This is NOT for impl-side bugs or test designs you disagree with."
 )
 ```
 
@@ -913,9 +915,12 @@ Production measurements show Hannibal-mediated dispatch adds 2-3 minutes of late
 |-----------------|------------------|-------------------|
 | `murdock-N` done | any idle `ba-M` via `mv` | FYI (success) or ALERT (no idle) |
 | `ba-N` done | any idle `lynch-M` via `mv` | FYI (success) or ALERT (no idle) |
+| `ba-N` rejected (TEST BUG) | any idle `murdock-M` via `mv` | FYI (success) or ALERT (no idle) |
 | `lynch-N` approved | any idle `amy-M` via `mv` | FYI (success) or ALERT (no idle) |
 | `lynch-N` rejected | (no pool claim) | DONE-REJECTED to Hannibal |
 | `amy-N` verified/flag | (no downstream agent) | DONE to Hannibal |
+
+`ba-N` self-rejection is restricted to `--return-to testing` — the handoff hook will block any other rejection target. This is the only backward-handoff path B.A. has; for everything else (impl-side bugs, missing AC coverage), B.A. completes the impl normally and lets Lynch catch it during review.
 
 **No instance-number affinity.** `murdock-2` completing WI-008 may hand off to `ba-1` or `ba-2` — whichever has an `.idle` file first. The instance numbers of sender and receiver are independent.
 

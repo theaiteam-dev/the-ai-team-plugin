@@ -349,11 +349,16 @@ ateam board getBoard --json
 
 ## Handling Rejections
 
-**In native teams mode:** Lynch and Amy handle rejections autonomously via `agentStop --outcome rejected`. They increment the rejection count, move the item backward, and START the responsible agent directly — Hannibal is not in the critical path.
+**In native teams mode:** Lynch, Amy, and (rarely) B.A. handle rejections autonomously via `agentStop --outcome rejected`. They increment the rejection count, move the item backward, and START the responsible agent directly — Hannibal is not in the critical path.
+
+**Who can self-reject and where it goes:**
+- **Lynch** → `testing` (Murdock) for test gaps, or `implementing` (B.A.) for impl bugs
+- **Amy** → `implementing` (B.A.) for bugs found during probing
+- **B.A.** → `testing` (Murdock) **only** when a test is genuinely broken (TEST BUG: prefix). Rare — used to avoid the "BA blocks waiting for someone to fix the test" stall pattern. Trigger criteria are narrow (see `agents/ba.md` "When the Test Is Wrong"); the handoff hook blocks B.A. from rejecting to any other stage.
 
 **What Hannibal receives on rejection:**
-- **FYI from Lynch/Amy** — rejection handled, agent re-dispatched. Check for escalation: if the FYI message indicates `escalated: true` or the item moved to `blocked`, announce to the user that human intervention is needed.
-- **ALERT from Lynch/Amy** — handoff failed (peer timed out). Fall back to manual re-dispatch (see below).
+- **FYI from Lynch/Amy/B.A.** — rejection handled, agent re-dispatched. Check for escalation: if the FYI message indicates `escalated: true` or the item moved to `blocked`, announce to the user that human intervention is needed.
+- **ALERT from Lynch/Amy/B.A.** — handoff failed (peer timed out, or no idle next-agent). Fall back to manual re-dispatch (see below).
 
 **On ALERT fallback:** Check the item's `stageId` from the board — if it was moved back already (e.g. `implementing`), just re-dispatch B.A. If it's still in `review`/`probing` (handoff failed before the move), call `agentStop --outcome rejected` yourself, then re-dispatch:
 

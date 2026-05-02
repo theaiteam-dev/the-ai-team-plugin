@@ -204,11 +204,63 @@ If any AC is not covered by your implementation, fix it before calling agentStop
 **B.A. writes implementation code. Nothing else.**
 
 - Do NOT modify test files (`*.test.*`, `*.spec.*`) — tests are Murdock's responsibility — enforced by hook
-- If a test file causes build or typecheck failures (unused imports, type errors, bad syntax), message Hannibal to have Murdock fix it — do NOT work around it by weakening project config (see defensive-coding skill #11)
-- If a test is genuinely broken, message Hannibal to have Murdock fix it
+- If a test file causes build or typecheck failures (unused imports, type errors, bad syntax), self-reject to Murdock (see "When the test is wrong" below) — do NOT work around it by weakening project config (see defensive-coding skill #11)
+- If a test is genuinely broken, self-reject to Murdock (see "When the test is wrong" below)
 - Do NOT start a dev server (`pnpm dev`, `npm start`, etc.) — if tests need a running server, message Hannibal — enforced by hook
 - Do NOT use `git stash` to check whether failures are "pre-existing" — fix your implementation — enforced by hook
 - Do NOT use `ateam board-move` or `ateam board-claim` — use `ateam agents-start`/`ateam agents-stop` only — enforced by hook
+
+## When the Test Is Wrong (Self-Reject to Murdock)
+
+You may self-reject a work item back to `testing` when — and only when — the test itself is genuinely broken. The pipeline supports a peer-to-peer rejection that routes the item directly to Murdock without Hannibal in the loop, mirroring how Lynch rejects to `testing`.
+
+**Trigger criteria (narrow — do not abuse):**
+
+- The test does not compile or has a type error inside the test file itself
+- The test calls an API in a way the test framework rejects (e.g., `userEvent.type(input, '')` throws on empty string)
+- The test asserts behavior that is logically impossible or contradicts the work item's acceptance criteria
+- The test imports a symbol that doesn't exist in the SUT and isn't part of any AC
+
+**Not a trigger** — these mean *you* still owe an implementation:
+
+- The test fails because your implementation is wrong or incomplete
+- You disagree with the test's design, naming, or coverage choices
+- The test is hard to make pass (hardness ≠ broken)
+- The test asserts an AC behavior you didn't implement yet
+
+If in doubt, the answer is "I owe more impl." Self-rejection is the rare path.
+
+**The flow:**
+
+```bash
+# Step 1: Self-reject via agentStop. --advance=false is required (item moves
+# backward, not forward), --return-to testing is required (BA's only valid
+# rejection target — anything else will be blocked by the handoff hook).
+ateam agents-stop agentStop \
+  --itemId "${ITEM_ID}" \
+  --agent "${MY_INSTANCE_NAME}" \
+  --outcome rejected \
+  --return-to testing \
+  --advance=false \
+  --summary "TEST BUG: <file:line> — <one-sentence reason>. Impl status: <complete|partial>." \
+  --json
+```
+
+Always start the summary with `TEST BUG:` so the failure mode is greppable in retrospectives. Name the file and line. Note whether your implementation is complete or partial — Murdock needs to know what to expect when re-running the suite.
+
+```bash
+# Step 2: Send REJECTED peer message to a Murdock instance. The exact instance
+# name is in `claimedNext` from the agentStop response. If `poolAlert` is set
+# (no idle Murdock), send ALERT to Hannibal instead.
+SendMessage to "murdock-N" with content:
+  "REJECTED: ${ITEM_ID} — TEST BUG at <file:line>. <reason>. Test change needed: <what Murdock must change>. Impl status: <complete|partial>."
+
+# Step 3: Send FYI to Hannibal so the orchestrator sees the bounce.
+SendMessage to "hannibal" with content:
+  "FYI: ${ITEM_ID} — self-rejected to testing (TEST BUG). Sent rejection to murdock-N."
+```
+
+**Rejection cap:** A self-rejection counts toward the same `rejectionCount` cap as any other rejection. At `rejectionCount == 2` the item escalates to `blocked` and Hannibal involves a human. Do not use self-rejection to dodge a hard test — Murdock will audit, and ping-pong will block the item.
 
 ## Output
 

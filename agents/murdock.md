@@ -125,23 +125,28 @@ This claims the item AND records `assigned_agent` on the work item so the kanban
 
 ### Step 2.5: Rework Mode (only if rejectionCount > 0)
 
-If the rendered work item shows `rejectionCount > 0` and `work_log` contains a recent `rejected` entry from Lynch, you are in Rework Mode. **Do NOT write fresh tests from scratch.** The pipeline routes every Lynch rejection through you — including rejections whose primary defect is implementation code — because the TDD invariant is that every defect becomes a failing test (or an explicitly-audited existing test) before B.A. changes code.
+If the rendered work item shows `rejectionCount > 0` and `work_log` contains a recent `rejected` entry, you are in Rework Mode. **Do NOT write fresh tests from scratch.** The pipeline routes every rejection that returns to `testing` through you — whether it came from Lynch (review found a test gap or impl bug) or from B.A. self-rejecting a TEST BUG — because the TDD invariant is that every defect becomes a failing test (or an explicitly-audited existing test) before B.A. changes code.
 
-1. **Read Lynch's rejection message** from `work_log` (and the REJECTED message if received via SendMessage). It names the AC, the observed gap, and the test change Lynch wants you to consider.
+**Identify the rejector first.** The work_log entry's `agent` field tells you who bounced the item:
+
+- **From Lynch:** the rejection names an AC, the observed gap, and the test change Lynch wants you to consider. Lynch may believe the bug is in tests or impl — you decide via audit (exits below).
+- **From B.A.:** the summary starts with `TEST BUG:` and names a specific test file and line. B.A. has already determined the test itself is broken (won't compile, throws on valid input, asserts impossible behavior). Read B.A.'s reasoning carefully — exit (b) is rarely the right answer here, because B.A. already audited from the implementer's seat.
+
+1. **Read the rejection message** from `work_log` (and the REJECTED message if received via SendMessage).
 2. **Read the existing test file** at `outputs.test`.
-3. **Audit:** does the existing test suite, as written, assert the behavior Lynch flagged? Specifically — name the exact assertion that would fail if the implementation had the bug Lynch described. If you cannot name one, the test is not adequate.
+3. **Audit:** does the existing test suite, as written, assert the behavior the rejector flagged? Specifically — name the exact assertion that would fail if the implementation had the bug the rejector described. If you cannot name one, the test is not adequate.
 
 **Two exits:**
 
-**(a) Test gap is real** → add or tighten the specific test Lynch described. Verify it fails for the right reason against the current implementation (missing behavior, not a syntax error). Advance normally via `agentStop --outcome completed --advance`. Summary names the added/changed test and its assertion.
+**(a) Test gap or test bug is real** → fix or tighten the specific test the rejector described. For B.A.'s TEST BUG rejections, this is almost always the right exit — apply the targeted fix B.A. named (e.g., guard `userEvent.type` against empty strings). For Lynch rejections, add or tighten the assertion. Verify the test fails for the right reason against the current implementation (missing behavior, not a syntax error). Advance normally via `agentStop --outcome completed --advance`. Summary names the added/changed test and its assertion.
 
-**(b) Existing test is adequate (pass-through)** → the defect is impl-only, but you have affirmatively audited and confirmed an existing assertion covers the AC. Log an ActivityLog entry:
+**(b) Existing test is adequate (pass-through)** → the defect is impl-only, but you have affirmatively audited and confirmed an existing assertion covers the AC. This exit is appropriate for Lynch rejections where the underlying defect is in the implementation. It is rarely appropriate for a B.A. TEST BUG rejection — if you take exit (b) on a B.A. self-rejection, you are saying B.A. was wrong about the test being broken; expect B.A. to re-reject if you bounce it back without fixing the test.
 
 ```bash
-ateam activity createActivityEntry --agent "Murdock" --message "Audited Lynch rejection of {itemId} — existing test at {path}:{line} asserts {behavior}. Pass-through to B.A., no test changes." --level info
+ateam activity createActivityEntry --agent "Murdock" --message "Audited rejection of {itemId} from {rejector} — existing test at {path}:{line} asserts {behavior}. Pass-through to B.A., no test changes." --level info
 ```
 
-Then advance via `agentStop --outcome completed --advance` with a summary starting with `PASS-THROUGH:` and naming the existing test that covers the AC. See the `teams-messaging` skill for the rework START format — your START to B.A. must carry Lynch's rejection verbatim plus your audit verdict.
+Then advance via `agentStop --outcome completed --advance` with a summary starting with `PASS-THROUGH:` and naming the existing test that covers the AC. See the `teams-messaging` skill for the rework START format — your START to B.A. must carry the rejection verbatim plus your audit verdict.
 
 **Pass-through is not a skip.** It is an affirmative, logged statement that you inspected the tests and found them adequate. If you are uncertain, take exit (a).
 

@@ -153,7 +153,7 @@ SendMessage({ to: "lynch", message: "ACK: {itemId}", summary: "ACK {itemId}" })
 
 ### Lynch → Murdock (REJECTED path)
 
-**All Lynch rejections return to `testing` and route through Murdock** — there is no Lynch → B.A. path. See `agents/lynch.md` "Rejection Flow" and `agents/murdock.md` Step 2.5 for the rationale (TDD invariant: every defect becomes a failing test before code changes).
+**All rejections that return to `testing` route through Murdock** — both Lynch's review rejections and B.A.'s self-rejected TEST BUGs (see next section). There is no Lynch → B.A. path. See `agents/lynch.md` "Rejection Flow" and `agents/murdock.md` Step 2.5 for the rationale (TDD invariant: every defect becomes a failing test before code changes).
 
 After `ateam agents-stop agentStop --outcome rejected --return-to testing --advance=false`, notify Murdock directly, then send FYI to Hannibal. The message must be actionable without Lynch in the loop: name the AC, the observed gap, the test change to consider, and the code fix B.A. will need.
 
@@ -176,9 +176,35 @@ SendMessage({
 
 Note: Rejection messages are fire-and-forget — Murdock picks up the returned item from the board when next idle. No ACK is required or expected.
 
+### B.A. → Murdock (REJECTED path — TEST BUG)
+
+B.A. self-rejects only when a test is genuinely broken (see `agents/ba.md` "When the Test Is Wrong" for the narrow trigger criteria — disagreement, hardness, or missing impl do NOT qualify). The summary must start with `TEST BUG:` so the failure mode is greppable in retrospectives.
+
+After `ateam agents-stop agentStop --outcome rejected --return-to testing --advance=false --summary "TEST BUG: ..."`, notify a Murdock instance directly, then send FYI to Hannibal:
+
+```javascript
+SendMessage({
+  to: "murdock-N",  // exact instance from claimedNext in agentStop response
+  message: "REJECTED: {itemId} - TEST BUG at {file:line}. {one-sentence reason}. Test change needed: {what Murdock must change}. Impl status: {complete|partial}.",
+  summary: "REJECTED {itemId} (TEST BUG)"
+})
+```
+
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "FYI: {itemId} - self-rejected to testing (TEST BUG). Sent rejection to murdock-N.",
+  summary: "TEST BUG bounce for {itemId}"
+})
+```
+
+If `claimedNext` is empty and `poolAlert` is set (no idle Murdock), send `ALERT` to Hannibal instead — same recovery path Lynch uses on a no-idle ALERT.
+
+Like Lynch's rejections, B.A. self-rejections count toward the same `rejectionCount` cap; at 2 the item escalates to `blocked`.
+
 ### Murdock → B.A. (rework pass-through START)
 
-When Murdock enters Rework Mode (rejectionCount > 0) and audits existing tests as adequate (see `agents/murdock.md` Step 2.5 exit (b)), the START to B.A. must carry Lynch's rejection verbatim plus Murdock's audit verdict — so B.A. fixes the impl without ambiguity about what Lynch wants:
+When Murdock enters Rework Mode (rejectionCount > 0) and audits existing tests as adequate (see `agents/murdock.md` Step 2.5 exit (b)), the START to B.A. must carry the upstream rejection verbatim plus Murdock's audit verdict — so B.A. fixes the impl without ambiguity about what the rejector wants:
 
 ```javascript
 SendMessage({

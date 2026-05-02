@@ -65,6 +65,10 @@ const HANDOFF_TARGETS = {
 const REJECTION_TARGETS = {
   lynch: { testing: 'murdock', implementing: 'ba' },
   amy: { implementing: 'ba' },
+  // B.A. may self-reject only when a test is genuinely broken.
+  // The rework routes through Murdock so the TDD invariant (every
+  // defect becomes a test change before code changes) is preserved.
+  ba: { testing: 'murdock' },
 };
 
 // Read hook input from stdin
@@ -182,8 +186,10 @@ for (const line of lines) {
         if (expectedType && recipient.startsWith(expectedType) && content.includes('REJECTED')) {
           // Correct rejection target
           foundHandoff = true;
-        } else if (!expectedType && content.includes('REJECTED')) {
-          // --return-to not parseable or agent not in REJECTION_TARGETS — fall back to any REJECTED
+        } else if (!agentStopReturnTo && content.includes('REJECTED')) {
+          // --return-to not parseable at all — fall back to accepting any REJECTED.
+          // (When --return-to IS parseable but the agent has no entry for that stage,
+          // we deliberately do NOT fall back — the routing is wrong and must be blocked.)
           foundHandoff = true;
         }
       } else if (target?.next) {
@@ -250,6 +256,15 @@ if (!foundHandoff) {
         `${missing.length + 1}. Send REJECTED to a ${expectedType} instance (matches --return-to ${agentStopReturnTo}).\n` +
         `   SendMessage to "${expectedType}-N" with content including "REJECTED: <itemId> - <reason>"\n` +
         `   Then send FYI to Hannibal.`
+      );
+    } else if (rejTargets && agentStopReturnTo) {
+      // Agent is in REJECTION_TARGETS but used a --return-to stage that's not valid for it.
+      const validStages = Object.keys(rejTargets);
+      const validRoutes = validStages.map((stage) => `${stage} → ${rejTargets[stage]}`).join(', ');
+      missing.push(
+        `${missing.length + 1}. ${resolvedAgent} cannot reject --return-to ${agentStopReturnTo}.\n` +
+        `   Valid rejection routes for ${resolvedAgent}: ${validRoutes}.\n` +
+        `   Re-run agentStop with a valid --return-to stage and SendMessage REJECTED to the matching agent type.`
       );
     } else {
       missing.push(
