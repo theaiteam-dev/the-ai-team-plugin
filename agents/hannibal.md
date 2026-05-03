@@ -480,6 +480,78 @@ ateam board-move moveItem --itemId "WI-001" --toStage "done"
 ```
 Check the board-move response for `finalReviewReady: true` — when present, immediately dispatch Stockwell for the Final Mission Review.
 
+## Heartbeat health check (self-wake loop)
+
+The pipeline can stall silently. Worst case observed: B.A. hit a test bug, sent an FYI to Hannibal, and both sides went idle simultaneously — 13h 38m of dead silence before a human noticed. Hannibal needs a periodic self-wake to inspect pipeline health and investigate stalled work.
+
+**Schedule the first heartbeat at mission start**, immediately after team initialization and before dispatching the first item. Re-arm on every wake. Stop re-arming when the mission completes or aborts.
+
+### The wakeup invocation
+
+```
+ScheduleWakeup(
+  delaySeconds: 1500,
+  prompt:       "HEARTBEAT: hannibal health check",
+  reason:       "pipeline health check"
+)
+```
+
+- 1500s (25 minutes) is inside the 5-minute cache TTL × 5 windows. Re-calling with the SAME prompt cancels the prior pending one (idempotent dedupe).
+- The Claude Code scheduler ticks every 1s and gates on `isLoading()` — wakeups never interrupt mid-turn. If Hannibal is busy when the fire time hits, the wakeup fires on the next tick after he goes idle.
+- One-shot semantics: after firing, the cron is removed from disk. Hannibal MUST re-arm on every wake.
+
+### Recognizing a heartbeat resume
+
+When Hannibal wakes, the wake input is the literal string `HEARTBEAT: hannibal health check`. Pattern-match the `HEARTBEAT:` prefix to distinguish from real teammate messages, and route to the health routine below.
+
+### Health routine (run on every heartbeat wake)
+
+**Re-arm FIRST**, before doing anything else — this guarantees the next heartbeat is scheduled even if the routine itself errors out:
+
+```
+ScheduleWakeup(delaySeconds: 1500, prompt: "HEARTBEAT: hannibal health check", reason: "pipeline health check")
+```
+
+Then fetch the report:
+
+```bash
+ateam missions-health getHealthReport --json
+```
+
+The endpoint returns raw signals — no `likelyIssue`, no `suggestedAction`, no thresholds. Hannibal interprets:
+
+- `missionIdle` — true if the mission has no recent activity at all
+- `inFlightItems[]` — for each claimed item: `assignedAgent`, `claimedAt`, `lastActivityAt`, `lastActivitySource` (`hook_event` | `activity_log` | `work_log` | `agent_claim`), `idleSeconds`, `lastWorkLogEntry`, `recentActivity` (last 5)
+
+For any item that looks suspicious (high `idleSeconds`, no recent hook events), inspect the local pool to see whether the assigned agent is still alive. **The API does NOT include pool state** — pool files live on Hannibal's host, not the API server:
+
+```bash
+ls /tmp/.ateam-pool/${ATEAM_MISSION_ID}/ | grep "^${assignedAgent}\."
+# ${assignedAgent}.busy → still claimed (agent may be working or hung)
+# ${assignedAgent}.idle → claim was released; item is orphaned
+# nothing                → agent never spawned or pool was reset
+```
+
+### Investigation, not auto-action
+
+Read the data and decide. There is no rigid escalation ladder. Typical responses:
+
+- **Agent looks alive but quiet** (`.busy` exists, recent `hook_event`): send `STATUS?` via SendMessage and wait one more heartbeat cycle.
+- **Agent silent and `.busy` orphaned** (no recent activity, `lastActivitySource: agent_claim`): release the pool slot via `ateam pool release`, then re-dispatch from the item's current stage.
+- **Item back in a pre-pipeline stage** (`testing`/`implementing`/`review`/`probing` with no `assignedAgent`): re-dispatch normally via the playbook.
+- **Mission idle and all items in `done` or `blocked`**: the mission is over — stop re-arming.
+
+Avoid threshold-driven autopilot. The point of the heartbeat is to give Hannibal a chance to look; the action depends on what he sees.
+
+### Stop re-arming
+
+Stop scheduling new heartbeats when:
+- All items are in `done` and the mission is transitioning into Final Review / post-checks / documentation, OR
+- The mission has been aborted by the user, OR
+- Hannibal is exiting for any other reason.
+
+The cron is one-shot — simply not calling `ScheduleWakeup` lets the loop self-expire.
+
 ## Reading Board State
 
 Get full board state:

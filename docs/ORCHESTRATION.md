@@ -83,6 +83,10 @@ Pipeline agents communicate directly with each other (peer-to-peer handoffs) and
 
 Native teams + the pool directory handle orchestration and routing; `ateam` CLI handles persistence, stage transitions, and pool claim/release.
 
+### Hannibal Heartbeat Health Check
+
+Because peer-to-peer handoffs leave Hannibal mostly asleep, a silent stall (e.g., a teammate finishes and goes idle without successfully handing off) can sit undetected indefinitely. To guard against this, Hannibal arms a self-wake every 1500s using the `ScheduleWakeup` primitive with the prompt `"HEARTBEAT: hannibal health check"`. On each wake he re-arms, pulls a snapshot from `GET /api/missions/current/health-report` (CLI: `ateam missions-health getHealthReport --json`) — returning `missionIdle` plus per-in-flight-item activity signals (`claimedAt`, `lastActivityAt`, `lastActivitySource`, `idleSeconds`, `lastWorkLogEntry`, `recentActivity`) — inspects the local `/tmp/.ateam-pool/${ATEAM_MISSION_ID}/` directory for the suspect agent, and either pings `STATUS?` or re-dispatches. The endpoint returns raw data only; no thresholds. See `agents/hannibal.md` ("Heartbeat health check") and `playbooks/orchestration-native.md` ("Heartbeat Health Check") for the full procedure.
+
 ## Pipeline Parallelism & Instance Pools
 
 Each pipeline role (Murdock, B.A., Lynch, Amy) runs as a pool of N parallel instances, where N is computed per mission by `ateam scaling compute` (see below). When N=1, instance names are the base names (`murdock`, `ba`, `lynch`, `amy`) and behaviour is identical to single-instance mode. When N>1, instances are suffixed numerically: `murdock-1`..`murdock-N`, `ba-1`..`ba-N`, etc. Different work items flow through the pipeline concurrently; within each stage, up to N items can be processed in parallel.
