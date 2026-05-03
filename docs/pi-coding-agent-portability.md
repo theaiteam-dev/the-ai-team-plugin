@@ -165,7 +165,7 @@ Plus team lifecycle (`TeamCreate`/`TeamDelete` on Claude Code, no equivalent nee
 
 Instead of maintaining two playbook versions, each playbook gets a **dispatch adapter header** that maps abstract operations to concrete harness calls. The orchestration logic uses the abstract names.
 
-```
+```text
 # ═══════════════════════════════════════════════════════════
 # DISPATCH ADAPTER (set by harness detection at mission start)
 # ═══════════════════════════════════════════════════════════

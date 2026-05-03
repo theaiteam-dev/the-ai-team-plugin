@@ -32,7 +32,7 @@ try {
 
   const toolName = hookInput.tool_name || '';
   const toolInput = hookInput.tool_input || {};
-  const filePath = toolInput.file_path || '';
+  const filePath = toolInput.file_path || toolInput.notebook_path || '';
 
   // Only gate write-capable tools. Reads, searches, and execs are unrelated
   // to this hook's intent ("hannibal writes") — Hannibal must read source

@@ -304,6 +304,31 @@ describe('block-amy-writes — agent guards', () => {
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toMatch(/BLOCKED/i);
   });
+
+  // ---------------------------------------------------------------------------
+  // NotebookEdit / MultiEdit path-extraction coverage (PR #35 fix)
+  // NotebookEdit uses notebook_path, not file_path — must not bypass block.
+  // MultiEdit uses file_path (same as Write/Edit) — verified here for parity.
+  // ---------------------------------------------------------------------------
+  it('blocks amy MultiEdit to src/services/auth.ts (exit 2)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'amy',
+      tool_name: 'MultiEdit',
+      tool_input: { file_path: 'src/services/auth.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('blocks amy NotebookEdit to src/lib/analysis.ipynb via notebook_path (exit 2)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'amy',
+      tool_name: 'NotebookEdit',
+      tool_input: { notebook_path: 'src/lib/analysis.ipynb' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
 });
 
 // =============================================================================
@@ -478,6 +503,31 @@ describe('block-murdock-impl-writes — agent guards', () => {
       agent_type: 'murdock',
       tool_name: 'Write',
       tool_input: { file_path: '/var/log/foo.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  // ---------------------------------------------------------------------------
+  // NotebookEdit / MultiEdit path-extraction coverage (PR #35 fix)
+  // NotebookEdit uses notebook_path, not file_path — must not bypass block.
+  // MultiEdit uses file_path (same as Write/Edit) — verified here for parity.
+  // ---------------------------------------------------------------------------
+  it('blocks murdock MultiEdit to src/whatever.ts (exit 2)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'murdock',
+      tool_name: 'MultiEdit',
+      tool_input: { file_path: 'src/whatever.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('blocks murdock NotebookEdit to src/whatever.ipynb via notebook_path (exit 2)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'murdock',
+      tool_name: 'NotebookEdit',
+      tool_input: { notebook_path: 'src/whatever.ipynb' },
     });
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toMatch(/BLOCKED/i);
@@ -930,6 +980,31 @@ describe('block-hannibal-writes — agent guards', () => {
       agent_type: 'hannibal',
       tool_name: 'Write',
       tool_input: { file_path: 'src/whatever.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  // ---------------------------------------------------------------------------
+  // NotebookEdit / MultiEdit path-extraction coverage (PR #35 fix)
+  // NotebookEdit uses notebook_path, not file_path — must not bypass block.
+  // MultiEdit uses file_path (same as Write/Edit) — verified here for parity.
+  // ---------------------------------------------------------------------------
+  it('blocks hannibal MultiEdit to src/whatever.ts (exit 2)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'hannibal',
+      tool_name: 'MultiEdit',
+      tool_input: { file_path: 'src/whatever.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('blocks hannibal NotebookEdit to src/whatever.ipynb via notebook_path (exit 2)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'hannibal',
+      tool_name: 'NotebookEdit',
+      tool_input: { notebook_path: 'src/whatever.ipynb' },
     });
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toMatch(/BLOCKED/i);

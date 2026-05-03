@@ -232,8 +232,12 @@ func TestPoolClaimExitCodes(t *testing.T) {
 		{
 			name: "corrupted state returns 4",
 			setup: func(t *testing.T, poolDir string) {
-				_ = os.WriteFile(filepath.Join(poolDir, "murdock-1.idle"), nil, 0644)
-				_ = os.WriteFile(filepath.Join(poolDir, "murdock-1.busy"), nil, 0644)
+				if err := os.WriteFile(filepath.Join(poolDir, "murdock-1.idle"), nil, 0644); err != nil {
+					t.Fatalf("seed idle: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(poolDir, "murdock-1.busy"), nil, 0644); err != nil {
+					t.Fatalf("seed busy: %v", err)
+				}
 			},
 			argv:     []string{"pool", "claim", "murdock-1"},
 			wantExit: PoolExitCorruptedState,
@@ -397,6 +401,9 @@ func TestPoolClaimCrossProcessRace(t *testing.T) {
 	for i := 0; i < iterations; i++ {
 		missionID := fmt.Sprintf("M-test-cross-race-%d", i)
 		poolDir := filepath.Join("/tmp/.ateam-pool", missionID)
+		if err := os.RemoveAll(poolDir); err != nil {
+			t.Fatalf("iter %d: cleanup stale pool dir: %v", i, err)
+		}
 		if err := os.MkdirAll(poolDir, 0755); err != nil {
 			t.Fatalf("iter %d: mkdir: %v", i, err)
 		}

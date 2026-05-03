@@ -113,7 +113,7 @@ When a PRD describes a page or app assembled from multiple components, the integ
 
 **The rule:** the scaffold item does NOT create the integration parent file. A dedicated integration item (the final wave) creates the parent from scratch, importing the real components.
 
-```
+```text
 WI-001: Scaffold (Vite + TS + Tailwind + test setup + types + API client) — does NOT create App.tsx
 WI-002: ErrorBanner component                       ┐
 WI-003: EmptyState component                        │ all in parallel; none touch App.tsx
