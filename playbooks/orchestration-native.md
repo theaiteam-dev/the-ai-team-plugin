@@ -908,40 +908,25 @@ Schedule the first heartbeat immediately after `TeamCreate` and pre-warming lane
 ```
 ScheduleWakeup(
   delaySeconds: 1500,
-  prompt:       "HEARTBEAT: hannibal health check",
+  prompt:       "/ai-team:healthcheck",
   reason:       "pipeline health check"
 )
 ```
 
-Re-call with the same prompt on every wake — this both arms the next heartbeat and (idempotently) cancels any prior pending one.
+The wake fires the **`/ai-team:healthcheck` slash command** (`commands/healthcheck.md`). The slash command is the canonical health routine — Hannibal does not improvise it. The slash command itself re-arms the next wake, so Hannibal's only job at mission start is to fire the first one.
 
-### Recognizing the resume
+**Why a slash command, not a `HEARTBEAT:` string?** A previous mission shipped 6 wakes but only ran the health routine once — the freeform prompt was easy to skim past. A slash command guarantees Claude Code loads `commands/healthcheck.md` deterministically every fire.
 
-When Hannibal's session resumes with input `HEARTBEAT: hannibal health check`, route to the health routine. Pattern-match the `HEARTBEAT:` prefix — do NOT treat it as a SendMessage from a teammate.
+### What the slash command does
 
-### The routine
+See `commands/healthcheck.md` for the full routine. Summary:
 
-1. **Re-arm first.** Call `ScheduleWakeup` with the same args before doing anything else. If the routine errors, the next heartbeat is still scheduled.
-2. **Pull the report:** `ateam missions-health getHealthReport --json`. Returns `{missionIdle, inFlightItems[]}` with raw signals (`assignedAgent`, `claimedAt`, `lastActivityAt`, `lastActivitySource`, `idleSeconds`, `lastWorkLogEntry`, `recentActivity`). No thresholds — Hannibal interprets.
-3. **Inspect the local pool** for any flagged item's `assignedAgent` — the API does NOT include pool state since the API server and Hannibal's host are typically different boxes:
-   ```bash
-   ls /tmp/.ateam-pool/${ATEAM_MISSION_ID}/ | grep "^${assignedAgent}\."
-   ```
-   `.busy` → still claimed (working or hung). `.idle` → orphaned. Nothing → never spawned or pool reset.
-4. **Investigate, don't auto-act.** Read the signals, decide. Typical responses:
-   - High `idleSeconds` but recent `hook_event` → SendMessage `STATUS?` to the agent and wait one more cycle.
-   - Orphaned `.busy` with no recent activity → `ateam pool release ${assignedAgent}`, then re-dispatch from the item's current stage (treat as ALERT-equivalent).
-   - Item in pipeline stage with no `assignedAgent` → re-dispatch normally.
-   - `missionIdle: true` and all items `done`/`blocked` → mission is over, stop re-arming.
-
-### Stop re-arming
-
-Do NOT call `ScheduleWakeup` after:
-- All items reach `done` and Hannibal is transitioning to Final Review / post-checks / documentation.
-- Mission abort.
-- Any normal exit.
-
-The cron is one-shot. Skip the call and the loop expires on its own.
+1. Re-arm the next wake with the same `/ai-team:healthcheck` prompt FIRST.
+2. Pull `ateam missions-health getHealthReport --json` (raw signals only — no thresholds).
+3. Inspect `/tmp/.ateam-pool/${ATEAM_MISSION_ID}/` for any suspicious item's `assignedAgent` (`.busy` / `.idle` / nothing).
+4. Investigate per item — `STATUS?` ping, pool release + re-dispatch, or no-op. No rigid escalation ladder.
+5. Skip the re-arm when all items are in `done`/`blocked` or the mission is exiting.
+6. Report a one-line summary.
 
 ## Peer-to-Peer Pool Handoffs
 
@@ -967,7 +952,7 @@ Production measurements show Hannibal-mediated dispatch adds 2-3 minutes of late
 | `lynch-N` approved | any idle `amy-M` via `mv` | FYI (success) or ALERT (no idle) |
 | `lynch-N` rejected | (no pool claim) | DONE-REJECTED to Hannibal |
 | `amy-N` verified/flag | (no downstream agent) | DONE to Hannibal |
-| (none — self-wake) | (no pool claim) | `HEARTBEAT:` self-prompt every 1500s — see "Heartbeat Health Check" |
+| (none — self-wake) | (no pool claim) | `/ai-team:healthcheck` slash command every 1500s — see "Heartbeat Health Check" |
 
 `ba-N` self-rejection is restricted to `--return-to testing` — the handoff hook will block any other rejection target. This is the only backward-handoff path B.A. has; for everything else (impl-side bugs, missing AC coverage), B.A. completes the impl normally and lets Lynch catch it during review.
 
