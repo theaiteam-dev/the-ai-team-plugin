@@ -1108,10 +1108,11 @@ paths:
         the item to the next pipeline stage (or blocked if outcome=blocked).
 
         When `outcome=rejected`, the item is moved backward to the `returnTo`
-        stage and its `rejectionCount` is incremented. After 2 rejections the
-        item is automatically escalated to `blocked`. `returnTo` is required
-        when `outcome=rejected` and is only valid in that case. This replaces
-        the former `/api/items/{id}/reject` endpoint.
+        stage and its `rejectionCount` is incremented. After the configured
+        rejection cap is reached (default 4, override via `ATEAM_REJECTION_CAP`
+        on the API server) the item is automatically escalated to `blocked`.
+        `returnTo` is required when `outcome=rejected` and is only valid in
+        that case. This replaces the former `/api/items/{id}/reject` endpoint.
 
         When `advance=true` (default), WIP limits on the target stage are
         checked before moving. If the target stage is at capacity, the request

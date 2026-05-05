@@ -158,7 +158,7 @@ ateam agents-stop agentStop \
 ```
 
 - The API atomically increments `rejectionCount`, moves the item back to the `--return-to` stage, and logs the rejection to the work log.
-- At `rejectionCount == 2` the item is escalated to `blocked`.
+- When `rejectionCount` hits the configured rejection cap (default `4`, override via `ATEAM_REJECTION_CAP` on the API server) the item is escalated to `blocked`.
 - The working agent then sends a REJECTED peer message to the correct recipient so the rework starts immediately — Hannibal is notified via FYI only.
 - `--advance=false` is required on rejection: the item is moving backward, not forward, so the default forward `--advance=true` pool claim must be skipped.
 

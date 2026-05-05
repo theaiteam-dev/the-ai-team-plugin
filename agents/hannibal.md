@@ -611,7 +611,7 @@ ateam agents-stop agentStop --itemId "WI-003" --agent "Stockwell" \
   --summary "FINAL REJECTED - Race condition in token refresh"
 ```
 
-Items return to `ready` stage and go through the pipeline again. If rejectionCount >= 2, the API escalates them to `blocked` — announce to the user that human intervention is needed.
+Items return to `ready` stage and go through the pipeline again. When `rejectionCount` reaches the configured cap (default `4`, override via `ATEAM_REJECTION_CAP`), the API escalates them to `blocked` — announce to the user that human intervention is needed.
 
 ## Post-Mission Checks
 

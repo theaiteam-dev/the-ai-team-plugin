@@ -199,7 +199,7 @@ The `agents-stop agentStop` command is the single entry point for completion, re
 
 - **Always pass `--json` on the root command.** The JSON response carries `data.claimedNext` (the next pipeline instance the CLI auto-claimed from the pool), `data.poolAlert` (set when no idle next-stage instance is available), and `data.wipExceeded` (set when the target stage is at WIP capacity — work is logged and claim released, but the item does NOT advance).
 - **Multi-instance naming.** Under the native teams dispatch mode, `--agent` takes an instance name such as `murdock-1`, `ba-2`, `lynch-1`, `amy-3`. When N=1, the suffix is omitted (`murdock`, `ba`, `lynch`, `amy`).
-- **`--outcome rejected` requires `--return-to <stage>`.** Valid stages: `ready | testing | implementing | review | probing`. There is **no `ateam items rejectItem` command** — rejection is a first-class outcome of `agentStop`. The API increments `rejectionCount` and auto-escalates to `blocked` at 2 rejections.
+- **`--outcome rejected` requires `--return-to <stage>`.** Valid stages: `ready | testing | implementing | review | probing`. There is **no `ateam items rejectItem` command** — rejection is a first-class outcome of `agentStop`. The API increments `rejectionCount` and auto-escalates to `blocked` when it reaches the configured rejection cap (default `4`, override via `ATEAM_REJECTION_CAP` on the API server).
 - **`--advance=false`** releases the claim and logs work without moving the item. Use it for rejections (paired with `--outcome rejected --return-to`) or when you need to release on a known-full stage without triggering the WIP error path.
 
 For detailed flag semantics, summary writing guidance, and the REJECTED peer-message flow, see the `agent-lifecycle` skill.

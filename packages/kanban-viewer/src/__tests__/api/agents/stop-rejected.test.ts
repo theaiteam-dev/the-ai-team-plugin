@@ -12,7 +12,8 @@ import { NextRequest } from 'next/server';
  * The API must:
  * 1. Increment rejectionCount on the item
  * 2. Move the item to the stage specified by returnTo
- * 3. If rejectionCount reaches the escalation threshold (2), move to 'blocked' instead
+ * 3. If rejectionCount reaches the escalation threshold (default 4, configurable
+ *    via ATEAM_REJECTION_CAP), move to 'blocked' instead
  * 4. Log a WorkLog entry with action='rejected'
  * 5. Return VALIDATION_ERROR when outcome='rejected' but returnTo is missing or invalid
  */
@@ -20,7 +21,7 @@ import { NextRequest } from 'next/server';
 import type { AgentStopRequest } from '@/types/api';
 import type { AgentName } from '@/types/agent';
 
-const ESCALATION_THRESHOLD = 2;
+const ESCALATION_THRESHOLD = 4;
 
 const mockPrisma = {
   item: {
@@ -264,7 +265,7 @@ describe('POST /api/agents/stop — outcome=rejected', () => {
       const request = createRequest({
         itemId: 'WI-001',
         agent: 'Lynch',
-        summary: 'Still broken after two attempts',
+        summary: 'Still broken after repeated attempts',
         outcome: 'rejected',
         returnTo: 'implementing',
       });
@@ -276,6 +277,65 @@ describe('POST /api/agents/stop — outcome=rejected', () => {
       expect(data.data.nextStage).toBe('blocked');
       expect(data.data.escalated).toBe(true);
       expect(data.data.rejectionCount).toBe(ESCALATION_THRESHOLD);
+    });
+
+    it('honors ATEAM_REJECTION_CAP env override', async () => {
+      const original = process.env.ATEAM_REJECTION_CAP;
+      process.env.ATEAM_REJECTION_CAP = '2';
+      try {
+        setupSuccessfulReject('Lynch', 'review', 1);
+        mockPrisma.item.update.mockResolvedValue(
+          createMockItem({ rejectionCount: 2, stageId: 'blocked', assignedAgent: null })
+        );
+
+        const { POST } = await import('@/app/api/agents/stop/route');
+        const request = createRequest({
+          itemId: 'WI-001',
+          agent: 'Lynch',
+          summary: 'Override cap reached',
+          outcome: 'rejected',
+          returnTo: 'implementing',
+        });
+
+        const response = await POST(request);
+        expect(response.status).toBe(200);
+        const data = await response.json();
+        expect(data.data.nextStage).toBe('blocked');
+        expect(data.data.escalated).toBe(true);
+        expect(data.data.rejectionCount).toBe(2);
+      } finally {
+        if (original === undefined) delete process.env.ATEAM_REJECTION_CAP;
+        else process.env.ATEAM_REJECTION_CAP = original;
+      }
+    });
+
+    it('falls back to default when ATEAM_REJECTION_CAP is invalid', async () => {
+      const original = process.env.ATEAM_REJECTION_CAP;
+      process.env.ATEAM_REJECTION_CAP = 'not-a-number';
+      try {
+        setupSuccessfulReject('Lynch', 'review', ESCALATION_THRESHOLD - 1);
+        mockPrisma.item.update.mockResolvedValue(
+          createMockItem({ rejectionCount: ESCALATION_THRESHOLD, stageId: 'blocked', assignedAgent: null })
+        );
+
+        const { POST } = await import('@/app/api/agents/stop/route');
+        const request = createRequest({
+          itemId: 'WI-001',
+          agent: 'Lynch',
+          summary: 'Default cap reached',
+          outcome: 'rejected',
+          returnTo: 'implementing',
+        });
+
+        const response = await POST(request);
+        expect(response.status).toBe(200);
+        const data = await response.json();
+        expect(data.data.escalated).toBe(true);
+        expect(data.data.rejectionCount).toBe(ESCALATION_THRESHOLD);
+      } finally {
+        if (original === undefined) delete process.env.ATEAM_REJECTION_CAP;
+        else process.env.ATEAM_REJECTION_CAP = original;
+      }
     });
   });
 

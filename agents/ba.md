@@ -260,7 +260,7 @@ SendMessage to "hannibal" with content:
   "FYI: ${ITEM_ID} — self-rejected to testing (TEST BUG). Sent rejection to murdock-N."
 ```
 
-**Rejection cap:** A self-rejection counts toward the same `rejectionCount` cap as any other rejection. At `rejectionCount == 2` the item escalates to `blocked` and Hannibal involves a human. Do not use self-rejection to dodge a hard test — Murdock will audit, and ping-pong will block the item.
+**Rejection cap:** A self-rejection counts toward the same `rejectionCount` cap as any other rejection. When `rejectionCount` reaches the configured cap (default `4`, override via `ATEAM_REJECTION_CAP`) the item escalates to `blocked` and Hannibal involves a human. Do not use self-rejection to dodge a hard test — Murdock will audit, and ping-pong will block the item.
 
 ## Output
 

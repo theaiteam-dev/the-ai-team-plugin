@@ -200,7 +200,7 @@ SendMessage({
 
 If `claimedNext` is empty and `poolAlert` is set (no idle Murdock), send `ALERT` to Hannibal instead — same recovery path Lynch uses on a no-idle ALERT.
 
-Like Lynch's rejections, B.A. self-rejections count toward the same `rejectionCount` cap; at 2 the item escalates to `blocked`.
+Like Lynch's rejections, B.A. self-rejections count toward the same `rejectionCount` cap; when it reaches the configured cap (default `4`, override via `ATEAM_REJECTION_CAP`) the item escalates to `blocked`.
 
 ### Murdock → B.A. (rework pass-through START)
 
