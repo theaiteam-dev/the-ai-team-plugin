@@ -72,7 +72,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const projectId = projectValidation.projectId;
 
     const mission = await prisma.mission.findFirst({
-      where: { projectId, archivedAt: null },
+      where: {
+        projectId,
+        archivedAt: null,
+        state: {
+          notIn: ['completed', 'failed', 'archived'],
+        },
+      },
     });
 
     if (!mission) {
@@ -128,8 +134,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
       // Hook events: if payload.itemId is present, attribute ONLY to that item
       // (prevents cross-item leak when one agent works multiple items in a mission).
-      // Fall back to agentName === assignedAgent only when payload.itemId is missing.
+      // Fall back to agentName === assignedAgent only when payload.itemId is missing,
+      // but constrain the fallback to events at or after claimedAt so we don't pick
+      // up events from earlier claims on other items the same agent worked on.
       const itemHookEvents = hookEvents.filter((ev) => {
+        if (claimedAt && ev.timestamp < claimedAt) return false;
         const payloadItemId = extractItemIdFromPayload(ev.payload);
         if (payloadItemId !== null) return payloadItemId === item.id;
         if (assignedAgent && ev.agentName === assignedAgent) return true;
@@ -137,8 +146,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       });
 
       // Activity logs: linked by agent === assignedAgent within the mission.
+      // Constrain to the current claim window (timestamp >= claimedAt) to avoid
+      // attributing activity from earlier claims on other items to this item.
       const itemActivityLogs = assignedAgent
-        ? activityLogs.filter((log) => log.agent === assignedAgent)
+        ? activityLogs.filter(
+            (log) => log.agent === assignedAgent && (!claimedAt || log.timestamp >= claimedAt),
+          )
         : [];
 
       // Work logs scoped to this item, sorted desc by timestamp; newest is the lastWorkLogEntry.

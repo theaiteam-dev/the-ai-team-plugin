@@ -74,7 +74,7 @@ Mission-level agents have no first-class lifecycle in the API. They are forced i
 2. The system shall reject `POST /api/agents/start` calls from `face`, `sosa`, `hannibal`, `stockwell`, or `tawnia` that *do* include an `itemId`, with a clear validation error.
 3. The system shall accept `POST /api/agents/start` calls from `murdock`, `ba`, `lynch`, and `amy` only when an `itemId` is provided, preserving the existing item-flow behavior.
 4. The system shall map agent identity to phase using a fixed registry: `face → decomposition`, `sosa → critique`, `hannibal → orchestration`, `stockwell → final-review`, `tawnia → docs`. In addition, the system shall record a `coding` phase row for the period when the per-item pipeline is active. The `coding` phase is system-managed (no single agent claims it): it opens automatically when the first item enters `testing` and closes when the last item reaches `done` or the mission is otherwise terminated. `MissionPhase.agent` is therefore nullable for system-managed phases.
-5. The system shall enforce single-claim semantics per `(missionId, phase)`: a second `phase-start` for the same `(missionId, phase)` while the first is `in_progress` shall return a conflict error.
+5. The system shall enforce single-claim semantics per `(missionId, phase)`: a second `phase-start` for the same `(missionId, phase)` while the first is `in_progress` shall return a conflict error. Repeated runs of the same phase (e.g., a Stockwell re-run after a rollback per Req 7) shall **append a new `MissionPhase` row each time** — `(missionId, phase)` is therefore NOT unique; the partial unique constraint is `(missionId, phase) WHERE status = 'in_progress'`. Each row carries its own `startedAt`/`finishedAt`/`summary`/`tokenSnapshot` so retries are first-class history, not overwritten state.
 6. The system shall accept `POST /api/agents/stop` for a phase agent and update the matching `MissionPhase` row's `status` (`completed` or `failed`), `finishedAt`, and `summary`.
 7. The system shall accept `--outcome rejected` on phase-stop *only for `stockwell`*. A Stockwell rejection shall write to BOTH (a) the matching `MissionPhase` row (status, summary, and the list of rejected item IDs) AND (b) each named item — incrementing the item's `rejection_count` and recording the rejection in its `work_log`. Items that hit the rejection cap shall transition to `blocked` per the existing item rejection policy. The Stockwell rejection shall ALSO roll `Mission.state` back from `final_review_in_progress` to `coding` (re-opening the coding phase row) so that re-dispatch of the affected items is a legal forward transition under the matrix; re-entry into `final_review` requires every named item to reach `done` again, at which point Stockwell may be re-dispatched. All other phase agents may only complete or fail.
 8. The system shall expose phase rows on `GET /api/missions/{id}` (or a sibling endpoint) so the kanban UI can render a mission timeline.
@@ -146,7 +146,7 @@ The hook (`enforce-agent-start.js`) gains a small allowlist: phase agents skip t
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
 | Hook drift between API registry and JS hook registry | Medium | Phase agents fail silently again | Single shared module; CI test that loads both and compares |
-| Phase rows leak across missions if `missionId` is wrong | Low | Wrong cost attribution, wrong timeline | Validate `missionId` exists; index `(missionId, phase)` for exclusivity |
+| Phase rows leak across missions if `missionId` is wrong | Low | Wrong cost attribution, wrong timeline | Validate `missionId` exists; partial unique index `(missionId, phase) WHERE status = 'in_progress'` enforces "at most one active row per phase per mission" without forbidding append-on-retry (per Req 5) |
 | In-progress phases accumulate after orchestrator crash | Medium | Stuck-looking missions in UI | Auto-fail in-progress phases on `archiveMission`; surface as warning, not error |
 | Older `ateam` CLIs still send pseudo-IDs | Low | Validation errors visible to users | Error message names the fix; minCliVersion bump if needed |
 | Token rollup join is expensive on large missions | Low | Slow timeline UI | Materialize rollup on phase-stop, cache on `MissionPhase.tokenSnapshot` |
@@ -156,7 +156,7 @@ The hook (`enforce-agent-start.js`) gains a small allowlist: phase agents skip t
 ### Open Questions
 
 None blocking. Implementation team decides naming for the shared registry module and the state-machine module during build-out.
-- [ ] Should phase rows be deletable, or append-only? (Lean: append-only — they're mission history.)
+- ~~Should phase rows be deletable, or append-only?~~ Resolved: **append-only**, see Req 5. Each `phase-start` writes a new row; `phase-stop` updates that row's terminal state. Stockwell rollbacks open a fresh row on the next `phase-start`.
 
 ## 11. Rollout & Measurement
 
@@ -167,7 +167,7 @@ None blocking. Implementation team decides naming for the shared registry module
 
 **Measurement plan:**
 - Watch `api-errors.log` post-launch for any remaining `ITEM_NOT_FOUND` codes from the five mission agents — target zero within the first mission run.
-- Verify `MissionPhase` row count ≥ 6 for every new mission (5 agent-claimed phases + 1 system-managed `coding` phase).
+- Verify `MissionPhase` row count ≥ 6 for every new mission (5 agent-claimed phases + 1 system-managed `coding` phase). Missions that exercise a Stockwell rollback (Req 7) will exceed the floor — count an additional row for each retry, not a single row whose state is overwritten.
 - Verify Stockwell rejections increment the named items' `rejection_count` AND populate the phase row's rejection target list.
 - After Phase 2, sample a real mission's per-phase cost breakdown and confirm it sums (within rounding) to the existing whole-mission token total.
 - After Phase 3, walk a fresh mission end-to-end and confirm the kanban timeline reflects each phase's status in real time, including the `coding` phase span.

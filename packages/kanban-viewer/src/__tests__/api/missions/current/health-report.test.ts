@@ -590,6 +590,29 @@ describe('GET /api/missions/current/health-report', () => {
     expect(body.error.message).toContain('X-Project-ID');
   });
 
+  // Fix A (active-mission predicate): completed mission with archivedAt: null must NOT be returned.
+  // The findFirst query must include state: { notIn: ['completed', 'failed', 'archived'] }
+  // so that stale completed/failed missions don't bleed into the health report.
+  it('excludes completed-but-not-archived mission: findFirst must filter by active state', async () => {
+    // Simulate: findFirst returns null when state filter is applied (no truly active mission)
+    // and would return a completed mission if only archivedAt: null were used.
+    mockPrismaClient.mission.findFirst.mockResolvedValue(null);
+
+    const response = await GET(buildRequest({ 'X-Project-ID': PROJECT_ID }));
+    const body = await response.json();
+
+    expect(response.status).toBe(404);
+
+    // The where clause MUST include a state filter that excludes completed/failed/archived.
+    const where = mockPrismaClient.mission.findFirst.mock.calls[0][0].where;
+    expect(where.projectId).toBe(PROJECT_ID);
+    // Must have state.notIn — not just archivedAt: null
+    expect(where.state).toBeDefined();
+    expect(where.state.notIn).toBeDefined();
+    expect(where.state.notIn).toContain('completed');
+    expect(where.state.notIn).toContain('failed');
+  });
+
   // Fix 2: item query must be scoped to current mission via MissionItem join table,
   // not just projectId — an in-flight item from a different mission must NOT appear.
   it('does not include in-flight items from other missions (scoped to current missionId)', async () => {
@@ -625,5 +648,130 @@ describe('GET /api/missions/current/health-report', () => {
     expect(itemFindManyCall.where.missionItems.some.missionId).toBe(MISSION_ID);
     // OTHER_MISSION_ID reference to suppress unused-var lint
     expect(OTHER_MISSION_ID).toBe('M-OTHER-001');
+  });
+
+  // Fix B (claim-window constraint): hook event from assignedAgent BEFORE claimedAt
+  // must NOT appear in recentActivity or influence lastActivityAt.
+  it('excludes pre-claim hook events from assignedAgent when payload.itemId is absent', async () => {
+    mockPrismaClient.mission.findFirst.mockResolvedValue(activeMission);
+    const item = makeItem({ id: 'WI-PRE', stageId: 'implementing' });
+    mockPrismaClient.item.findMany.mockResolvedValue([item]);
+
+    const claimedAt = new Date('2026-05-02T10:00:00.000Z');
+    mockPrismaClient.agentClaim.findMany.mockResolvedValue([
+      { id: 1, agentName: 'ba', itemId: 'WI-PRE', claimedAt },
+    ]);
+
+    // Pre-claim event: timestamp < claimedAt, no payload.itemId (would match by agent only)
+    const preClaimTs = new Date('2026-05-02T09:00:00.000Z'); // 1 hour before claim
+    // Post-claim event: timestamp > claimedAt, no payload.itemId (should match)
+    const postClaimTs = new Date('2026-05-02T11:00:00.000Z'); // 1 hour after claim
+
+    mockPrismaClient.hookEvent.findMany.mockResolvedValue([
+      {
+        id: 1,
+        projectId: PROJECT_ID,
+        missionId: MISSION_ID,
+        eventType: 'post_tool_use',
+        agentName: 'ba',
+        toolName: 'Read',
+        status: 'success',
+        durationMs: 5,
+        summary: 'pre-claim work on prior item',
+        payload: null, // no itemId — only agent fallback applies
+        correlationId: null,
+        timestamp: preClaimTs,
+        inputTokens: null,
+        outputTokens: null,
+        cacheCreationTokens: null,
+        cacheReadTokens: null,
+        model: null,
+      },
+      {
+        id: 2,
+        projectId: PROJECT_ID,
+        missionId: MISSION_ID,
+        eventType: 'post_tool_use',
+        agentName: 'ba',
+        toolName: 'Edit',
+        status: 'success',
+        durationMs: 5,
+        summary: 'post-claim work on this item',
+        payload: null, // no itemId — only agent fallback applies
+        correlationId: null,
+        timestamp: postClaimTs,
+        inputTokens: null,
+        outputTokens: null,
+        cacheCreationTokens: null,
+        cacheReadTokens: null,
+        model: null,
+      },
+    ]);
+
+    const response = await GET(buildRequest({ 'X-Project-ID': PROJECT_ID }));
+    const body = await response.json();
+
+    const out = body.data.inFlightItems[0];
+
+    // The post-claim event SHOULD be included
+    expect(out.recentActivity.some((r: { timestamp: string }) => r.timestamp === postClaimTs.toISOString())).toBe(true);
+
+    // The pre-claim event MUST NOT be included
+    expect(out.recentActivity.some((r: { timestamp: string }) => r.timestamp === preClaimTs.toISOString())).toBe(false);
+
+    // lastActivityAt must reflect the post-claim event, not the pre-claim one
+    expect(out.lastActivityAt).toBe(postClaimTs.toISOString());
+    expect(out.lastActivitySource).toBe('hook_event');
+  });
+
+  // Fix B (claim-window constraint): activity log entry from assignedAgent BEFORE claimedAt
+  // must NOT appear in recentActivity or influence lastActivityAt.
+  it('excludes pre-claim activity log entries from assignedAgent when claimedAt is set', async () => {
+    mockPrismaClient.mission.findFirst.mockResolvedValue(activeMission);
+    const item = makeItem({ id: 'WI-ACT-PRE', stageId: 'implementing' });
+    mockPrismaClient.item.findMany.mockResolvedValue([item]);
+
+    const claimedAt = new Date('2026-05-02T10:00:00.000Z');
+    mockPrismaClient.agentClaim.findMany.mockResolvedValue([
+      { id: 1, agentName: 'ba', itemId: 'WI-ACT-PRE', claimedAt },
+    ]);
+
+    const preClaimActivityTs = new Date('2026-05-02T09:30:00.000Z'); // before claim
+    const postClaimActivityTs = new Date('2026-05-02T10:30:00.000Z'); // after claim
+
+    mockPrismaClient.activityLog.findMany.mockResolvedValue([
+      {
+        id: 1,
+        missionId: MISSION_ID,
+        projectId: PROJECT_ID,
+        agent: 'ba',
+        message: 'pre-claim activity on prior item',
+        level: 'info',
+        timestamp: preClaimActivityTs,
+      },
+      {
+        id: 2,
+        missionId: MISSION_ID,
+        projectId: PROJECT_ID,
+        agent: 'ba',
+        message: 'post-claim activity on this item',
+        level: 'info',
+        timestamp: postClaimActivityTs,
+      },
+    ]);
+
+    const response = await GET(buildRequest({ 'X-Project-ID': PROJECT_ID }));
+    const body = await response.json();
+
+    const out = body.data.inFlightItems[0];
+
+    // Post-claim activity SHOULD be included
+    expect(out.recentActivity.some((r: { timestamp: string }) => r.timestamp === postClaimActivityTs.toISOString())).toBe(true);
+
+    // Pre-claim activity MUST NOT be included
+    expect(out.recentActivity.some((r: { timestamp: string }) => r.timestamp === preClaimActivityTs.toISOString())).toBe(false);
+
+    // lastActivityAt must be the post-claim one
+    expect(out.lastActivityAt).toBe(postClaimActivityTs.toISOString());
   });
 });

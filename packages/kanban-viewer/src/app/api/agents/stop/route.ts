@@ -35,7 +35,8 @@ function getRejectionEscalationThreshold(): number {
   const raw = process.env.ATEAM_REJECTION_CAP;
   if (raw === undefined || raw === '') return DEFAULT_REJECTION_CAP;
   const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : DEFAULT_REJECTION_CAP;
+  if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_REJECTION_CAP;
+  return parsed;
 }
 
 /**

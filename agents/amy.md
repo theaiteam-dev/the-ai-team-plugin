@@ -319,7 +319,7 @@ If the work item's PRD specifies non-functional requirements, verify them:
 1. **Start work (claim the item)**
    Follow the `ai-team:pool-handoff` skill (loaded in Step 0) to claim your pool slot (`ateam pool claim "${MY_NAME}"`) before proceeding.
 
-   Run `ateam agents-start agentStart --itemId "XXX" --agent "amy"` (replace XXX with actual item ID).
+   Run `ateam agents-start agentStart --itemId "XXX" --agent "${MY_NAME}"` (replace XXX with actual item ID; `${MY_NAME}` is your instance name from Step 0, e.g., `amy-1`, `amy-2`).
 
    This claims the item AND records `assigned_agent` on the work item so the kanban UI shows you're working on it.
 

@@ -29,7 +29,7 @@ The system prompt body is the markdown content below the frontmatter — identic
 
 ### Frontmatter Compatibility
 
-Pi ignores unknown frontmatter keys (logs warnings but loads the file). This means **our agent files work on both harnesses as-is** — Pi reads `name`, `model`, `description`, `tools` and the body; silently skips `hooks:`, `permissionMode:`, `skills:`.
+Pi ignores unknown frontmatter keys (logs warnings but loads the file). This means **our agent files _load_ on both harnesses without modification** — Pi reads `name`, `model`, `description`, `tools` and the body; it silently skips `hooks:`, `permissionMode:`, and `skills:`. The files load identically; behavioral parity is **not** automatic — see "What Needs Work" below for the bridge/skills work required before Pi-run agents behave like Claude Code-run ones.
 
 Relevant Pi issues:
 - [#1235](https://github.com/badlogic/pi-mono/issues/1235) — Suppress warnings for Claude Code extended frontmatter fields (people already sharing files across harnesses)

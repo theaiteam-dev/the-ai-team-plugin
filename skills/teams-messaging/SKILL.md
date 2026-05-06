@@ -153,7 +153,7 @@ SendMessage({ to: "lynch", message: "ACK: {itemId}", summary: "ACK {itemId}" })
 
 ### Lynch → Murdock (REJECTED path)
 
-**All rejections that return to `testing` route through Murdock** — both Lynch's review rejections and B.A.'s self-rejected TEST BUGs (see next section). There is no Lynch → B.A. path. See `agents/lynch.md` "Rejection Flow" and `agents/murdock.md` Step 2.5 for the rationale (TDD invariant: every defect becomes a failing test before code changes).
+**All rejections that return to `testing` route through Murdock** — both Lynch's review rejections and B.A.'s self-rejected TEST BUGs (see next section). Lynch retains a separate impl-only rejection path via `--return-to implementing` → `ba-N` for cases where tests are correct but the implementation is wrong (see "Rejection Routing Reference" table further down); this section covers only the `testing` route. See `agents/lynch.md` "Rejection Flow" and `agents/murdock.md` Step 2.5 for the rationale (TDD invariant: every defect becomes a failing test before code changes).
 
 After `ateam agents-stop agentStop --outcome rejected --return-to testing --advance=false`, notify Murdock directly, then send FYI to Hannibal. The message must be actionable without Lynch in the loop: name the AC, the observed gap, the test change to consider, and the code fix B.A. will need.
 

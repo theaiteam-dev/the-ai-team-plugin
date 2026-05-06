@@ -99,7 +99,7 @@ ateam agents-stop agentStop --itemId WI-007 --agent Amy \
   --summary "FLAG - crashes on plain-text error body"
 ```
 
-The API handles: `rejectionCount++`, escalation to `blocked` once the configured rejection cap is reached (default 4, override via `ATEAM_REJECTION_CAP`), stage move to `returnTo`.
+The API handles: `rejectionCount++` and stage move. Once the configured rejection cap is reached (default 4, override via `ATEAM_REJECTION_CAP`), the item is escalated to `blocked` **instead of** the `returnTo` stage — escalation replaces the rework move, it does not happen alongside it.
 
 In native teams mode, Lynch and Amy then send `START` directly to the appropriate agent (Murdock for test issues, B.A. for impl/bug issues). Hannibal receives FYI only and does not re-dispatch unless he gets ALERT.
 
