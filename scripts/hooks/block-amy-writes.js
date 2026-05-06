@@ -34,7 +34,15 @@ try {
 
   const toolName = hookInput.tool_name || '';
   const toolInput = hookInput.tool_input || {};
-  const filePath = toolInput.file_path || '';
+  const filePath = toolInput.file_path || toolInput.notebook_path || '';
+
+  // Only gate write-capable tools. Reads, searches, and execs are unrelated
+  // to this hook's intent ("amy writes") — Amy must read source files to
+  // investigate bugs and probe behavior.
+  const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+  if (!WRITE_TOOLS.has(toolName)) {
+    process.exit(0);
+  }
 
   if (!filePath) {
     process.exit(0);

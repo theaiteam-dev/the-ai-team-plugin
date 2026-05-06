@@ -83,6 +83,10 @@ Pipeline agents communicate directly with each other (peer-to-peer handoffs) and
 
 Native teams + the pool directory handle orchestration and routing; `ateam` CLI handles persistence, stage transitions, and pool claim/release.
 
+### Hannibal Heartbeat Health Check
+
+Because peer-to-peer handoffs leave Hannibal mostly asleep, a silent stall (e.g., a teammate finishes and goes idle without successfully handing off) can sit undetected indefinitely. To guard against this, Hannibal arms a self-wake every 1500s using the `ScheduleWakeup` primitive with the prompt `"/ai-team:healthcheck"`. The wake fires the `/ai-team:healthcheck` slash command (`commands/healthcheck.md`), which deterministically re-arms the next wake, pulls `GET /api/missions/current/health-report` (CLI: `ateam missions-health getHealthReport --json`) — returning per-in-flight-item activity signals (`claimedAt`, `lastActivityAt`, `lastActivitySource`, `idleSeconds`, `lastWorkLogEntry`, `recentActivity`) plus an aggregate `missionIdle` boolean derived from a 600-second per-item idle threshold — inspects the local `/tmp/.ateam-pool/${ATEAM_MISSION_ID}/` directory for the suspect agent, and either pings `STATUS?` or re-dispatches. The endpoint exposes raw timestamps and counts; the only threshold is the 600s cutoff used to compute `missionIdle`. Using a slash command (not a freeform `HEARTBEAT:` string) guarantees the routine runs every fire — a prior run shipped 6 wakes but only ran the routine once because the freeform prompt was easy to skim past. See `commands/healthcheck.md`, `agents/hannibal.md` ("Heartbeat health check"), and `playbooks/orchestration-native.md` ("Heartbeat Health Check") for the full procedure.
+
 ## Pipeline Parallelism & Instance Pools
 
 Each pipeline role (Murdock, B.A., Lynch, Amy) runs as a pool of N parallel instances, where N is computed per mission by `ateam scaling compute` (see below). When N=1, instance names are the base names (`murdock`, `ba`, `lynch`, `amy`) and behaviour is identical to single-instance mode. When N>1, instances are suffixed numerically: `murdock-1`..`murdock-N`, `ba-1`..`ba-N`, etc. Different work items flow through the pipeline concurrently; within each stage, up to N items can be processed in parallel.
@@ -154,9 +158,21 @@ ateam agents-stop agentStop \
 ```
 
 - The API atomically increments `rejectionCount`, moves the item back to the `--return-to` stage, and logs the rejection to the work log.
-- At `rejectionCount == 2` the item is escalated to `blocked`.
-- The working agent then sends a REJECTED peer message to the correct recipient (Murdock for test issues, B.A. for implementation issues) so the rework starts immediately — Hannibal is notified via FYI only.
+- When `rejectionCount` hits the configured rejection cap (default `4`, override via `ATEAM_REJECTION_CAP` on the API server) the item is escalated to `blocked`.
+- The working agent then sends a REJECTED peer message to the correct recipient so the rework starts immediately — Hannibal is notified via FYI only.
 - `--advance=false` is required on rejection: the item is moving backward, not forward, so the default forward `--advance=true` pool claim must be skipped.
+
+**Valid rejection routes** (enforced by `scripts/hooks/enforce-handoff.js` REJECTION_TARGETS):
+
+| Rejector | --return-to | REJECTED recipient | Use case |
+|----------|-------------|--------------------|----------|
+| `lynch`  | `testing`       | `murdock-N` | Tests miss an AC or assert wrong behavior (test gap, with or without an impl bug — earliest-flagged-stage) |
+| `lynch`  | `implementing`  | `ba-N`      | Tests OK; impl is wrong (impl-only) |
+| `amy`    | `testing`       | `murdock-N` | FLAG names any test gap (alone or with an impl bug) — earliest-flagged-stage |
+| `amy`    | `implementing`  | `ba-N`      | FLAG names only an impl bug (probing found a bug beyond test coverage) |
+| `ba`     | `testing`       | `murdock-N` | TEST BUG only — test won't compile / throws on valid input / asserts impossible behavior. Summary must start with `TEST BUG:` |
+
+B.A.'s self-rejection is restricted to `--return-to testing` and uses the `TEST BUG:` summary prefix; any other rejection target from B.A. will be blocked by the handoff hook. This path exists to prevent the "B.A. blocks waiting for Hannibal to manually re-dispatch Murdock" stall pattern. See `agents/ba.md` "When the Test Is Wrong" for the narrow trigger criteria.
 
 ## Final Review Persistence
 

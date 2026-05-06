@@ -349,11 +349,18 @@ ateam board getBoard --json
 
 ## Handling Rejections
 
-**In native teams mode:** Lynch and Amy handle rejections autonomously via `agentStop --outcome rejected`. They increment the rejection count, move the item backward, and START the responsible agent directly — Hannibal is not in the critical path.
+**In native teams mode:** Lynch, Amy, and (rarely) B.A. handle rejections autonomously via `agentStop --outcome rejected`. They increment the rejection count, move the item backward, and START the responsible agent directly — Hannibal is not in the critical path.
+
+**Who can self-reject and where it goes:**
+- **Lynch** → `testing` (Murdock) for test gaps, or `implementing` (B.A.) for impl bugs. If both: `testing` (earliest-flagged-stage principle).
+- **Amy** → `testing` (Murdock) for FLAGs that name a test gap, or `implementing` (B.A.) for FLAGs that name only an impl bug. If the FLAG names both: `testing`.
+- **B.A.** → `testing` (Murdock) **only** when a test is genuinely broken (TEST BUG: prefix). Rare — used to avoid the "BA blocks waiting for someone to fix the test" stall pattern. Trigger criteria are narrow (see `agents/ba.md` "When the Test Is Wrong"); the handoff hook blocks B.A. from rejecting to any other stage.
+
+**Hannibal cannot walk items backward through the matrix.** `board-move` enforces the forward `TRANSITION_MATRIX` in `packages/shared/src/stages.ts`; only `agentStop --outcome rejected --return-to <stage>` can move items backward. If a teammate's rejection routed to a later stage than it should have (e.g. Amy rejected to `implementing` when the FLAG also named a test gap), do NOT attempt manual `board-move` recovery — the matrix will reject it as `INVALID_TRANSITION`. Re-dispatch from the current stage and rely on the next reviewer to bounce it correctly with the right `--return-to`.
 
 **What Hannibal receives on rejection:**
-- **FYI from Lynch/Amy** — rejection handled, agent re-dispatched. Check for escalation: if the FYI message indicates `escalated: true` or the item moved to `blocked`, announce to the user that human intervention is needed.
-- **ALERT from Lynch/Amy** — handoff failed (peer timed out). Fall back to manual re-dispatch (see below).
+- **FYI from Lynch/Amy/B.A.** — rejection handled, agent re-dispatched. Check for escalation: if the FYI message indicates `escalated: true` or the item moved to `blocked`, announce to the user that human intervention is needed.
+- **ALERT from Lynch/Amy/B.A.** — handoff failed (peer timed out, or no idle next-agent). Fall back to manual re-dispatch (see below).
 
 **On ALERT fallback:** Check the item's `stageId` from the board — if it was moved back already (e.g. `implementing`), just re-dispatch B.A. If it's still in `review`/`probing` (handoff failed before the move), call `agentStop --outcome rejected` yourself, then re-dispatch:
 
@@ -475,6 +482,40 @@ ateam board-move moveItem --itemId "WI-001" --toStage "done"
 ```
 Check the board-move response for `finalReviewReady: true` — when present, immediately dispatch Stockwell for the Final Mission Review.
 
+## Heartbeat health check (self-wake loop)
+
+The pipeline can stall silently. Worst case observed: B.A. hit a test bug, sent an FYI to Hannibal, and both sides went idle simultaneously — 13h 38m of dead silence before a human noticed. Hannibal needs a periodic self-wake to inspect pipeline health and investigate stalled work.
+
+The wake fires the **`/ai-team:healthcheck` slash command**, which is the canonical health routine. Using a slash command (not a freeform `HEARTBEAT:` string) guarantees the steps run deterministically every time — a previous run shipped 6 wakes but only ran the health routine once because the freeform prompt was easy to ignore.
+
+**Schedule the first heartbeat at mission start**, immediately after team initialization and before dispatching the first item. The slash command re-arms the next wake itself. Hannibal's only job here is to fire the first one.
+
+### The wakeup invocation
+
+```text
+ScheduleWakeup(
+  delaySeconds: 1500,
+  prompt:       "/ai-team:healthcheck",
+  reason:       "pipeline health check"
+)
+```
+
+- 1500s (25 minutes) is inside the 5-minute cache TTL × 5 windows. Re-calling with the SAME prompt cancels the prior pending one (idempotent dedupe).
+- The Claude Code scheduler ticks every 1s and gates on `isLoading()` — wakeups never interrupt mid-turn. If Hannibal is busy when the fire time hits, the wakeup fires on the next tick after he goes idle.
+- One-shot semantics: after firing, the cron is removed from disk. The slash command itself re-arms the next wake (see `commands/healthcheck.md`).
+
+### What runs on wake
+
+When the wake fires, Claude Code resumes the session with input `/ai-team:healthcheck`. The runtime loads `commands/healthcheck.md` — Hannibal does not improvise the routine. The slash command:
+
+1. Re-arms the next wake (with the same `/ai-team:healthcheck` prompt) FIRST.
+2. Fetches `ateam missions-health getHealthReport --json`.
+3. Inspects the local pool (`/tmp/.ateam-pool/${ATEAM_MISSION_ID}/`) for any suspicious item.
+4. Decides per item — investigate, send `STATUS?`, release+re-dispatch, or no-op.
+5. Reports a one-line summary.
+
+See `commands/healthcheck.md` for the full routine including the action matrix and stop-re-arming conditions.
+
 ## Reading Board State
 
 Get full board state:
@@ -534,7 +575,7 @@ ateam agents-stop agentStop --itemId "WI-003" --agent "Stockwell" \
   --summary "FINAL REJECTED - Race condition in token refresh"
 ```
 
-Items return to `ready` stage and go through the pipeline again. If rejectionCount >= 2, the API escalates them to `blocked` — announce to the user that human intervention is needed.
+Items return to `ready` stage and go through the pipeline again. When `rejectionCount` reaches the configured cap (default `4`, override via `ATEAM_REJECTION_CAP`), the API escalates them to `blocked` — announce to the user that human intervention is needed.
 
 ## Post-Mission Checks
 

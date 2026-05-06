@@ -151,36 +151,70 @@ After `ateam agents-stop agentStop --advance` (approved):
 SendMessage({ to: "lynch", message: "ACK: {itemId}", summary: "ACK {itemId}" })
 ```
 
-### Lynch → Murdock or B.A. (REJECTED path)
+### Lynch → Murdock (REJECTED path)
 
-After `ateam agents-stop agentStop --outcome rejected --return-to <stage>`, notify the responsible agent directly, then send FYI to Hannibal:
+**All rejections that return to `testing` route through Murdock** — both Lynch's review rejections and B.A.'s self-rejected TEST BUGs (see next section). Lynch retains a separate impl-only rejection path via `--return-to implementing` → `ba-N` for cases where tests are correct but the implementation is wrong (see "Rejection Routing Reference" table further down); this section covers only the `testing` route. See `agents/lynch.md` "Rejection Flow" and `agents/murdock.md` Step 2.5 for the rationale (TDD invariant: every defect becomes a failing test before code changes).
+
+After `ateam agents-stop agentStop --outcome rejected --return-to testing --advance=false`, notify Murdock directly, then send FYI to Hannibal. The message must be actionable without Lynch in the loop: name the AC, the observed gap, the test change to consider, and the code fix B.A. will need.
 
 ```javascript
-// To Murdock (test issues, --return-to testing):
 SendMessage({
   to: "murdock",
-  message: "REJECTED: {itemId} - {specific issues}. Required fixes: {fix list}",
-  summary: "REJECTED {itemId}"
-})
-
-// To B.A. (implementation issues, --return-to implementing):
-SendMessage({
-  to: "ba",
-  message: "REJECTED: {itemId} - {specific issues}. Required fixes: {fix list}",
+  message: "REJECTED: {itemId} - AC {n} {ac text}. Observed gap: {what's broken}. Test to add/tighten: {specific assertion}. Code fix required: {what B.A. must change}.",
   summary: "REJECTED {itemId}"
 })
 ```
 
-Then send FYI to Hannibal:
+Then FYI to Hannibal:
 ```javascript
 SendMessage({
   to: "hannibal",
-  message: "FYI: {itemId} - REJECTED, returned to {stage}. Sent rejection to {Murdock/B.A.}.",
+  message: "FYI: {itemId} - REJECTED, returned to testing. Sent rejection to Murdock.",
   summary: "Rejection sent for {itemId}"
 })
 ```
 
-Note: Rejection messages are fire-and-forget — the rejected agent picks up the returned item from the board when it's next idle. No ACK is required or expected.
+Note: Rejection messages are fire-and-forget — Murdock picks up the returned item from the board when next idle. No ACK is required or expected.
+
+### B.A. → Murdock (REJECTED path — TEST BUG)
+
+B.A. self-rejects only when a test is genuinely broken (see `agents/ba.md` "When the Test Is Wrong" for the narrow trigger criteria — disagreement, hardness, or missing impl do NOT qualify). The summary must start with `TEST BUG:` so the failure mode is greppable in retrospectives.
+
+After `ateam agents-stop agentStop --outcome rejected --return-to testing --advance=false --summary "TEST BUG: ..."`, notify a Murdock instance directly, then send FYI to Hannibal:
+
+```javascript
+SendMessage({
+  to: "murdock-N",  // exact instance from claimedNext in agentStop response
+  message: "REJECTED: {itemId} - TEST BUG at {file:line}. {one-sentence reason}. Test change needed: {what Murdock must change}. Impl status: {complete|partial}.",
+  summary: "REJECTED {itemId} (TEST BUG)"
+})
+```
+
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "FYI: {itemId} - self-rejected to testing (TEST BUG). Sent rejection to murdock-N.",
+  summary: "TEST BUG bounce for {itemId}"
+})
+```
+
+If `claimedNext` is empty and `poolAlert` is set (no idle Murdock), send `ALERT` to Hannibal instead — same recovery path Lynch uses on a no-idle ALERT.
+
+Like Lynch's rejections, B.A. self-rejections count toward the same `rejectionCount` cap; when it reaches the configured cap (default `4`, override via `ATEAM_REJECTION_CAP`) the item escalates to `blocked`.
+
+### Murdock → B.A. (rework pass-through START)
+
+When Murdock enters Rework Mode (rejectionCount > 0) and audits existing tests as adequate (see `agents/murdock.md` Step 2.5 exit (b)), the START to B.A. must carry the upstream rejection verbatim plus Murdock's audit verdict — so B.A. fixes the impl without ambiguity about what the rejector wants:
+
+```javascript
+SendMessage({
+  to: "ba",
+  message: "START: {itemId} — REWORK (pass-through). Lynch rejection: {verbatim rejection}. Test audit: existing test at {path}:{line} asserts {behavior} — will fail once you apply {specific fix}. Impl change only, no test changes.",
+  summary: "START {itemId} rework"
+})
+```
+
+If Murdock's audit finds the test gap real (exit (a) — tests were added or tightened), use the normal START format from the top of this document.
 
 ### Amy → Hannibal (terminal — no downstream)
 
@@ -194,7 +228,7 @@ SendMessage({
 })
 ```
 
-No START/ACK needed. On VERIFIED, `--advance` already moved the item to `done`. On FLAG, Amy calls `agentStop --outcome rejected --return-to ready` to send the item back to ready (per the transition matrix: probing → ready), then sends ALERT to Hannibal with the bug details for re-dispatch.
+No START/ACK needed. On VERIFIED, `--advance` already moved the item to `done`. On FLAG, Amy calls `agentStop --outcome rejected --return-to <testing|implementing> --advance=false` per the earliest-flagged-stage principle (see the rejection-routing note below), sends `REJECTED` to the matching peer (`murdock-N` or `ba-N`), and sends `FYI` to Hannibal.
 
 ### Tawnia → Hannibal (terminal — no downstream)
 
@@ -219,6 +253,67 @@ SendMessage({
   summary: "Final mission review complete"
 })
 ```
+
+### Sosa → Hannibal (planning phase — terminal critique)
+
+Sosa runs during `/ai-team:plan`, not `/ai-team:run`. After reviewing every item in `briefings`, send the refinement report to Hannibal so Face can apply the recommendations on the second pass:
+
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "REVIEW COMPLETE: {APPROVED | APPROVED WITH WARNINGS | BLOCKED}\n\nCritical: {N}\nWarnings: {N}\nItems reviewed: {N}/{total}\n\n{full refinement report}",
+  summary: "Decomposition review: {verdict}"
+})
+```
+
+Sosa does **not** START Face directly. Face is re-invoked by the planning command, not via peer handoff. The verdict tells Hannibal whether the second pass should run.
+
+### Sosa → user (human-clarification questions)
+
+For QUESTION-level issues that only a human can resolve, use `AskUserQuestion` (NOT `SendMessage`) — these go to the user, not to a teammate:
+
+```javascript
+AskUserQuestion({
+  questions: [{
+    question: "Should email verification be required before login?",
+    header: "Email verification",
+    options: [
+      { label: "Required", description: "..." },
+      { label: "Optional", description: "..." },
+      { label: "Skip",     description: "..." }
+    ],
+    multiSelect: false
+  }]
+})
+```
+
+Batch all open questions into one `AskUserQuestion` call when possible. Block on the answers, then incorporate them into the report sent to Hannibal.
+
+If a question cannot be put in option form (open-ended business decision), escalate to Hannibal instead:
+
+```javascript
+SendMessage({
+  to: "hannibal",
+  message: "QUESTION: {description of ambiguity needing human input}",
+  summary: "Needs human input on {topic}"
+})
+```
+
+---
+
+## Rejection Routing Reference
+
+Pipeline order: `testing < implementing < review < probing`.
+
+| Rejector | Valid `--return-to` | REJECTED recipient |
+|----------|---------------------|--------------------|
+| Lynch    | `testing`           | `murdock-N`        |
+| Lynch    | `implementing`      | `ba-N`             |
+| Amy      | `testing`           | `murdock-N`        |
+| Amy      | `implementing`      | `ba-N`             |
+| B.A.     | `testing` (TEST BUG only) | `murdock-N`  |
+
+**Earliest-flagged-stage principle.** When a single rejection implicates failures at more than one stage, route to the EARLIEST flagged stage. The pipeline flows forward only — if Lynch or Amy routes to `implementing` but the test coverage also has a gap, the next reviewer will bounce it back to `testing`, costing an extra cycle. Routing to the earliest stage closes the loop in one cycle: Murdock writes the failing test, B.A. fills the impl in pass-through, the reviewer re-evaluates.
 
 ---
 

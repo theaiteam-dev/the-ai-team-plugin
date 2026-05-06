@@ -62,9 +62,26 @@ const HANDOFF_TARGETS = {
 };
 
 // Valid rejection routing: agent → { returnToStage: expectedRecipientType }
+//
+// Earliest-flagged-stage principle: when a single rejection implicates
+// failures at multiple pipeline stages, route to the EARLIEST flagged
+// stage. The pipeline only flows forward (testing → implementing →
+// review → probing), so routing to the earliest gap lets the rework
+// flow through in one cycle (Murdock writes the failing test → B.A.
+// fills impl in pass-through → Lynch reviews → Amy verifies). Routing
+// to a later stage when an earlier-stage gap also exists costs an extra
+// cycle when the next reviewer bounces it back.
+//
+// Amy's `testing` route exists for FLAGs that name a test gap (with or
+// without an accompanying impl bug). FLAGs that name only an impl bug
+// route to `implementing`.
 const REJECTION_TARGETS = {
   lynch: { testing: 'murdock', implementing: 'ba' },
-  amy: { implementing: 'ba' },
+  amy: { testing: 'murdock', implementing: 'ba' },
+  // B.A. may self-reject only when a test is genuinely broken.
+  // The rework routes through Murdock so the TDD invariant (every
+  // defect becomes a test change before code changes) is preserved.
+  ba: { testing: 'murdock' },
 };
 
 // Read hook input from stdin
@@ -150,11 +167,11 @@ for (const line of lines) {
         foundAgentStop = true;
         const itemMatch = command.match(/--itemId\s+["']?([^\s"']+)["']?/);
         if (itemMatch) agentStopItemId = itemMatch[1];
-        const agentMatch = command.match(/--agent\s+["']?([^\s"']+)["']?/);
+        const agentMatch = command.match(/--agent(?:=|\s+)["']?([^\s"']+)["']?/);
         if (agentMatch) instanceName = agentMatch[1];
-        const outcomeMatch = command.match(/--outcome\s+["']?([^\s"']+)["']?/);
+        const outcomeMatch = command.match(/--outcome(?:=|\s+)["']?([^\s"']+)["']?/);
         if (outcomeMatch) agentStopOutcome = outcomeMatch[1];
-        const returnToMatch = command.match(/--return-to\s+["']?([^\s"']+)["']?/);
+        const returnToMatch = command.match(/--return-to(?:=|\s+)["']?([^\s"']+)["']?/);
         if (returnToMatch) agentStopReturnTo = returnToMatch[1];
       }
     }
@@ -182,8 +199,10 @@ for (const line of lines) {
         if (expectedType && recipient.startsWith(expectedType) && content.includes('REJECTED')) {
           // Correct rejection target
           foundHandoff = true;
-        } else if (!expectedType && content.includes('REJECTED')) {
-          // --return-to not parseable or agent not in REJECTION_TARGETS — fall back to any REJECTED
+        } else if (!agentStopReturnTo && content.includes('REJECTED')) {
+          // --return-to not parseable at all — fall back to accepting any REJECTED.
+          // (When --return-to IS parseable but the agent has no entry for that stage,
+          // we deliberately do NOT fall back — the routing is wrong and must be blocked.)
           foundHandoff = true;
         }
       } else if (target?.next) {
@@ -250,6 +269,15 @@ if (!foundHandoff) {
         `${missing.length + 1}. Send REJECTED to a ${expectedType} instance (matches --return-to ${agentStopReturnTo}).\n` +
         `   SendMessage to "${expectedType}-N" with content including "REJECTED: <itemId> - <reason>"\n` +
         `   Then send FYI to Hannibal.`
+      );
+    } else if (rejTargets && agentStopReturnTo) {
+      // Agent is in REJECTION_TARGETS but used a --return-to stage that's not valid for it.
+      const validStages = Object.keys(rejTargets);
+      const validRoutes = validStages.map((stage) => `${stage} → ${rejTargets[stage]}`).join(', ');
+      missing.push(
+        `${missing.length + 1}. ${resolvedAgent} cannot reject --return-to ${agentStopReturnTo}.\n` +
+        `   Valid rejection routes for ${resolvedAgent}: ${validRoutes}.\n` +
+        `   Re-run agentStop with a valid --return-to stage and SendMessage REJECTED to the matching agent type.`
       );
     } else {
       missing.push(

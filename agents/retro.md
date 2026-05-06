@@ -57,6 +57,12 @@ curl -s -X POST "${ATEAM_API_URL:-http://localhost:3000}/api/missions/{missionId
   -H "X-Project-ID: $ATEAM_PROJECT_ID" | cat
 curl -s "${ATEAM_API_URL:-http://localhost:3000}/api/missions/{missionId}/token-usage" \
   -H "X-Project-ID: $ATEAM_PROJECT_ID" | cat
+
+# Tool-call histogram per agent
+ateam missions getToolHistogram {missionId} --json
+
+# Skill activation log per agent
+ateam missions getSkillUsage {missionId} --json
 ```
 
 ### 2. Extract Key Signals
@@ -85,6 +91,16 @@ From the data, extract:
 - Per-agent cost breakdown
 - Most expensive agents
 - Total mission cost
+
+**Tool usage** — from `getToolHistogram`:
+- Which tools each agent leaned on most
+- Agents exceeding their role (e.g., Lynch running Edit/Write, Murdock skipping Read)
+- Tool mix anomalies (e.g., heavy Bash when dedicated tools exist)
+
+**Skill usage** — from `getSkillUsage`:
+- Which skills each agent invoked and how often
+- Agents that never invoked an expected skill (coverage gap)
+- High `distinctArgs` on a skill (likely exploratory or repeated reloads)
 
 ### 3. Handle Edge Cases
 
@@ -183,6 +199,32 @@ Write the report in this format:
 - {Observation 2}
 
 {If no observations: "Pipeline flow was smooth — no bottlenecks observed."}
+
+---
+
+## Tool Usage
+
+{Summarize the tool-call histogram — one line per agent with its top 3 tools and counts}
+
+- **{agent}**: {tool1} ×N, {tool2} ×N, {tool3} ×N
+- ...
+
+**Notable:** {Any agent using tools outside their role? Any tool conspicuously absent?}
+**Recommendation:** {Frontmatter permission tightening, or a missed dedicated tool?}
+
+---
+
+## Skill Activations
+
+{Summarize `getSkillUsage` — one line per agent listing skills invoked}
+
+- **{agent}**: {skill1} ×N ({distinctArgs} distinct args), {skill2} ×N
+- ...
+
+{If no skill invocations recorded: "No skill activations recorded for this mission."}
+
+**Notable:** {Expected skills that went uninvoked? Repeated invocations of the same skill?}
+**Recommendation:** {Skill additions/removals for agent frontmatter?}
 
 ---
 

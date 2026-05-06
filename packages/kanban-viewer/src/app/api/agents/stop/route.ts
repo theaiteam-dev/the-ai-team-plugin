@@ -28,7 +28,16 @@ import { logApiError } from '@/lib/api-logger';
 
 const VALID_OUTCOMES = ['completed', 'blocked', 'rejected'] as const;
 const VALID_RETURN_TO_STAGES: StageId[] = ['ready', 'testing', 'implementing', 'review', 'probing'];
-const REJECTION_ESCALATION_THRESHOLD = 2;
+
+const DEFAULT_REJECTION_CAP = 4;
+
+function getRejectionEscalationThreshold(): number {
+  const raw = process.env.ATEAM_REJECTION_CAP;
+  if (raw === undefined || raw === '') return DEFAULT_REJECTION_CAP;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_REJECTION_CAP;
+  return parsed;
+}
 
 /**
  * POST /api/agents/stop
@@ -202,7 +211,7 @@ export async function POST(
       if (outcome === 'rejected') {
         const returnTo = body.returnTo as StageId;
         const newRejectionCount = item.rejectionCount + 1;
-        const escalated = newRejectionCount >= REJECTION_ESCALATION_THRESHOLD;
+        const escalated = newRejectionCount >= getRejectionEscalationThreshold();
         const targetStage: StageId = escalated ? 'blocked' : returnTo;
 
         const workLog = await tx.workLog.create({

@@ -448,6 +448,84 @@ describe('enforce-handoff — rejection routing', () => {
     expect(parseOutput(result.stdout)).toEqual({});
   });
 
+  it('allows Amy rejecting to testing → REJECTED to murdock (test-gap FLAG, earliest-stage routing)', () => {
+    const transcriptPath = writeTranscript([
+      {
+        name: 'Bash',
+        input: { command: 'ateam agents-stop agentStop --itemId "WI-005" --agent "amy-1" --outcome rejected --return-to testing --summary "FLAG: AC17 test gap — Cancel button onKeyDown not asserted, plus impl missing handler" --json' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'murdock-1', content: 'REJECTED: WI-005 - test gap on AC17 (Cancel onKeyDown) plus matching impl bug' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'hannibal', content: 'FYI: WI-005 - rejected to testing (earliest flagged stage)' },
+      },
+    ]);
+
+    const result = runHook({ agent_type: 'ai-team:amy-1', transcript_path: transcriptPath });
+    expect(result.exitCode).toBe(0);
+    expect(parseOutput(result.stdout)).toEqual({});
+  });
+
+  it('allows B.A. self-rejecting to testing → REJECTED to murdock instance (TEST BUG)', () => {
+    const transcriptPath = writeTranscript([
+      {
+        name: 'Bash',
+        input: { command: 'ateam agents-stop agentStop --itemId "WI-005" --agent "ba-1" --outcome rejected --return-to testing --advance=false --summary "TEST BUG: TodoItem.test.tsx:446 - user.type(input, \'\') throws on empty string" --json' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'murdock-1', content: 'REJECTED: WI-005 - TEST BUG at TodoItem.test.tsx:446' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'hannibal', content: 'FYI: WI-005 - rejected to testing (test bug)' },
+      },
+    ]);
+
+    const result = runHook({ agent_type: 'ai-team:ba-1', transcript_path: transcriptPath });
+    expect(result.exitCode).toBe(0);
+    expect(parseOutput(result.stdout)).toEqual({});
+  });
+
+  it('blocks B.A. rejecting to implementing (only testing is a valid BA rejection target)', () => {
+    const transcriptPath = writeTranscript([
+      {
+        name: 'Bash',
+        input: { command: 'ateam agents-stop agentStop --itemId "WI-005" --agent "ba-1" --outcome rejected --return-to implementing --summary "self-reject" --json' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'ba-2', content: 'REJECTED: WI-005 - self reject' },
+      },
+    ]);
+
+    const result = runHook({ agent_type: 'ai-team:ba-1', transcript_path: transcriptPath });
+    const output = parseOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(output.reason).toContain('murdock');
+  });
+
+  it('blocks B.A. rejecting to testing but sending START instead of REJECTED', () => {
+    const transcriptPath = writeTranscript([
+      {
+        name: 'Bash',
+        input: { command: 'ateam agents-stop agentStop --itemId "WI-005" --agent "ba-1" --outcome rejected --return-to testing --summary "TEST BUG: bad assert" --json' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'murdock-1', content: 'START: WI-005 - please look at this' },
+      },
+    ]);
+
+    const result = runHook({ agent_type: 'ai-team:ba-1', transcript_path: transcriptPath });
+    const output = parseOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(output.reason).toContain('REJECTED');
+  });
+
   it('falls back to any REJECTED when --return-to is not parseable', () => {
     const transcriptPath = writeTranscript([
       {
@@ -477,6 +555,70 @@ describe('enforce-handoff — rejection routing', () => {
     const output = parseOutput(result.stdout);
     expect(output.decision).toBe('block');
     expect(output.reason).toContain('murdock');
+  });
+
+  // --return-to= (equals form) regression tests
+  it('blocks Lynch using --return-to=testing (equals form) with REJECTED sent to wrong agent (ba)', () => {
+    // With the bug: --return-to=testing is NOT parsed → agentStopReturnTo stays null
+    // → permissive fallback fires because content.includes('REJECTED') → foundHandoff=true → PASSES (wrong)
+    // After fix: --return-to=testing IS parsed → expectedType='murdock' → ba-1 fails the startsWith check → BLOCKED
+    const transcriptPath = writeTranscript([
+      {
+        name: 'Bash',
+        input: { command: 'ateam agents-stop agentStop --itemId "WI-005" --agent "lynch-1" --outcome=rejected --return-to=testing --summary "tests are wrong" --json' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'ba-1', content: 'REJECTED: WI-005 - tests are wrong' },
+      },
+    ]);
+
+    const result = runHook({ agent_type: 'ai-team:lynch-1', transcript_path: transcriptPath });
+    const output = parseOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(output.reason).toContain('murdock');
+  });
+
+  it('allows Lynch using --return-to=testing (equals form) with REJECTED correctly sent to murdock', () => {
+    const transcriptPath = writeTranscript([
+      {
+        name: 'Bash',
+        input: { command: 'ateam agents-stop agentStop --itemId "WI-005" --agent=lynch-1 --outcome=rejected --return-to=testing --summary "tests are wrong" --json' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'murdock-1', content: 'REJECTED: WI-005 - tests are wrong' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'hannibal', content: 'FYI: WI-005 - rejected to testing' },
+      },
+    ]);
+
+    const result = runHook({ agent_type: 'ai-team:lynch-1', transcript_path: transcriptPath });
+    expect(result.exitCode).toBe(0);
+    expect(parseOutput(result.stdout)).toEqual({});
+  });
+
+  it('allows Lynch using --outcome=rejected --return-to=implementing (equals form) with REJECTED to ba', () => {
+    const transcriptPath = writeTranscript([
+      {
+        name: 'Bash',
+        input: { command: 'ateam agents-stop agentStop --itemId "WI-005" --agent=lynch-1 --outcome=rejected --return-to=implementing --summary "impl broken" --json' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'ba-2', content: 'REJECTED: WI-005 - impl broken' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'hannibal', content: 'FYI: WI-005 - rejected to implementing' },
+      },
+    ]);
+
+    const result = runHook({ agent_type: 'ai-team:lynch-1', transcript_path: transcriptPath });
+    expect(result.exitCode).toBe(0);
+    expect(parseOutput(result.stdout)).toEqual({});
   });
 });
 

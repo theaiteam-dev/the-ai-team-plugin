@@ -53,7 +53,7 @@ briefings → ready → testing → implementing → review → probing → done
                                                         └─────────────────┘
 ```
 
-**Note on transition enforcement:** The transition matrix enforces the linear pipeline: `testing` advances to `implementing` (not directly to `review`); `implementing` advances to `review`; `review` can send an item back to `testing` or `implementing` for rework, or forward to `probing`; `probing` advances to `done` or can send back to `ready`. See `packages/shared/src/stages.ts` for the full `TRANSITION_MATRIX`.
+**Note on transition enforcement:** The transition matrix enforces the linear pipeline: `testing` advances to `implementing` (not directly to `review`); `implementing` advances to `review`; `review` can send an item back to `testing` or `implementing` for rework, or forward to `probing`; `probing` advances to `done`. **Lynch and Amy use the earliest-flagged-stage principle** (`packages/shared/src/stages.ts` + `scripts/hooks/enforce-handoff.js`): if the rejection names a test gap (alone or with an impl bug), `--return-to testing` so Murdock audits coverage before B.A. reworks; if it names only an impl bug, `--return-to implementing` so B.A. fixes directly. Stockwell (final review) may rework to either stage. The matrix also allows a `probing → ready` transition for manual operator recovery (Hannibal can re-decompose a problematic item) but no pipeline agent uses it as a rejection target. See `packages/shared/src/stages.ts` for the full `TRANSITION_MATRIX`.
 
 Each feature flows through stages sequentially. Different features can be at different stages simultaneously (**pipeline parallelism** — the assembly-line model). Within each stage, up to N items can be processed concurrently by N agent instances (**stage concurrency**), where N is guided by `ateam scaling compute`. WIP limits are **per stage** (per column) — each stage independently caps how many items can be in it. An idle agent should always be dispatched work if its stage has capacity, regardless of how many items are in other stages.
 
@@ -143,7 +143,7 @@ The `outputs` field is critical - without it, Murdock and B.A. don't know where 
 
 **Native teams mode (pipeline workers):** Call `ateam agents-stop agentStop --advance` (default `true`) — this advances the item to the next stage atomically. If the target stage is at WIP capacity, the API returns `WIP_LIMIT_EXCEEDED` (409); use `--advance=false` to release the claim without advancing, then send an ALERT to Hannibal to handle re-dispatch when capacity opens.
 
-**Rejections (Lynch / Stockwell):** Rejection is expressed through `agentStop` with `--outcome rejected --return-to <stage>`. This replaces the old `ateam items rejectItem` command (which has been removed). The API moves the item back to the target stage (`testing` or `implementing`), increments `rejection_count`, and records the rejection summary in `work_log`. Items that hit the rejection cap transition to `blocked`.
+**Rejections (Lynch / Stockwell):** Rejection is expressed through `agentStop` with `--outcome rejected --return-to <stage>`. This replaces the old `ateam items rejectItem` command (which has been removed). The API moves the item back to the target stage (`testing` or `implementing`), increments `rejection_count`, and records the rejection summary in `work_log`. Items that hit the rejection cap transition to `blocked` instead of moving back to `--return-to`. The cap defaults to **4** and is overridable per API server via the `ATEAM_REJECTION_CAP` environment variable; non-integer or non-positive values fall back to the default.
 
 ## Key Conventions
 
@@ -261,10 +261,19 @@ Usage: `ateam <resource> <command> [flags]`
 | Archive mission | `ateam missions-archive archiveMission --json` |
 | Get final review | `ateam missions-final-review getFinalReview --missionId <id> --json` |
 | Write final review | `ateam missions-final-review writeFinalReview --missionId <id> --report "..." --json` |
+| Tool histogram | `ateam missions getToolHistogram <missionId> --json` |
+| Skill usage | `ateam missions getSkillUsage <missionId> --json` |
+| Health report | `ateam missions-health getHealthReport [--json]` |
 | Compute scaling | `ateam scaling compute [--concurrency N] [--memory N] --json` |
 | Check deps | `ateam deps-check checkDeps --json` |
 | Log activity | `ateam activity createActivityEntry --agent <name> --message "..." --level info` |
 | List activity | `ateam activity listActivity --json` |
+| Pool init | `ateam pool init` |
+| Pool destroy | `ateam pool destroy` |
+| Pool status | `ateam pool status [--json]` |
+| Pool claim | `ateam pool claim <instance>` |
+| Pool release | `ateam pool release --agent <instance>` |
+| Pool mark-idle | `ateam pool mark-idle <instance>` |
 
 ### Agent Lifecycle Commands
 
@@ -322,7 +331,11 @@ Returns per-agent breakdown with model, token counts, and estimated cost:
 - `GET /api/missions/current` — get active mission
 - `GET /api/items` — get work items (board state)
 - `POST /api/missions/{id}/token-usage` — aggregate and return token costs
+- `GET /api/missions/{id}/tool-histogram` — per-agent tool-call counts grouped by tool name
+- `GET /api/missions/{id}/skill-usage` — per-agent skill invocations with counts and `distinctArgs`
 - `POST /api/hooks/events` — store hook events (called by observer hooks, not manually)
+
+**Skill activations** are captured on the `HookEvent` `payload` column: when `toolName === 'Skill'`, observer hooks record `skill_name` and a 12-char SHA-256 `args_hash` so repeated invocations with the same args are identifiable without storing the args themselves.
 
 Token pricing is loaded from `ateam.config.json` at runtime (see `packages/kanban-viewer/src/lib/token-cost.ts`).
 

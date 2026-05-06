@@ -107,39 +107,78 @@ When an item is too big, use one of these named patterns to find the natural sea
 - Each item generates a test file, and 40 test files for one PRD is excessive
 - Horizontal slicing: "Create todo UI", "Create todo API", "Create todo DB migration" (should be one item)
 
-### Shell-First Decomposition for Integration-Heavy PRDs
+### Integration-Last Decomposition for Integration-Heavy PRDs
 
-When a PRD describes a page or app assembled from multiple components, **create the integration shell first** as a scaffold item, then create component items that fill in the stubs:
+When a PRD describes a page or app assembled from multiple components, the integration parent file (e.g. `App.tsx`, `_app.tsx`, root layout) is a **shared seam**: every component item that introduces or changes a prop contract has to flow that change back into the parent's call sites. If multiple component items run in the same wave and the parent already exists from the scaffold, those parallel edits collide on the parent file and produce phantom typecheck failures during review (a sibling's contract change has landed but its parent-side patch has not yet propagated to the reviewer).
 
-```
-WI-001: App shell with stubs (scaffold — creates App.tsx with real imports, stub components)
-WI-002: EmptyState component (replaces stub with real implementation)
-WI-003: TodoList component (replaces stub with real implementation)
-WI-004: CreateTodo component (replaces stub with real implementation)
-```
+**The rule:** the scaffold item does NOT create the integration parent file. A dedicated integration item (the final wave) creates the parent from scratch, importing the real components.
 
-WI-001 creates:
-```tsx
-// App.tsx — shell with real imports, stub components exist as empty exports
-import { EmptyState } from './components/EmptyState';
-import { TodoList } from './components/TodoList';
-import { CreateTodo } from './components/CreateTodo';
-// ... real wiring with real imports, components are initially stubs
+```text
+WI-001: Scaffold (Vite + TS + Tailwind + test setup + types + API client) — does NOT create App.tsx
+WI-002: ErrorBanner component                       ┐
+WI-003: EmptyState component                        │ all in parallel; none touch App.tsx
+WI-004: CreateTodo component                        │
+WI-005: TodoItem component                          │
+WI-006: TodoList component                          ┘
+WI-007: App integration — creates App.tsx from scratch, imports the five real components
 ```
 
-Each subsequent item replaces its stub with the real implementation. The imports and wiring are correct from day one — no "big-bang integration item" at the end that tries to wire 4+ components at once.
+**Why this works:**
 
-**Why this works:** Integration items fail because the implementing agent reimagines component interfaces instead of importing real ones. Shell-first eliminates the problem — the wiring exists before the components do, and B.A. only needs to flesh out each component to match its already-wired interface.
+- **No shared seam during the parallel wave.** Component items only write their own files (`components/EmptyState.tsx`, `components/EmptyState.test.tsx`). Lynch's project-wide typecheck for sibling N can't fail on contract drift in a shared parent, because the parent doesn't exist yet.
+- **No big-bang integration failure.** By the time WI-007 runs, every component already exists at a known path with a known prop contract. The integration agent imports real components (no reimagining interfaces) and wires them per the parent's own ACs. WI-007 has no in-flight siblings, so its full-project typecheck reflects reality.
 
-**When to use shell-first:**
+**To prevent the integration item from reimagining interfaces** (the failure mode the old shell-first pattern was guarding against): the integration item's `context` field must list each component's `outputs.impl` path AND the prop signature derived from that component's acceptance criteria. The integration agent reads those imports as the authoritative interface. If an interface is ambiguous from the AC, surface that as a Sosa question rather than letting the integration agent guess.
+
+**When to use integration-last:**
 - PRD describes a page composed of 3+ distinct components
 - Multiple components need to be wired into a shared parent
 - The parent manages shared state consumed by children
 
-**When NOT to use shell-first:**
+**When NOT to use integration-last:**
 - Components are independent (no shared parent wiring needed)
 - PRD is primarily API/backend work with no page assembly
-- Only 1-2 components to wire (a single integration item is fine)
+- Only 1-2 components to wire (those can land directly with the integration item)
+
+**Hard rule for scaffold items:** the scaffold may create config files, type definitions, an API client, and an empty `index.html` / entry point that mounts a placeholder, but the scaffold MUST NOT import any sibling-wave component or define a parent that will be edited by sibling items. If the scaffold needs to mount *something* (so the dev server boots), mount a single inline placeholder element inside the entry file (`<div>Loading…</div>` in `main.tsx` is fine) — never a `<ComponentName />` reference that points at a sibling's output path.
+
+### Shared-File Splits: State Contract First
+
+When 2+ items share a target file (whether sequential via dependencies or co-grouped via `parallel_group`), they will inevitably share runtime state in that file. Without a designed-up-front contract, each agent introduces its own state slice in isolation — the result is parallel boolean flags where a discriminated union belongs, and you pay for it later in mutual-exclusivity tests, focus-management coordination bugs, and impossible-state defects that no per-item review catches.
+
+**The rule:** the FIRST item in a shared-file chain MUST define the full state-shape contract for that file in its acceptance criteria, even if later modes are placeholder-only. Subsequent items extend the existing state, never invent parallel state.
+
+**What "state-shape contract" means in practice:**
+- **Component state:** declare the discriminated union of UI modes (e.g. `type UiMode = "display" | "editing" | "confirming-delete"`) with every mode the file will eventually need, even if only one is implemented in this slice. Other modes throw or render null.
+- **Reducer/store state:** declare the full state interface and action union; later items add cases, never new top-level state fields.
+- **Class/object:** declare the full method signature surface; later items fill in bodies.
+
+**Example (the TodoItem trap):**
+
+```text
+BAD — three slices each invent their own state:
+  WI-310 (render+toggle):  adds optimisticCompleted, pending booleans
+  WI-312 (inline edit):    adds isEditing, draftTitle, isSaving, validationError
+  WI-313 (delete-confirm): adds isConfirmingDelete, isDeleting
+  Result: 8 boolean slices that permit isEditing && isConfirmingDelete
+          simultaneously. Six tests written to defend against the
+          impossible state. ~30% test bloat the design itself would
+          have prevented.
+
+GOOD — first slice pins the state machine:
+  WI-310 acceptance criteria include:
+    "Defines type UiMode = 'display' | 'editing' | 'confirming-delete'
+     with display fully implemented; editing and confirming-delete
+     branches throw 'unimplemented' (filled in by WI-312 and WI-313)."
+  WI-312 extends the existing 'editing' branch.
+  WI-313 extends the existing 'confirming-delete' branch.
+  Result: impossible states unrepresentable; mutual-exclusivity tests
+          unnecessary; focus management centralized.
+```
+
+**Hard rule for Face:** if you split a single component's behaviors across multiple items on the same impl file, the first item's `context` field MUST name the state shape (`UiMode`, reducer state, etc.) and its acceptance MUST require the placeholder branches for unimplemented modes. This is non-negotiable for shared-file dep chains — the cost of skipping it is paid by every downstream agent and every reviewer.
+
+**Sosa check:** when reviewing decomposition, flag any same-file chain where the first item's ACs do not pin the state contract. This is a CRITICAL issue, not a warning — boolean-state drift is invisible to per-item review and only surfaces as accumulated tech debt.
 
 ### Over-splitting Consolidation
 
@@ -405,7 +444,7 @@ ateam items createItem \
 ### Parallel Groups
 
 Assign `parallel_group` to prevent conflicting concurrent work within a wave:
-- Features modifying the **same file** → same group (only one runs at a time)
+- Features modifying the **same file** → same group (only one runs at a time). See "Shared-File Splits: State Contract First" — same-file splits also require a designed-up-front state contract, not just write-serialization.
 - Features in the **same logical component** → same group
 - Independent components → different groups (run concurrently)
 

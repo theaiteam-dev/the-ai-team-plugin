@@ -263,6 +263,131 @@ curl http://localhost:3000/api/board/item/001
 
 ---
 
+## Mission Telemetry
+
+These endpoints aggregate hook event data for a mission. All require the `X-Project-ID` header. See `openapi.yaml` for the canonical response schemas.
+
+### GET /api/missions/{missionId}/tool-histogram
+
+Per-agent tool-call counts for a mission, grouped by `toolName` (Prisma `groupBy + _count`).
+
+**Response**
+
+```json
+{
+  "success": true,
+  "data": {
+    "missionId": "M-20260506-002",
+    "agents": [
+      {
+        "agentName": "lynch",
+        "tools": [
+          { "name": "Bash", "count": 72 },
+          { "name": "SendMessage", "count": 44 },
+          { "name": "Skill", "count": 36 }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**CLI:** `ateam missions getToolHistogram <missionId> [--json]`
+
+---
+
+### GET /api/missions/{missionId}/skill-usage
+
+Per-agent skill activations with counts and `distinctArgs`. Filters `eventType: 'pre_tool_use'` so the same `Skill` invocation isn't double-counted across pre+post hook events.
+
+**Response**
+
+```json
+{
+  "success": true,
+  "data": {
+    "missionId": "M-20260506-002",
+    "agents": [
+      {
+        "agentName": "amy",
+        "skills": [
+          {
+            "skillName": "ai-team:perspective-test",
+            "invocations": 4,
+            "distinctArgs": 1
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`distinctArgs` is the count of distinct 12-char SHA-256 hashes of `args` for the skill — useful for spotting agents that re-invoke a skill with different arguments versus repeatedly invoking it identically.
+
+**CLI:** `ateam missions getSkillUsage <missionId> [--json]`
+
+---
+
+### GET /api/missions/current/health-report
+
+Pure-data health-report for in-flight items in the active mission. Used by Hannibal's `/ai-team:healthcheck` slash command and available for ad-hoc inspection.
+
+Returns activity timestamps & counts per in-flight item (`testing | implementing | review | probing`) plus an aggregate `missionIdle` boolean derived from a 600-second per-item idle threshold (true when every in-flight item has `idleSeconds > 600`, also true when there are no in-flight items). Scoped to the active mission via the `MissionItem` join and a `state notIn (completed/failed/archived)` predicate so it never returns stale data from old missions.
+
+**Response (active mission, items in flight)**
+
+```json
+{
+  "success": true,
+  "data": {
+    "missionId": "M-20260506-002",
+    "generatedAt": "2026-05-06T19:13:03.000Z",
+    "missionIdle": false,
+    "inFlightItems": [
+      {
+        "itemId": "WI-318",
+        "title": "TodoItem component: render, toggle, inline edit, delete",
+        "stage": "implementing",
+        "assignedAgent": "ba-1",
+        "claimedAt": "2026-05-06T18:30:00.000Z",
+        "lastActivityAt": "2026-05-06T18:35:27.000Z",
+        "lastActivitySource": "hook_event",
+        "idleSeconds": 305,
+        "lastWorkLogEntry": {
+          "agent": "amy-1",
+          "summary": "FLAG - CRITICAL: handleConfirmDelete has no in-flight guard",
+          "timestamp": "2026-05-06T18:35:27.000Z"
+        },
+        "recentActivity": [
+          {
+            "agent": "ba-1",
+            "tool": "Edit",
+            "eventType": "pre_tool_use",
+            "timestamp": "2026-05-06T18:33:14.000Z"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The freshest activity timestamp per item is the max of: hook events (with `payload.itemId` matching when present, falling back to `agentName === assignedAgent && timestamp >= claimedAt` when missing), activity logs (same constraint), work logs scoped by `itemId`, and the agent claim itself. Items with no signals at all emit `lastActivityAt: null` and `idleSeconds: null` rather than a phantom "agent_claim @ generatedAt" fallback.
+
+**Status Codes**
+
+| Code | Description |
+|------|-------------|
+| 200 | Success (active mission found, items returned) |
+| 400 | `VALIDATION_ERROR` — missing or malformed `X-Project-ID` |
+| 404 | `NO_ACTIVE_MISSION` — no mission in this project is in a non-terminal state |
+| 500 | `DATABASE_ERROR` — Prisma error during aggregation |
+
+**CLI:** `ateam missions-health getHealthReport [--json]`
+
+---
+
 ## Data Types
 
 ### WorkItem

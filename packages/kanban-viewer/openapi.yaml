@@ -1108,14 +1108,17 @@ paths:
         the item to the next pipeline stage (or blocked if outcome=blocked).
 
         When `outcome=rejected`, the item is moved backward to the `returnTo`
-        stage and its `rejectionCount` is incremented. After 2 rejections the
-        item is automatically escalated to `blocked`. `returnTo` is required
-        when `outcome=rejected` and is only valid in that case. This replaces
-        the former `/api/items/{id}/reject` endpoint.
+        stage and its `rejectionCount` is incremented. After the configured
+        rejection cap is reached (default 4, override via `ATEAM_REJECTION_CAP`
+        on the API server) the item is automatically escalated to `blocked`.
+        `returnTo` is required when `outcome=rejected` and is only valid in
+        that case. This replaces the former `/api/items/{id}/reject` endpoint.
 
         When `advance=true` (default), WIP limits on the target stage are
-        checked before moving. If the target stage is at capacity, the request
-        fails with `WIP_LIMIT_EXCEEDED` and no state is changed.
+        checked before moving. If the target stage is at capacity, the claim
+        is still released and the work log entry is still written, but the
+        item stays in its current stage. The response returns `200` with
+        `wipExceeded: true` and `blockedStage` set to the full stage.
 
         When `advance=false`, the stage transition is skipped entirely — only
         the claim is released and the work log entry is created.
@@ -1153,13 +1156,16 @@ paths:
                   description: |
                     When true (default), advance the item to the next pipeline
                     stage after releasing the claim. WIP limits are checked
-                    before moving; returns WIP_LIMIT_EXCEEDED if the target
-                    stage is at capacity.
+                    before moving; if the target stage is at capacity the item
+                    stays put and the response includes `wipExceeded: true`.
                     When false, skip the stage transition — only release the
                     claim and log work.
       responses:
         '200':
-          description: Work completed
+          description: |
+            Work recorded. Returned for all terminal outcomes: completed,
+            blocked, rejected, or WIP-exceeded. Check `wipExceeded` and
+            `escalated` to distinguish sub-cases.
           content:
             application/json:
               schema:
@@ -1180,24 +1186,43 @@ paths:
                       workLogEntry:
                         $ref: '#/components/schemas/WorkLogEntry'
                       nextStage:
-                        nullable: true
                         allOf:
                           - $ref: '#/components/schemas/StageId'
                         description: |
-                          The stage the item was moved to. Null when
-                          advance=false (no stage transition performed).
+                          The stage the item is now in. When `advance=false`
+                          or WIP is exceeded, this is the item's current
+                          (unchanged) stage. On rejection it is the `returnTo`
+                          stage (or `blocked` if escalated).
                       wipExceeded:
                         type: boolean
                         description: |
-                          True when the target stage hit its WIP limit and
-                          the item was not advanced.
+                          Present and `true` when the target stage hit its
+                          WIP limit and the item was not advanced. The claim
+                          is still released and the work log is still written.
                       blockedStage:
-                        nullable: true
                         allOf:
                           - $ref: '#/components/schemas/StageId'
                         description: |
                           The stage that hit its WIP limit, blocking the
-                          advance. Null when wipExceeded is false.
+                          advance. Only present when `wipExceeded` is `true`.
+                      rejectionCount:
+                        type: integer
+                        minimum: 0
+                        description: |
+                          Present on rejection outcomes. The new total
+                          rejection count for this item after this rejection.
+                      escalated:
+                        type: boolean
+                        description: |
+                          Present on rejection outcomes. `true` when the
+                          rejection count reached the escalation threshold and
+                          the item was automatically moved to `blocked`.
+                      missionComplete:
+                        type: boolean
+                        description: |
+                          Present and `true` when this stop caused the last
+                          remaining mission item to reach `done`, signalling
+                          that the overall mission is complete.
         '400':
           description: VALIDATION_ERROR · NOT_CLAIMED
           content:
@@ -1212,12 +1237,6 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
           description: ITEM_NOT_FOUND
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '409':
-          description: WIP_LIMIT_EXCEEDED — target stage is at capacity
           content:
             application/json:
               schema:

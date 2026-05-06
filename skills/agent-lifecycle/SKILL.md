@@ -165,7 +165,7 @@ Use `--outcome rejected` when you are rejecting an item and sending it back for 
 1. Increments `rejectionCount` on the work item
 2. Moves the item backward to the stage named in `--return-to`
 3. Releases your claim
-4. Automatically escalates the item to `blocked` when `rejectionCount` hits **2**
+4. Automatically escalates the item to `blocked` when `rejectionCount` hits the configured rejection cap (default **4**, override via `ATEAM_REJECTION_CAP` on the API server)
 
 Rejection is a first-class outcome of `agentStop` — there is **no separate `rejectItem` command**. Pool management is skipped for rejections (no `claimedNext` is returned), because peer handoff goes backward, not forward.
 
