@@ -16,7 +16,6 @@ import {
   createValidationError,
   createNoActiveMissionError,
   createDatabaseError,
-  ERROR_HTTP_STATUS,
 } from '@/lib/errors';
 
 const IN_FLIGHT_STAGES = ['testing', 'implementing', 'review', 'probing'] as const;
@@ -25,7 +24,7 @@ const IDLE_THRESHOLD_SECONDS = 600;
 type ActivitySource = 'hook_event' | 'activity_log' | 'work_log' | 'agent_claim';
 
 interface RecentActivityEntry {
-  agent: string;
+  agent: string | null;
   tool: string | null;
   eventType: string;
   timestamp: string;
@@ -68,7 +67,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const err = createValidationError(
         projectValidation.error.message,
       );
-      return NextResponse.json(err.toResponse(), { status: ERROR_HTTP_STATUS[err.code] });
+      return NextResponse.json(err.toResponse(), { status: err.httpStatus });
     }
     const projectId = projectValidation.projectId;
 
@@ -78,7 +77,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     if (!mission) {
       const err = createNoActiveMissionError();
-      return NextResponse.json(err.toResponse(), { status: ERROR_HTTP_STATUS[err.code] });
+      return NextResponse.json(err.toResponse(), { status: err.httpStatus });
     }
 
     const generatedAt = new Date();
@@ -244,6 +243,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to build health report';
     const err = createDatabaseError(message);
-    return NextResponse.json(err.toResponse(), { status: ERROR_HTTP_STATUS[err.code] });
+    return NextResponse.json(err.toResponse(), { status: err.httpStatus });
   }
 }
