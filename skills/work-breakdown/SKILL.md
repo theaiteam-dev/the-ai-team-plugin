@@ -142,6 +142,44 @@ WI-007: App integration — creates App.tsx from scratch, imports the five real 
 
 **Hard rule for scaffold items:** the scaffold may create config files, type definitions, an API client, and an empty `index.html` / entry point that mounts a placeholder, but the scaffold MUST NOT import any sibling-wave component or define a parent that will be edited by sibling items. If the scaffold needs to mount *something* (so the dev server boots), mount a single inline placeholder element inside the entry file (`<div>Loading…</div>` in `main.tsx` is fine) — never a `<ComponentName />` reference that points at a sibling's output path.
 
+### Shared-File Splits: State Contract First
+
+When 2+ items share a target file (whether sequential via dependencies or co-grouped via `parallel_group`), they will inevitably share runtime state in that file. Without a designed-up-front contract, each agent introduces its own state slice in isolation — the result is parallel boolean flags where a discriminated union belongs, and you pay for it later in mutual-exclusivity tests, focus-management coordination bugs, and impossible-state defects that no per-item review catches.
+
+**The rule:** the FIRST item in a shared-file chain MUST define the full state-shape contract for that file in its acceptance criteria, even if later modes are placeholder-only. Subsequent items extend the existing state, never invent parallel state.
+
+**What "state-shape contract" means in practice:**
+- **Component state:** declare the discriminated union of UI modes (e.g. `type UiMode = "display" | "editing" | "confirming-delete"`) with every mode the file will eventually need, even if only one is implemented in this slice. Other modes throw or render null.
+- **Reducer/store state:** declare the full state interface and action union; later items add cases, never new top-level state fields.
+- **Class/object:** declare the full method signature surface; later items fill in bodies.
+
+**Example (the TodoItem trap):**
+
+```text
+BAD — three slices each invent their own state:
+  WI-310 (render+toggle):  adds optimisticCompleted, pending booleans
+  WI-312 (inline edit):    adds isEditing, draftTitle, isSaving, validationError
+  WI-313 (delete-confirm): adds isConfirmingDelete, isDeleting
+  Result: 8 boolean slices that permit isEditing && isConfirmingDelete
+          simultaneously. Six tests written to defend against the
+          impossible state. ~30% test bloat the design itself would
+          have prevented.
+
+GOOD — first slice pins the state machine:
+  WI-310 acceptance criteria include:
+    "Defines type UiMode = 'display' | 'editing' | 'confirming-delete'
+     with display fully implemented; editing and confirming-delete
+     branches throw 'unimplemented' (filled in by WI-312 and WI-313)."
+  WI-312 extends the existing 'editing' branch.
+  WI-313 extends the existing 'confirming-delete' branch.
+  Result: impossible states unrepresentable; mutual-exclusivity tests
+          unnecessary; focus management centralized.
+```
+
+**Hard rule for Face:** if you split a single component's behaviors across multiple items on the same impl file, the first item's `context` field MUST name the state shape (`UiMode`, reducer state, etc.) and its acceptance MUST require the placeholder branches for unimplemented modes. This is non-negotiable for shared-file dep chains — the cost of skipping it is paid by every downstream agent and every reviewer.
+
+**Sosa check:** when reviewing decomposition, flag any same-file chain where the first item's ACs do not pin the state contract. This is a CRITICAL issue, not a warning — boolean-state drift is invisible to per-item review and only surfaces as accumulated tech debt.
+
 ### Over-splitting Consolidation
 
 When items should be merged, the consolidation instruction should identify:
@@ -406,7 +444,7 @@ ateam items createItem \
 ### Parallel Groups
 
 Assign `parallel_group` to prevent conflicting concurrent work within a wave:
-- Features modifying the **same file** → same group (only one runs at a time)
+- Features modifying the **same file** → same group (only one runs at a time). See "Shared-File Splits: State Contract First" — same-file splits also require a designed-up-front state contract, not just write-serialization.
 - Features in the **same logical component** → same group
 - Independent components → different groups (run concurrently)
 
