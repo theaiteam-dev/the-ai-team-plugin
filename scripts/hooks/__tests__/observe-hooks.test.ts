@@ -432,6 +432,100 @@ describe('Observer Hook - Payload Construction', () => {
       expect(payload?.summary).toContain('teams-messaging');
     });
   });
+
+  // ================================================================
+  // ScheduleWakeup payload capture
+  //
+  // Heartbeat debugging needs to know what was scheduled. Without
+  // capturing prompt/reason/delaySeconds we can only see WHEN
+  // ScheduleWakeup fired, not WHAT it asked the next wake to do.
+  // Real-mission evidence: M-20260506-001 had 5 ScheduleWakeup calls
+  // but only the first fire ran the full /ai-team:healthcheck routine —
+  // we couldn't tell from telemetry whether subsequent wakes scheduled
+  // the same prompt or something else.
+  // ================================================================
+  describe('ScheduleWakeup tool activation', () => {
+    it('should capture prompt, reason, and delaySeconds in payload for ScheduleWakeup tool calls', () => {
+      const hookInput: ObserverHookInput = {
+        tool_input: {
+          delaySeconds: 1500,
+          prompt: '/ai-team:healthcheck',
+          reason: 'pipeline health check',
+        },
+        tool_name: 'ScheduleWakeup',
+        hook_event_name: 'PreToolUse',
+      };
+
+      const payload = buildObserverPayload(hookInput, 'hannibal');
+
+      expect(payload).not.toBeNull();
+      expect(payload?.toolName).toBe('ScheduleWakeup');
+
+      const parsed = JSON.parse(payload!.payload as string);
+      expect(parsed.prompt).toBe('/ai-team:healthcheck');
+      expect(parsed.reason).toBe('pipeline health check');
+      expect(parsed.delay_seconds).toBe(1500);
+    });
+
+    it('should include the prompt in the summary so the activity feed shows what was scheduled', () => {
+      const hookInput: ObserverHookInput = {
+        tool_input: {
+          delaySeconds: 1500,
+          prompt: '/ai-team:healthcheck',
+          reason: 'pipeline health check',
+        },
+        tool_name: 'ScheduleWakeup',
+        hook_event_name: 'PreToolUse',
+      };
+
+      const payload = buildObserverPayload(hookInput, 'hannibal');
+
+      expect(payload).not.toBeNull();
+      expect(payload?.summary).toContain('/ai-team:healthcheck');
+    });
+
+    it('should truncate very long prompts in payload to keep HookEvent rows bounded', () => {
+      const longPrompt = 'x'.repeat(2000);
+      const hookInput: ObserverHookInput = {
+        tool_input: {
+          delaySeconds: 60,
+          prompt: longPrompt,
+          reason: 'long-prompt-test',
+        },
+        tool_name: 'ScheduleWakeup',
+        hook_event_name: 'PreToolUse',
+      };
+
+      const payload = buildObserverPayload(hookInput, 'hannibal');
+
+      expect(payload).not.toBeNull();
+      const parsed = JSON.parse(payload!.payload as string);
+      // Prompt is captured but capped — pick a reasonable bound; observer
+      // events are stored verbatim so an unbounded prompt could blow up
+      // the row size. 1000 chars is ample for slash-command names and
+      // short instructions while protecting the column.
+      expect(typeof parsed.prompt).toBe('string');
+      expect(parsed.prompt.length).toBeLessThanOrEqual(1000);
+      expect(parsed.prompt.startsWith('xxxxxxxxxx')).toBe(true);
+    });
+
+    it('should still produce a valid payload when ScheduleWakeup is missing optional fields', () => {
+      const hookInput: ObserverHookInput = {
+        tool_input: { delaySeconds: 60 },
+        tool_name: 'ScheduleWakeup',
+        hook_event_name: 'PreToolUse',
+      };
+
+      const payload = buildObserverPayload(hookInput, 'hannibal');
+
+      expect(payload).not.toBeNull();
+      const parsed = JSON.parse(payload!.payload as string);
+      // delay_seconds present, prompt/reason absent — payload still valid.
+      expect(parsed.delay_seconds).toBe(60);
+      expect(parsed.prompt).toBeUndefined();
+      expect(parsed.reason).toBeUndefined();
+    });
+  });
 });
 
 describe('Observer Hook - API Communication', () => {

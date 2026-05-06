@@ -33,7 +33,10 @@ const SUMMARY_FIELDS = {
   WebSearch: 'query',
   WebFetch: 'url',
   Skill: 'skill',
+  ScheduleWakeup: 'prompt',
 };
+
+const SCHEDULE_WAKEUP_PROMPT_MAX = 1000;
 
 function summarizeToolInput(toolName, toolInput) {
   const field = SUMMARY_FIELDS[toolName];
@@ -169,6 +172,19 @@ function buildObserverPayload(hookInput, agentNameArg) {
     if (toolName === 'Skill') {
       payloadData.skill_name = toolInput.skill;
       payloadData.args_hash = hashArgs(toolInput.args ?? '');
+    }
+    if (toolName === 'ScheduleWakeup') {
+      if (typeof toolInput.delaySeconds === 'number') {
+        payloadData.delay_seconds = toolInput.delaySeconds;
+      }
+      if (typeof toolInput.prompt === 'string') {
+        payloadData.prompt = toolInput.prompt.length > SCHEDULE_WAKEUP_PROMPT_MAX
+          ? toolInput.prompt.slice(0, SCHEDULE_WAKEUP_PROMPT_MAX)
+          : toolInput.prompt;
+      }
+      if (typeof toolInput.reason === 'string') {
+        payloadData.reason = toolInput.reason;
+      }
     }
     const payload = Object.keys(payloadData).length > 0 ? JSON.stringify(payloadData) : '{}';
 
