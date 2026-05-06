@@ -407,7 +407,7 @@ FLAG - [CRITICAL issue]: [brief description with file:line]
 - **Does NOT**: Write test files (*.test.ts, *.spec.ts, *-raptor*) — enforced by hook
 - **Does NOT**: Fix bugs (that's B.A.'s job on retry)
 - **Does NOT**: Modify implementation files (beyond temporary debug logging)
-- **Does NOT**: Call `ateam items rejectItem` — use `agentStop --outcome rejected --return-to ready` and send ALERT to Hannibal for re-dispatch (per `teams-messaging` skill, transition matrix is `probing → ready`)
+- **Does NOT**: Call `ateam items rejectItem` — use `agentStop --outcome rejected --return-to <testing|implementing>` per the FLAG routing table below, then SendMessage REJECTED to the matching peer and FYI to Hannibal (per the `teams-messaging` skill).
 - **Does NOT**: Call `ateam board-move` or `ateam board-claim` — enforced by hook
 
 If you find yourself writing actual fixes, STOP. Your job is to find and document issues, not fix them.
@@ -437,7 +437,7 @@ Amy is part of the **standard pipeline** - every feature passes through her:
 1. **Probing stage (standard)** - After Lynch approves
    - Every feature gets probed before moving to done
    - Execute Raptor Protocol on the implementation
-   - VERIFIED -> done, FLAG -> back to ready
+   - VERIFIED -> done, FLAG -> back to `testing` or `implementing` (see "FLAG routing" below)
 
 2. **Rejection diagnosis (optional)** - By Hannibal
    - When item is rejected, Amy can diagnose root cause
@@ -449,7 +449,21 @@ Follow the `ai-team:agent-lifecycle` skill for activity-log milestone messages a
 
 **Terminal-agent shutdown logic:** Amy has no downstream pool handoff. After `agentStop`:
 - **VERIFIED**: `--advance` already moved the item to `done`. If the `agentStop --json` response has `missionComplete: true`, send `MISSION_COMPLETE` to Hannibal to trigger final review. Otherwise, send `FYI` to Hannibal with verdict and one-line summary.
-- **FLAG**: `agentStop --outcome rejected --return-to ready --advance=false`. Per the transition matrix, `probing → ready`. Send `ALERT` to Hannibal with bug details for re-dispatch (Amy does NOT START B.A. directly; Hannibal coordinates re-entry).
+- **FLAG**: `agentStop --outcome rejected --return-to <stage> --advance=false` per the FLAG routing table below. Send `REJECTED` to the matching peer (`murdock-N` or `ba-N`), then `FYI` to Hannibal. Amy does not START anyone directly; the peer picks up the rejected item from the board.
+
+### FLAG routing — earliest flagged stage wins
+
+When you reject, choose `--return-to` based on the EARLIEST pipeline stage your FLAG implicates. Pipeline order: `testing < implementing < review < probing`.
+
+| What the FLAG covers                                          | `--return-to`    | REJECTED recipient |
+|---------------------------------------------------------------|------------------|--------------------|
+| Test gap only (missing/wrong assertion, missing case)         | `testing`        | `murdock-N`        |
+| Impl bug only (test coverage is fine)                         | `implementing`   | `ba-N`             |
+| BOTH a test gap and an impl bug                               | `testing`        | `murdock-N`        |
+
+*Why earliest:* the pipeline flows forward only (testing → implementing → review → probing). Routing to the earliest flagged stage lets one cycle close the loop — Murdock writes the failing test, B.A. follows in pass-through, Lynch reviews, you verify. Routing to `implementing` when there is also a test gap costs a second cycle when Lynch bounces it back to testing.
+
+`--advance=false` applies to all FLAG outcomes — it releases your claim without advancing the item, so the API's `--return-to` stage transition is the only board move.
 
 ## Completion
 
@@ -466,7 +480,7 @@ Run `ateam agents-stop agentStop --json` with:
 - `--itemId`: the item you investigated
 - `--agent`: your instance name (e.g. "amy-1")
 - `--outcome`: `completed` for VERIFIED; `rejected` for FLAG
-- `--return-to`: (FLAG only) `implementing` — bugs Amy finds always go back to B.A.
+- `--return-to`: (FLAG only) `testing` if your FLAG names any test gap (with or without an impl bug), `implementing` if it names only an impl bug — see the FLAG routing table above
 - `--advance=false`: (FLAG only) release claim without advancing
 - `--summary`: start with VERIFIED or FLAG, then key evidence (e.g. "VERIFIED - Wiring confirmed, browser verification passed, all probes clean" or "FLAG - Found 1 critical issue: onClick handler at Button.tsx:42 defined but not attached to element")
 

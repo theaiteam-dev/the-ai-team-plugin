@@ -62,9 +62,22 @@ const HANDOFF_TARGETS = {
 };
 
 // Valid rejection routing: agent → { returnToStage: expectedRecipientType }
+//
+// Earliest-flagged-stage principle: when a single rejection implicates
+// failures at multiple pipeline stages, route to the EARLIEST flagged
+// stage. The pipeline only flows forward (testing → implementing →
+// review → probing), so routing to the earliest gap lets the rework
+// flow through in one cycle (Murdock writes the failing test → B.A.
+// fills impl in pass-through → Lynch reviews → Amy verifies). Routing
+// to a later stage when an earlier-stage gap also exists costs an extra
+// cycle when the next reviewer bounces it back.
+//
+// Amy's `testing` route exists for FLAGs that name a test gap (with or
+// without an accompanying impl bug). FLAGs that name only an impl bug
+// route to `implementing`.
 const REJECTION_TARGETS = {
   lynch: { testing: 'murdock', implementing: 'ba' },
-  amy: { implementing: 'ba' },
+  amy: { testing: 'murdock', implementing: 'ba' },
   // B.A. may self-reject only when a test is genuinely broken.
   // The rework routes through Murdock so the TDD invariant (every
   // defect becomes a test change before code changes) is preserved.

@@ -448,6 +448,27 @@ describe('enforce-handoff — rejection routing', () => {
     expect(parseOutput(result.stdout)).toEqual({});
   });
 
+  it('allows Amy rejecting to testing → REJECTED to murdock (test-gap FLAG, earliest-stage routing)', () => {
+    const transcriptPath = writeTranscript([
+      {
+        name: 'Bash',
+        input: { command: 'ateam agents-stop agentStop --itemId "WI-005" --agent "amy-1" --outcome rejected --return-to testing --summary "FLAG: AC17 test gap — Cancel button onKeyDown not asserted, plus impl missing handler" --json' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'murdock-1', content: 'REJECTED: WI-005 - test gap on AC17 (Cancel onKeyDown) plus matching impl bug' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'hannibal', content: 'FYI: WI-005 - rejected to testing (earliest flagged stage)' },
+      },
+    ]);
+
+    const result = runHook({ agent_type: 'ai-team:amy-1', transcript_path: transcriptPath });
+    expect(result.exitCode).toBe(0);
+    expect(parseOutput(result.stdout)).toEqual({});
+  });
+
   it('allows B.A. self-rejecting to testing → REJECTED to murdock instance (TEST BUG)', () => {
     const transcriptPath = writeTranscript([
       {

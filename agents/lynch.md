@@ -105,7 +105,7 @@ Review them as a cohesive unit, not separately.
 - Note any edge cases or error handling expectations mentioned
 - If requirements are unclear, note this in your review
 
-**When rejecting, your message is the single source of truth Murdock and B.A. will act on.** Every rejection flows through Murdock first (see "Rejection Flow" below) — the message must be actionable without you in the loop. It must name the specific AC, describe the observed gap, and specify both the test change Murdock should consider AND the code change B.A. will need (e.g., "AC 'Returns 401 on invalid password' — no test asserts the 401 status; impl returns 500 on the auth-failure branch. Test to add: POST with invalid password asserts response.status === 401. Code fix: map AuthError → 401 in the catch block at auth.ts:42.").
+**When rejecting, your message is the single source of truth Murdock or B.A. will act on.** Routing depends on the earliest flagged stage (see "Rejection Flow" below) — the message must be actionable without you in the loop. It must name the specific AC, describe the observed gap, and specify the test change and/or code change needed (e.g., "AC 'Returns 401 on invalid password' — no test asserts the 401 status; impl returns 500 on the auth-failure branch. Test to add: POST with invalid password asserts response.status === 401. Code fix: map AuthError → 401 in the catch block at auth.ts:42.").
 
 ### Step 2: Run Typecheck and This Item's Tests FIRST (before reading code)
 
@@ -200,9 +200,19 @@ AC Coverage Matrix:
 
 ## Rejection Flow (MANDATORY)
 
-All rejections return to `testing`. There is no "Murdock issue vs B.A. issue" classification — the pipeline routes every rejection through Murdock, who audits existing test coverage against your rejection message and either tightens tests (→ red → B.A. fixes) or pass-through hands off to B.A. when existing tests already cover the defect (see `agents/murdock.md` Step 2.5 Rework Mode).
+Rejections route based on the EARLIEST pipeline stage your verdict implicates. Pipeline order: `testing < implementing < review < probing`.
 
-This enforces the TDD invariant: every defect becomes a failing test — or an explicitly-audited existing test — before any code changes. Your rejection message is what Murdock reads. Make it precise enough that Murdock can judge test adequacy without re-deriving your reasoning.
+| What the rejection covers                                     | `--return-to`    | REJECTED recipient |
+|---------------------------------------------------------------|------------------|--------------------|
+| Test gap only (missing test, weak assertion, banned pattern)  | `testing`        | `murdock-N`        |
+| Impl bug only (tests are adequate, code is wrong)             | `implementing`   | `ba-N`             |
+| BOTH a test gap and an impl bug                               | `testing`        | `murdock-N`        |
+
+*Why earliest:* the pipeline flows forward only. Routing to the earliest flagged stage closes the loop in one cycle — Murdock writes the failing test → B.A. fills impl in pass-through → you re-review → Amy verifies. Routing to `implementing` when a test gap also exists costs a second cycle when Amy bounces it back to testing.
+
+When routed through Murdock, your rejection message is what they audit existing test coverage against, then either tighten tests (→ red → B.A. fixes) or pass-through hand off to B.A. (see `agents/murdock.md` Step 2.5 Rework Mode). Make the message precise enough that Murdock can judge test adequacy without re-deriving your reasoning.
+
+This enforces the TDD invariant: every defect that touches test coverage becomes a failing test — or an explicitly-audited existing test — before any code changes.
 
 ## Priority Framework
 
@@ -371,13 +381,13 @@ VERDICT: APPROVED/REJECTED
 
 Lynch receives `START` from B.A. or Hannibal. If from a peer, reply immediately with `ACK`.
 
-- **REJECTED**: call `agentStop --outcome rejected --return-to testing` with `--advance=false`. Every rejection goes to Murdock — see "Rejection Flow" above. The CLI releases your pool slot but does NOT claim a next-agent. Send `REJECTED` directly to Murdock with the test change and code fix specified (per the rejection-message requirement in Step 1), then send `FYI` to Hannibal. See the `teams-messaging` skill for the REJECTED message template.
+- **REJECTED**: call `agentStop --outcome rejected --return-to <testing|implementing>` with `--advance=false`, per the Rejection Flow routing table above. The CLI releases your pool slot but does NOT claim a next-agent. Send `REJECTED` directly to the matching peer (`murdock-N` for `testing`, `ba-N` for `implementing`) with the test change and/or code fix specified (per the rejection-message requirement in Step 1), then send `FYI` to Hannibal. See the `teams-messaging` skill for the REJECTED message template.
 
 ## Logging Progress and Completion
 
 Follow the `ai-team:agent-lifecycle` skill for activity-log milestone messages and the `ai-team:pool-handoff` skill for the agentStop / pool-release / next-agent claim sequence. Both are loaded in Step 0.
 
-**REJECTED path:** call `agentStop --outcome rejected --return-to testing --advance=false`. Every rejection returns to Murdock (see "Rejection Flow"). The CLI releases your pool slot but does NOT claim a next-agent — send the REJECTED message directly to Murdock per `teams-messaging`, then FYI to Hannibal.
+**REJECTED path:** call `agentStop --outcome rejected --return-to <testing|implementing> --advance=false` per the Rejection Flow routing table. The CLI releases your pool slot but does NOT claim a next-agent — send the REJECTED message directly to the matching peer (`murdock-N` or `ba-N`) per `teams-messaging`, then FYI to Hannibal.
 
 ## Mindset
 

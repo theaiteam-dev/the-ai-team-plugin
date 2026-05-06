@@ -352,9 +352,11 @@ ateam board getBoard --json
 **In native teams mode:** Lynch, Amy, and (rarely) B.A. handle rejections autonomously via `agentStop --outcome rejected`. They increment the rejection count, move the item backward, and START the responsible agent directly — Hannibal is not in the critical path.
 
 **Who can self-reject and where it goes:**
-- **Lynch** → `testing` (Murdock) for test gaps, or `implementing` (B.A.) for impl bugs
-- **Amy** → `implementing` (B.A.) for bugs found during probing
+- **Lynch** → `testing` (Murdock) for test gaps, or `implementing` (B.A.) for impl bugs. If both: `testing` (earliest-flagged-stage principle).
+- **Amy** → `testing` (Murdock) for FLAGs that name a test gap, or `implementing` (B.A.) for FLAGs that name only an impl bug. If the FLAG names both: `testing`.
 - **B.A.** → `testing` (Murdock) **only** when a test is genuinely broken (TEST BUG: prefix). Rare — used to avoid the "BA blocks waiting for someone to fix the test" stall pattern. Trigger criteria are narrow (see `agents/ba.md` "When the Test Is Wrong"); the handoff hook blocks B.A. from rejecting to any other stage.
+
+**Hannibal cannot walk items backward through the matrix.** `board-move` enforces the forward `TRANSITION_MATRIX` in `packages/shared/src/stages.ts`; only `agentStop --outcome rejected --return-to <stage>` can move items backward. If a teammate's rejection routed to a later stage than it should have (e.g. Amy rejected to `implementing` when the FLAG also named a test gap), do NOT attempt manual `board-move` recovery — the matrix will reject it as `INVALID_TRANSITION`. Re-dispatch from the current stage and rely on the next reviewer to bounce it correctly with the right `--return-to`.
 
 **What Hannibal receives on rejection:**
 - **FYI from Lynch/Amy/B.A.** — rejection handled, agent re-dispatched. Check for escalation: if the FYI message indicates `escalated: true` or the item moved to `blocked`, announce to the user that human intervention is needed.

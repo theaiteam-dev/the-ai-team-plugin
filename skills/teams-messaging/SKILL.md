@@ -228,7 +228,7 @@ SendMessage({
 })
 ```
 
-No START/ACK needed. On VERIFIED, `--advance` already moved the item to `done`. On FLAG, Amy calls `agentStop --outcome rejected --return-to ready` to send the item back to ready (per the transition matrix: probing → ready), then sends ALERT to Hannibal with the bug details for re-dispatch.
+No START/ACK needed. On VERIFIED, `--advance` already moved the item to `done`. On FLAG, Amy calls `agentStop --outcome rejected --return-to <testing|implementing> --advance=false` per the earliest-flagged-stage principle (see the rejection-routing note below), sends `REJECTED` to the matching peer (`murdock-N` or `ba-N`), and sends `FYI` to Hannibal.
 
 ### Tawnia → Hannibal (terminal — no downstream)
 
@@ -298,6 +298,22 @@ SendMessage({
   summary: "Needs human input on {topic}"
 })
 ```
+
+---
+
+## Rejection Routing Reference
+
+Pipeline order: `testing < implementing < review < probing`.
+
+| Rejector | Valid `--return-to` | REJECTED recipient |
+|----------|---------------------|--------------------|
+| Lynch    | `testing`           | `murdock-N`        |
+| Lynch    | `implementing`      | `ba-N`             |
+| Amy      | `testing`           | `murdock-N`        |
+| Amy      | `implementing`      | `ba-N`             |
+| B.A.     | `testing` (TEST BUG only) | `murdock-N`  |
+
+**Earliest-flagged-stage principle.** When a single rejection implicates failures at more than one stage, route to the EARLIEST flagged stage. The pipeline flows forward only — if Lynch or Amy routes to `implementing` but the test coverage also has a gap, the next reviewer will bounce it back to `testing`, costing an extra cycle. Routing to the earliest stage closes the loop in one cycle: Murdock writes the failing test, B.A. fills the impl in pass-through, the reviewer re-evaluates.
 
 ---
 
