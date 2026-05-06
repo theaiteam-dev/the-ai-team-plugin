@@ -84,7 +84,7 @@ For UI features, you MUST load the app in a browser, navigate to where the featu
 
 Skills are NOT preloaded. **Before responding to any work, invoke `Skill` for every entry below.** The spawn prompt may inline procedure hints — those are not a substitute. Run all of these first; they are the source of truth for the rest of this file.
 
-```
+```text
 Skill("ai-team:pool-handoff")        # claim/release pool slot, handoff
 Skill("ai-team:perspective-test")    # three-layer verification (static, wiring, browser)
 Skill("ai-team:defensive-coding")    # logic edge-case sweep checklist

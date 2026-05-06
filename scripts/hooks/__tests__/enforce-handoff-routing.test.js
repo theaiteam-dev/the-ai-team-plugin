@@ -556,6 +556,70 @@ describe('enforce-handoff — rejection routing', () => {
     expect(output.decision).toBe('block');
     expect(output.reason).toContain('murdock');
   });
+
+  // --return-to= (equals form) regression tests
+  it('blocks Lynch using --return-to=testing (equals form) with REJECTED sent to wrong agent (ba)', () => {
+    // With the bug: --return-to=testing is NOT parsed → agentStopReturnTo stays null
+    // → permissive fallback fires because content.includes('REJECTED') → foundHandoff=true → PASSES (wrong)
+    // After fix: --return-to=testing IS parsed → expectedType='murdock' → ba-1 fails the startsWith check → BLOCKED
+    const transcriptPath = writeTranscript([
+      {
+        name: 'Bash',
+        input: { command: 'ateam agents-stop agentStop --itemId "WI-005" --agent "lynch-1" --outcome=rejected --return-to=testing --summary "tests are wrong" --json' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'ba-1', content: 'REJECTED: WI-005 - tests are wrong' },
+      },
+    ]);
+
+    const result = runHook({ agent_type: 'ai-team:lynch-1', transcript_path: transcriptPath });
+    const output = parseOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(output.reason).toContain('murdock');
+  });
+
+  it('allows Lynch using --return-to=testing (equals form) with REJECTED correctly sent to murdock', () => {
+    const transcriptPath = writeTranscript([
+      {
+        name: 'Bash',
+        input: { command: 'ateam agents-stop agentStop --itemId "WI-005" --agent=lynch-1 --outcome=rejected --return-to=testing --summary "tests are wrong" --json' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'murdock-1', content: 'REJECTED: WI-005 - tests are wrong' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'hannibal', content: 'FYI: WI-005 - rejected to testing' },
+      },
+    ]);
+
+    const result = runHook({ agent_type: 'ai-team:lynch-1', transcript_path: transcriptPath });
+    expect(result.exitCode).toBe(0);
+    expect(parseOutput(result.stdout)).toEqual({});
+  });
+
+  it('allows Lynch using --outcome=rejected --return-to=implementing (equals form) with REJECTED to ba', () => {
+    const transcriptPath = writeTranscript([
+      {
+        name: 'Bash',
+        input: { command: 'ateam agents-stop agentStop --itemId "WI-005" --agent=lynch-1 --outcome=rejected --return-to=implementing --summary "impl broken" --json' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'ba-2', content: 'REJECTED: WI-005 - impl broken' },
+      },
+      {
+        name: 'SendMessage',
+        input: { to: 'hannibal', content: 'FYI: WI-005 - rejected to implementing' },
+      },
+    ]);
+
+    const result = runHook({ agent_type: 'ai-team:lynch-1', transcript_path: transcriptPath });
+    expect(result.exitCode).toBe(0);
+    expect(parseOutput(result.stdout)).toEqual({});
+  });
 });
 
 // =============================================================================

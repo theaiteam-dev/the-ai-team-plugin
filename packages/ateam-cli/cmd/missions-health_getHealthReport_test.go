@@ -10,21 +10,39 @@ import (
 	"testing"
 )
 
-// healthReportResponse returns a minimal valid getHealthReport API response.
+// healthReportResponse returns a minimal valid getHealthReport API response
+// matching the real /api/missions/current/health-report contract.
 func healthReportResponse() []byte {
 	resp := map[string]interface{}{
 		"success": true,
 		"data": map[string]interface{}{
-			"missionId":       "M-20260502-test",
-			"overallHealth":   "healthy",
-			"itemsTotal":      10,
-			"itemsDone":       7,
-			"itemsBlocked":    0,
-			"rejectionsTotal": 1,
-			"stages": map[string]interface{}{
-				"testing":      1,
-				"implementing": 2,
-				"review":       0,
+			"missionId":    "M-20260502-test",
+			"generatedAt":  "2026-05-06T10:00:00.000Z",
+			"missionIdle":  false,
+			"inFlightItems": []interface{}{
+				map[string]interface{}{
+					"itemId":             "WI-001",
+					"title":              "Implement order creation endpoint",
+					"stage":              "implementing",
+					"assignedAgent":      "B.A.",
+					"claimedAt":          "2026-05-06T09:45:00.000Z",
+					"lastActivityAt":     "2026-05-06T09:55:00.000Z",
+					"lastActivitySource": "hook_event",
+					"idleSeconds":        300,
+					"lastWorkLogEntry": map[string]interface{}{
+						"agent":     "Murdock",
+						"summary":   "Created 4 test cases covering happy path and error conditions",
+						"timestamp": "2026-05-06T09:40:00.000Z",
+					},
+					"recentActivity": []interface{}{
+						map[string]interface{}{
+							"agent":     "B.A.",
+							"tool":      "Write",
+							"eventType": "tool_call",
+							"timestamp": "2026-05-06T09:55:00.000Z",
+						},
+					},
+				},
 			},
 		},
 	}
@@ -186,5 +204,29 @@ func TestMissionsHealthGetHealthReportNon2xxReturnsError(t *testing.T) {
 	_, err := executeGetHealthReport(t, srv.URL, true)
 	if err == nil {
 		t.Fatal("expected non-nil error for 500 response, got nil")
+	}
+}
+
+// TestMissionsHealthGetHealthReportTableFallbackContainsInFlightField verifies
+// that the real inFlightItems shape is surfaced in non-JSON output. This guards
+// against the fixture drifting back to the stale overallHealth/itemsTotal shape.
+func TestMissionsHealthGetHealthReportTableFallbackContainsInFlightField(t *testing.T) {
+	t.Setenv("ATEAM_PROJECT_ID", "test-project")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(healthReportResponse())
+	}))
+	defer srv.Close()
+
+	output, err := executeGetHealthReport(t, srv.URL, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// WI-001 is the itemId of the seeded in-flight item. If the fixture ever
+	// reverts to the stale shape (no inFlightItems), this assertion catches it.
+	if !strings.Contains(output, "WI-001") {
+		t.Errorf("expected inFlightItems itemId %q in non-JSON output, got: %s", "WI-001", output)
 	}
 }

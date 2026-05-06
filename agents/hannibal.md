@@ -492,7 +492,7 @@ The wake fires the **`/ai-team:healthcheck` slash command**, which is the canoni
 
 ### The wakeup invocation
 
-```
+```text
 ScheduleWakeup(
   delaySeconds: 1500,
   prompt:       "/ai-team:healthcheck",

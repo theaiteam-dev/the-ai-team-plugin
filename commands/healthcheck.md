@@ -14,7 +14,7 @@ The command is deterministic: every wake runs the same routine. Unlike a freefor
 
 Do this before anything else so a downstream error can't kill the loop:
 
-```
+```text
 ScheduleWakeup(
   delaySeconds: 1500,
   prompt:       "/ai-team:healthcheck",
@@ -69,7 +69,7 @@ Avoid threshold-driven autopilot. The point of the heartbeat is to give Hannibal
 
 After the routine, output a single line so the run log reads cleanly:
 
-```
+```text
 HEARTBEAT @ <timestamp>: <N> in-flight, <K> idle > 30min, action: <none | investigated WI-X | re-dispatched WI-Y>
 ```
 

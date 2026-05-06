@@ -203,7 +203,7 @@ The playbook bodies are 90%+ pipeline logic. The dispatch calls are sprinkled th
 
 | Gap | Effort | Approach |
 |-----|--------|----------|
-| Per-agent skills | Small | PR to Pi upstream ([#338](https://github.com/badlogic/pi-mono/issues/338) is related) |
+| Per-agent skills | Small | PR to Pi upstream (track via dedicated per-agent-skills issue; #338 above is hooks-in-frontmatter, not skills) |
 | `permissionMode` equivalent | Small | Extension that auto-accepts edits per agent |
 | Hook bridge extension | Medium | One TypeScript file, ~100-150 lines, wraps all 29 hooks |
 | Agent identity in Pi events | Small | Shim in bridge that maps Pi event shape to our `resolveAgent()` format |

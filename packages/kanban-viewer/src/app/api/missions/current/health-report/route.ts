@@ -12,7 +12,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getAndValidateProjectId } from '@/lib/project-utils';
-import type { ApiError } from '@/types/api';
+import {
+  createValidationError,
+  createNoActiveMissionError,
+  createDatabaseError,
+  ERROR_HTTP_STATUS,
+} from '@/lib/errors';
 
 const IN_FLIGHT_STAGES = ['testing', 'implementing', 'review', 'probing'] as const;
 const IDLE_THRESHOLD_SECONDS = 600;
@@ -60,11 +65,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const projectValidation = getAndValidateProjectId(request.headers);
     if (!projectValidation.valid) {
-      const errorResponse: ApiError = {
-        success: false,
-        error: projectValidation.error,
-      };
-      return NextResponse.json(errorResponse, { status: 400 });
+      const err = createValidationError(
+        projectValidation.error.message,
+      );
+      return NextResponse.json(err.toResponse(), { status: ERROR_HTTP_STATUS[err.code] });
     }
     const projectId = projectValidation.projectId;
 
@@ -73,23 +77,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     });
 
     if (!mission) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: { code: 'NOT_FOUND', message: 'no active mission' },
-        },
-        { status: 404 },
-      );
+      const err = createNoActiveMissionError();
+      return NextResponse.json(err.toResponse(), { status: ERROR_HTTP_STATUS[err.code] });
     }
 
     const generatedAt = new Date();
     const missionId = mission.id;
 
-    // Fetch all in-flight items for this mission's project.
+    // Fetch in-flight items scoped to the current mission via the MissionItem join table.
+    // This prevents items from archived/old missions leaking into the report.
     const items = await prisma.item.findMany({
       where: {
         projectId,
         stageId: { in: [...IN_FLIGHT_STAGES] },
+        missionItems: { some: { missionId } },
       },
     });
 
@@ -241,13 +242,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       },
     });
   } catch (error) {
-    const apiError: ApiError = {
-      success: false,
-      error: {
-        code: 'DATABASE_ERROR',
-        message: error instanceof Error ? error.message : 'Failed to build health report',
-      },
-    };
-    return NextResponse.json(apiError, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Failed to build health report';
+    const err = createDatabaseError(message);
+    return NextResponse.json(err.toResponse(), { status: ERROR_HTTP_STATUS[err.code] });
   }
 }

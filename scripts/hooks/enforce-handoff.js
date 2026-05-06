@@ -167,11 +167,11 @@ for (const line of lines) {
         foundAgentStop = true;
         const itemMatch = command.match(/--itemId\s+["']?([^\s"']+)["']?/);
         if (itemMatch) agentStopItemId = itemMatch[1];
-        const agentMatch = command.match(/--agent\s+["']?([^\s"']+)["']?/);
+        const agentMatch = command.match(/--agent(?:=|\s+)["']?([^\s"']+)["']?/);
         if (agentMatch) instanceName = agentMatch[1];
-        const outcomeMatch = command.match(/--outcome\s+["']?([^\s"']+)["']?/);
+        const outcomeMatch = command.match(/--outcome(?:=|\s+)["']?([^\s"']+)["']?/);
         if (outcomeMatch) agentStopOutcome = outcomeMatch[1];
-        const returnToMatch = command.match(/--return-to\s+["']?([^\s"']+)["']?/);
+        const returnToMatch = command.match(/--return-to(?:=|\s+)["']?([^\s"']+)["']?/);
         if (returnToMatch) agentStopReturnTo = returnToMatch[1];
       }
     }

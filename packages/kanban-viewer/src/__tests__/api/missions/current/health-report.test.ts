@@ -565,4 +565,65 @@ describe('GET /api/missions/current/health-report', () => {
     expect(out.lastActivitySource).toBe('activity_log');
     expect(out.recentActivity.every((r: { agent: string }) => r.agent === 'ba')).toBe(true);
   });
+
+  // Fix 1: uses createNoActiveMissionError() factory — code must be NO_ACTIVE_MISSION
+  it('returns error code NO_ACTIVE_MISSION (not NOT_FOUND) when no active mission exists', async () => {
+    mockPrismaClient.mission.findFirst.mockResolvedValue(null);
+
+    const response = await GET(buildRequest({ 'X-Project-ID': PROJECT_ID }));
+    const body = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe('NO_ACTIVE_MISSION');
+  });
+
+  // Fix 1: uses createValidationError() factory — code must be VALIDATION_ERROR
+  it('returns error code VALIDATION_ERROR (factory shape) when X-Project-ID header is missing', async () => {
+    const response = await GET(buildRequest());
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+    // Factory message must still mention X-Project-ID
+    expect(body.error.message).toContain('X-Project-ID');
+  });
+
+  // Fix 2: item query must be scoped to current mission via MissionItem join table,
+  // not just projectId — an in-flight item from a different mission must NOT appear.
+  it('does not include in-flight items from other missions (scoped to current missionId)', async () => {
+    const OTHER_MISSION_ID = 'M-OTHER-001';
+    mockPrismaClient.mission.findFirst.mockResolvedValue(activeMission);
+
+    // Active mission has NO items; only the other mission has an in-flight item.
+    // With the bug (project-only scoping) findMany returns the other-mission item.
+    // After the fix (missionItems: { some: { missionId } }) it must return nothing.
+    const otherMissionItem = makeItem({ id: 'WI-OTHER', stageId: 'implementing' });
+    mockPrismaClient.item.findMany.mockImplementation(
+      (args: { where?: { missionItems?: { some?: { missionId?: string } } } }) => {
+        const missionFilter = args?.where?.missionItems?.some?.missionId;
+        if (missionFilter === MISSION_ID) {
+          // Correctly scoped — current mission has no items
+          return Promise.resolve([]);
+        }
+        // Fallback simulates old project-only scoping returning the foreign item
+        return Promise.resolve([otherMissionItem]);
+      },
+    );
+
+    const response = await GET(buildRequest({ 'X-Project-ID': PROJECT_ID }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    // Must be empty: the only item belongs to OTHER_MISSION_ID, not the active mission
+    expect(body.data.inFlightItems).toEqual([]);
+    // Verify missionId was actually passed in the query
+    const itemFindManyCall = mockPrismaClient.item.findMany.mock.calls[0][0];
+    expect(itemFindManyCall.where.missionItems).toBeDefined();
+    expect(itemFindManyCall.where.missionItems.some.missionId).toBe(MISSION_ID);
+    // OTHER_MISSION_ID reference to suppress unused-var lint
+    expect(OTHER_MISSION_ID).toBe('M-OTHER-001');
+  });
 });
