@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+#### Mission Telemetry Endpoints
+
+Three new aggregation endpoints expose hook-event data per mission. All require the `X-Project-ID` header. See `docs/api.md` and `openapi.yaml` for full schemas.
+
+- **`GET /api/missions/{missionId}/tool-histogram`** — per-agent tool-call counts grouped by `toolName` (Prisma `groupBy + _count`). Powers the retro agent's "Tool Usage" section. Go CLI: `ateam missions getToolHistogram <missionId>`.
+- **`GET /api/missions/{missionId}/skill-usage`** — per-agent `Skill` invocations with `invocations` and `distinctArgs` counts. Filters `eventType: 'pre_tool_use'` so pre+post Skill events don't double-count. Go CLI: `ateam missions getSkillUsage <missionId>`.
+- **`GET /api/missions/current/health-report`** — pure-data activity report for in-flight items. Returns per-item `claimedAt`/`lastActivityAt`/`lastActivitySource`/`idleSeconds`/`lastWorkLogEntry`/`recentActivity` plus an aggregate `missionIdle` boolean (600s per-item idle threshold). Active-mission scoped via `MissionItem` join + `state notIn (completed/failed/archived)`. Used by Hannibal's `/ai-team:healthcheck` slash command. Go CLI: `ateam missions-health getHealthReport`.
+
+#### Skill Activation in Hook Events
+
+`HookEvent.payload` now carries `skill_name` and a 12-char SHA-256 `args_hash` for every `Skill` tool call. No schema migration required — payload is already a JSON column. Powers the new skill-usage endpoint above.
+
+#### `ScheduleWakeup` Payload Capture
+
+`HookEvent.payload` for `ScheduleWakeup` tool calls now records `prompt` (truncated to 1000 chars), `reason`, and `delay_seconds`. Surfaced in the activity-feed `summary` so the dashboard shows what each heartbeat scheduled. Diagnostic-quality data for the heartbeat loop.
+
+### Changed
+
+- **`POST /api/agents/stop` rejection cap is configurable** via the `ATEAM_REJECTION_CAP` environment variable (default `4`). Non-integers (`1.5`, `NaN`), zero, and negatives all fall back to the default; previously decimals silently floored to `1` and blocked items at count=2 instead of the configured value.
+- **`POST /api/agents/stop` schema synced** in `openapi.yaml`: removed dead `409 WIP_LIMIT_EXCEEDED` response (route returns `200` with `wipExceeded` + `blockedStage` instead), added `rejectionCount` and `escalated` fields to rejection-path responses, dropped stale `nextStage: nullable`, corrected the WIP-exceeded narrative.
+- **Health-report active-mission scoping fixed:** `GET /api/missions/current/health-report` now uses `state notIn (completed/failed/archived)` matching the rest of the mission APIs. Previously `archivedAt: null` alone matched completed-but-not-archived missions and surfaced stale data.
+- **Health-report cross-item signal-leak fixed:** when `payload.itemId` is missing from a hook event, the assigned-agent fallback is now bounded by `timestamp >= claimedAt` for both `hookEvents` and `activityLogs`. Prevents events from earlier claims on other items the same agent worked on from being attributed to the current item.
+
 ## [0.12.0] - 2026-01-30
 
 ### Added

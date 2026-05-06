@@ -143,7 +143,7 @@ The `outputs` field is critical - without it, Murdock and B.A. don't know where 
 
 **Native teams mode (pipeline workers):** Call `ateam agents-stop agentStop --advance` (default `true`) — this advances the item to the next stage atomically. If the target stage is at WIP capacity, the API returns `WIP_LIMIT_EXCEEDED` (409); use `--advance=false` to release the claim without advancing, then send an ALERT to Hannibal to handle re-dispatch when capacity opens.
 
-**Rejections (Lynch / Stockwell):** Rejection is expressed through `agentStop` with `--outcome rejected --return-to <stage>`. This replaces the old `ateam items rejectItem` command (which has been removed). The API moves the item back to the target stage (`testing` or `implementing`), increments `rejection_count`, and records the rejection summary in `work_log`. Items that hit the rejection cap transition to `blocked`.
+**Rejections (Lynch / Stockwell):** Rejection is expressed through `agentStop` with `--outcome rejected --return-to <stage>`. This replaces the old `ateam items rejectItem` command (which has been removed). The API moves the item back to the target stage (`testing` or `implementing`), increments `rejection_count`, and records the rejection summary in `work_log`. Items that hit the rejection cap transition to `blocked` instead of moving back to `--return-to`. The cap defaults to **4** and is overridable per API server via the `ATEAM_REJECTION_CAP` environment variable; non-integer or non-positive values fall back to the default.
 
 ## Key Conventions
 
@@ -263,10 +263,17 @@ Usage: `ateam <resource> <command> [flags]`
 | Write final review | `ateam missions-final-review writeFinalReview --missionId <id> --report "..." --json` |
 | Tool histogram | `ateam missions getToolHistogram <missionId> --json` |
 | Skill usage | `ateam missions getSkillUsage <missionId> --json` |
+| Health report | `ateam missions-health getHealthReport [--json]` |
 | Compute scaling | `ateam scaling compute [--concurrency N] [--memory N] --json` |
 | Check deps | `ateam deps-check checkDeps --json` |
 | Log activity | `ateam activity createActivityEntry --agent <name> --message "..." --level info` |
 | List activity | `ateam activity listActivity --json` |
+| Pool init | `ateam pool init` |
+| Pool destroy | `ateam pool destroy` |
+| Pool status | `ateam pool status [--json]` |
+| Pool claim | `ateam pool claim <instance>` |
+| Pool release | `ateam pool release --agent <instance>` |
+| Pool mark-idle | `ateam pool mark-idle <instance>` |
 
 ### Agent Lifecycle Commands
 
