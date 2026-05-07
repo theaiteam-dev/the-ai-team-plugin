@@ -125,6 +125,8 @@ jobs:
         working-directory: .
       - run: bunx prisma generate
       - run: mkdir -p ${{ github.workspace }}/packages/kanban-viewer/prisma/data
+      - name: Verify migration parity
+        run: bunx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --exit-code
       - run: bunx prisma migrate deploy --config prisma/prisma.config.ts
         env:
           DATABASE_URL: file:${{ github.workspace }}/packages/kanban-viewer/prisma/data/dev.db

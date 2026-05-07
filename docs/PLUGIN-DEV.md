@@ -283,3 +283,118 @@ docker compose up -d
 ```
 
 The shared package must be built before the kanban-viewer since it depends on it. The `ateam` CLI is built separately with Go and does not depend on the bun workspace packages.
+
+## How to Add a Prisma Migration
+
+The schema lives in `packages/kanban-viewer/prisma/schema.prisma`. All commands below run from inside that package directory.
+
+1. **Edit the schema.** Add your new model, field, or index to `schema.prisma`.
+
+2. **Generate the migration.**
+
+   ```bash
+   cd packages/kanban-viewer
+   npm run migrate:create -- --name <description>
+   # Example:
+   npm run migrate:create -- --name add_scaling_rationale_to_mission
+   ```
+
+   This runs `prisma migrate dev --name <description>`, which:
+   - Creates `prisma/migrations/<YYYYMMDDHHmmss>_<description>/migration.sql`
+   - Applies the migration to the local SQLite database
+   - Updates `_prisma_migrations` with the new row
+
+3. **Review the generated SQL** before committing:
+
+   ```bash
+   cat prisma/migrations/<YYYYMMDDHHmmss>_<description>/migration.sql
+   ```
+
+   Verify the SQL matches your intent — Prisma generates `ALTER TABLE` for field additions and `CREATE TABLE` for new models.
+
+4. **Commit both files:**
+
+   ```bash
+   git add prisma/schema.prisma prisma/migrations/
+   git commit -m "feat: add <description>"
+   ```
+
+**SKIP_MIGRATE override:** If `prisma migrate deploy` fails at dev-server startup (e.g., a migration has a syntax error or the schema diverged from the DB), bypass the migration step and bring the server up anyway:
+
+```bash
+cd packages/kanban-viewer
+SKIP_MIGRATE=1 npm run dev
+```
+
+The server starts on port 5566 without attempting `prisma migrate deploy`. Use this only as a temporary escape hatch while you fix the migration — the database schema is left as-is.
+
+## Migration Failure Recovery
+
+When a migration fails part-way through, the `_prisma_migrations` table retains a row for the failed migration with a null `finished_at` and a non-null `logs` field. `prisma migrate status` reports it as "Not finished."
+
+### 1. Identify the failure
+
+```bash
+cd packages/kanban-viewer
+npx prisma migrate status
+```
+
+Look for output like:
+
+```
+20260328000000_add_item_objective_acceptance_context
+  Applied: No
+  Not finished
+```
+
+### 2. Resolve without a restore (preferred when possible)
+
+If you can fix the schema or SQL manually, tell Prisma how to treat the failed row:
+
+```bash
+# Mark as successfully applied (you fixed the schema/data by hand):
+npx prisma migrate resolve --applied 20260328000000_add_item_objective_acceptance_context
+
+# Mark as rolled back (discard the migration; re-generate it fresh):
+npx prisma migrate resolve --rolled-back 20260328000000_add_item_objective_acceptance_context
+```
+
+After resolving, run `prisma migrate deploy` again to apply any remaining pending migrations.
+
+### 3. Restore from a backup (when the DB is corrupted)
+
+The container entrypoint (`docker-entrypoint.sh`) automatically creates a timestamped backup of the live database before every migration run (when an existing volume is detected):
+
+```
+/app/prisma/data/ateam.db.backup-<YYYYMMDDTHHMMSSz>
+# Example: /app/prisma/data/ateam.db.backup-20260507T151900Z
+```
+
+To restore:
+
+1. Stop the container:
+   ```bash
+   docker compose down
+   ```
+2. On the host, replace the live database with the most recent backup:
+   ```bash
+   # List available backups, newest last:
+   ls -1 prisma/data/ateam.db.backup-*
+
+   # Copy the most recent one over the live database:
+   cp prisma/data/ateam.db.backup-<timestamp> prisma/data/ateam.db
+   ```
+3. Fix the broken migration (`prisma/migrations/<name>/migration.sql`) or delete the migration directory and re-generate it with `npm run migrate:create`.
+4. Restart the container:
+   ```bash
+   docker compose up -d
+   ```
+
+### 4. Pruning old backups
+
+The entrypoint automatically keeps only the **5 most recent** backups, deleting older ones on each container start. To prune manually:
+
+```bash
+# Remove all but the 5 most recent backups:
+ls -1 prisma/data/ateam.db.backup-* | sort | head -n -5 | xargs -r rm -f
+```

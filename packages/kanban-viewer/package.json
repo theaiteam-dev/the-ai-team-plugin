@@ -6,7 +6,8 @@
     "seed": "npx tsx prisma/seed.ts"
   },
   "scripts": {
-    "dev": "next dev --port 5566",
+    "migrate:create": "prisma migrate dev --name",
+    "dev": "if [ \"$SKIP_MIGRATE\" = \"1\" ]; then echo \"Skipping prisma migrate deploy (SKIP_MIGRATE=1)\"; next dev --port 5566; else prisma migrate deploy && next dev --port 5566; fi",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
