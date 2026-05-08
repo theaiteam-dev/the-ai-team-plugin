@@ -17,10 +17,27 @@ if [ -z "$DATABASE_URL" ]; then
   exit 1
 fi
 
+# Validate scheme: SQLite-only deployment, only file: URLs are supported.
+# Reject libsql://, postgres://, etc. up-front so misconfiguration surfaces
+# before any backup, backfill, or migrate step runs. (Mirrors the
+# normalizeDatabasePath scheme guard in the backfill TypeScript module.)
+case "$DATABASE_URL" in
+  file:*) ;;
+  *)
+    echo "[ateam] ERROR: DATABASE_URL must use the file: scheme (got: $DATABASE_URL)"
+    exit 1
+    ;;
+esac
+
 # Derive DB_PATH from DATABASE_URL by stripping the "file:" scheme prefix.
-# Relative paths (e.g. file:./prisma/data/ateam.db) are resolved against /app
-# (the container workdir) so every downstream step works on an absolute path.
-DB_PATH=$(echo "$DATABASE_URL" | sed 's|^file:||')
+# Use shell parameter expansion (no sed/echo subshell). Relative paths
+# (e.g. file:./prisma/data/ateam.db) are resolved against /app (the container
+# workdir) so every downstream step works on an absolute path.
+DB_PATH=${DATABASE_URL#file:}
+if [ -z "$DB_PATH" ]; then
+  echo "[ateam] ERROR: DATABASE_URL has empty path after file: prefix"
+  exit 1
+fi
 case "$DB_PATH" in
   /*) ;;                          # already absolute — use as-is
   *)  DB_PATH="/app/$DB_PATH" ;;  # relative → resolve against /app

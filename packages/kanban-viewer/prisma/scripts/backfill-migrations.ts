@@ -14,6 +14,7 @@
  */
 
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import { accessSync, constants, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { createClient } from '@libsql/client';
@@ -263,7 +264,13 @@ export async function backfillMigrations({
 
 // ── CLI entrypoint ───────────────────────────────────────────────────────────
 
-if (process.argv[1] === import.meta.filename) {
+// Compare URL forms so symlinks, relative paths, and alternate loaders all
+// resolve to the same canonical form. The string comparison
+// `process.argv[1] === import.meta.filename` works under tsx but is brittle.
+if (
+  process.argv[1] !== undefined &&
+  pathToFileURL(process.argv[1]).href === import.meta.url
+) {
   const databaseUrl =
     process.env.DATABASE_URL?.replace(/^file:/, '') ??
     './prisma/data/ateam.db';

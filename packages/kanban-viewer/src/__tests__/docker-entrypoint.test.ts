@@ -211,6 +211,37 @@ describe('docker-entrypoint.sh', () => {
       // Error message must name the variable so operators know what to fix
       expect(script).toMatch(/echo.*DATABASE_URL/);
     });
+
+    // PR #37 review: misconfigured non-file: URLs (libsql://, postgres://) should
+    // be rejected at the earliest step — same guard that backfill-migrations.ts has.
+    // The validation must use a case match against `file:*` and reject other schemes
+    // with a clear error before any cp/migrate/backfill runs.
+    it('rejects non-file: DATABASE_URL schemes up front with a scheme-specific error', () => {
+      // The `case` validation for the file: scheme must appear before the
+      // DB_PATH derivation, so misconfigured schemes never reach `cp` or `migrate`.
+      const caseMatch = script.match(/case\s+"\$DATABASE_URL"\s+in[\s\S]*?file:\*/);
+      expect(caseMatch, 'file: scheme validation case-statement not found').toBeTruthy();
+      // The error message must mention the file: scheme requirement
+      expect(script).toMatch(/file:\s+scheme/);
+    });
+
+    // PR #37 review: avoid the sed/echo subshell and use shell parameter expansion
+    // instead. ${DATABASE_URL#file:} is the POSIX-portable way to strip the prefix.
+    it('uses parameter expansion (no sed subshell) to strip the file: prefix from DATABASE_URL', () => {
+      // The new form must appear and the old sed-based form must be gone
+      expect(script).toMatch(/\$\{DATABASE_URL#file:\}/);
+      expect(script).not.toMatch(/sed\s+'s\|\^file:\|/);
+    });
+
+    // PR #37 review: catch the edge case where DATABASE_URL is just "file:" with no
+    // path. Without this guard, DB_PATH would be empty and DB_PATH="/app/" would
+    // resolve to the workdir itself — confusing failure mode.
+    it('rejects an empty path after the file: prefix with an explicit error', () => {
+      // After stripping `file:`, an empty DB_PATH must be detected and rejected
+      // with an error that names DATABASE_URL.
+      const emptyPathGuard = script.match(/-z\s+"\$DB_PATH"[\s\S]{0,200}DATABASE_URL/);
+      expect(emptyPathGuard, 'empty-DB_PATH guard not found').toBeTruthy();
+    });
   });
 
   // ── AC1 & AC8: fresh-volume path ────────────────────────────────────────
