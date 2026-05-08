@@ -131,4 +131,16 @@ describe('Dockerfile runner stage: prisma/scripts availability', () => {
   it('copies prisma/scripts/ from the builder stage so backfill-migrations.ts is available at runtime', () => {
     expect(runnerStage).toMatch(/COPY.*--from=builder.*prisma\/scripts/)
   })
+
+  // Critical bug flagged in PR #37 review: the runner stage was missing a COPY for
+  // prisma/migrations. docker-entrypoint.sh runs `prisma migrate deploy` on every
+  // existing-volume boot (line 43 of entrypoint). Without the SQL migration files
+  // in the image, migrate deploy cannot apply pending migrations and exits non-zero,
+  // causing set -e to kill the container before the app ever starts.
+  //
+  // The fix: COPY prisma/migrations from the builder stage alongside the other
+  // prisma assets (schema.prisma, prisma.config.ts, prisma/scripts).
+  it('copies prisma/migrations from the builder stage so migrate deploy can read SQL files at runtime', () => {
+    expect(runnerStage).toMatch(/COPY.*--from=builder.*prisma\/migrations/)
+  })
 })

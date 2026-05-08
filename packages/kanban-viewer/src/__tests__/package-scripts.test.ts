@@ -32,8 +32,19 @@ describe('package.json script entries (WI-323)', () => {
 
   describe('migrate:create script', () => {
     // AC1: exact literal value so argument forwarding works correctly
-    it('is the exact literal string "prisma migrate dev --name"', () => {
-      expect(pkg.scripts['migrate:create']).toBe('prisma migrate dev --name');
+    it('is the exact literal string "prisma migrate dev --config ./prisma/prisma.config.ts --name"', () => {
+      expect(pkg.scripts['migrate:create']).toBe(
+        'prisma migrate dev --config ./prisma/prisma.config.ts --name'
+      );
+    });
+
+    // Regression guard: --config must be present so Prisma 7 resolves the custom
+    // schema path (prisma.config.ts defines the schema location). Without it,
+    // migrate:create fails with "datasource.url property is required".
+    it('includes --config ./prisma/prisma.config.ts', () => {
+      expect(pkg.scripts['migrate:create']).toContain(
+        '--config ./prisma/prisma.config.ts'
+      );
     });
   });
 

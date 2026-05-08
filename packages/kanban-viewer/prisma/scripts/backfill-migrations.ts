@@ -84,30 +84,44 @@ function sha256hex(content: string): string {
  * Skips Prisma's table-rebuild pattern: `CREATE TABLE "new_X"` followed later
  * in the same migration by `ALTER TABLE "new_X" RENAME TO "X"`. The new_X table
  * does not exist post-migration (it was renamed to X), so verifying it would
- * always fail. The renamed-to table (X) is verified instead via the existing
- * tables in the live DB — but since we can't reliably know whether X already
- * existed before, we just skip the rebuild-temporary CREATE TABLE checks
- * entirely and rely on the column-add and rename-target presence as evidence.
+ * always fail. Instead, the rename TARGET ("X") is emitted as a table-existence
+ * check — ensuring the final post-migration state is verified even when no
+ * ADD COLUMN statement is present in the migration.
  */
 function parseSqlChecks(sql: string): SchemaCheck[] {
   const cleaned = stripSqlComments(sql);
   const checks: SchemaCheck[] = [];
 
-  // First pass: collect all rebuild-temporary tables (sources of RENAME TO).
+  // First pass: collect all rebuild-temporary tables (rename sources) and their
+  // rename targets so we can (a) skip the CREATE TABLE check for new_X and
+  // (b) emit a table-existence check for X (the renamed-to destination).
   const renameSources = new Set<string>();
+  const renameTargets = new Set<string>();
   const renameRegex =
     /ALTER\s+TABLE\s+["'`]?(\w+)["'`]?\s+RENAME\s+TO\s+["'`]?(\w+)["'`]?/gi;
   let match: RegExpExecArray | null;
   while ((match = renameRegex.exec(cleaned)) !== null) {
     renameSources.add(match[1]);
+    renameTargets.add(match[2]);
   }
 
-  // Second pass: emit checks, skipping CREATE TABLE for any rename source.
+  // Second pass: emit CREATE TABLE checks, skipping any rename source.
+  // Track emitted table names so we can deduplicate rename-target checks below.
+  const emittedTables = new Set<string>();
   const createTableRegex =
     /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?(\w+)["'`]?/gi;
   while ((match = createTableRegex.exec(cleaned)) !== null) {
     if (renameSources.has(match[1])) continue;
     checks.push({ table: match[1] });
+    emittedTables.add(match[1]);
+  }
+
+  // Third pass: emit a table-existence check for each rename target that has
+  // not already been covered by a CREATE TABLE check in this migration.
+  for (const dst of renameTargets) {
+    if (!emittedTables.has(dst)) {
+      checks.push({ table: dst });
+    }
   }
 
   const alterAddColumnRegex =

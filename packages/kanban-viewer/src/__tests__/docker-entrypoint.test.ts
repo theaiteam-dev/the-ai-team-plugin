@@ -97,9 +97,17 @@ describe('docker-entrypoint.sh', () => {
   // ── AC3: backup file naming ──────────────────────────────────────────────
 
   describe('backup file naming (ateam.db.backup-<YYYYMMDDTHHMMSSZ>)', () => {
-    // AC3: backup prefix must be present
-    it('creates backup with "ateam.db.backup-" prefix', () => {
-      expect(script).toMatch(/ateam\.db\.backup-/);
+    // AC3: backup naming uses .backup- suffix on the DB basename (via $DB_PATH interpolation).
+    // After the PR #37 fix the cp line uses $(basename "$DB_PATH").backup-$(date ...) rather
+    // than the literal filename, so we check for the pattern instead of the literal.
+    it('creates backup using $(basename "$DB_PATH").backup- naming pattern', () => {
+      const backupLine = script
+        .split('\n')
+        .find((l) => l.includes('cp') && l.includes('backup-$(date'));
+      expect(backupLine, 'backup cp line not found in script').toBeTruthy();
+      // Must reference DB_PATH and use the .backup- suffix
+      expect(backupLine).toMatch(/\$\{?DB_PATH\}?/);
+      expect(backupLine).toContain('.backup-');
     });
 
     // AC3: the timestamp must use %Y%m%dT%H%M%SZ — no colons, Z suffix mandatory
@@ -118,9 +126,18 @@ describe('docker-entrypoint.sh', () => {
   // ── AC4 (content): pruning glob ──────────────────────────────────────────
 
   describe('backup pruning', () => {
-    // AC4: the prune step must use ateam.db.backup-* so live ateam.db is never matched
-    it('uses "ateam.db.backup-*" glob for pruning (never matches live ateam.db)', () => {
-      expect(script).toMatch(/ateam\.db\.backup-\*/);
+    // AC4: the prune glob uses .backup- scoped to $(basename "$DB_PATH") so it never
+    // matches the live database file itself (which has no .backup- suffix).
+    // After the PR #37 fix, the glob is $(basename "$DB_PATH").backup-"* rather than
+    // the literal ateam.db.backup-*, so we check for the interpolated pattern.
+    it('uses a .backup- glob scoped to $DB_PATH for pruning (never matches live DB)', () => {
+      const pruneLine = script
+        .split('\n')
+        .find((l) => l.includes('.backup-') && l.includes('rm'));
+      expect(pruneLine, 'prune command not found in script').toBeTruthy();
+      expect(pruneLine).toContain('.backup-');
+      // Must reference DB_PATH so the glob stays scoped to the configured DB dir
+      expect(pruneLine).toMatch(/\$\{?DB_PATH\}?|dirname/);
     });
 
     // The prune command must include a sort/head -n -5 pattern to keep the last 5
@@ -165,11 +182,15 @@ describe('docker-entrypoint.sh', () => {
   describe('existing-volume step ordering: backup → backfill → migrate → prune → exec', () => {
     // AC2: the order is critical and must be preserved exactly
     it('executes steps in the required order', () => {
-      // Each token identifies its respective step uniquely
-      const backupCreatePos = script.indexOf('ateam.db.backup-$(');   // backup creation
+      // Each token identifies its respective step uniquely.
+      // After the PR #37 fix, backup creation uses $DB_PATH so the token is
+      // "backup-$(date" (timestamp subshell) rather than the literal filename.
+      // The prune step uses split-quoting: .backup-"* so the glob expands;
+      // the token '.backup-"' appears only on the prune line.
+      const backupCreatePos = script.indexOf('backup-$(date');          // backup creation
       const backfillPos     = script.indexOf('backfill-migrations.ts'); // WI-321 backfill
       const migratePos      = script.indexOf('prisma migrate deploy'); // migration apply
-      const prunePos        = script.indexOf('ateam.db.backup-*');     // prune old backups
+      const prunePos        = script.indexOf('.backup-"');              // prune old backups (split-quoted glob)
       const execPos         = script.indexOf('exec node server.js');   // start app
 
       expect(backupCreatePos, 'backup creation not found in script').toBeGreaterThan(-1);
@@ -232,6 +253,86 @@ describe('docker-entrypoint.sh', () => {
     });
   });
 
+  // ── DB_PATH derivation (PR #37 fix) ─────────────────────────────────────
+
+  describe('DB_PATH derived from DATABASE_URL (PR #37: no hardcoded paths)', () => {
+    // New: script must derive DB_PATH from DATABASE_URL after the guard
+    it('derives DB_PATH by stripping the "file:" prefix from DATABASE_URL', () => {
+      // The script must contain a DB_PATH assignment that references DATABASE_URL
+      const dbPathLine = script
+        .split('\n')
+        .find((l) => l.includes('DB_PATH') && l.includes('DATABASE_URL'));
+      expect(
+        dbPathLine,
+        'No line found that assigns DB_PATH from DATABASE_URL'
+      ).toBeTruthy();
+    });
+
+    // New: backup source/target must use $DB_PATH, not the literal /app/prisma/data/ateam.db
+    it('uses $DB_PATH for backup source/target, not the hardcoded literal /app/prisma/data/ateam.db', () => {
+      // Find the cp line that creates the timestamped backup
+      const backupLine = script
+        .split('\n')
+        .find((l) => l.includes('ateam.db.backup-$(') || (l.includes('cp') && l.includes('backup-')));
+      expect(backupLine, 'backup cp line not found in script').toBeTruthy();
+      // Must not hardcode the live DB path literally
+      expect(backupLine).not.toContain('/app/prisma/data/ateam.db"');
+      expect(backupLine).not.toMatch(/cp -p \/app\/prisma\/data\/ateam\.db /);
+      // Must reference $DB_PATH or ${DB_PATH}
+      expect(backupLine).toMatch(/\$\{?DB_PATH\}?/);
+    });
+
+    // New: backfill and migrate deploy DATABASE_URL must use $DB_PATH, not the hardcoded path
+    it('uses $DB_PATH in DATABASE_URL= prefix for backfill and migrate deploy lines', () => {
+      const backfillLine = lineContaining('backfill-migrations.ts');
+      expect(backfillLine, '"backfill-migrations.ts" line not found').toBeTruthy();
+      expect(backfillLine).not.toContain('file:/app/prisma/data/ateam.db');
+      expect(backfillLine).toMatch(/DATABASE_URL=.*\$\{?DB_PATH\}?/);
+
+      const migrateLine = lineContaining('prisma migrate deploy');
+      expect(migrateLine, '"prisma migrate deploy" line not found').toBeTruthy();
+      expect(migrateLine).not.toContain('file:/app/prisma/data/ateam.db');
+      expect(migrateLine).toMatch(/DATABASE_URL=.*\$\{?DB_PATH\}?/);
+    });
+
+    // New: the prune glob must use $(dirname "$DB_PATH") or equivalent, not the hardcoded dir.
+    // After the PR #37 fix the prune line uses .backup-"* (split quoting) so the glob
+    // expands correctly; the finder looks for ".backup-" + "rm" (unique to the prune line).
+    it('uses DB_PATH-derived directory for the prune glob, not /app/prisma/data/ literally', () => {
+      const pruneLine = script
+        .split('\n')
+        .find((l) => l.includes('.backup-') && l.includes('rm'));
+      expect(pruneLine, 'prune command not found in script').toBeTruthy();
+      // Must NOT hardcode the old directory
+      expect(pruneLine).not.toContain('/app/prisma/data/ateam.db.backup-*');
+      // Must reference DB_PATH somehow (dirname or variable expansion)
+      expect(pruneLine).toMatch(/\$\{?DB_PATH\}?|dirname/);
+    });
+
+    // New: fresh-volume detection must use $DB_PATH, not the hardcoded path
+    it('uses $DB_PATH for fresh-volume detection ([ ! -f "$DB_PATH" ]), not the hardcoded path', () => {
+      const freshVolumeLine = script
+        .split('\n')
+        .find((l) => l.includes('! -f') && (l.includes('DB_PATH') || l.includes('ateam.db')));
+      expect(freshVolumeLine, 'fresh-volume detection line not found').toBeTruthy();
+      expect(freshVolumeLine).not.toContain('/app/prisma/data/ateam.db');
+      expect(freshVolumeLine).toMatch(/\$\{?"?DB_PATH"?\}?/);
+    });
+
+    // New: fresh-volume seed copy destination must use $DB_PATH; source stays fixed
+    it('copies seed DB to $DB_PATH (not /app/prisma/data/ateam.db) on fresh volume', () => {
+      const seedCopyLine = script
+        .split('\n')
+        .find((l) => l.includes('cp') && l.includes('data.init/ateam.db'));
+      expect(seedCopyLine, 'seed copy line not found').toBeTruthy();
+      // Source (build artifact) stays fixed — that's intentional
+      expect(seedCopyLine).toContain('/app/prisma/data.init/ateam.db');
+      // Destination must use $DB_PATH, not the old hardcoded path
+      expect(seedCopyLine).not.toMatch(/cp -p \/app\/prisma\/data\.init\/ateam\.db \/app\/prisma\/data\/ateam\.db/);
+      expect(seedCopyLine).toMatch(/\$\{?DB_PATH\}?/);
+    });
+  });
+
   // ── AC4 behavioral: pruning algorithm ───────────────────────────────────
 
   describe('pruning algorithm (behavioral)', () => {
@@ -262,19 +363,25 @@ describe('docker-entrypoint.sh', () => {
       // Live database must survive pruning
       writeFileSync(join(tmpDir, 'ateam.db'), 'live database content');
 
-      // Extract the prune command from the script; substitute the hardcoded
-      // /app/prisma/data/ path with tmpDir so we exercise the real implementation
+      // Extract the prune command from the script; run it with DB_PATH set to
+      // a file inside tmpDir so dirname/basename expansion resolves there.
+      // After the PR #37 fix the prune line uses $DB_PATH, so we inject the
+      // variable rather than doing a brittle literal string substitution.
       const pruneLine = script
         .split('\n')
-        .find((line) => line.includes('ateam.db.backup-*') && line.includes('rm'));
+        .find((line) => line.includes('.backup-') && line.includes('rm'));
 
-      expect(pruneLine, 'prune command (containing ateam.db.backup-* and rm) not found in script').toBeTruthy();
+      expect(pruneLine, 'prune command (containing .backup- and rm) not found in script').toBeTruthy();
 
-      const pruneCmd = pruneLine!
-        .trim()
-        .replace(/\/app\/prisma\/data\//g, `${tmpDir}/`);
-
-      const result = spawnSync('sh', ['-c', pruneCmd], { encoding: 'utf-8' });
+      const pruneCmd = pruneLine!.trim();
+      // Set DB_PATH to a fake ateam.db inside tmpDir so the shell expansions
+      // $(dirname "$DB_PATH") and $(basename "$DB_PATH") resolve to tmpDir and
+      // "ateam.db" respectively, matching the backup filenames we created above.
+      const result = spawnSync(
+        'sh',
+        ['-c', `DB_PATH="${tmpDir}/ateam.db"; ${pruneCmd}`],
+        { encoding: 'utf-8' },
+      );
       expect(result.status, `prune command exited non-zero: ${result.stderr}`).toBe(0);
 
       // 2 oldest backup files must be deleted
@@ -309,15 +416,16 @@ describe('docker-entrypoint.sh', () => {
 
       const pruneLine = script
         .split('\n')
-        .find((line) => line.includes('ateam.db.backup-*') && line.includes('rm'));
+        .find((line) => line.includes('.backup-') && line.includes('rm'));
 
       expect(pruneLine, 'prune command not found in script').toBeTruthy();
 
-      const pruneCmd = pruneLine!
-        .trim()
-        .replace(/\/app\/prisma\/data\//g, `${tmpDir}/`);
-
-      const result = spawnSync('sh', ['-c', pruneCmd], { encoding: 'utf-8' });
+      const pruneCmd = pruneLine!.trim();
+      const result = spawnSync(
+        'sh',
+        ['-c', `DB_PATH="${tmpDir}/ateam.db"; ${pruneCmd}`],
+        { encoding: 'utf-8' },
+      );
       expect(result.status).toBe(0);
 
       // All 5 must survive — at-limit means nothing is old enough to delete

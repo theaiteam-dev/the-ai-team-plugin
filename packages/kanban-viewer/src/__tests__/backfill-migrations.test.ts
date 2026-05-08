@@ -608,6 +608,63 @@ describe('backfillMigrations', () => {
       ).rejects.toThrow(/RealTable/);
     });
 
+    it('pure-rebuild migration (CREATE TABLE new_X + RENAME TO X, no ADD COLUMN) rejects when the renamed-to table X is missing from the live DB', async () => {
+      // A pure-rebuild migration: creates new_Foo, renames to Foo, no ADD COLUMN.
+      // The live DB does NOT have a Foo table at all.
+      // After this fix, parseSqlChecks must emit a check for "Foo" (the rename target),
+      // so the backfill throws and names the missing table.
+      const rebuildSql = `
+        CREATE TABLE "new_Foo" ("id" TEXT NOT NULL PRIMARY KEY);
+        INSERT INTO "new_Foo" SELECT * FROM "Foo";
+        DROP TABLE "Foo";
+        ALTER TABLE "new_Foo" RENAME TO "Foo";
+      `;
+      const migName = '20250101000000_rebuild_foo_pure';
+      await createMigration(migName, rebuildSql);
+
+      // Empty DB — "Foo" does not exist
+      const setup = await openDb(dbPath);
+      setup.close();
+
+      let error!: Error;
+      try {
+        await backfillMigrations({ databaseUrl: dbPath, migrationsDir });
+      } catch (e) {
+        error = e as Error;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toContain(migName);
+      expect(error.message).toContain('Foo');
+    });
+
+    it('pure-rebuild migration succeeds when the renamed-to table X exists in the live DB', async () => {
+      // Same pure-rebuild SQL, but the live DB already has "Foo" (post-migration state).
+      const rebuildSql = `
+        CREATE TABLE "new_Foo" ("id" TEXT NOT NULL PRIMARY KEY);
+        INSERT INTO "new_Foo" SELECT * FROM "Foo";
+        DROP TABLE "Foo";
+        ALTER TABLE "new_Foo" RENAME TO "Foo";
+      `;
+      const migName = '20250101000000_rebuild_foo_pure_ok';
+      await createMigration(migName, rebuildSql);
+
+      // Live DB has "Foo" in post-migration state
+      const setup = await openDb(dbPath);
+      await setup.execute('CREATE TABLE "Foo" ("id" TEXT NOT NULL PRIMARY KEY);');
+      setup.close();
+
+      await expect(
+        backfillMigrations({ databaseUrl: dbPath, migrationsDir })
+      ).resolves.not.toThrow();
+
+      const verify = await openDb(dbPath);
+      const rows = await getMigrationRows(verify);
+      verify.close();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].migration_name).toBe(migName);
+    });
+
     it('strips SQL comments before regex scanning (— and /* */ comments)', async () => {
       // A comment that mentions CREATE TABLE for a non-existent table must NOT
       // cause the script to add a check for that table.

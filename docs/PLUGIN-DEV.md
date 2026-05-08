@@ -299,9 +299,11 @@ The schema lives in `packages/kanban-viewer/prisma/schema.prisma`. All commands 
    npm run migrate:create -- add_scaling_rationale_to_mission
    ```
 
-   The npm script body is `prisma migrate dev --name`, and npm forwards the
-   `<description>` arg after `--`, so the full command becomes
-   `prisma migrate dev --name <description>`. This:
+   The npm script body is `prisma migrate dev --config ./prisma/prisma.config.ts --name`,
+   and npm forwards the `<description>` arg after `--`, so the full command becomes
+   `prisma migrate dev --config ./prisma/prisma.config.ts --name <description>`.
+   The `--config` flag is required for Prisma 7 + libSQL to locate the custom schema
+   path defined in `prisma/prisma.config.ts`. This:
    - Creates `prisma/migrations/<YYYYMMDDHHmmss>_<description>/migration.sql`
    - Applies the migration to the local SQLite database
    - Updates `_prisma_migrations` with the new row
@@ -338,7 +340,7 @@ When a migration fails part-way through, the `_prisma_migrations` table retains 
 
 ```bash
 cd packages/kanban-viewer
-npx prisma migrate status
+npx prisma migrate status --config ./prisma/prisma.config.ts
 ```
 
 Look for output like:
@@ -355,10 +357,10 @@ If you can fix the schema or SQL manually, tell Prisma how to treat the failed r
 
 ```bash
 # Mark as successfully applied (you fixed the schema/data by hand):
-npx prisma migrate resolve --applied 20260328000000_add_item_objective_acceptance_context
+npx prisma migrate resolve --config ./prisma/prisma.config.ts --applied 20260328000000_add_item_objective_acceptance_context
 
 # Mark as rolled back (discard the migration; re-generate it fresh):
-npx prisma migrate resolve --rolled-back 20260328000000_add_item_objective_acceptance_context
+npx prisma migrate resolve --config ./prisma/prisma.config.ts --rolled-back 20260328000000_add_item_objective_acceptance_context
 ```
 
 After resolving, run `prisma migrate deploy` again to apply any remaining pending migrations.
@@ -387,9 +389,9 @@ To restore:
    cp prisma/data/ateam.db.backup-<timestamp> prisma/data/ateam.db
    ```
 3. Fix the broken migration (`prisma/migrations/<name>/migration.sql`) or delete the migration directory and re-generate it with `npm run migrate:create`.
-4. Restart the container:
+4. Rebuild and restart the container so the corrected `migration.sql` lands inside the image (a plain `up -d` reuses the cached image and your fix never reaches the runner stage):
    ```bash
-   docker compose up -d
+   docker compose up -d --build
    ```
 
 ### 4. Pruning old backups

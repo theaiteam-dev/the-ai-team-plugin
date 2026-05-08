@@ -17,7 +17,16 @@ if [ -z "$DATABASE_URL" ]; then
   exit 1
 fi
 
-if [ ! -f /app/prisma/data/ateam.db ]; then
+# Derive DB_PATH from DATABASE_URL by stripping the "file:" scheme prefix.
+# Relative paths (e.g. file:./prisma/data/ateam.db) are resolved against /app
+# (the container workdir) so every downstream step works on an absolute path.
+DB_PATH=$(echo "$DATABASE_URL" | sed 's|^file:||')
+case "$DB_PATH" in
+  /*) ;;                          # already absolute — use as-is
+  *)  DB_PATH="/app/$DB_PATH" ;;  # relative → resolve against /app
+esac
+
+if [ ! -f "$DB_PATH" ]; then
   # ── Fresh volume: copy factory-fresh seed database ──────────────────────────
   # The seed DB (built by WI-322) already has _prisma_migrations populated,
   # so the shared migrate deploy below is a no-op on first boot.
@@ -26,26 +35,26 @@ if [ ! -f /app/prisma/data/ateam.db ]; then
     exit 1
   fi
   echo "[ateam] Fresh volume detected — copying seed database..."
-  cp -p /app/prisma/data.init/ateam.db /app/prisma/data/ateam.db
+  cp -p /app/prisma/data.init/ateam.db "$DB_PATH"
 else
   # ── Existing volume: backup → backfill ──────────────────────────────────────
   # Backup with a timestamped filename (no colons — safe for all filesystems)
   echo "[ateam] Existing volume detected — creating backup..."
-  cp -p /app/prisma/data/ateam.db "/app/prisma/data/ateam.db.backup-$(date +%Y%m%dT%H%M%SZ)"
+  cp -p "$DB_PATH" "$(dirname "$DB_PATH")/$(basename "$DB_PATH").backup-$(date +%Y%m%dT%H%M%SZ)"
 
   # Backfill _prisma_migrations for databases originally created via db push
   echo "[ateam] Running migrations backfill..."
-  DATABASE_URL=file:/app/prisma/data/ateam.db npx tsx ./prisma/scripts/backfill-migrations.ts
+  DATABASE_URL="file:$DB_PATH" npx tsx ./prisma/scripts/backfill-migrations.ts
 fi
 
 # ── Apply pending migrations (shared: no-op for seeded fresh DB) ────────────
 echo "[ateam] Applying pending migrations..."
-DATABASE_URL=file:/app/prisma/data/ateam.db npx prisma migrate deploy --config ./prisma/prisma.config.ts
+DATABASE_URL="file:$DB_PATH" npx prisma migrate deploy --config ./prisma/prisma.config.ts
 
 # ── Prune old backups: keep the 5 most recent ───────────────────────────────
 # Uses ateam.db.backup-* so the live ateam.db is never matched by the glob.
 # head -n -5 outputs all but the last 5 lines (the oldest); xargs -r skips
 # running rm when the list is empty (at-limit or below).
-ls -1 /app/prisma/data/ateam.db.backup-* 2>/dev/null | sort | head -n -5 | xargs -r rm -f
+ls -1 "$(dirname "$DB_PATH")/$(basename "$DB_PATH").backup-"* 2>/dev/null | sort | head -n -5 | xargs -r rm -f
 
 exec node server.js

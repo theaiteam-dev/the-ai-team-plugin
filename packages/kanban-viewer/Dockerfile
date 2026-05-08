@@ -64,9 +64,10 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # to run prisma db push for schema migrations before the app starts.
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
 
-# Copy Prisma schema, config, and backfill script for runtime migrations
+# Copy Prisma schema, config, migrations, and backfill script for runtime migrations
 COPY --from=builder --chown=nextjs:nodejs /app/prisma/schema.prisma ./prisma/schema.prisma
 COPY --from=builder --chown=nextjs:nodejs /app/prisma/prisma.config.ts ./prisma/prisma.config.ts
+COPY --from=builder --chown=nextjs:nodejs /app/prisma/migrations ./prisma/migrations
 COPY --from=builder --chown=nextjs:nodejs /app/prisma/scripts ./prisma/scripts
 
 # Copy the seeded factory database (used to initialize empty volume mounts)
