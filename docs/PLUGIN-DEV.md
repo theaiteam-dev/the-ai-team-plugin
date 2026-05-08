@@ -294,12 +294,14 @@ The schema lives in `packages/kanban-viewer/prisma/schema.prisma`. All commands 
 
    ```bash
    cd packages/kanban-viewer
-   npm run migrate:create -- --name <description>
+   npm run migrate:create -- <description>
    # Example:
-   npm run migrate:create -- --name add_scaling_rationale_to_mission
+   npm run migrate:create -- add_scaling_rationale_to_mission
    ```
 
-   This runs `prisma migrate dev --name <description>`, which:
+   The npm script body is `prisma migrate dev --name`, and npm forwards the
+   `<description>` arg after `--`, so the full command becomes
+   `prisma migrate dev --name <description>`. This:
    - Creates `prisma/migrations/<YYYYMMDDHHmmss>_<description>/migration.sql`
    - Applies the migration to the local SQLite database
    - Updates `_prisma_migrations` with the new row
@@ -395,6 +397,14 @@ To restore:
 The entrypoint automatically keeps only the **5 most recent** backups, deleting older ones on each container start. To prune manually:
 
 ```bash
-# Remove all but the 5 most recent backups:
+# Remove all but the 5 most recent backups (run from packages/kanban-viewer/):
 ls -1 prisma/data/ateam.db.backup-* | sort | head -n -5 | xargs -r rm -f
 ```
+
+The example above uses host-relative paths (run from `packages/kanban-viewer/`). The entrypoint's actual prune line uses absolute container paths (`/app/prisma/data/ateam.db.backup-*`). Both globs are anchored on `ateam.db.backup-*` so the live `ateam.db` is never matched.
+
+### 5. Known limitations
+
+- **Backup-name collision on simultaneous boots.** Two containers booting against the same volume in the same UTC second produce the same backup filename (`ateam.db.backup-<YYYYMMDDTHHMMSSZ>`); the second `cp` overwrites the first. The window is one second per concurrent-pair, the cost is one missing backup. Avoid simultaneous deploys against a shared volume.
+- **No advisory lock around backup → backfill → migrate deploy.** Concurrent containers may race on the backfill insert loop. Prisma's own `_prisma_migrations` insert serializes the migrate-deploy step itself, but earlier steps are not protected. In practice, single-replica deployments are unaffected.
+- **`head -n -5` and `xargs -r` are GNU coreutils extensions.** The production image is Debian-based (node:20-slim), where they work. Running the entrypoint locally on macOS without GNU coreutils will silently keep all backups (the script doesn't fail; it just over-retains).

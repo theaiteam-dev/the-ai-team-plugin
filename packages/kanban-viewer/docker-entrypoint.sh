@@ -1,4 +1,14 @@
 #!/bin/sh
+# Container startup: backup → backfill → migrate deploy → prune → exec.
+# Hard-fails on any error (set -e). No silent swallows.
+#
+# Runtime assumptions:
+#   - Image is node:20-slim (Debian) → GNU coreutils. `head -n -5` and
+#     `xargs -r` below are GNU extensions and would fail on macOS / BSD;
+#     use a Linux container (or install GNU coreutils) when running locally.
+#   - This script runs ONLY inside the container at /app/. Don't invoke it
+#     directly against a host-mounted DB path — that would resolve to host
+#     paths and could damage live state. (See PR #37 for the incident.)
 set -e
 
 # Guard: DATABASE_URL must be set before any migration step runs

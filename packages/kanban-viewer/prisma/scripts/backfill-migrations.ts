@@ -39,10 +39,35 @@ interface SchemaCheck {
 /**
  * Normalizes a database URL/path using the same convention as src/lib/db-path.ts:
  * strips the `file:` prefix, then resolves relative paths to absolute.
+ *
+ * Throws on non-`file:` URL schemes (e.g. `libsql://`, `postgres://`) — the
+ * backfill speaks SQLite only and silently treating those as host-relative
+ * paths produced confusing error messages in the past.
  */
 function normalizeDatabasePath(databaseUrl: string): string {
+  if (databaseUrl.length === 0) {
+    throw new Error('DATABASE_URL is empty');
+  }
+  const schemeMatch = databaseUrl.match(/^([a-z][a-z0-9+.-]*):/i);
+  if (schemeMatch && schemeMatch[1].toLowerCase() !== 'file') {
+    throw new Error(
+      `Backfill only supports file: URLs (got ${schemeMatch[1]}://...). ` +
+        `Set DATABASE_URL to file:./prisma/data/ateam.db or similar.`
+    );
+  }
   const stripped = databaseUrl.replace(/^file:/, '');
   return path.resolve(stripped);
+}
+
+/**
+ * Strips SQL line comments (`--` until end-of-line) and block comments
+ * (`/* … *​/`) before regex scanning. Without this, a comment like
+ * `-- CREATE TABLE old_foo` would be mistaken for a real DDL statement.
+ */
+function stripSqlComments(sql: string): string {
+  return sql
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/--[^\n]*/g, '');
 }
 
 function sha256hex(content: string): string {
@@ -55,20 +80,39 @@ function sha256hex(content: string): string {
  * Handles:
  *   CREATE TABLE ["']TableName["']  → verify the table exists
  *   ALTER TABLE ["']TableName["'] ADD COLUMN ["']colName["']  → verify the column exists
+ *
+ * Skips Prisma's table-rebuild pattern: `CREATE TABLE "new_X"` followed later
+ * in the same migration by `ALTER TABLE "new_X" RENAME TO "X"`. The new_X table
+ * does not exist post-migration (it was renamed to X), so verifying it would
+ * always fail. The renamed-to table (X) is verified instead via the existing
+ * tables in the live DB — but since we can't reliably know whether X already
+ * existed before, we just skip the rebuild-temporary CREATE TABLE checks
+ * entirely and rely on the column-add and rename-target presence as evidence.
  */
 function parseSqlChecks(sql: string): SchemaCheck[] {
+  const cleaned = stripSqlComments(sql);
   const checks: SchemaCheck[] = [];
 
+  // First pass: collect all rebuild-temporary tables (sources of RENAME TO).
+  const renameSources = new Set<string>();
+  const renameRegex =
+    /ALTER\s+TABLE\s+["'`]?(\w+)["'`]?\s+RENAME\s+TO\s+["'`]?(\w+)["'`]?/gi;
+  let match: RegExpExecArray | null;
+  while ((match = renameRegex.exec(cleaned)) !== null) {
+    renameSources.add(match[1]);
+  }
+
+  // Second pass: emit checks, skipping CREATE TABLE for any rename source.
   const createTableRegex =
     /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?(\w+)["'`]?/gi;
-  let match: RegExpExecArray | null;
-  while ((match = createTableRegex.exec(sql)) !== null) {
+  while ((match = createTableRegex.exec(cleaned)) !== null) {
+    if (renameSources.has(match[1])) continue;
     checks.push({ table: match[1] });
   }
 
   const alterAddColumnRegex =
     /ALTER\s+TABLE\s+["'`]?(\w+)["'`]?\s+ADD\s+COLUMN\s+["'`]?(\w+)["'`]?/gi;
-  while ((match = alterAddColumnRegex.exec(sql)) !== null) {
+  while ((match = alterAddColumnRegex.exec(cleaned)) !== null) {
     checks.push({ table: match[1], column: match[2] });
   }
 

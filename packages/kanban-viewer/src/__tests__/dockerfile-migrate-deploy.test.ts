@@ -71,10 +71,24 @@ describe('Dockerfile builder stage: prisma migrate deploy', () => {
     expect(builderStage).toMatch(/prisma migrate deploy/)
   })
 
-  // AC1 (continued): the invocation must reference the schema file so Prisma resolves
-  // migrations from the correct location inside the image
-  it('invokes prisma migrate deploy with --schema pointing to prisma/schema.prisma', () => {
-    expect(builderStage).toMatch(/prisma migrate deploy.*--schema.*schema\.prisma/)
+  // AC1 (continued): Prisma 7 + libSQL requires --config (not --schema) so the
+  // datasource URL resolves correctly. Without --config, migrate deploy exits 1
+  // with "datasource.url property is required". This is the exact bug Amy caught
+  // on the entrypoint — same fix must hold for the builder stage.
+  it('invokes prisma migrate deploy with --config pointing to prisma/prisma.config.ts', () => {
+    expect(builderStage).toMatch(
+      /prisma migrate deploy[^\n]*--config[^\n]*prisma\/prisma\.config\.ts/
+    )
+  })
+
+  // Regression guard: --schema=... (the prior, broken invocation) must NOT
+  // appear on the migrate deploy line. Prisma 7 ignores it for migrate deploy
+  // unless --config is also present, and the ignored case was the original bug.
+  it('does not pass --schema on the migrate deploy line (use --config instead)', () => {
+    const migrateLine = builderStage
+      .split('\n')
+      .find((l) => l.includes('prisma migrate deploy')) ?? ''
+    expect(migrateLine).not.toMatch(/--schema/)
   })
 
   // AC3: The seed step still runs — and must run AFTER migrate deploy so the schema

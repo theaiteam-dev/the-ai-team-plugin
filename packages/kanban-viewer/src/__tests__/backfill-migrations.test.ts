@@ -515,5 +515,117 @@ describe('backfillMigrations', () => {
       verify.close();
       expect(rows).toHaveLength(1);
     });
+
+    // SF-1: defense-in-depth against the live-DB-truncation incident — bail out
+    // loudly on non-file: schemes instead of silently treating them as paths.
+    it('rejects non-file: URL schemes with a clear error', async () => {
+      await expect(
+        backfillMigrations({
+          databaseUrl: 'libsql://example.turso.io',
+          migrationsDir,
+        })
+      ).rejects.toThrow(/file: URLs/i);
+
+      await expect(
+        backfillMigrations({
+          databaseUrl: 'postgres://localhost/db',
+          migrationsDir,
+        })
+      ).rejects.toThrow(/file: URLs/i);
+    });
+
+    it('rejects an empty DATABASE_URL with a clear error', async () => {
+      await expect(
+        backfillMigrations({ databaseUrl: '', migrationsDir })
+      ).rejects.toThrow(/empty/i);
+    });
+  });
+
+  // ── AC10: Prisma table-rebuild pattern (CRITICAL — caught by code review) ───
+  //
+  // Prisma generates "table-rebuild" migrations any time SQLite can't ALTER:
+  //   CREATE TABLE "new_X" (...)         ← intermediate table
+  //   INSERT INTO "new_X" SELECT FROM X
+  //   DROP TABLE X
+  //   ALTER TABLE "new_X" RENAME TO "X"  ← final state
+  //
+  // Post-migration the live DB has X (renamed), not new_X. A naive PRAGMA
+  // verification would hit "table 'new_X' does not exist" and abort the
+  // backfill on every legacy DB that has a rebuild migration in its history.
+  // Two of the existing migrations use this pattern (20260216203144, 20260216203229).
+
+  describe('AC10 – Prisma table-rebuild pattern (new_X CREATE + RENAME TO X)', () => {
+    it('skips the intermediate new_X CREATE TABLE check when an ALTER … RENAME TO is present in the same migration', async () => {
+      // Realistic rebuild-pattern migration: rebuild "Foo" via an intermediate
+      const rebuildSql = `
+        CREATE TABLE "new_Foo" (
+          "id"     TEXT NOT NULL PRIMARY KEY,
+          "label"  TEXT NOT NULL DEFAULT 'x'
+        );
+        INSERT INTO "new_Foo" ("id") SELECT "id" FROM "Foo";
+        DROP TABLE "Foo";
+        ALTER TABLE "new_Foo" RENAME TO "Foo";
+      `;
+      await createMigration('20250101000000_rebuild_foo', rebuildSql);
+
+      // Live DB has the post-migration state: only "Foo" exists, "new_Foo" does not.
+      const setup = await openDb(dbPath);
+      await setup.execute(
+        'CREATE TABLE "Foo" ("id" TEXT NOT NULL PRIMARY KEY, "label" TEXT NOT NULL DEFAULT \'x\');'
+      );
+      setup.close();
+
+      await expect(
+        backfillMigrations({ databaseUrl: dbPath, migrationsDir })
+      ).resolves.not.toThrow();
+
+      const verify = await openDb(dbPath);
+      const rows = await getMigrationRows(verify);
+      verify.close();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].migration_name).toBe('20250101000000_rebuild_foo');
+    });
+
+    it('still verifies tables that are NOT rebuild intermediates (regression guard)', async () => {
+      // A migration that creates a brand-new RealTable AND has a separate
+      // unrelated rebuild of OtherTable. RealTable's CREATE must still be checked.
+      const sql = `
+        CREATE TABLE "RealTable" ("id" TEXT NOT NULL PRIMARY KEY);
+        CREATE TABLE "new_OtherTable" ("id" TEXT NOT NULL PRIMARY KEY);
+        DROP TABLE "OtherTable";
+        ALTER TABLE "new_OtherTable" RENAME TO "OtherTable";
+      `;
+      await createMigration('20250101000000_mixed', sql);
+
+      // Live DB has OtherTable (post-rename) but is MISSING RealTable.
+      // Expected: backfill aborts because RealTable verification fails.
+      const setup = await openDb(dbPath);
+      await setup.execute('CREATE TABLE "OtherTable" ("id" TEXT NOT NULL PRIMARY KEY);');
+      setup.close();
+
+      await expect(
+        backfillMigrations({ databaseUrl: dbPath, migrationsDir })
+      ).rejects.toThrow(/RealTable/);
+    });
+
+    it('strips SQL comments before regex scanning (— and /* */ comments)', async () => {
+      // A comment that mentions CREATE TABLE for a non-existent table must NOT
+      // cause the script to add a check for that table.
+      const sql = `
+        -- CREATE TABLE "GhostTable" ("id" TEXT)
+        /* CREATE TABLE "AnotherGhost" ("id" TEXT) */
+        CREATE TABLE "RealTable" ("id" TEXT NOT NULL PRIMARY KEY);
+      `;
+      await createMigration('20250101000000_with_comments', sql);
+
+      const setup = await openDb(dbPath);
+      await setup.execute('CREATE TABLE "RealTable" ("id" TEXT NOT NULL PRIMARY KEY);');
+      setup.close();
+
+      // Should succeed — the comments must not be scanned as DDL
+      await expect(
+        backfillMigrations({ databaseUrl: dbPath, migrationsDir })
+      ).resolves.not.toThrow();
+    });
   });
 });

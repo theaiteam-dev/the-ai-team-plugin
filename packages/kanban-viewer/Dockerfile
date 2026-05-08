@@ -33,7 +33,7 @@ COPY packages/kanban-viewer/ .
 ENV DATABASE_URL="file:./prisma/data.init/ateam.db"
 RUN mkdir -p prisma/data.init && \
     npx prisma generate && \
-    npx prisma migrate deploy --schema=./prisma/schema.prisma && \
+    npx prisma migrate deploy --config ./prisma/prisma.config.ts && \
     npx tsx prisma/seed.ts
 
 # Build Next.js

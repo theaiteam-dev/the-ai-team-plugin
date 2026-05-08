@@ -53,6 +53,16 @@ describe('package.json script entries (WI-323)', () => {
     it('contains SKIP_MIGRATE — is a conditional wrapper, not a bare && chain', () => {
       expect(pkg.scripts.dev).toContain('SKIP_MIGRATE');
     });
+
+    // Regression guard: Prisma 7 + libSQL requires --config on migrate deploy.
+    // Without it, migrate deploy exits 1 with "datasource.url property is required"
+    // and `npm run dev` fails on every invocation. Same fix as Dockerfile +
+    // entrypoint + CI workflow. Must reference prisma.config.ts explicitly.
+    it('passes --config prisma.config.ts on the migrate deploy invocation', () => {
+      expect(pkg.scripts.dev).toMatch(
+        /prisma migrate deploy[^&|]*--config[^&|]*prisma\/prisma\.config\.ts/
+      );
+    });
   });
 
   // ─── Behavioral: spawn the dev script with fake prisma / next on PATH ──────
