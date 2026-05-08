@@ -14,7 +14,7 @@
  */
 
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import { accessSync, constants, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { createClient } from '@libsql/client';
@@ -275,8 +275,13 @@ if (
     process.env.DATABASE_URL?.replace(/^file:/, '') ??
     './prisma/data/ateam.db';
 
+  // Use import.meta.url + fileURLToPath rather than import.meta.filename —
+  // import.meta.filename is undefined when tsx transpiles to CJS under Node 24,
+  // crashing the script before the DB is touched. Caught by the prod-snapshot
+  // smoke test against data/prod.db; would have hard-failed first deploy.
+  const scriptPath = fileURLToPath(import.meta.url);
   const migrationsDir = path.resolve(
-    path.dirname(import.meta.filename),
+    path.dirname(scriptPath),
     '../migrations'
   );
 

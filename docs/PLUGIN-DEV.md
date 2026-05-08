@@ -332,6 +332,36 @@ SKIP_MIGRATE=1 npm run dev
 
 The server starts on port 5566 without attempting `prisma migrate deploy`. Use this only as a temporary escape hatch while you fix the migration — the database schema is left as-is.
 
+## First Deployment of the Migration-Deploy Entrypoint (One-Time)
+
+The first container boot after `docker-entrypoint.sh` switches from `prisma db push` to `prisma migrate deploy` will run the **backfill script** (`prisma/scripts/backfill-migrations.ts`) to populate `_prisma_migrations` for the existing live DB. The backfill verifies, via `PRAGMA table_info`, that each migration's tables and columns actually exist in the live DB before marking that migration applied. **If the live DB is behind on schema** (because `db push` hasn't been run with the latest `schema.prisma`), the backfill aborts with a clear error like:
+
+```text
+Backfill failed: Migration 20260328000000_add_item_objective_acceptance_context: column "objective" not found in table "Item"
+```
+
+The container then hard-fails (`set -e`) and refuses to start the app. This is the safety net working as designed — it refuses to mark a migration applied when its schema isn't there.
+
+### One-time recovery (run once against the live DB before this PR auto-deploys)
+
+```bash
+# 1. SSH to the host or otherwise reach the live DB.
+# 2. Run prisma migrate deploy against the live DB to apply pending migrations.
+cd packages/kanban-viewer
+DATABASE_URL=file:/path/to/live/ateam.db \
+  npx prisma migrate deploy --config ./prisma/prisma.config.ts
+
+# 3. Verify the live DB is now caught up.
+DATABASE_URL=file:/path/to/live/ateam.db \
+  npx prisma migrate status --config ./prisma/prisma.config.ts
+# Expect: "Database schema is up to date!"
+
+# 4. Restart the container — backfill now marks all 10 migrations applied,
+#    migrate deploy is a no-op, app starts cleanly.
+```
+
+After this one-time recovery, every subsequent deploy is automatic: the entrypoint backs up, runs the (idempotent) backfill, runs the (no-op) migrate-deploy, and the app boots.
+
 ## Migration Failure Recovery
 
 When a migration fails part-way through, the `_prisma_migrations` table retains a row for the failed migration with a null `finished_at` and a non-null `logs` field. `prisma migrate status` reports it as "Not finished."
