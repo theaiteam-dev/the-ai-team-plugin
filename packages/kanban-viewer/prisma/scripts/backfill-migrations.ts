@@ -56,7 +56,10 @@ function normalizeDatabasePath(databaseUrl: string): string {
         `Set DATABASE_URL to file:./prisma/data/ateam.db or similar.`
     );
   }
-  const stripped = databaseUrl.replace(/^file:/, '');
+  const stripped = databaseUrl.replace(/^file:/i, '');
+  if (stripped.length === 0) {
+    throw new Error('DATABASE_URL must include a path when using file: scheme');
+  }
   return path.resolve(stripped);
 }
 

@@ -375,7 +375,7 @@ npx prisma migrate status --config ./prisma/prisma.config.ts
 
 Look for output like:
 
-```
+```text
 20260328000000_add_item_objective_acceptance_context
   Applied: No
   Not finished
@@ -399,7 +399,7 @@ After resolving, run `prisma migrate deploy` again to apply any remaining pendin
 
 The container entrypoint (`docker-entrypoint.sh`) automatically creates a timestamped backup of the live database before every migration run (when an existing volume is detected):
 
-```
+```text
 /app/prisma/data/ateam.db.backup-<YYYYMMDDTHHMMSSz>
 # Example: /app/prisma/data/ateam.db.backup-20260507T151900Z
 ```

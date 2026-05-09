@@ -545,6 +545,38 @@ describe('backfillMigrations', () => {
         backfillMigrations({ databaseUrl: '', migrationsDir })
       ).rejects.toThrow(/empty/i);
     });
+
+    // Regression: bare `file:` (no path) used to fall through to path.resolve(''),
+    // which silently returned the CWD and produced a confusing libsql/open error.
+    // Reject up-front with the same shape as the empty-URL case.
+    it('rejects a bare file: URL (no path) with a clear error', async () => {
+      await expect(
+        backfillMigrations({ databaseUrl: 'file:', migrationsDir })
+      ).rejects.toThrow(/path/i);
+    });
+
+    // Regression: scheme detection is case-insensitive, but the strip step used
+    // /^file:/ (no `i` flag), so `File:./db` left the scheme attached and
+    // resolved to a wrong path. Strip must match the case-insensitive scheme.
+    it('strips the file: scheme case-insensitively (FILE:, File:)', async () => {
+      await createMigration(
+        '20250101000000_create_thing',
+        'CREATE TABLE "Thing" ("id" TEXT NOT NULL PRIMARY KEY);'
+      );
+
+      const setup = await openDb(dbPath);
+      await setup.execute('CREATE TABLE "Thing" ("id" TEXT NOT NULL PRIMARY KEY);');
+      setup.close();
+
+      await expect(
+        backfillMigrations({ databaseUrl: `FILE:${dbPath}`, migrationsDir })
+      ).resolves.not.toThrow();
+
+      const verify = await openDb(dbPath);
+      const rows = await getMigrationRows(verify);
+      verify.close();
+      expect(rows).toHaveLength(1);
+    });
   });
 
   // ── AC11: Post-bootstrap idempotence ───────────────────────────────────────

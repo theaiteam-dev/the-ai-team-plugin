@@ -365,8 +365,13 @@ describe('docker-entrypoint.sh', () => {
   });
 
   // ── AC4 behavioral: pruning algorithm ───────────────────────────────────
+  // The prune line uses GNU coreutils (`head -n -5`, `xargs -r`) — these are
+  // documented as Linux-only in docker-entrypoint.sh and would fail on macOS/BSD,
+  // so gate the spawnSync-based behavioral tests to Linux. Container behavior is
+  // unaffected; the static pattern checks above already cover non-Linux hosts.
+  const describeIfLinux = process.platform === 'linux' ? describe : describe.skip;
 
-  describe('pruning algorithm (behavioral)', () => {
+  describeIfLinux('pruning algorithm (behavioral)', () => {
     let tmpDir: string;
 
     afterEach(() => {
