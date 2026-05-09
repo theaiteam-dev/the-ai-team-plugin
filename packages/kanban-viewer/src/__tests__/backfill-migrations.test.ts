@@ -196,7 +196,9 @@ describe('backfillMigrations', () => {
       const captured = logSpy.mock.calls.map((args) => args.join(' '));
       logSpy.mockRestore();
 
-      const noOpLine = captured.find((line) => /already applied/i.test(line));
+      const noOpLine = captured.find((line) =>
+        /already populated|skipping|bootstrap/i.test(line)
+      );
       expect(noOpLine).toBeDefined();
     });
   });
@@ -243,18 +245,23 @@ describe('backfillMigrations', () => {
   });
 
   // ── AC4: Partial population ─────────────────────────────────────────────────
+  //
+  // NEW BEHAVIOR: When _prisma_migrations has ANY rows the backfill skips
+  // entirely (post-bootstrap idempotence). Partial-bootstrap state (some rows
+  // but not all) is accepted as-is — the script does not attempt to fill gaps.
+  // `migrate deploy` handles any unapplied migrations in the normal entrypoint flow.
 
   describe('AC4 – partially populated DB', () => {
-    it('inserts only missing rows and leaves existing rows untouched', async () => {
+    it('skips entirely and leaves existing rows untouched when _prisma_migrations already has rows (partial-bootstrap is a no-op)', async () => {
       const mA = await createMigration(
         '20250101000000_create_alpha',
         'CREATE TABLE "Alpha" ("id" TEXT NOT NULL PRIMARY KEY);'
       );
-      const mB = await createMigration(
+      await createMigration(
         '20250202000000_create_beta',
         'CREATE TABLE "Beta" ("id" TEXT NOT NULL PRIMARY KEY);'
       );
-      const mC = await createMigration(
+      await createMigration(
         '20250303000000_add_gamma',
         'ALTER TABLE "Alpha" ADD COLUMN "gamma" TEXT;'
       );
@@ -265,26 +272,25 @@ describe('backfillMigrations', () => {
       );
       await setup.execute('CREATE TABLE "Beta" ("id" TEXT NOT NULL PRIMARY KEY);');
       await setup.execute(CREATE_PRISMA_MIGRATIONS_TABLE);
-      // Pre-insert only mA — mB and mC are "missing"
+      // Pre-insert only mA — mB and mC are absent
       const originalId = await insertMigrationRow(setup, mA.name, mA.checksum);
       setup.close();
 
-      await backfillMigrations({ databaseUrl: dbPath, migrationsDir });
+      // Must not throw and must not insert any new rows
+      await expect(
+        backfillMigrations({ databaseUrl: dbPath, migrationsDir })
+      ).resolves.not.toThrow();
 
       const verify = await openDb(dbPath);
       const rows = await getMigrationRows(verify);
       verify.close();
 
-      expect(rows).toHaveLength(3);
+      // Still only 1 row — no gap-filling in the partial-bootstrap case
+      expect(rows).toHaveLength(1);
 
-      // Existing row for mA must be untouched (same UUID preserved)
+      // The original row is preserved with its original UUID
       const aRow = rows.find((r) => r.migration_name === mA.name);
       expect(aRow?.id).toBe(originalId);
-
-      // Previously missing rows for mB and mC are now present
-      const names = rows.map((r) => r.migration_name as string);
-      expect(names).toContain(mB.name);
-      expect(names).toContain(mC.name);
     });
   });
 
@@ -538,6 +544,116 @@ describe('backfillMigrations', () => {
       await expect(
         backfillMigrations({ databaseUrl: '', migrationsDir })
       ).rejects.toThrow(/empty/i);
+    });
+  });
+
+  // ── AC11: Post-bootstrap idempotence ───────────────────────────────────────
+  //
+  // Once _prisma_migrations has ANY rows the backfill must skip entirely.
+  // This prevents a future-migration scenario where the new migration's schema
+  // is not yet in the DB (migrate deploy hasn't run yet) from causing a hard-fail
+  // PRAGMA error that kills the container before migrate deploy can apply it.
+
+  describe('AC11 – post-bootstrap idempotence', () => {
+    it('skips entirely when _prisma_migrations already has rows, even if migrations dir has new entries', async () => {
+      // Three migrations; the third adds a column that does NOT exist in the DB yet
+      await createMigration(
+        '20250101000000_create_widget',
+        'CREATE TABLE "Widget" ("id" TEXT NOT NULL PRIMARY KEY);'
+      );
+      await createMigration(
+        '20250202000000_add_name',
+        'ALTER TABLE "Widget" ADD COLUMN "name" TEXT;'
+      );
+      await createMigration(
+        '20250303000000_add_future_col',
+        'ALTER TABLE "Widget" ADD COLUMN "future_col" TEXT;'
+      );
+
+      // DB has Widget with only id — missing future_col (simulates future migration not yet applied)
+      const setup = await openDb(dbPath);
+      await setup.execute('CREATE TABLE "Widget" ("id" TEXT NOT NULL PRIMARY KEY);');
+      // Pre-populate _prisma_migrations with 1 row (bootstrap already ran)
+      await setup.execute(CREATE_PRISMA_MIGRATIONS_TABLE);
+      await insertMigrationRow(setup, '20250101000000_create_widget', 'fake-checksum-001');
+      setup.close();
+
+      // Must NOT throw even though future_col doesn't exist in the DB
+      await expect(
+        backfillMigrations({ databaseUrl: dbPath, migrationsDir })
+      ).resolves.not.toThrow();
+
+      // Row count must be unchanged — the new migrations were NOT processed
+      const verify = await openDb(dbPath);
+      const rows = await getMigrationRows(verify);
+      verify.close();
+
+      expect(rows).toHaveLength(1); // still just the original row
+      const names = rows.map((r) => r.migration_name as string);
+      expect(names).not.toContain('20250303000000_add_future_col');
+    });
+
+    it('skips entirely on a future-migration scenario without raising', async () => {
+      // More realistic: 2 migrations bootstrapped, 3rd in dir adds a column not yet applied
+      const m1sql = 'CREATE TABLE "Order" ("id" TEXT NOT NULL PRIMARY KEY, "total" INTEGER NOT NULL DEFAULT 0);';
+      const m2sql = 'CREATE TABLE "LineItem" ("id" TEXT NOT NULL PRIMARY KEY, "orderId" TEXT NOT NULL);';
+      await createMigration('20250101000000_create_order', m1sql);
+      await createMigration('20250202000000_create_lineitem', m2sql);
+      await createMigration(
+        '20250303000000_add_discount',
+        'ALTER TABLE "Order" ADD COLUMN "discount" INTEGER NOT NULL DEFAULT 0;'
+      );
+
+      // DB has Order and LineItem but WITHOUT the discount column
+      const setup = await openDb(dbPath);
+      await setup.execute(m1sql);
+      await setup.execute(m2sql);
+      await setup.execute(CREATE_PRISMA_MIGRATIONS_TABLE);
+      await insertMigrationRow(setup, '20250101000000_create_order', sha256hex(m1sql));
+      await insertMigrationRow(setup, '20250202000000_create_lineitem', sha256hex(m2sql));
+      setup.close();
+
+      // Must not throw — migrate deploy will handle the discount migration
+      await expect(
+        backfillMigrations({ databaseUrl: dbPath, migrationsDir })
+      ).resolves.not.toThrow();
+
+      const verify = await openDb(dbPath);
+      const rows = await getMigrationRows(verify);
+      verify.close();
+
+      // Still exactly 2 rows; the future migration was not touched
+      expect(rows).toHaveLength(2);
+      const names = rows.map((r) => r.migration_name as string);
+      expect(names).not.toContain('20250303000000_add_discount');
+    });
+
+    it('logs an informational message when skipping so operators know what happened', async () => {
+      await createMigration(
+        '20250101000000_create_widget',
+        'CREATE TABLE "Widget" ("id" TEXT NOT NULL PRIMARY KEY);'
+      );
+      // A second migration that would fail PRAGMA if the bootstrap path ran
+      await createMigration(
+        '20250202000000_add_unseen_col',
+        'ALTER TABLE "Widget" ADD COLUMN "unseen_col" TEXT;'
+      );
+
+      const setup = await openDb(dbPath);
+      await setup.execute('CREATE TABLE "Widget" ("id" TEXT NOT NULL PRIMARY KEY);');
+      await setup.execute(CREATE_PRISMA_MIGRATIONS_TABLE);
+      await insertMigrationRow(setup, '20250101000000_create_widget', 'fake-checksum-001');
+      setup.close();
+
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      await backfillMigrations({ databaseUrl: dbPath, migrationsDir });
+      const captured = logSpy.mock.calls.map((args) => args.join(' '));
+      logSpy.mockRestore();
+
+      const skipLine = captured.find((line) =>
+        /skipping|already populated|bootstrap/i.test(line)
+      );
+      expect(skipLine).toBeDefined();
     });
   });
 

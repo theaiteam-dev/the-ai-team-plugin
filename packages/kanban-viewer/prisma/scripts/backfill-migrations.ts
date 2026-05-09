@@ -187,6 +187,21 @@ export async function backfillMigrations({
     // Step 5: Create _prisma_migrations table if it doesn't exist yet
     await client.execute(CREATE_PRISMA_MIGRATIONS_TABLE);
 
+    // Step 5b: If the table already has rows, the legacy bootstrap has already
+    // run once. Skip the entire bootstrap loop so that future migrations (whose
+    // schema is not yet in the DB) don't cause a spurious PRAGMA hard-fail
+    // before `migrate deploy` has had a chance to apply them.
+    const countResult = await client.execute(
+      'SELECT COUNT(*) AS rowCount FROM "_prisma_migrations"'
+    );
+    const rowCount = Number(countResult.rows[0]?.rowCount ?? 0);
+    if (rowCount > 0) {
+      console.log(
+        `Backfill: _prisma_migrations already populated (${rowCount} row${rowCount === 1 ? '' : 's'}), skipping legacy bootstrap.`
+      );
+      return;
+    }
+
     // Step 6: Fetch migration names that are already recorded
     const existingResult = await client.execute(
       'SELECT migration_name FROM "_prisma_migrations"'
