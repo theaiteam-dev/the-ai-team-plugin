@@ -65,6 +65,8 @@ mission/
 
 **Prisma ORM** (`prisma/schema.prisma`): Database schema defining Projects, Items, Missions, AgentClaims, and ActivityLogs. SQLite database stored in `prisma/data/ateam.db`.
 
+> For step-by-step instructions on authoring new migrations and recovering from a corrupted database, see [docs/PLUGIN-DEV.md — How to Add a Prisma Migration](../../docs/PLUGIN-DEV.md#how-to-add-a-prisma-migration) and [Migration Failure Recovery](../../docs/PLUGIN-DEV.md#migration-failure-recovery).
+
 **Database Models** (10 tables)
 - `Project`: Multi-project isolation (id, name, timestamps)
 - `Stage`: Board columns with WIP limits

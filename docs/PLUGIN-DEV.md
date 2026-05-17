@@ -283,3 +283,160 @@ docker compose up -d
 ```
 
 The shared package must be built before the kanban-viewer since it depends on it. The `ateam` CLI is built separately with Go and does not depend on the bun workspace packages.
+
+## How to Add a Prisma Migration
+
+The schema lives in `packages/kanban-viewer/prisma/schema.prisma`. All commands below run from inside that package directory.
+
+1. **Edit the schema.** Add your new model, field, or index to `schema.prisma`.
+
+2. **Generate the migration.**
+
+   ```bash
+   cd packages/kanban-viewer
+   npm run migrate:create -- <description>
+   # Example:
+   npm run migrate:create -- add_scaling_rationale_to_mission
+   ```
+
+   The npm script body is `prisma migrate dev --config ./prisma/prisma.config.ts --name`,
+   and npm forwards the `<description>` arg after `--`, so the full command becomes
+   `prisma migrate dev --config ./prisma/prisma.config.ts --name <description>`.
+   The `--config` flag is required for Prisma 7 + libSQL to locate the custom schema
+   path defined in `prisma/prisma.config.ts`. This:
+   - Creates `prisma/migrations/<YYYYMMDDHHmmss>_<description>/migration.sql`
+   - Applies the migration to the local SQLite database
+   - Updates `_prisma_migrations` with the new row
+
+3. **Review the generated SQL** before committing:
+
+   ```bash
+   cat prisma/migrations/<YYYYMMDDHHmmss>_<description>/migration.sql
+   ```
+
+   Verify the SQL matches your intent — Prisma generates `ALTER TABLE` for field additions and `CREATE TABLE` for new models.
+
+4. **Commit both files:**
+
+   ```bash
+   git add prisma/schema.prisma prisma/migrations/
+   git commit -m "feat: add <description>"
+   ```
+
+**SKIP_MIGRATE override:** If `prisma migrate deploy` fails at dev-server startup (e.g., a migration has a syntax error or the schema diverged from the DB), bypass the migration step and bring the server up anyway:
+
+```bash
+cd packages/kanban-viewer
+SKIP_MIGRATE=1 npm run dev
+```
+
+The server starts on port 5566 without attempting `prisma migrate deploy`. Use this only as a temporary escape hatch while you fix the migration — the database schema is left as-is.
+
+## First Deployment of the Migration-Deploy Entrypoint (One-Time)
+
+The first container boot after `docker-entrypoint.sh` switches from `prisma db push` to `prisma migrate deploy` will run the **backfill script** (`prisma/scripts/backfill-migrations.ts`) to populate `_prisma_migrations` for the existing live DB. The backfill verifies, via `PRAGMA table_info`, that each migration's tables and columns actually exist in the live DB before marking that migration applied. **If the live DB is behind on schema** (because `db push` hasn't been run with the latest `schema.prisma`), the backfill aborts with a clear error like:
+
+```text
+Backfill failed: Migration 20260328000000_add_item_objective_acceptance_context: column "objective" not found in table "Item"
+```
+
+The container then hard-fails (`set -e`) and refuses to start the app. This is the safety net working as designed — it refuses to mark a migration applied when its schema isn't there.
+
+### One-time recovery (run once against the live DB before this PR auto-deploys)
+
+```bash
+# 1. SSH to the host or otherwise reach the live DB.
+# 2. Run prisma migrate deploy against the live DB to apply pending migrations.
+cd packages/kanban-viewer
+DATABASE_URL=file:/path/to/live/ateam.db \
+  npx prisma migrate deploy --config ./prisma/prisma.config.ts
+
+# 3. Verify the live DB is now caught up.
+DATABASE_URL=file:/path/to/live/ateam.db \
+  npx prisma migrate status --config ./prisma/prisma.config.ts
+# Expect: "Database schema is up to date!"
+
+# 4. Restart the container — backfill now marks all 10 migrations applied,
+#    migrate deploy is a no-op, app starts cleanly.
+```
+
+After this one-time recovery, every subsequent deploy is automatic: the entrypoint backs up, runs the (idempotent) backfill, runs the (no-op) migrate-deploy, and the app boots.
+
+## Migration Failure Recovery
+
+When a migration fails part-way through, the `_prisma_migrations` table retains a row for the failed migration with a null `finished_at` and a non-null `logs` field. `prisma migrate status` reports it as "Not finished."
+
+### 1. Identify the failure
+
+```bash
+cd packages/kanban-viewer
+npx prisma migrate status --config ./prisma/prisma.config.ts
+```
+
+Look for output like:
+
+```text
+20260328000000_add_item_objective_acceptance_context
+  Applied: No
+  Not finished
+```
+
+### 2. Resolve without a restore (preferred when possible)
+
+If you can fix the schema or SQL manually, tell Prisma how to treat the failed row:
+
+```bash
+# Mark as successfully applied (you fixed the schema/data by hand):
+npx prisma migrate resolve --config ./prisma/prisma.config.ts --applied 20260328000000_add_item_objective_acceptance_context
+
+# Mark as rolled back (discard the migration; re-generate it fresh):
+npx prisma migrate resolve --config ./prisma/prisma.config.ts --rolled-back 20260328000000_add_item_objective_acceptance_context
+```
+
+After resolving, run `prisma migrate deploy` again to apply any remaining pending migrations.
+
+### 3. Restore from a backup (when the DB is corrupted)
+
+The container entrypoint (`docker-entrypoint.sh`) automatically creates a timestamped backup of the live database before every migration run (when an existing volume is detected):
+
+```text
+/app/prisma/data/ateam.db.backup-<YYYYMMDDTHHMMSSz>
+# Example: /app/prisma/data/ateam.db.backup-20260507T151900Z
+```
+
+To restore:
+
+1. Stop the container:
+   ```bash
+   docker compose down
+   ```
+2. On the host, replace the live database with the most recent backup:
+   ```bash
+   # List available backups, newest last:
+   ls -1 prisma/data/ateam.db.backup-*
+
+   # Copy the most recent one over the live database:
+   cp prisma/data/ateam.db.backup-<timestamp> prisma/data/ateam.db
+   ```
+3. Fix the broken migration (`prisma/migrations/<name>/migration.sql`) or delete the migration directory and re-generate it with `npm run migrate:create`.
+4. Rebuild and restart the container so the corrected `migration.sql` lands inside the image (a plain `up -d` reuses the cached image and your fix never reaches the runner stage):
+   ```bash
+   docker compose up -d --build
+   ```
+
+### 4. Pruning old backups
+
+The entrypoint automatically keeps only the **5 most recent** backups, deleting older ones on each container start. To prune manually:
+
+```bash
+# Remove all but the 5 most recent backups (run from packages/kanban-viewer/):
+ls -1 prisma/data/ateam.db.backup-* | sort | head -n -5 | xargs -r rm -f
+```
+
+The example above uses host-relative paths (run from `packages/kanban-viewer/`). The entrypoint's actual prune line uses absolute container paths (`/app/prisma/data/ateam.db.backup-*`). Both globs are anchored on `ateam.db.backup-*` so the live `ateam.db` is never matched.
+
+### 5. Known limitations
+
+- **Backup-name collision on simultaneous boots.** Two containers booting against the same volume in the same UTC second produce the same backup filename (`ateam.db.backup-<YYYYMMDDTHHMMSSZ>`); the second `cp` overwrites the first. The window is one second per concurrent-pair, the cost is one missing backup. Avoid simultaneous deploys against a shared volume.
+- **No advisory lock around backup → backfill → migrate deploy.** Concurrent containers may race on the backfill insert loop. Prisma's own `_prisma_migrations` insert serializes the migrate-deploy step itself, but earlier steps are not protected. In practice, single-replica deployments are unaffected.
+- **`head -n -5` and `xargs -r` are GNU coreutils extensions.** The production image is Debian-based (node:20-slim), where they work. Running the entrypoint locally on macOS without GNU coreutils will silently keep all backups (the script doesn't fail; it just over-retains).

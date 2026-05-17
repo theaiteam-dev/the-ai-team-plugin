@@ -4,6 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **For plugin development:** See `docs/PLUGIN-DEV.md` (file organization, hooks, installation, build setup).
 **For orchestration reference:** See `docs/ORCHESTRATION.md` (architecture, env vars, permissions, config).
+**For migration authoring and recovery:** See `docs/PLUGIN-DEV.md` — [How to Add a Prisma Migration](docs/PLUGIN-DEV.md#how-to-add-a-prisma-migration) and [Migration Failure Recovery](docs/PLUGIN-DEV.md#migration-failure-recovery).
 
 ## Overview
 
