@@ -182,7 +182,9 @@ ateam pool init
 At mission start, create a team:
 
 ```text
-TeamCreate(team_name: "mission-{missionId}", description: "A(i)-Team mission: {mission name}")
+TeamCreate(team_name: "mission-{projectId}-{missionId}", description: "A(i)-Team mission: {mission name}")
+
+> **`projectId`** is `$ATEAM_PROJECT_ID` from the environment. Including it in the team name prevents cross-project message-bus collisions when two deployments independently generate the same mission ID on the same day.
 ```
 
 ## Agent Pre-Warming (Lazy)
@@ -222,7 +224,7 @@ function spawn_lane(lane_number):
 
     for instance in lane_instances:
         Task(
-            team_name:    "mission-{missionId}",
+            team_name:    "mission-{projectId}-{missionId}",
             name:         instance.name,
             subagent_type: agentTypeToSubagent(instance.agentType),
             description:  "{instance.name}: standby",
@@ -587,7 +589,7 @@ function dispatch(instance, item_id):
         )
     else:
         Task(
-            team_name:    "mission-{missionId}",
+            team_name:    "mission-{projectId}-{missionId}",
             name:         instance.name,
             subagent_type: agentTypeToSubagent(instance.agentType),
             description:  "{instance.name}: {item title}",
@@ -659,7 +661,7 @@ active_instances[001] = "murdock-2"
 **First spawn (or re-spawn):**
 ```text
 Task(
-  team_name: "mission-{missionId}",
+  team_name: "mission-{projectId}-{missionId}",
   name: "murdock-2",                          ← instance name, NOT "murdock"
   subagent_type: "ai-team:murdock",
   description: "murdock-2: {feature title}",
@@ -703,7 +705,7 @@ active_instances[001] = "ba-1"
 **First spawn:**
 ```text
 Task(
-  team_name: "mission-{missionId}",
+  team_name: "mission-{projectId}-{missionId}",
   name: "ba-1",
   subagent_type: "ai-team:ba",
   description: "ba-1: {feature title}",
@@ -739,7 +741,7 @@ active_instances[001] = "lynch-1"
 **First spawn:**
 ```text
 Task(
-  team_name: "mission-{missionId}",
+  team_name: "mission-{projectId}-{missionId}",
   name: "lynch-1",
   subagent_type: "ai-team:lynch",
   description: "lynch-1: {feature title}",
@@ -773,7 +775,7 @@ active_instances[001] = "amy-2"
 **First spawn:**
 ```text
 Task(
-  team_name: "mission-{missionId}",
+  team_name: "mission-{projectId}-{missionId}",
   name: "amy-2",
   subagent_type: "ai-team:amy",
   description: "amy-2: {feature title}",
@@ -802,7 +804,7 @@ After post-checks pass (Tawnia is never pre-warmed):
 
 ```text
 Task(
-  team_name: "mission-{missionId}",
+  team_name: "mission-{projectId}-{missionId}",
   name: "tawnia",
   subagent_type: "ai-team:tawnia",
   description: "Tawnia: Documentation and final commit",
@@ -824,7 +826,7 @@ Task(
 
 ```text
 Task(
-  team_name: "mission-{missionId}",
+  team_name: "mission-{projectId}-{missionId}",
   name: "retro",
   subagent_type: "ai-team:retro",
   description: "Retro: Mission retrospective",
@@ -1047,7 +1049,7 @@ When ALL items reach `done` stage, fetch `prdPath` from `ateam missions-current 
 
 ```text
 Task(
-  team_name: "mission-{missionId}",
+  team_name: "mission-{projectId}-{missionId}",
   name: "stockwell",
   subagent_type: "ai-team:stockwell",
   description: "Stockwell: Final Mission Review",
@@ -1178,7 +1180,7 @@ Native teams are ephemeral — they don't survive session restarts. On resume:
 
 3. **Create fresh team:**
    ```
-   TeamCreate(team_name: "mission-{missionId}", description: "Resumed A(i)-Team mission")
+   TeamCreate(team_name: "mission-{projectId}-{missionId}", description: "Resumed A(i)-Team mission")
    ```
 
 4. **Re-initialize instance pool** (same structure as before)
@@ -1203,28 +1205,28 @@ Native teams are ephemeral — they don't survive session restarts. On resume:
    for item in testing stage:
        Bash("ateam board-release releaseItem --itemId {item_id}")
        claimed = claimInstance("murdock")
-       Task(team_name: "mission-{missionId}", name: claimed,
+       Task(team_name: "mission-{projectId}-{missionId}", name: claimed,
             subagent_type: "ai-team:murdock", ...)
        active_instances[item_id] = claimed
 
    for item in implementing stage:
        Bash("ateam board-release releaseItem --itemId {item_id}")
        claimed = claimInstance("ba")
-       Task(team_name: "mission-{missionId}", name: claimed,
+       Task(team_name: "mission-{projectId}-{missionId}", name: claimed,
             subagent_type: "ai-team:ba", ...)
        active_instances[item_id] = claimed
 
    for item in review stage:
        Bash("ateam board-release releaseItem --itemId {item_id}")
        claimed = claimInstance("lynch")
-       Task(team_name: "mission-{missionId}", name: claimed,
+       Task(team_name: "mission-{projectId}-{missionId}", name: claimed,
             subagent_type: "ai-team:lynch", ...)
        active_instances[item_id] = claimed
 
    for item in probing stage:
        Bash("ateam board-release releaseItem --itemId {item_id}")
        claimed = claimInstance("amy")
-       Task(team_name: "mission-{missionId}", name: claimed,
+       Task(team_name: "mission-{projectId}-{missionId}", name: claimed,
             subagent_type: "ai-team:amy", ...)
        active_instances[item_id] = claimed
    ```

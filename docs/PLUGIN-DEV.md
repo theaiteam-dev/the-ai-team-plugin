@@ -440,3 +440,83 @@ The example above uses host-relative paths (run from `packages/kanban-viewer/`).
 - **Backup-name collision on simultaneous boots.** Two containers booting against the same volume in the same UTC second produce the same backup filename (`ateam.db.backup-<YYYYMMDDTHHMMSSZ>`); the second `cp` overwrites the first. The window is one second per concurrent-pair, the cost is one missing backup. Avoid simultaneous deploys against a shared volume.
 - **No advisory lock around backup → backfill → migrate deploy.** Concurrent containers may race on the backfill insert loop. Prisma's own `_prisma_migrations` insert serializes the migrate-deploy step itself, but earlier steps are not protected. In practice, single-replica deployments are unaffected.
 - **`head -n -5` and `xargs -r` are GNU coreutils extensions.** The production image is Debian-based (node:20-slim), where they work. Running the entrypoint locally on macOS without GNU coreutils will silently keep all backups (the script doesn't fail; it just over-retains).
+
+---
+
+## Tick-based Mission Controller
+
+The tick-based mission controller is the A(i)-Team's execution engine. Instead of Hannibal reading a 1200-line orchestration playbook on every wake, the Go controller computes a compact JSON action plan that Claude executes via Claude Code primitives. This reduces Hannibal's context cost by ~80% per cycle.
+
+### Architecture
+
+The controller lives in `packages/ateam-cli/internal/controller/` and is exposed via `ateam controller tick --json`. Claude calls the `/ai-team:tick` slash command (in `commands/tick.md`) on every wake, which calls the controller, executes each action, confirms each action in the checkpoint, and re-arms the next wake via `ScheduleWakeup`.
+
+> **Phase 1 stub history:** The original PRD proposed shipping `commands/tick.md` with inline planning logic before the Go controller existed. That stub path was never shipped. The full controller path (Go planner + checkpoint API) is now live; the stub is not used.
+
+### Tick lifecycle
+
+```
+Claude wakes (ScheduleWakeup fires /ai-team:tick)
+  │
+  ├─ ateam controller tick --json
+  │     reads: /api/missions/current, /api/items?stage=*,
+  │            /api/deps/check, /api/missions/current/health-report,
+  │            /api/controller-checkpoint/<missionId>,
+  │            /tmp/.ateam-pool/<missionId>/ (native-teams only)
+  │     emits: JSON action plan
+  │
+  ├─ Claude executes each action (controller emits/returns actions):
+  │     dispatch      → Task or TeamCreate (legacy vs native-teams mode)
+  │     message       → SendMessage
+  │     final-review  → spawn Stockwell
+  │     release       → ateam board-release releaseItem + ateam pool release
+  │     move          → ateam board-move moveItem --itemId <id> --toStage <stage>
+  │     needsJudgment → print evidence packet, operator decides
+  │
+  └─ After each action, checkpoint confirms:
+        ateam controller checkpoint confirm --action-id <id>
+        (atomic server-side append — idempotent across retries)
+```
+
+### Legacy escape hatch
+
+Passing `--legacy` to `/ai-team:run` or `/ai-team:resume` skips the tick loop and loads the original orchestration playbook instead. The `--legacy` flag is available for one release as a fallback while operators gain confidence in the controller path.
+
+### Action kinds reference
+
+| Kind | What Claude does |
+|------|-----------------|
+| `dispatch` | Fetches item prompt with `ateam items renderItem`, spawns agent via Task (legacy) or TeamCreate (native-teams) |
+| `message` | Sends `SendMessage` to the named instance with the literal action text |
+| `final-review` | Spawns Stockwell via the appropriate Claude primitive |
+| `release` | Calls `ateam board-release releaseItem` and `ateam pool release` |
+| `move` | Moves the item to the controller-specified stage |
+| `needsJudgment` | Prints the evidence packet (item ids, signals, suggested investigation); operator decides |
+
+### Recovery: stale claim detection
+
+The controller detects two classes of stuck items:
+
+- **Stale idle slot** — pool slot has been `.idle` for longer than `ATEAM_STALE_CLAIM_SECONDS` (default: 600) **and** no hook events fired in the window → emits a `release` action.
+- **Ambiguous stall** — pool slot is `.busy` + no hook events + recent activity-log entry → emits `needsJudgment` with `kind: stall-ambiguous` instead of guessing.
+
+**`ATEAM_STALE_CLAIM_SECONDS`** — override the stale-claim threshold (seconds). Set in the environment before starting the controller. Defaults to `600` (10 minutes), matching the health-report API's idle threshold.
+
+### Checkpoint debugging
+
+Operators can inspect or seed the controller checkpoint directly:
+
+```bash
+# Read the current checkpoint for a mission
+ateam controller checkpoint get --mission-id <missionId> --json
+
+# Upsert a checkpoint document (seeding / manual recovery)
+ateam controller checkpoint put --mission-id <missionId> --data '<json>'
+
+# Confirm an action id server-side (atomic, idempotent)
+ateam controller checkpoint confirm --mission-id <missionId> --action-id <id>
+```
+
+### Dry-run snapshot (healthcheck)
+
+`/ai-team:healthcheck` runs `ateam controller tick --json --dry-run` to inspect the controller plan without executing any action or writing to the checkpoint. Useful for operators who want to see what the controller would do before letting it run live.

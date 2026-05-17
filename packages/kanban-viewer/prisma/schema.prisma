@@ -137,6 +137,7 @@ model Mission {
   activities  ActivityLog[]
   hookEvents  HookEvent[]
   tokenUsage  MissionTokenUsage[]
+  checkpoint  ControllerCheckpoint?
 
   // Indexes for common queries
   @@index([archivedAt])
@@ -215,4 +216,22 @@ model MissionTokenUsage {
   @@unique([missionId, agentName, model])
   @@index([missionId])
   @@index([projectId])
+}
+
+/// Per-mission checkpoint for the tick-based controller.
+/// Stores the controller's full state so it can survive context resets
+/// without losing track of pending/confirmed actions, cursor position,
+/// or lane occupancy.
+model ControllerCheckpoint {
+  missionId           String   @id
+  mission             Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
+
+  tickedAt            DateTime                   // Wall-clock time of the last tick
+  activityCursor      Int                        // Highest activity-log ID consumed
+
+  // JSON-serialized arrays / records stored as TEXT in SQLite
+  pendingActionIds    String                     // JSON: string[]
+  confirmedActionIds  String                     // JSON: string[]
+  retryCounters       String                     // JSON: Record<string, number>
+  lastLaneState       String                     // JSON: Record<string, 'idle' | 'busy'>
 }

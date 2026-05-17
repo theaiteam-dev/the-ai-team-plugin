@@ -19,6 +19,7 @@ jobs:
       shared: ${{ steps.filter.outputs.shared }}
       mcp-server: ${{ steps.filter.outputs.mcp-server }}
       kanban-viewer: ${{ steps.filter.outputs.kanban-viewer }}
+      ateam-cli: ${{ steps.filter.outputs.ateam-cli }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -41,6 +42,11 @@ jobs:
               - 'packages/shared/**'
               - 'package.json'
               - 'bun.lockb'
+              - '.github/workflows/**'
+            ateam-cli:
+              - 'packages/ateam-cli/**'
+              - 'packages/shared/fixtures/**'
+              - 'packages/shared/src/stages.ts'
               - '.github/workflows/**'
 
   mcp-server:
@@ -75,7 +81,27 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install
         working-directory: .
-      - run: bunx tsc --noEmit
+      - run: bun run build
+
+  ateam-cli:
+    name: ateam-cli Go Tests
+    needs: [changes]
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.ateam-cli == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: packages/ateam-cli/go.mod
+          cache-dependency-path: packages/ateam-cli/go.sum
+      - run: bun install
+      - name: Generate stage-matrix fixture
+        run: bun run generate
+        working-directory: packages/shared
+      - name: Run Go contract tests
+        run: go test ./internal/stages/...
+        working-directory: packages/ateam-cli
 
   dist-freshness-check:
     name: dist freshness check

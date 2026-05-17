@@ -256,8 +256,21 @@ WIP limits are **per stage** — each pipeline column independently caps how man
      ```
      STOP. Do not start the pipeline.
 
-3. **Detect dispatch mode and load orchestration playbook**
+3. **Enter the tick controller loop**
 
+   Output to user:
+   ```
+   [Hannibal] Tick controller engaged. Watching mission via /ai-team:tick.
+   ```
+
+   Invoke `/ai-team:tick` to start the self-sustaining controller loop. The tick
+   command reads the action plan from the controller, executes each action via the
+   appropriate Claude primitive, confirms each action in the checkpoint, and
+   re-arms the next wake automatically. No further steps are needed.
+
+   ### Legacy escape hatch (`--legacy` flag)
+
+   If `--legacy` was passed, fall back to the original playbook-driven orchestration.
    First, get the plugin root path from the `CLAUDE_PLUGIN_ROOT` environment variable:
    ```
    Bash("echo $CLAUDE_PLUGIN_ROOT")
@@ -274,7 +287,7 @@ WIP limits are **per stage** — each pipeline column independently caps how man
 
    **Read exactly ONE playbook. Do not read both.**
    The playbook contains your complete orchestration loop, dispatch
-   patterns, completion detection, and concrete examples.
+   patterns, completion detection, and concrete examples. Continue with steps 4–9.
 
 4. **Main Claude becomes Hannibal**
    - Orchestration runs in the main context (visible to user)

@@ -75,8 +75,21 @@ Hannibal's job is coordination, not deep reasoning. Sonnet handles dispatch loop
    - `review`: Lynch can re-review (tests + implementation exist, review is idempotent)
    - `probing`: Amy can re-probe (all prior work exists, probing is idempotent)
 
-4. **Load dispatch playbook and re-dispatch agents**
+4. **Enter the tick controller loop**
 
+   Output to user:
+   ```
+   [Hannibal] Tick controller engaged. Watching mission via /ai-team:tick.
+   ```
+
+   Invoke `/ai-team:tick` to hand control to the self-sustaining controller loop.
+   The tick command picks up from the current board state, executes pending actions,
+   confirms each in the checkpoint, and re-arms the next wake automatically.
+   No further steps are needed.
+
+   ### Legacy escape hatch (`--legacy` flag)
+
+   If `--legacy` was passed, fall back to the original playbook-driven orchestration.
    First, get the plugin root path from the `CLAUDE_PLUGIN_ROOT` environment variable:
    ```
    Bash("echo $CLAUDE_PLUGIN_ROOT")
@@ -92,6 +105,7 @@ Hannibal's job is coordination, not deep reasoning. Sonnet handles dispatch loop
    - Otherwise: `Read("$CLAUDE_PLUGIN_ROOT/playbooks/orchestration-legacy.md")`
 
    Follow the playbook's resume/recovery section for dispatch mechanics.
+   Continue with steps 5–7.
 
    **API state is the source of truth:**
    - Work items track all progress via `work_log`
@@ -122,9 +136,9 @@ Hannibal's job is coordination, not deep reasoning. Sonnet handles dispatch loop
    Resuming orchestration...
    ```
 
-7. **Start Hannibal orchestration**
-   - Same as `/ai-team:run` from recovered state
-   - Hannibal picks up from current board state
+7. **Start Hannibal orchestration** (`--legacy` path only)
+   - Hannibal picks up from the current board state using the loaded playbook
+   - Follow the playbook's recovery section for dispatch mechanics
 
 ## Recovery Rules
 

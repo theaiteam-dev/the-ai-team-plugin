@@ -12,7 +12,8 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "generate": "bun scripts/generate-stage-matrix.ts",
+    "build": "bun run generate && tsc",
     "dev": "tsc --watch"
   },
   "devDependencies": {

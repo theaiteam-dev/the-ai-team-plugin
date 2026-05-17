@@ -1,0 +1,64 @@
+{
+  "transitionMatrix": {
+    "briefings": [
+      "ready",
+      "blocked"
+    ],
+    "ready": [
+      "testing",
+      "implementing",
+      "probing",
+      "blocked",
+      "briefings"
+    ],
+    "testing": [
+      "implementing",
+      "blocked"
+    ],
+    "implementing": [
+      "review",
+      "blocked"
+    ],
+    "probing": [
+      "ready",
+      "done",
+      "blocked"
+    ],
+    "review": [
+      "testing",
+      "implementing",
+      "probing",
+      "blocked"
+    ],
+    "done": [],
+    "blocked": [
+      "ready"
+    ]
+  },
+  "pipelineStages": {
+    "testing": {
+      "agent": "murdock",
+      "agentDisplay": "Murdock",
+      "nextStage": "implementing",
+      "description": "writes tests defining acceptance criteria"
+    },
+    "implementing": {
+      "agent": "ba",
+      "agentDisplay": "B.A.",
+      "nextStage": "review",
+      "description": "implements code to pass tests"
+    },
+    "review": {
+      "agent": "lynch",
+      "agentDisplay": "Lynch",
+      "nextStage": "probing",
+      "description": "reviews tests and implementation together"
+    },
+    "probing": {
+      "agent": "amy",
+      "agentDisplay": "Amy",
+      "nextStage": "done",
+      "description": "investigates for bugs beyond test coverage"
+    }
+  }
+}

@@ -6,7 +6,7 @@ Invoked two ways:
 - **Self-wake from `ScheduleWakeup`** — fires on the recurring heartbeat schedule
 - **Manual** — a human runs `/ai-team:healthcheck` to take a snapshot
 
-The command is deterministic: every wake runs the same routine. Unlike a freeform `HEARTBEAT:` prompt, the slash command guarantees the steps below execute.
+The command is deterministic: every wake runs the same routine.
 
 ## Behavior
 
@@ -29,60 +29,40 @@ ScheduleWakeup(
 
 The cron is one-shot — simply not calling `ScheduleWakeup` lets the loop self-expire.
 
-### 2. Fetch the health report
+**No active mission** — exit silently and do not re-arm. The heartbeat is meaningless without a mission.
+
+### 2. Snapshot the controller state (dry-run tick)
+
+Ask the controller what it would do right now, without executing any action or writing to the checkpoint:
 
 ```bash
-ateam missions-health getHealthReport --json
+ateam controller tick --json --dry-run
 ```
 
-The endpoint returns raw signals — no thresholds, no heuristics. Fields:
+Parse the JSON output and print a human-readable summary to the user:
 
-- `missionIdle` — true if the mission has no recent activity at all
-- `inFlightItems[]` — per claimed item: `itemId`, `assignedAgent`, `claimedAt`, `lastActivityAt`, `lastActivitySource` (`hook_event` | `activity_log` | `work_log` | `agent_claim`), `idleSeconds`, `lastWorkLogEntry`, `recentActivity` (last 5)
-
-### 3. Inspect the local pool (host-side, not in the API)
-
-For any in-flight item that looks suspicious, check pool state on Hannibal's host:
-
-```bash
-ls /tmp/.ateam-pool/${ATEAM_MISSION_ID}/ | grep "^${assignedAgent}\."
+```
+[Hannibal] Healthcheck snapshot:
+  summary:       {response.summary}
+  nextWake:      {response.nextWakeSeconds}s
+  actions:       {response.actions.length} pending
+  needsJudgment: {response.needsJudgment ? "YES — see below" : "none"}
 ```
 
-- `${assignedAgent}.busy` → still claimed (agent may be working or hung)
-- `${assignedAgent}.idle` → claim was released; item is orphaned
-- nothing → agent never spawned or pool was reset
+If `actions` is non-empty, list each action's `kind`, `itemId`, and `why` so the operator can see what the controller plans to do on the next live tick.
 
-### 4. Decide and act
+If `needsJudgment` is set, print the evidence packet (`needsJudgment.evidence`: item ids, signals, suggested investigation). Do NOT load any orchestration playbook — just present the evidence so the operator can decide.
 
-Read the data. Pick a response per item — there is no rigid ladder:
+### 3. Handle errors
 
-| Signal | Likely action |
-|--------|---------------|
-| Agent alive but quiet (`.busy` + recent `hook_event`) | Send `STATUS?` via SendMessage, wait one more heartbeat |
-| Agent silent + `.busy` orphaned (no recent activity, `lastActivitySource: agent_claim`) | `ateam pool release`, then re-dispatch from item's current stage |
-| Item back in pre-pipeline stage with no `assignedAgent` | Re-dispatch normally via the playbook |
-| Mission idle, all items `done` or `blocked` | Mission is over — do NOT re-arm (skip step 1 next time) |
+**API unreachable** — log the error, report `HEALTHCHECK: API unreachable`, and exit non-zero. The re-arm in step 1 already fired, so the loop survives the transient outage.
 
-Avoid threshold-driven autopilot. The point of the heartbeat is to give Hannibal a chance to look; the action depends on what he sees.
+**`ateam` binary missing** — same as API unavailable.
 
-### 5. Report a one-line summary
-
-After the routine, output a single line so the run log reads cleanly:
-
-```text
-HEARTBEAT @ <timestamp>: <N> in-flight, <K> idle > 30min, action: <none | investigated WI-X | re-dispatched WI-Y>
-```
-
-## Errors
-
-- **No active mission** — exit silently. The heartbeat is meaningless without a mission; do not re-arm.
-- **API unavailable** — log the error, re-arm anyway (so the loop survives a transient outage), and report `HEARTBEAT: API unreachable`.
-- **`ateam` binary missing** — same as API unavailable.
+**`ateam controller tick` exits non-zero** — print the error payload (it is always valid JSON with a `needsJudgment` reason). Do not treat this as fatal; the controller's fail-closed design surfaces the reason in the JSON.
 
 ## CLI Commands Used
 
 | Command | Purpose |
 |---------|---------|
-| `ateam missions-health getHealthReport --json` | Raw mission/item activity signals |
-| `ateam pool release --agent <name> --mission <id>` | Free an orphaned pool slot |
-| `ls /tmp/.ateam-pool/${ATEAM_MISSION_ID}/` | Inspect host-side pool state |
+| `ateam controller tick --json --dry-run` | Snapshot the controller plan without executing actions |
