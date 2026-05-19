@@ -256,128 +256,59 @@ WIP limits are **per stage** — each pipeline column independently caps how man
      ```
      STOP. Do not start the pipeline.
 
-3. **Enter the tick controller loop**
+3. **Enter the tick controller loop — DEFAULT PATH ENDS HERE**
 
    Output to user:
    ```
    [Hannibal] Tick controller engaged. Watching mission via /ai-team:tick.
    ```
 
-   Invoke `/ai-team:tick` to start the self-sustaining controller loop. The tick
-   command reads the action plan from the controller, executes each action via the
-   appropriate Claude primitive, confirms each action in the checkpoint, and
-   re-arms the next wake automatically. No further steps are needed.
-
-   ### Legacy escape hatch (`--legacy` flag)
-
-   If `--legacy` was passed, fall back to the original playbook-driven orchestration.
-   First, get the plugin root path from the `CLAUDE_PLUGIN_ROOT` environment variable:
+   Use the **Skill tool** to invoke the tick command now:
    ```
-   Bash("echo $CLAUDE_PLUGIN_ROOT")
+   Skill({"skill": "ai-team:tick"})
    ```
 
-   Then check the environment variable:
-   ```
-   Bash("echo $CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")
-   ```
+   **⛔ STOP. This is the end of /ai-team:run for the default path.**
+   The tick skill handles everything from here: reading the action plan, dispatching
+   agents, confirming actions, and scheduling the next wake. Do NOT load any playbook.
+   Do NOT execute the legacy steps below. Do NOT dispatch any agents yourself.
 
-   Using the plugin root path from above:
-   - If output is "1": `Read("$CLAUDE_PLUGIN_ROOT/playbooks/orchestration-native.md")`
-   - Otherwise: `Read("$CLAUDE_PLUGIN_ROOT/playbooks/orchestration-legacy.md")`
+---
 
-   **Read exactly ONE playbook. Do not read both.**
-   The playbook contains your complete orchestration loop, dispatch
-   patterns, completion detection, and concrete examples. Continue with steps 4–9.
+## Legacy Mode (`--legacy` flag only)
 
-4. **Main Claude becomes Hannibal**
-   - Orchestration runs in the main context (visible to user)
-   - Worker agents dispatched as direct subagents
+> **Only read this section if `--legacy` was explicitly passed as an argument.**
+> If `--legacy` was NOT passed, you already finished at step 3. Stop here.
 
-5. **Orchestration loop:**
-   Follow the loaded orchestration playbook for the complete loop,
-   dispatch patterns, and completion detection.
-   - Use `ateam board-move moveItem` to advance items between stages
-   - Use `ateam deps-check checkDeps` to find items ready to move from briefings → ready
-   - Start new features if per-stage WIP limits allow (check instance availability, not global count)
+**Step L1 — Load the orchestration playbook:**
 
-6. **Final Mission Review (Stockwell):**
-   - When ALL items reach `done` stage, dispatch Stockwell for final review
-   - Stockwell reviews PRD + diff for cross-cutting issues
-   - Focus: PRD compliance, consistency, security, integration
-   - If FINAL APPROVED → proceed to post-checks
-   - If FINAL REJECTED → specified items return to pipeline
+Check the environment variables:
+```
+Bash("echo $CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")
+Bash("echo $CLAUDE_PLUGIN_ROOT")
+```
 
-7. **Post-Mission Checks:**
-   **GATE: Stockwell's Final Mission Review MUST have completed before running postchecks.**
-   If Stockwell was not dispatched or did not return a verdict, STOP and dispatch Stockwell first.
-   This is not optional — postchecks without a final review means cross-cutting issues go undetected.
+Find and load ONE playbook:
+- If `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`: `Read("$CLAUDE_PLUGIN_ROOT/playbooks/orchestration-native.md")` (or search for it with `find`)
+- Otherwise: `Read("$CLAUDE_PLUGIN_ROOT/playbooks/orchestration-legacy.md")`
 
-   Run checks via Bash first (like precheck), then call `ateam missions-postcheck missionPostcheck` with results.
+**Read exactly ONE playbook. Do not read both.**
 
-   Read `ateam.config.json` to get the list of check names (`config.postcheck`) and their commands
-   (`config.checks`). Run each check via Bash, capturing stdout, stderr, and exit code.
-   Then call `ateam missions-postcheck missionPostcheck` with the computed result:
+**Step L2 — Orchestration loop:**
+Follow the loaded playbook for the complete loop, dispatch patterns, and completion detection.
 
-   ```text
-   config = Read("ateam.config.json")  # parse JSON
+**Step L3 — Final Mission Review (Stockwell):**
+When ALL items reach `done`, dispatch Stockwell. If FINAL APPROVED → proceed to post-checks.
 
-   passed   = true
-   blockers = []
-   output   = {}
+**Step L4 — Post-Mission Checks:**
+Run checks via Bash (per `ateam.config.json`), then call `ateam missions-postcheck missionPostcheck`.
 
-   # config.postcheck lists the check names to run (e.g. ["lint", "unit"] by default).
-   # config.checks maps each name to its shell command.
-   # Results are stored in output keyed by check name: output["lint"], output["unit"], etc.
-   for checkName in config.postcheck:
-       if checkName not in config.checks:
-           passed = false
-           blockers.append("Check '" + checkName + "' is listed in config.postcheck but has no command in config.checks")
-           continue
-       if config.checks[checkName] is null:
-           # Skip null commands (e.g. e2e: null means no e2e checks)
-           continue
+**Step L5 — Documentation Phase (Tawnia):**
+When all items done + final review passed + post-checks passed, dispatch Tawnia for CHANGELOG and final commit.
 
-       result = Bash(config.checks[checkName], capture: stdout+stderr+exitcode, timeout: 300s)
-       timedOut = (result.exitcode == TIMEOUT_CODE)
-       output[checkName] = { stdout: result.stdout, stderr: result.stderr, timedOut }
-
-       if timedOut:
-           passed = false
-           blockers.append(checkName + " timed out after 5 minutes")
-       elif result.exitcode != 0:
-           passed = false
-           blockers.append(checkName + " failed: " + result.stdout.slice(0,200))
-
-   ateam missions-postcheck missionPostcheck --passed {passed} --blockers {blockers} --output {output}
-   ```
-
-   - If `passed = true`: mission transitions to `completed`.
-   - If `passed = false`: mission transitions to `failed`. Report blockers to user.
-     Items that caused the failure return to pipeline for fixes.
-
-8. **Documentation Phase (Tawnia):**
-   - Dispatch Tawnia when ALL three conditions are met:
-     1. All items in `done` stage
-     2. Final review passed
-     3. Post-checks passed
-   - Tawnia updates CHANGELOG.md (always)
-   - Tawnia updates README.md (if user-facing changes)
-   - Tawnia creates/updates docs/ entries (for complex features)
-   - Tawnia makes the **final commit** bundling all mission work + documentation
-   - Updates mission state with documentation completion and commit hash
-
-9. **Completion (ALL conditions required):**
-   - ✓ All items in `done` stage
-   - ✓ Final review passed
-   - ✓ Post-checks passed
-   - ✓ Tawnia documentation committed ← **REQUIRED**
-   - Then and ONLY then: "I love it when a plan comes together."
-
-
-   **Mission is NOT complete until Tawnia commits. No exceptions.**
-
-   - Items in `blocked` stage → Needs human intervention
-   - Post-checks fail → Fix issues before documentation can run
+**Step L6 — Completion:**
+Mission complete only when: all items done ✓, final review passed ✓, post-checks passed ✓, Tawnia committed ✓.
+"I love it when a plan comes together."
 
 ## Progress Updates
 

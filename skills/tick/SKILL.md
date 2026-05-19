@@ -1,6 +1,8 @@
 ---
-model: sonnet
+name: tick
+description: One controller tick for the A(i)-Team mission loop. Reads the action plan from `ateam controller tick --json`, executes each action via the appropriate Claude primitive (Task/SendMessage/board-move/pool-release), confirms each action in the checkpoint, and re-arms the next wake via ScheduleWakeup. Called by /ai-team:run and /ai-team:resume after precheck passes.
 ---
+
 # /ai-team:tick
 
 One controller tick: read the action plan, execute each action, confirm completion, and re-arm the next wake.
@@ -49,7 +51,7 @@ For each entry in `actions`, act based on `kind`. The `mode` field in the respon
 
 | Kind | How to execute |
 |------|----------------|
-| `dispatch` | Fetch the item prompt with `ateam items renderItem --id <itemId>`. Then spawn the agent depending on `mode`:<br>**Legacy mode** (`mode: "legacy"`): `Agent(subagent_type: "ai-team:<agent>", prompt: <renderItem output>)`.<br>**Native-teams mode** (`mode: "native-teams"`): Before dispatching Murdock, pre-warm the full pipeline lane so peer-to-peer handoffs work automatically: (1) determine next lane number N (lowest unused N from pool status); (2) spawn all 4 lane agents in one message: `Agent(team_name: <team>, name: "murdock-N", subagent_type: "ai-team:murdock")`, `Agent(team_name: <team>, name: "ba-N", ...)`, `Agent(team_name: <team>, name: "lynch-N", ...)`, `Agent(team_name: <team>, name: "amy-N", ...)`; (3) wait for READY from all 4; (4) `ateam pool mark-idle <instance>` for each; (5) send work to murdock-N via SendMessage. Create the team first with `TeamCreate(team_name: "mission-<projectId>-<missionId>")` if it doesn't exist yet. Do NOT inline or invent prompts — always use `renderItem`. |
+| `dispatch` | Fetch the item prompt with `ateam items renderItem --id <itemId>`. Then spawn the agent depending on mode:<br>**Legacy mode** (`mode: "legacy"`): `Agent(subagent_type: "ai-team:<agent>", prompt: <renderItem output>)`.<br>**Native-teams mode** (`mode: "native-teams"`): Before dispatching Murdock, first pre-warm the full pipeline lane so peer-to-peer handoffs work automatically: (1) determine next lane number N (check which `murdock-N` pool slots exist, pick the lowest unused N); (2) spawn all 4 lane agents via `Agent(team_name: <team>, name: "murdock-N"/"ba-N"/"lynch-N"/"amy-N", subagent_type: ...)` in a single message; (3) wait for READY messages from all 4; (4) `ateam pool mark-idle <instance>` for each that sent READY; (5) send work to murdock-N via SendMessage. If no team exists yet, create one first with `TeamCreate(team_name: "mission-<projectId>-<missionId>")`. Do NOT inline or invent prompts — always use `renderItem`. |
 | `message` | `SendMessage` to the named instance with the literal text from the action |
 | `final-review` | Spawn `Stockwell` via the appropriate Claude primitive (`Task` in legacy mode, `TeamCreate` in native-teams mode) |
 | `release` | `ateam board-release releaseItem --itemId <id>` **and** `ateam pool release <name>` as named by the action |

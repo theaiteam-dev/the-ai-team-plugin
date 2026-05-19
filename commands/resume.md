@@ -75,70 +75,44 @@ Hannibal's job is coordination, not deep reasoning. Sonnet handles dispatch loop
    - `review`: Lynch can re-review (tests + implementation exist, review is idempotent)
    - `probing`: Amy can re-probe (all prior work exists, probing is idempotent)
 
-4. **Enter the tick controller loop**
+4. **Enter the tick controller loop — DEFAULT PATH ENDS HERE**
 
    Output to user:
    ```
    [Hannibal] Tick controller engaged. Watching mission via /ai-team:tick.
    ```
 
-   Invoke `/ai-team:tick` to hand control to the self-sustaining controller loop.
-   The tick command picks up from the current board state, executes pending actions,
-   confirms each in the checkpoint, and re-arms the next wake automatically.
-   No further steps are needed.
-
-   ### Legacy escape hatch (`--legacy` flag)
-
-   If `--legacy` was passed, fall back to the original playbook-driven orchestration.
-   First, get the plugin root path from the `CLAUDE_PLUGIN_ROOT` environment variable:
+   Use the **Skill tool** to invoke the tick command now:
    ```
-   Bash("echo $CLAUDE_PLUGIN_ROOT")
+   Skill({"skill": "ai-team:tick"})
    ```
 
-   Then check the environment variable (same as `/ai-team:run`):
-   ```
-   Bash("echo $CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")
-   ```
+   **⛔ STOP. This is the end of /ai-team:resume for the default path.**
+   The tick skill picks up from the current board state, dispatches pending work,
+   confirms actions, and schedules the next wake. Do NOT load any playbook.
+   Do NOT re-dispatch agents yourself. Do NOT execute the legacy steps below.
 
-   Using the plugin root path from above:
-   - If "1": `Read("$CLAUDE_PLUGIN_ROOT/playbooks/orchestration-native.md")`
-   - Otherwise: `Read("$CLAUDE_PLUGIN_ROOT/playbooks/orchestration-legacy.md")`
+---
 
-   Follow the playbook's resume/recovery section for dispatch mechanics.
-   Continue with steps 5–7.
+## Legacy Mode (`--legacy` flag only)
 
-   **API state is the source of truth:**
-   - Work items track all progress via `work_log`
-   - Board stage positions are preserved in the database
-   - Only the agent sessions are lost - not the work state
-   - Agents pick up from the current board state, not from memory
+> **Only read this section if `--legacy` was explicitly passed as an argument.**
+> If `--legacy` was NOT passed, you already finished at step 4. Stop here.
 
-5. **Validate board integrity**
-   - Run `ateam deps-check checkDeps --json` to verify dependency graph
-   - Check for orphaned items
-   - Ensure no items are "lost"
+**Step L1 — Load the orchestration playbook:**
+```
+Bash("echo $CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")
+Bash("echo $CLAUDE_PLUGIN_ROOT")
+```
+- If `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`: `Read("$CLAUDE_PLUGIN_ROOT/playbooks/orchestration-native.md")`
+- Otherwise: `Read("$CLAUDE_PLUGIN_ROOT/playbooks/orchestration-legacy.md")`
 
-6. **Display recovery summary**
-   ```
-   The A(i)-Team is back. Resuming mission...
+**Step L2 — Validate board integrity:**
+Run `ateam deps-check checkDeps --json`. Check for orphaned items.
 
-   Recovered state:
-   - {n} items in active stages, agents re-dispatched at current stage
-   - {t} in testing (Murdock), {i} in implementing (B.A.), {r} in review (Lynch), {p} in probing (Amy)
-   - Native teams: respawned from board state (if teams mode)
-
-   Current state:
-   - Briefings: {x}
-   - Ready:     {y}
-   - Done:      {z}
-   - Blocked:   {b}
-
-   Resuming orchestration...
-   ```
-
-7. **Start Hannibal orchestration** (`--legacy` path only)
-   - Hannibal picks up from the current board state using the loaded playbook
-   - Follow the playbook's recovery section for dispatch mechanics
+**Step L3 — Display recovery summary and resume orchestration:**
+Follow the playbook's resume/recovery section to re-dispatch agents at their current stages.
+API state is the source of truth — board positions and work logs are preserved.
 
 ## Recovery Rules
 
