@@ -260,16 +260,18 @@ If you can't produce a concrete example for an AC, it needs to be rewritten with
 "Uses bcrypt for hashing"           # implementation choice, not behavior
 "Error handling works"              # unmeasurable
 "Performance is good"               # unmeasurable
-"No tinted Tailwind color tokens"   # CSS class-list scan — not testable in jsdom, will be rejected by Lynch
-"Pure black/white palette"          # same — untestable styling constraint
-"Color invariant scans className"   # explicitly banned anti-pattern in test-writing skill
+"No tinted color tokens"            # CSS output — not testable in jsdom, will cause a banned class-list scan
+"Pure black/white palette"          # CSS output — same problem
+"Renders with correct spacing"      # CSS layout — not observable in jsdom
+"Animates on hover"                 # CSS — not observable in jsdom
 ```
 
-**Styling/visual constraints that cannot be tested in jsdom** (Tailwind colors, CSS tokens, layout, animations) must be written as: `"<constraint> (code review only)"`. This signals to Murdock to document it rather than write a banned class-list scan test.
+**CSS outputs cannot be tested in jsdom** — this includes class names, computed styles, colors, spacing, layout, animations, and any CSS framework tokens. jsdom does not compute CSS. Any AC that references a CSS output must be written as `"<constraint> (code review only)"` so Murdock documents it rather than writing a banned test.
 
 ```
-"Only uses black/white Tailwind classes (code review only)"   # GOOD
-"No gray color tokens in rendered output (code review only)"  # GOOD
+"Only uses black/white color palette (code review only)"      # GOOD
+"No layout shift on toggle (code review only)"                # GOOD
+"Correct spacing between items (code review only)"            # GOOD
 ```
 
 **GOOD:**

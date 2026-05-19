@@ -86,14 +86,23 @@ expect(screen.getByRole('checkbox', { name: /walk dog/i })).toBeChecked();
 // (or: assert content/role/aria changed — not which tokens did)
 ```
 
-**When an AC asks you to verify Tailwind colors, CSS tokens, or class names:** do NOT write a test. jsdom does not compute CSS — any such test would be a class-list scan and will be rejected. Instead, write a comment in the test file:
+**Never test CSS outputs.** jsdom does not compute CSS — class names, computed styles, inline styles, layout, animations, and color tokens are all invisible to vitest. Any test that asserts on CSS is either a banned class-list scan or a test that always passes regardless of the actual rendered appearance.
+
+This covers:
+- Class name strings (`toHaveClass`, `className.includes`, `getAttribute('class')`)
+- Computed styles (`getComputedStyle` — always returns empty in jsdom)
+- Inline styles (`style.color`, `style.backgroundColor`)
+- CSS custom properties
+- Any Tailwind token, color, spacing, or layout utility
+
+**When an AC references CSS output** ("no tinted color tokens", "pure black/white palette", "renders with correct spacing", "animates on hover") — do NOT write a test. Write a comment instead:
 
 ```typescript
-// AC N: [styling — code review only] Not automatable in vitest/jsdom.
-// Tailwind token constraints are verified by reading the implementation.
+// AC N: [CSS — code review only] Not automatable in vitest/jsdom.
+// CSS outputs are verified by reading the implementation.
 ```
 
-This applies even if the AC is phrased as a requirement ("no tinted color tokens", "pure black/white palette", "no gray classes"). The constraint is real; the test is not the right tool.
+The constraint is real. The automated test is not the right tool for it.
 
 ### 4. Source File Regex Matching (BANNED)
 
