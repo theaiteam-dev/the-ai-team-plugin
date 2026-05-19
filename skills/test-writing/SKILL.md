@@ -86,6 +86,15 @@ expect(screen.getByRole('checkbox', { name: /walk dog/i })).toBeChecked();
 // (or: assert content/role/aria changed — not which tokens did)
 ```
 
+**When an AC asks you to verify Tailwind colors, CSS tokens, or class names:** do NOT write a test. jsdom does not compute CSS — any such test would be a class-list scan and will be rejected. Instead, write a comment in the test file:
+
+```typescript
+// AC N: [styling — code review only] Not automatable in vitest/jsdom.
+// Tailwind token constraints are verified by reading the implementation.
+```
+
+This applies even if the AC is phrased as a requirement ("no tinted color tokens", "pure black/white palette", "no gray classes"). The constraint is real; the test is not the right tool.
+
 ### 4. Source File Regex Matching (BANNED)
 
 Using `readFileSync` to read production code as strings and regex-match. Tests must render or execute code, not pattern-match source text.

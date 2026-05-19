@@ -260,6 +260,16 @@ If you can't produce a concrete example for an AC, it needs to be rewritten with
 "Uses bcrypt for hashing"           # implementation choice, not behavior
 "Error handling works"              # unmeasurable
 "Performance is good"               # unmeasurable
+"No tinted Tailwind color tokens"   # CSS class-list scan — not testable in jsdom, will be rejected by Lynch
+"Pure black/white palette"          # same — untestable styling constraint
+"Color invariant scans className"   # explicitly banned anti-pattern in test-writing skill
+```
+
+**Styling/visual constraints that cannot be tested in jsdom** (Tailwind colors, CSS tokens, layout, animations) must be written as: `"<constraint> (code review only)"`. This signals to Murdock to document it rather than write a banned class-list scan test.
+
+```
+"Only uses black/white Tailwind classes (code review only)"   # GOOD
+"No gray color tokens in rendered output (code review only)"  # GOOD
 ```
 
 **GOOD:**
