@@ -19,13 +19,15 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"ateam/internal/stages"
 )
 
 // Config holds all inputs the Planner needs to compute a tick plan.
 type Config struct {
 	// BaseURL is the kanban-viewer API base URL (e.g. "http://localhost:3000").
 	BaseURL string
-	// MissionID is the active mission identifier, e.g. "M-20260501-001".
+	// MissionID is the active mission identifier, e.g. "M-ai-team-20260501-001".
 	MissionID string
 	// Mode is "native-teams" or "legacy". Controls whether the pool
 	// filesystem is consulted for WIP gating.
@@ -57,13 +59,15 @@ type TickOutput struct {
 // All actions carry ID, Kind, and Why. Kind-specific fields use omitempty so
 // they only appear in the JSON for the relevant action kinds.
 type Action struct {
-	ID        string `json:"id"`
-	Kind      string `json:"kind"`
-	Why       string `json:"why"`
-	ItemID    string `json:"itemId,omitempty"`
-	ItemTitle string `json:"itemTitle,omitempty"`
-	Agent     string `json:"agent,omitempty"`
-	ToStage   string `json:"toStage,omitempty"` // set for "move" actions
+	ID         string   `json:"id"`
+	Kind       string   `json:"kind"`
+	Why        string   `json:"why"`
+	ItemID     string   `json:"itemId,omitempty"`
+	ItemTitle  string   `json:"itemTitle,omitempty"`
+	Agent      string   `json:"agent,omitempty"`
+	ToStage    string   `json:"toStage,omitempty"`   // set for "move" actions
+	LaneNumber int      `json:"laneNumber,omitempty"` // set for "setup-lane" actions
+	Instances  []string `json:"instances,omitempty"`  // set for "setup-lane" actions
 }
 
 // HTTPError is returned by fetch for non-2xx responses. Callers can inspect
@@ -104,6 +108,10 @@ func (p *Planner) Tick() (*TickOutput, error) {
 	mission, missionErr := p.fetchMission()
 	if missionErr != nil {
 		return p.failClosed(missionID, mode, fmt.Errorf("fetch mission: %w", missionErr)), missionErr
+	}
+	// If missionID was not provided via config/env, use the one returned by the API.
+	if missionID == "" {
+		missionID = mission.ID
 	}
 
 	// ── 2. Health report (non-fatal — used for stale-claim recovery) ────────
@@ -175,7 +183,60 @@ func (p *Planner) Tick() (*TickOutput, error) {
 		dispatched++
 	}
 
-	// ── 8. Final-review action ────────────────────────────────────────────
+	// ── 7b. Setup-lane — ready items exist but pool is completely empty ──────
+	// Emit one setup-lane action so Hannibal spawns the full pipeline quartet
+	// (murdock-N, ba-N, lynch-N, amy-N) and marks them idle before the next tick.
+	// Only fires when there are NO murdock files at all (not even busy) —
+	// if agents are busy, work is in progress; wait for them instead of spawning a new lane.
+	if mode == "native-teams" && len(dispatchable) > 0 && idleAgentCount == 0 && dispatched == 0 {
+		poolDir := filepath.Join("/tmp", ".ateam-pool", missionID)
+		if !anyMurdockExists(poolDir) {
+			laneNum := nextLaneNumber(poolDir)
+			instances := []string{
+				fmt.Sprintf("murdock-%d", laneNum),
+				fmt.Sprintf("ba-%d", laneNum),
+				fmt.Sprintf("lynch-%d", laneNum),
+				fmt.Sprintf("amy-%d", laneNum),
+			}
+			actionID := buildActionID(missionID, "lane", "setup-lane", fmt.Sprintf("lane-%d", laneNum), seq)
+			actions = append(actions, Action{
+				ID:         actionID,
+				Kind:       "setup-lane",
+				Why:        fmt.Sprintf("ready items exist (%d) but pool is empty — pre-warm lane %d", len(dispatchable), laneNum),
+				LaneNumber: laneNum,
+				Instances:  instances,
+			})
+			seq++
+		}
+	}
+
+	// ── 8. Orphan dispatch — active-stage items with no assigned agent ───────
+	// Covers handoff failures: if an item is in testing/implementing/review/probing
+	// but has no assignedAgent, dispatch the responsible agent directly.
+	for stageName, stageInfo := range stages.PipelineStages {
+		for _, item := range itemsByStage[stageName] {
+			if item.AssignedAgent != "" {
+				continue // already claimed — skip
+			}
+			agentType := stageInfo.Agent
+			actionID := buildActionID(missionID, item.ID, "dispatch", agentType, seq)
+			why := fmt.Sprintf(
+				"orphan dispatch: %s in %s with no assigned agent — dispatching %s",
+				item.ID, stageName, agentType,
+			)
+			actions = append(actions, Action{
+				ID:        actionID,
+				Kind:      "dispatch",
+				Why:       why,
+				ItemID:    item.ID,
+				ItemTitle: item.Title,
+				Agent:     agentType,
+			})
+			seq++
+		}
+	}
+
+	// ── 9. Final-review action ────────────────────────────────────────────
 	nonDoneStages := []string{
 		"briefings", "ready", "testing", "implementing",
 		"review", "probing", "blocked",
@@ -246,10 +307,11 @@ type depsData struct {
 }
 
 type boardItem struct {
-	ID      string `json:"id"`
-	Title   string `json:"title"`
-	StageID string `json:"stageId"`
-	Type    string `json:"type"`
+	ID            string `json:"id"`
+	Title         string `json:"title"`
+	StageID       string `json:"stageId"`
+	Type          string `json:"type"`
+	AssignedAgent string `json:"assignedAgent"`
 }
 
 // checkpointData mirrors the GET /api/controller-checkpoint/:missionId
@@ -468,6 +530,33 @@ func countIdleAgents(poolDir, agentType string) int {
 }
 
 // ── Planning helpers ──────────────────────────────────────────────────────────
+
+// anyMurdockExists returns true if any murdock-N.idle or murdock-N.busy file exists in poolDir.
+// Used to distinguish "pool completely empty" from "all murdocks busy".
+func anyMurdockExists(poolDir string) bool {
+	for _, pat := range []string{"murdock-*.idle", "murdock-*.busy", "murdock.idle", "murdock.busy"} {
+		matches, _ := filepath.Glob(filepath.Join(poolDir, pat))
+		if len(matches) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// nextLaneNumber returns the lowest lane number N such that murdock-N.idle does not
+// exist in poolDir. If poolDir doesn't exist or is empty, returns 1.
+func nextLaneNumber(poolDir string) int {
+	for n := 1; n <= 16; n++ {
+		idlePath := filepath.Join(poolDir, fmt.Sprintf("murdock-%d.idle", n))
+		busyPath := filepath.Join(poolDir, fmt.Sprintf("murdock-%d.busy", n))
+		if _, errI := os.Stat(idlePath); os.IsNotExist(errI) {
+			if _, errB := os.Stat(busyPath); os.IsNotExist(errB) {
+				return n
+			}
+		}
+	}
+	return 1
+}
 
 // filterDispatchable returns ready items whose ID appears in the deps readySet.
 // Order is preserved (stable, sorted by item position in the slice) so action
