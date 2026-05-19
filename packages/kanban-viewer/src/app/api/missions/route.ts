@@ -83,19 +83,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 }
 
 /**
- * Generates a mission ID in M-YYYYMMDD-NNN format.
- * NNN is a sequential number that increments for missions created on the same day.
+ * Generates a mission ID in M-{projectId}-YYYYMMDD-NNN format.
+ * NNN is a sequential number that increments for missions created on the same day within the project.
  */
-async function generateMissionId(): Promise<string> {
+async function generateMissionId(projectId: string): Promise<string> {
   const now = new Date();
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
   const day = String(now.getDate()).padStart(2, '0');
-  const datePrefix = `M-${year}${month}${day}`;
+  const datePrefix = `M-${projectId}-${year}${month}${day}`;
 
-  // Count existing missions for today to determine sequence number
   const countToday = await prisma.mission.count({
     where: {
+      projectId,
       id: {
         startsWith: datePrefix,
       },
@@ -217,7 +217,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     await ensureProject(projectId);
 
     // Generate mission ID
-    const missionId = await generateMissionId();
+    const missionId = await generateMissionId(projectId);
 
     // Create new mission in initializing state
     const newMission = await prisma.mission.create({

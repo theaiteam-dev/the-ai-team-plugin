@@ -150,7 +150,7 @@ describe('POST /api/missions - 409 guard for precheck_failure', () => {
     mockPrisma.mission.findFirst.mockResolvedValue(null);
     mockPrisma.mission.count.mockResolvedValue(0);
     mockPrisma.mission.create.mockResolvedValue(
-      createMission({ id: 'M-20260306-001', state: 'initializing' })
+      createMission({ id: 'M-kanban-viewer-20260306-001', state: 'initializing' })
     );
 
     const { POST } = await import('@/app/api/missions/route');
@@ -161,6 +161,6 @@ describe('POST /api/missions - 409 guard for precheck_failure', () => {
     expect(response.status).toBe(201);
     const body = await response.json();
     expect(body.success).toBe(true);
-    expect(body.data.id).toMatch(/^M-\d{8}-\d{3}$/);
+    expect(body.data.id).toMatch(/^M-[a-z0-9-]+-\d{8}-\d{3}$/);
   });
 });

@@ -1066,8 +1066,8 @@ describe('Mission Endpoints Integration', () => {
   });
 
   describe('POST /api/missions - Create new mission', () => {
-    it('should create mission with auto-generated ID in M-YYYYMMDD-NNN format', async () => {
-      const newMission = createMockMission({ id: 'M-20260121-001', state: 'initializing' });
+    it('should create mission with auto-generated ID in M-{projectId}-YYYYMMDD-NNN format', async () => {
+      const newMission = createMockMission({ id: 'M-ai-team-20260121-001', state: 'initializing' });
 
       mockPrisma.mission.findFirst.mockResolvedValue(null); // No active mission
       mockPrisma.mission.count.mockResolvedValue(0);
@@ -1090,7 +1090,7 @@ describe('Mission Endpoints Integration', () => {
       expect(response.status).toBe(201);
 
       const data = await response.json();
-      expect(data.data.id).toMatch(/^M-\d{8}-\d{3}$/);
+      expect(data.data.id).toMatch(/^M-[a-z0-9-]+-\d{8}-\d{3}$/);
       expect(data.data.state).toBe('initializing');
     });
 

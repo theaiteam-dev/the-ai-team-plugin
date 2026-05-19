@@ -28,7 +28,7 @@ import type { Mission } from '@/types/mission';
 // Mock data
 const mockMissions: Mission[] = [
   {
-    id: 'M-20260121-001',
+    id: 'M-ai-team-20260121-001',
     name: 'Test Mission 1',
     state: 'completed',
     prdPath: '/prd/test-1.md',
@@ -37,7 +37,7 @@ const mockMissions: Mission[] = [
     archivedAt: null,
   },
   {
-    id: 'M-20260121-002',
+    id: 'M-ai-team-20260121-002',
     name: 'Test Mission 2',
     state: 'running',
     prdPath: '/prd/test-2.md',
@@ -191,7 +191,7 @@ describe('POST /api/missions', () => {
   describe('successful creation', () => {
     it('should create a new mission with valid request', async () => {
       const newMission: Mission = {
-        id: 'M-20260121-001',
+        id: 'M-ai-team-20260121-001',
         name: 'New Test Mission',
         state: 'initializing',
         prdPath: '/prd/new-feature.md',
@@ -228,7 +228,7 @@ describe('POST /api/missions', () => {
 
     it('should return mission with CreateMissionResponse structure', async () => {
       const newMission: Mission = {
-        id: 'M-20260121-001',
+        id: 'M-ai-team-20260121-001',
         name: 'Test Mission',
         state: 'initializing',
         prdPath: '/prd/test.md',
@@ -268,9 +268,9 @@ describe('POST /api/missions', () => {
   });
 
   describe('mission ID generation', () => {
-    it('should generate ID in M-YYYYMMDD-NNN format', async () => {
+    it('should generate ID in M-{projectId}-YYYYMMDD-NNN format', async () => {
       const newMission: Mission = {
-        id: 'M-20260121-001',
+        id: 'M-ai-team-20260121-001',
         name: 'Test',
         state: 'initializing',
         prdPath: '/prd/test.md',
@@ -299,8 +299,8 @@ describe('POST /api/missions', () => {
       const data = await response.json();
 
       expect(response.status).toBe(201);
-      // ID should match M-YYYYMMDD-NNN pattern
-      expect(data.data.id).toMatch(/^M-\d{8}-\d{3}$/);
+      // ID should match M-{projectId}-YYYYMMDD-NNN pattern
+      expect(data.data.id).toMatch(/^M-[a-z0-9-]+-\d{8}-\d{3}$/);
     });
 
     it('should increment sequence number for multiple missions on same day', async () => {
@@ -340,14 +340,14 @@ describe('POST /api/missions', () => {
 
       expect(response.status).toBe(201);
       // Should be 002 since one mission already exists
-      expect(data.data.id).toBe('M-20260121-002');
+      expect(data.data.id).toMatch(/^M-test-project-\d{8}-002$/);
     });
   });
 
   describe('archiving active mission', () => {
     it('should archive current active mission before creating new one', async () => {
       const activeMission: Mission = {
-        id: 'M-20260121-001',
+        id: 'M-ai-team-20260121-001',
         name: 'Active Mission',
         state: 'running',
         prdPath: '/prd/active.md',
@@ -365,7 +365,7 @@ describe('POST /api/missions', () => {
       mockPrismaClient.missionItem.findMany.mockResolvedValue([]);
       mockPrismaClient.mission.count.mockResolvedValue(1);
       mockPrismaClient.mission.create.mockResolvedValue({
-        id: 'M-20260121-002',
+        id: 'M-ai-team-20260121-002',
         name: 'New Mission',
         state: 'initializing',
         prdPath: '/prd/new.md',
@@ -399,7 +399,7 @@ describe('POST /api/missions', () => {
       mockPrismaClient.mission.findFirst.mockResolvedValue(null);
       mockPrismaClient.mission.count.mockResolvedValue(0);
       mockPrismaClient.mission.create.mockResolvedValue({
-        id: 'M-20260121-001',
+        id: 'M-ai-team-20260121-001',
         name: 'First Mission',
         state: 'initializing',
         prdPath: '/prd/first.md',
@@ -434,7 +434,7 @@ describe('POST /api/missions', () => {
       mockPrismaClient.mission.findFirst.mockResolvedValue(null);
       mockPrismaClient.mission.count.mockResolvedValue(1);
       mockPrismaClient.mission.create.mockResolvedValue({
-        id: 'M-20260121-002',
+        id: 'M-ai-team-20260121-002',
         name: 'New Mission',
         state: 'initializing',
         prdPath: '/prd/new.md',
@@ -466,7 +466,7 @@ describe('POST /api/missions', () => {
 
     it('should archive failed mission when force: true is passed', async () => {
       const failedMission: Mission = {
-        id: 'M-20260121-001',
+        id: 'M-ai-team-20260121-001',
         name: 'Failed Mission',
         state: 'failed',
         prdPath: '/prd/failed.md',
@@ -485,7 +485,7 @@ describe('POST /api/missions', () => {
       mockPrismaClient.missionItem.findMany.mockResolvedValue([]);
       mockPrismaClient.mission.count.mockResolvedValue(1);
       mockPrismaClient.mission.create.mockResolvedValue({
-        id: 'M-20260121-002',
+        id: 'M-ai-team-20260121-002',
         name: 'New Mission',
         state: 'initializing',
         prdPath: '/prd/new.md',
@@ -517,7 +517,7 @@ describe('POST /api/missions', () => {
 
     it('should archive completed mission when force: true is passed', async () => {
       const completedMission: Mission = {
-        id: 'M-20260121-001',
+        id: 'M-ai-team-20260121-001',
         name: 'Completed Mission',
         state: 'completed',
         prdPath: '/prd/completed.md',
@@ -535,7 +535,7 @@ describe('POST /api/missions', () => {
       mockPrismaClient.missionItem.findMany.mockResolvedValue([]);
       mockPrismaClient.mission.count.mockResolvedValue(1);
       mockPrismaClient.mission.create.mockResolvedValue({
-        id: 'M-20260121-002',
+        id: 'M-ai-team-20260121-002',
         name: 'New Mission',
         state: 'initializing',
         prdPath: '/prd/new.md',
@@ -566,7 +566,7 @@ describe('POST /api/missions', () => {
 
     it('should archive all items associated with the mission when archiving', async () => {
       const activeMission: Mission = {
-        id: 'M-20260121-001',
+        id: 'M-ai-team-20260121-001',
         name: 'Active Mission',
         state: 'running',
         prdPath: '/prd/active.md',
@@ -577,9 +577,9 @@ describe('POST /api/missions', () => {
 
       // Mock mission items associated with the mission
       const missionItems = [
-        { missionId: 'M-20260121-001', itemId: 'WI-001' },
-        { missionId: 'M-20260121-001', itemId: 'WI-002' },
-        { missionId: 'M-20260121-001', itemId: 'WI-003' },
+        { missionId: 'M-ai-team-20260121-001', itemId: 'WI-001' },
+        { missionId: 'M-ai-team-20260121-001', itemId: 'WI-002' },
+        { missionId: 'M-ai-team-20260121-001', itemId: 'WI-003' },
       ];
 
       mockPrismaClient.mission.findFirst.mockResolvedValue(activeMission);
@@ -592,7 +592,7 @@ describe('POST /api/missions', () => {
       mockPrismaClient.item.updateMany.mockResolvedValue({ count: 3 });
       mockPrismaClient.mission.count.mockResolvedValue(1);
       mockPrismaClient.mission.create.mockResolvedValue({
-        id: 'M-20260121-002',
+        id: 'M-ai-team-20260121-002',
         name: 'New Mission',
         state: 'initializing',
         prdPath: '/prd/new.md',
@@ -623,7 +623,7 @@ describe('POST /api/missions', () => {
 
     it('should not call item.updateMany when mission has no associated items', async () => {
       const activeMission: Mission = {
-        id: 'M-20260121-001',
+        id: 'M-ai-team-20260121-001',
         name: 'Active Mission',
         state: 'running',
         prdPath: '/prd/active.md',
@@ -641,7 +641,7 @@ describe('POST /api/missions', () => {
       mockPrismaClient.missionItem.findMany.mockResolvedValue([]); // No items
       mockPrismaClient.mission.count.mockResolvedValue(1);
       mockPrismaClient.mission.create.mockResolvedValue({
-        id: 'M-20260121-002',
+        id: 'M-ai-team-20260121-002',
         name: 'New Mission',
         state: 'initializing',
         prdPath: '/prd/new.md',
@@ -676,7 +676,7 @@ describe('POST /api/missions', () => {
       mockPrismaClient.mission.findFirst.mockResolvedValue(null);
       mockPrismaClient.mission.count.mockResolvedValue(0);
       mockPrismaClient.mission.create.mockResolvedValue({
-        id: 'M-20260121-001',
+        id: 'M-ai-team-20260121-001',
         name: 'Test',
         state: 'initializing',
         prdPath: '/prd/test.md',
@@ -807,7 +807,7 @@ describe('POST /api/missions', () => {
 
     it('should return 500 on database error during archive', async () => {
       const activeMission: Mission = {
-        id: 'M-20260121-001',
+        id: 'M-ai-team-20260121-001',
         name: 'Active',
         state: 'running',
         prdPath: '/prd/active.md',
@@ -883,7 +883,7 @@ describe('POST /api/missions', () => {
 
     it('should create mission with correct projectId', async () => {
       const newMission: Mission = {
-        id: 'M-20260121-001',
+        id: 'M-ai-team-20260121-001',
         name: 'Test',
         state: 'initializing',
         prdPath: '/prd/test.md',
@@ -919,7 +919,7 @@ describe('POST /api/missions', () => {
       mockPrismaClient.mission.findFirst.mockResolvedValue(null);
       mockPrismaClient.mission.count.mockResolvedValue(0);
       mockPrismaClient.mission.create.mockResolvedValue({
-        id: 'M-20260121-001',
+        id: 'M-ai-team-20260121-001',
         name: 'Test',
         state: 'initializing',
         prdPath: '/prd/test.md',
