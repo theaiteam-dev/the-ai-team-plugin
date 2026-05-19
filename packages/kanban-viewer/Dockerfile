@@ -34,7 +34,7 @@ ENV DATABASE_URL="file:./prisma/data.init/ateam.db"
 RUN mkdir -p prisma/data.init && \
     npx prisma generate && \
     npx prisma migrate deploy --config ./prisma/prisma.config.ts && \
-    npx tsx prisma/seed.ts
+    npx tsx prisma/seed.ts || echo "Seed failed — runtime DB is volume-mounted, continuing build"
 
 # Build Next.js
 RUN npm run build

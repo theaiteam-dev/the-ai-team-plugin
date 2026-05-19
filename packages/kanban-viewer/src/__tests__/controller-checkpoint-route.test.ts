@@ -54,7 +54,7 @@ import { POST as POST_CONFIRM } from '@/app/api/controller-checkpoint/[missionId
 // Fixtures and helpers
 // ----------------------------------------------------------------------------
 
-const MISSION_ID = 'M-001';
+const MISSION_ID = 'M-test-20260101-001';
 const PROJECT_A = 'project-a';
 const PROJECT_B = 'project-b';
 

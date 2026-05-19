@@ -149,16 +149,21 @@ function validateCheckpointBody(body: unknown): string | null {
  * requesting project.  Returns 404 with the literal { error: 'not_found' }
  * sentinel when no checkpoint exists.
  */
+const MISSION_ID_RE = /^M-[a-z0-9-]+-\d{8}-\d{3,}$/;
+
 export async function GET(request: Request, context: RouteContext) {
   try {
     const { missionId } = await context.params;
 
+    if (!MISSION_ID_RE.test(missionId)) {
+      const err = createValidationError(`Invalid mission ID format: ${missionId}`);
+      return NextResponse.json(err.toResponse(), { status: 400 });
+    }
+
     const projectValidation = getAndValidateProjectId(request.headers);
     if (!projectValidation.valid) {
-      return NextResponse.json(
-        { success: false, error: projectValidation.error },
-        { status: 400 }
-      );
+      const err = createValidationError(projectValidation.error.message);
+      return NextResponse.json(err.toResponse(), { status: 400 });
     }
     const { projectId } = projectValidation;
 
@@ -196,12 +201,15 @@ export async function POST(request: Request, context: RouteContext) {
   try {
     const { missionId } = await context.params;
 
+    if (!MISSION_ID_RE.test(missionId)) {
+      const err = createValidationError(`Invalid mission ID format: ${missionId}`);
+      return NextResponse.json(err.toResponse(), { status: 400 });
+    }
+
     const projectValidation = getAndValidateProjectId(request.headers);
     if (!projectValidation.valid) {
-      return NextResponse.json(
-        { success: false, error: projectValidation.error },
-        { status: 400 }
-      );
+      const err = createValidationError(projectValidation.error.message);
+      return NextResponse.json(err.toResponse(), { status: 400 });
     }
     const { projectId } = projectValidation;
 
