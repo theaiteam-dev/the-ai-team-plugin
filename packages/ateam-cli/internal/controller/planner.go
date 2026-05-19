@@ -143,7 +143,14 @@ func (p *Planner) Tick() (*TickOutput, error) {
 		}
 	}
 
-	// ── 6. Pool observation (native-teams only) ───────────────────────────
+	// ── 6. Scaling ───────────────────────────────────────────────────────────
+	// Fetch the recommended lane count from the API. Non-fatal: falls back to 1.
+	maxLanes := 1
+	if scaling, err := p.fetchScaling(); err == nil {
+		maxLanes = scaling.InstanceCount
+	}
+
+	// ── 7. Pool observation (native-teams only) ───────────────────────────
 	idleAgentCount := 0
 	if mode == "native-teams" {
 		poolDir := filepath.Join("/tmp", ".ateam-pool", missionID)
@@ -183,15 +190,24 @@ func (p *Planner) Tick() (*TickOutput, error) {
 		dispatched++
 	}
 
-	// ── 7b. Setup-lane — ready items exist but pool is completely empty ──────
-	// Emit one setup-lane action so Hannibal spawns the full pipeline quartet
-	// (murdock-N, ba-N, lynch-N, amy-N) and marks them idle before the next tick.
-	// Only fires when there are NO murdock files at all (not even busy) —
-	// if agents are busy, work is in progress; wait for them instead of spawning a new lane.
-	if mode == "native-teams" && len(dispatchable) > 0 && idleAgentCount == 0 && dispatched == 0 {
+	// ── 8b. Setup-lane — spawn additional lanes up to maxLanes when demand exceeds capacity ──
+	// Emit setup-lane for each lane that is needed but not yet in the pool.
+	// Condition: more dispatchable items than idle agents, AND unused lanes available (nextLane <= maxLanes).
+	// Guards: only in native-teams mode; skip if a lane is already being set up (non-idle busy agents exist
+	// for the target lane number, meaning a prior setup-lane is still in progress).
+	if mode == "native-teams" {
 		poolDir := filepath.Join("/tmp", ".ateam-pool", missionID)
-		if !anyMurdockExists(poolDir) {
+		undispatched := len(dispatchable) - dispatched
+		for undispatched > 0 {
 			laneNum := nextLaneNumber(poolDir)
+			if laneNum > maxLanes {
+				break
+			}
+			// Skip if this lane's murdock is already busy (prior setup-lane in progress).
+			busyPath := filepath.Join(poolDir, fmt.Sprintf("murdock-%d.busy", laneNum))
+			if _, err := os.Stat(busyPath); err == nil {
+				break
+			}
 			instances := []string{
 				fmt.Sprintf("murdock-%d", laneNum),
 				fmt.Sprintf("ba-%d", laneNum),
@@ -202,11 +218,12 @@ func (p *Planner) Tick() (*TickOutput, error) {
 			actions = append(actions, Action{
 				ID:         actionID,
 				Kind:       "setup-lane",
-				Why:        fmt.Sprintf("ready items exist (%d) but pool is empty — pre-warm lane %d", len(dispatchable), laneNum),
+				Why:        fmt.Sprintf("%d ready items, only %d idle murdock — pre-warm lane %d (max %d)", len(dispatchable), idleAgentCount, laneNum, maxLanes),
 				LaneNumber: laneNum,
 				Instances:  instances,
 			})
 			seq++
+			undispatched--
 		}
 	}
 
@@ -295,6 +312,10 @@ func (p *Planner) Tick() (*TickOutput, error) {
 
 // ── API data types ────────────────────────────────────────────────────────────
 
+type scalingData struct {
+	InstanceCount int `json:"instanceCount"`
+}
+
 type missionData struct {
 	ID          string      `json:"id"`
 	State       string      `json:"state"`
@@ -335,6 +356,31 @@ func (p *Planner) fetchMission() (*missionData, error) {
 	}
 	if err := p.fetchAndDecode("/api/missions/current", &envelope); err != nil {
 		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+func (p *Planner) fetchScaling() (*scalingData, error) {
+	encoded, _ := json.Marshal(map[string]interface{}{})
+	reqURL := strings.TrimRight(p.cfg.BaseURL, "/") + "/api/scaling/compute"
+	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewReader(encoded))
+	if err != nil {
+		return nil, err
+	}
+	p.injectHeaders(req)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := p.httpCli.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var envelope struct {
+		Success bool        `json:"success"`
+		Data    scalingData `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil || envelope.Data.InstanceCount < 1 {
+		envelope.Data.InstanceCount = 1
 	}
 	return &envelope.Data, nil
 }
