@@ -229,9 +229,9 @@ function spawn_lane(lane_number):
             subagent_type: agentTypeToSubagent(instance.agentType),
             description:  "{instance.name}: standby",
             prompt:       "You are {instance.name} ({instance.agentType} instance {lane_number}).
-                           Environment: export ATEAM_MISSION_ID='{missionId}'
+                           Environment: export ATEAM_MISSION_ID='{missionId}' ATEAM_PROJECT_ID='{projectId}' ATEAM_API_URL='{apiUrl}'
                            Your FIRST action on startup:
-                             1. Run: export ATEAM_MISSION_ID='{missionId}'
+                             1. Run: export ATEAM_MISSION_ID='{missionId}' ATEAM_PROJECT_ID='{projectId}' ATEAM_API_URL='{apiUrl}'
                              2. Send Hannibal a ready signal:
                                 SendMessage(to: 'hannibal', content: 'READY: {instance.name}')
                            Then await work item assignments via SendMessage.
