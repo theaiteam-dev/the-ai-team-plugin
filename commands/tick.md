@@ -29,11 +29,13 @@ ScheduleWakeup(
 ateam controller tick --json
 ```
 
-Parse the JSON output. Print the controller's summary so the run log stays readable:
+Parse the JSON output. Print **one line only**:
 
 ```
 [Hannibal] {summary}
 ```
+
+No other text. Do not describe what you are about to do, do not list the actions, do not explain your reasoning.
 
 **On non-zero exit** (API unreachable or fail-closed response): print the error, schedule a back-off, and do NOT execute any actions from a partial response:
 
@@ -44,6 +46,8 @@ ScheduleWakeup(delaySeconds: 120, prompt: "/ai-team:tick", reason: "tick error b
 Re-arm (Step 1) immediately after a successful parse, before executing any action.
 
 ## Step 3 — Execute each action
+
+**Output one line per action as you execute it:** `[Hannibal] <kind> <itemId|laneN>`. Nothing else — no status summaries, no pipeline state, no "waiting for..." narration.
 
 For each entry in `actions`, act based on `kind`. The `mode` field in the response is either `legacy` or `native-teams`:
 
@@ -68,7 +72,7 @@ This ensures the next tick is idempotent — already-confirmed actions are skipp
 
 ## Step 5 — Stop. Do not poll.
 
-After executing all actions and confirming them, **stop**. Do not check the board, do not inspect the pool, do not log activity, do not call `ateam controller tick` again. The `ScheduleWakeup` from Step 1 will fire the next tick at the right time. Every extra Bash call you make here adds to your context and costs money. Trust the loop.
+After confirming all actions, **stop immediately**. No Bash calls, no text output, no status summaries. The `ScheduleWakeup` from Step 1 fires the next tick. Every word you write here re-enters your context on the next wake and costs money.
 
 ## Handling `needsJudgment`
 
