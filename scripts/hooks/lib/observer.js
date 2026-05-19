@@ -219,14 +219,24 @@ async function sendObserverEvent(payload) {
   const cleanUrl = apiUrl.replace(/\/+$/, '');
   const url = `${cleanUrl}/api/hooks/events`;
 
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Project-ID': projectId,
+  };
+
+  // Inject Cloudflare Access service token headers when present,
+  // matching the auth headers sent by internal/client/client.go.
+  const cfClientId = process.env.ACCESS_CLIENT_ID;
+  const cfClientSecret = process.env.ACCESS_CLIENT_SECRET;
+  if (cfClientId) headers['CF-Access-Client-Id'] = cfClientId;
+  if (cfClientSecret) headers['CF-Access-Client-Secret'] = cfClientSecret;
+
   try {
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Project-ID': projectId,
-      },
+      headers,
       body: JSON.stringify(payload),
+      redirect: 'error', // fail fast on CF Access redirect instead of silently following to login page
     });
 
     if (!response.ok) {
