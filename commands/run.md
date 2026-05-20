@@ -1,5 +1,5 @@
 ---
-model: sonnet
+model: haiku
 ---
 # /ai-team:run
 
@@ -119,12 +119,12 @@ do not block dispatch because other stages are full.
 Before doing anything else, check your current model. Your system prompt contains your model ID (e.g., "You are powered by the model named Opus 4.6").
 
 ```text
-if model is NOT sonnet:
+if model is NOT haiku AND model is NOT sonnet:
     Output to user:
-    "Hannibal orchestration runs best on Sonnet — faster responses and lower
-    overall mission costs. You're currently on [model name].
+    "Hannibal orchestration runs on Haiku (tick loop) or Sonnet (legacy).
+    You're currently on [model name].
 
-    Please switch first:  /model sonnet
+    Please switch first:  /model haiku
     Then re-run:          /ai-team:run"
 
     STOP. Do not proceed.

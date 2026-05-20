@@ -1,5 +1,5 @@
 ---
-model: sonnet
+model: haiku
 ---
 # /ai-team:tick
 
