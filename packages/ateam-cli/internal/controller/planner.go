@@ -168,15 +168,21 @@ func (p *Planner) Tick() (*TickOutput, error) {
 	dispatchable := filterDispatchable(readyItems, readySet)
 
 	dispatched := 0
+	claimedInstances := map[string]bool{} // prevent double-claiming within one tick
 	for _, item := range dispatchable {
 		if dispatched >= idleAgentCount {
 			break
 		}
-		agentType := "murdock"
-		actionID := buildActionID(missionID, item.ID, "dispatch", agentType, seq)
+		poolDir := filepath.Join("/tmp", ".ateam-pool", missionID)
+		instance := pickIdleInstance(poolDir, "murdock", claimedInstances)
+		if instance == "" {
+			break // no more idle instances
+		}
+		claimedInstances[instance] = true
+		actionID := buildActionID(missionID, item.ID, "dispatch", instance, seq)
 		why := fmt.Sprintf(
 			"dispatch %s to %s — deps satisfied, lane free",
-			item.ID, agentType,
+			item.ID, instance,
 		)
 		actions = append(actions, Action{
 			ID:        actionID,
@@ -184,7 +190,7 @@ func (p *Planner) Tick() (*TickOutput, error) {
 			Why:       why,
 			ItemID:    item.ID,
 			ItemTitle: item.Title,
-			Agent:     agentType,
+			Agent:     instance, // specific instance, e.g. "murdock-2"
 		})
 		seq++
 		dispatched++
@@ -569,6 +575,29 @@ func (p *Planner) injectHeaders(req *http.Request) {
 }
 
 // ── Pool observation ──────────────────────────────────────────────────────────
+
+// pickIdleInstance returns the name of the first idle instance of agentType
+// that is not already in the claimed map. Returns "" if none available.
+func pickIdleInstance(poolDir, agentType string, claimed map[string]bool) string {
+	patterns := []string{
+		filepath.Join(poolDir, agentType+"-*.idle"),
+		filepath.Join(poolDir, agentType+".idle"),
+	}
+	for _, pattern := range patterns {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			continue
+		}
+		sort.Strings(matches)
+		for _, match := range matches {
+			name := strings.TrimSuffix(filepath.Base(match), ".idle")
+			if !claimed[name] {
+				return name
+			}
+		}
+	}
+	return ""
+}
 
 // countIdleAgents returns how many idle instances of agentType exist in poolDir.
 // Matches both "agentType.idle" and "agentType-N.idle" filenames.

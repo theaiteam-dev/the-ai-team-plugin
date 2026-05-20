@@ -495,7 +495,7 @@ func TestTickActionIDIsDeterministic(t *testing.T) {
 	s := setupHappyDispatch(t, m)
 
 	idPattern := regexp.MustCompile(
-		`^` + regexp.QuoteMeta(s.missionID) + `:WI-014:dispatch:murdock:\d+$`,
+		`^` + regexp.QuoteMeta(s.missionID) + `:WI-014:dispatch:murdock(-\d+)?:\d+$`,
 	)
 
 	// Run twice with the same (empty) checkpoint and identical mock state.
@@ -935,7 +935,8 @@ func TestTickActivityLogAndCheckpointWrites(t *testing.T) {
 		// Pin the full ID shape so a failure points at the exact discrepancy
 		// — same mission/item/kind/agent as the deterministic-ID test, just
 		// with the sequence bumped to 2 because of the prior checkpoint.
-		wantID := s.missionID + ":WI-014:dispatch:murdock:2"
+		// Agent field is now the specific pool instance (e.g. murdock-1), not generic "murdock"
+		wantID := s.missionID + ":WI-014:dispatch:murdock-1:2"
 		if id != wantID {
 			t.Errorf("dispatch id mismatch: want %q, got %q", wantID, id)
 		}
