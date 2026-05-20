@@ -262,7 +262,22 @@ func (p *Planner) Tick() (*TickOutput, error) {
 	hasDoneItems := len(itemsByStage["done"]) > 0
 	finalReviewAbsent := isFinalReviewAbsent(mission.FinalReview)
 
-	if !hasNonDoneItems && hasDoneItems && finalReviewAbsent {
+	finalReviewAlreadyDispatched := func() bool {
+		prefix := missionID + ":mission:final-review:"
+		for _, id := range checkpoint.ConfirmedActionIDs {
+			if strings.HasPrefix(id, prefix) {
+				return true
+			}
+		}
+		for _, id := range checkpoint.PendingActionIDs {
+			if strings.HasPrefix(id, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !hasNonDoneItems && hasDoneItems && finalReviewAbsent && !finalReviewAlreadyDispatched() {
 		actionID := buildActionID(missionID, "mission", "final-review", "stockwell", seq)
 		why := "all items are done and no final review has been recorded"
 		actions = append(actions, Action{
