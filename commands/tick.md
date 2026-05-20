@@ -58,7 +58,7 @@ For each entry in `actions`, act based on `kind`. The `mode` field in the respon
 | `final-review` | Spawn `Stockwell` via the appropriate Claude primitive (`Task` in legacy mode, `TeamCreate` in native-teams mode) |
 | `release` | `ateam board-release releaseItem --itemId <id>` **and** `ateam pool release <name>` as named by the action |
 | `move` | `ateam board-move moveItem --itemId <id> --toStage <stage>` using the action's target stage |
-| `setup-lane` | Pre-warm the pipeline lane so peer-to-peer handoffs work: (1) if no team exists, `TeamCreate(team_name: "mission-<projectId>-<missionId>")`; (2) spawn all 4 instances in one message: `Agent(team_name, name: "murdock-N", subagent_type: "ai-team:murdock")`, `Agent(... "ba-N" ...)`, `Agent(... "lynch-N" ...)`, `Agent(... "amy-N" ...)`; (3) wait for READY from all 4; (4) `ateam pool mark-idle <instance>` for each that sent READY. **Do not dispatch work yet** — the next tick will see idle agents and emit a `dispatch` action. |
+| `setup-lane` | **If multiple setup-lane actions are present, batch them:** spawn ALL agents for ALL lanes in a single message before waiting for any READY. (1) if no team exists, `TeamCreate(team_name: "mission-<projectId>-<missionId>")`; (2) for each setup-lane action, spawn all 4 instances: `Agent(team_name, name: "murdock-N", ...)`, `Agent(... "ba-N" ...)`, `Agent(... "lynch-N" ...)`, `Agent(... "amy-N" ...)` — send all spawns in one message for all lanes simultaneously; (3) wait for READY from all spawned agents across all lanes; (4) `ateam pool mark-idle <instance>` for each that sent READY. **Do not dispatch work yet** — the next tick will see idle agents and emit `dispatch` actions. |
 
 ## Step 4 — Confirm each action
 
