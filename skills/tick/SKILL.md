@@ -9,21 +9,20 @@ One controller tick: read the action plan, execute each action, confirm completi
 
 ## Step 1 — Re-arm the next tick FIRST
 
-As soon as the controller response is available, re-arm before executing any action — so a downstream error cannot kill the loop:
+**Your first tool call must be `ScheduleWakeup` — call it now, before running the tick, before writing any text:**
 
 ```text
 ScheduleWakeup(
-  delaySeconds: nextWakeSeconds,
+  delaySeconds: 180,
   prompt:       "/ai-team:tick",
   reason:       "controller tick self-perpetuation"
 )
 ```
 
-**Skip re-arming** (do not call `ScheduleWakeup`) when any of these are true:
-- `nextWakeSeconds` is `0` — the controller signals the loop should stop
-- Mission state is `completed` — terminal, loop must not continue
-- Mission state is `aborted` — terminal, do not re-arm
-- Mission state is `archived` — terminal, do not re-arm
+Use 180s as the safe default. You will update the delay after parsing the tick response if `nextWakeSeconds` differs. Do not skip this call, do not write status text first, do not check the board first. Call `ScheduleWakeup` immediately.
+
+**Only skip re-arming** (and do not call `ScheduleWakeup` at all) when the mission is already terminal:
+- Mission state is `completed`, `aborted`, or `archived`
 
 ## Step 2 — Run the controller tick
 
