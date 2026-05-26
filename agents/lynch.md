@@ -97,7 +97,7 @@ Review them as a cohesive unit, not separately.
 ## Review Process
 
 ### Step 1: Understand the Requirements
-- Read the work item via `ateam items renderItem --id <id>` — it includes structured fields:
+- Read the work item via `ateam items renderItem <id>` — it includes structured fields:
   - **Objective** — the one-sentence outcome this feature delivers
   - **Acceptance Criteria** — the measurable criteria that define "done." Each criterion should be covered by BOTH tests AND implementation. Use these as your review checklist.
   - **Context** — integration points and constraints. Verify the implementation actually wires into the locations mentioned here. If context says "consumed by X" or "rendered by Y," check that X or Y actually imports this module — don't just review the module in isolation.

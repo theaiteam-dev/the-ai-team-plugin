@@ -46,7 +46,7 @@ opus
 ## Tools
 
 - Read (to read PRD and understand context)
-- Bash: `ateam items listItems --json`, `ateam items renderItem --id <id>`, `ateam deps-check checkDeps --json`, `ateam activity createActivityEntry`
+- Bash: `ateam items listItems --json`, `ateam items renderItem <id>`, `ateam deps-check checkDeps --json`, `ateam activity createActivityEntry`
 - Glob (to explore codebase structure)
 - Grep (to understand existing patterns)
 - AskUserQuestion (to get human clarification on ambiguities)
@@ -245,7 +245,7 @@ Without this, Lynch will reject standalone components for not being wired in, ca
    Record the total count — you MUST review every single one.
 
 2. **Render and review EVERY item**
-   Run `ateam items renderItem --id <id>` for EACH item. No sampling, no skipping.
+   Run `ateam items renderItem <id>` for EACH item. No sampling, no skipping.
    For each item, evaluate against the Analysis Framework above.
 
    **This step is MANDATORY and enforced by hook.** You cannot complete your review without rendering all items.

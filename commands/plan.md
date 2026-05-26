@@ -288,7 +288,7 @@ With skip refinement:
 |---------|---------|
 | `ateam missions createMission --name <name> --prdPath <path> --force` | Archive existing mission, create fresh state |
 | `ateam items createItem` | Create work items (Face first pass) |
-| `ateam items updateItem --id <id>` | Update work items (Face second pass) |
+| `ateam items updateItem <id>` | Update work items (Face second pass) |
 | `ateam items listItems --json` | List items by stage (Sosa review) |
 | `ateam board-move moveItem --itemId <id> --toStage <stage>` | Move items between stages (Face second pass) |
 | `ateam deps-check checkDeps --json` | Validate dependency graph |

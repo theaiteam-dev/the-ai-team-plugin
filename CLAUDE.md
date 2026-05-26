@@ -247,10 +247,10 @@ Usage: `ateam <resource> <command> [flags]`
 | Claim item | `ateam board-claim claimItem --itemId <id> --agent <name>` |
 | Release item | `ateam board-release releaseItem --itemId <id>` |
 | Create item | `ateam items createItem --title "..." --type feature --description "..." --objective "..." --acceptance "criterion 1" --acceptance "criterion 2" --context "..." ...` |
-| Get item | `ateam items getItem --id <id>` |
+| Get item | `ateam items getItem <id> --json` |
 | List items | `ateam items listItems --json` |
-| Update item | `ateam items updateItem --id <id> [flags]` |
-| Render item | `ateam items renderItem --id <id>` |
+| Update item | `ateam items updateItem <id> [flags]` |
+| Render item | `ateam items renderItem <id>` |
 | Agent start | `ateam agents-start agentStart --itemId <id> --agent <name>` |
 | Agent stop | `ateam agents-stop agentStop --itemId <id> --agent <name> --outcome completed --summary "..."` |
 | Agent stop (no advance) | `ateam agents-stop agentStop --itemId <id> --agent <name> --outcome completed --summary "..." --advance=false` |

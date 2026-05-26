@@ -510,10 +510,10 @@ Configure environment via `.claude/settings.local.json`:
 | `ateam board-claim claimItem --itemId <id> --agent <name>` | Claim item for agent |
 | `ateam board-release releaseItem --itemId <id>` | Release item claim |
 | `ateam items createItem --title "..." --type feature` | Create work item |
-| `ateam items getItem --id <id> --json` | Get item details |
+| `ateam items getItem <id> --json` | Get item details |
 | `ateam items listItems --json` | List all items |
-| `ateam items updateItem --id <id>` | Update item |
-| `ateam items renderItem --id <id>` | Render item as markdown |
+| `ateam items updateItem <id>` | Update item |
+| `ateam items renderItem <id>` | Render item as markdown |
 | `ateam agents-start agentStart --itemId <id> --agent <name>` | Signal agent start |
 | `ateam agents-stop agentStop --itemId <id> --agent <name> --outcome completed --summary "..."` | Signal agent completion |
 | `ateam agents-stop agentStop --itemId <id> --agent <name> --outcome rejected --return-to <stage> --summary "..."` | Reject item and return to prior stage |

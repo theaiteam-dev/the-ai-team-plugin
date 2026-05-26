@@ -162,7 +162,7 @@ To read the config, run `ateam board getBoard --json` to get board state which i
 
 Gather intelligence before forming theories:
 
-1. **Read the work item** via `ateam items renderItem --id <id>` — it includes structured fields:
+1. **Read the work item** via `ateam items renderItem <id>` — it includes structured fields:
    - **Acceptance Criteria** — defines intended behavior. Probe for violations of each criterion and for gaps BETWEEN criteria.
    - **Context** — integration points tell you where boundary bugs live. If it says "called by OrderController at src/controllers/order.ts", verify that wiring exists and handles edge cases at the boundary.
 2. **Examine error messages** - If there's a reported issue, start with the exact error

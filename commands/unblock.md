@@ -33,15 +33,15 @@ Unblock a stuck work item and return it to the ready queue.
    ```
 
 3. **Read item details**
-   - Run `ateam items getItem --id <id> --json` to load the work item
+   - Run `ateam items getItem <id> --json` to load the work item
    - Show rejection history
    - Display last feedback
 
 4. **Apply human guidance** (if provided)
-   Run `ateam items updateItem --id <id>` to add guidance to the item context.
+   Run `ateam items updateItem <id>` to add guidance to the item context.
 
 5. **Reset for retry**
-   - Run `ateam items updateItem --id <id>` to reset `rejection_count` to 0
+   - Run `ateam items updateItem <id>` to reset `rejection_count` to 0
    - Run `ateam board-move moveItem --itemId <id> --toStage ready` to move item from `blocked` to `ready` stage
 
 6. **Confirm unblock**
@@ -140,8 +140,8 @@ Shows:
 |---------|---------|
 | `ateam missions-current getCurrentMission --json` | Check mission exists |
 | `ateam items listItems --json` | List blocked items |
-| `ateam items getItem --id <id> --json` | Get item details |
-| `ateam items updateItem --id <id>` | Reset rejection count, add guidance |
+| `ateam items getItem <id> --json` | Get item details |
+| `ateam items updateItem <id>` | Reset rejection count, add guidance |
 | `ateam board-move moveItem --itemId <id> --toStage ready` | Move from blocked to ready stage |
 
 ## Errors

@@ -39,11 +39,11 @@ ateam --json items listItems | jq '.[] | .title'
 
 ```bash
 # WRONG — json.load() / jq will fail, table output is not JSON
-ateam items getItem --id WI-109 | python3 -c "import json,sys; d=json.load(sys.stdin)..."
+ateam items getItem WI-109 | python3 -c "import json,sys; d=json.load(sys.stdin)..."
 ateam board getBoard | jq '.data'
 
 # CORRECT — always add --json when consuming output in code
-ateam items getItem --id WI-109 --json | python3 -c "import json,sys; d=json.load(sys.stdin)..."
+ateam items getItem WI-109 --json | python3 -c "import json,sys; d=json.load(sys.stdin)..."
 ateam board getBoard --json | jq '.data'
 ```
 
@@ -89,15 +89,25 @@ ateam board-release releaseItem --itemId WI-001
 
 ### Items
 
+> **Positional `<id>` vs `--itemId` flag:** Single-item lookup commands (`getItem`, `renderItem`, `updateItem`) take the ID as a positional argument — NOT `--id`. Commands that submit work (`agentStart`, `agentStop`, `claimItem`, `releaseItem`) use `--itemId` because it's a request body field.
+
 ```bash
 # List all items
 ateam items listItems
 
-# Get a specific item
-ateam items getItem --id WI-001
+# Get a specific item (positional <id>)
+ateam items getItem WI-001
 
-# Render item as markdown (useful for reading briefings)
-ateam items renderItem --id WI-001
+# Render item as markdown (positional <id>)
+ateam items renderItem WI-001
+
+# Update item fields (positional <id>)
+ateam items updateItem WI-001 --title "New title" --objective "..."
+
+# WRONG — --id does not exist on these commands:
+# ateam items getItem --id WI-001    ← error: unknown flag --id
+# ateam items renderItem --id WI-001 ← error: unknown flag --id
+# ateam items updateItem --id WI-001 ← error: unknown flag --id
 ```
 
 ### Missions
@@ -133,10 +143,12 @@ ateam missions-final-review writeFinalReview --missionId <id> --report "..."
 # Get health / staleness report
 ateam missions-health getHealthReport --json
 
-# List all missions, aggregate token costs
+# List all missions, aggregate token costs (positional <missionId>, not --id)
 ateam missions listMissions
-ateam missions aggregateTokenUsage --id <missionId>
-ateam missions getTokenUsage --id <missionId>
+ateam missions aggregateTokenUsage <missionId>
+ateam missions getTokenUsage <missionId>
+ateam missions getToolHistogram <missionId>
+ateam missions getSkillUsage <missionId>
 ```
 
 ### Mission Lifecycle Order
@@ -209,10 +221,10 @@ Agents use `ateam` via `Bash` for all API operations. Here is the complete mappi
 | Claim item for agent | `ateam board-claim claimItem --itemId <id> --agent <name>` |
 | Release item claim | `ateam board-release releaseItem --itemId <id>` |
 | Create work item | `ateam items createItem --title "..." --type feature [flags]` |
-| Get item details | `ateam items getItem --id <id> --json` |
+| Get item details | `ateam items getItem <id> --json` |
 | List all items | `ateam items listItems --json` |
-| Update item | `ateam items updateItem --id <id> [flags]` |
-| Render item as markdown | `ateam items renderItem --id <id>` |
+| Update item | `ateam items updateItem <id> [flags]` |
+| Render item as markdown | `ateam items renderItem <id>` |
 | Signal agent start | `ateam agents-start agentStart --itemId <id> --agent <name>` |
 | Signal agent completion | `ateam --json agents-stop agentStop --itemId <id> --agent <name> --outcome completed --summary "..."` |
 | Reject item (pipeline rework) | `ateam --json agents-stop agentStop --itemId <id> --agent <name> --outcome rejected --return-to <stage> --advance=false --summary "..."` |

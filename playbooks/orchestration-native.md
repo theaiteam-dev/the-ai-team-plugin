@@ -578,13 +578,13 @@ The `dispatch(instance, item_id)` function decides whether to send a `SendMessag
 
 ```text
 function dispatch(instance, item_id):
-    item = Bash("ateam items renderItem --id {item_id}")
+    item = Bash("ateam items renderItem {item_id}")
 
     if instance was already spawned and is alive:
         SendMessage(
             type:      "message",
             recipient: instance.name,
-            content:   "New work: {item_id} - {title}\n{relevant file paths}\nFetch full details with `ateam items renderItem --id {item_id}`.\nUse '--agent \"{instance.name}\"' in agentStart/agentStop.",
+            content:   "New work: {item_id} - {title}\n{relevant file paths}\nFetch full details with `ateam items renderItem {item_id}`.\nUse '--agent \"{instance.name}\"' in agentStart/agentStop.",
             summary:   "New {instance.agentType} work for {item_id}"
         )
     else:
@@ -687,7 +687,7 @@ Task(
 SendMessage(
   type: "message",
   recipient: "murdock-2",
-  content: "New work: WI-005 - {title}\nTest file: {outputs.test}\nTypes file: {outputs.types}\nFetch full details with `ateam items renderItem --id WI-005`.\nFirst run: `ateam agents-start agentStart --itemId WI-005 --agent \"murdock-2\"`",
+  content: "New work: WI-005 - {title}\nTest file: {outputs.test}\nTypes file: {outputs.types}\nFetch full details with `ateam items renderItem WI-005`.\nFirst run: `ateam agents-start agentStart --itemId WI-005 --agent \"murdock-2\"`",
   summary: "New test work for WI-005"
 )
 ```
@@ -984,7 +984,7 @@ if [ -n "$CLAIMED_NEXT" ]; then
     # SUCCESS: Send START directly to the claimed instance
     SendMessage(
         to: "${CLAIMED_NEXT}",
-        message: "START: WI-005 - {one-line summary}\nRun: ateam items renderItem --id WI-005",
+        message: "START: WI-005 - {one-line summary}\nRun: ateam items renderItem WI-005",
         summary: "START WI-005"
     )
     # Wait up to 20s for ACK, then notify Hannibal

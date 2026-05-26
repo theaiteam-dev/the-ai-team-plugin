@@ -381,7 +381,7 @@ When B.A. picks up a rejected item for retry, it needs the rejection reason — 
 **Always include rejection context in the dispatch prompt.** Fetch the rendered item (which includes the work log) and extract the most recent rejection reason:
 
 ```bash
-ateam items renderItem --id "WI-001"
+ateam items renderItem "WI-001"
 # Work log will contain the rejection entry:
 # - [Lynch] rejected: Missing error handling on fetchUser
 ```
@@ -453,7 +453,7 @@ Task(
 Amy's `agentStop --outcome rejected` already updated the board. Include Amy's FLAG summary (from the work_log) in the `## Prior Rejection` section of B.A.'s dispatch prompt (see "Re-dispatching B.A. After Rejection" above):
 
 ```bash
-ateam items renderItem --id "WI-001"
+ateam items renderItem "WI-001"
 # Work log will contain Amy's FLAG entry with full diagnosis
 ```
 
@@ -525,7 +525,7 @@ ateam board getBoard --json
 
 Get specific item:
 ```bash
-ateam items getItem --id "WI-001"
+ateam items getItem "WI-001"
 ```
 
 ## Final Mission Review
@@ -551,7 +551,7 @@ Read each done item and collect all `outputs.test`, `outputs.impl`, and `outputs
 
 ```bash
 # For each item in done stage, read its outputs
-ateam items getItem --id "WI-001"
+ateam items getItem "WI-001"
 # Extract outputs.test, outputs.impl, outputs.types
 ```
 
