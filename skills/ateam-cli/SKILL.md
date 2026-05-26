@@ -102,17 +102,54 @@ ateam items renderItem --id WI-001
 
 ### Missions
 
+**IMPORTANT: Mission commands are split across FOUR separate top-level resource groups.** Do NOT assume a command lives under `missions` or `missions-current` without checking. When unsure, run `ateam --help` to list all top-level groups.
+
+| Resource group | Purpose |
+|---------------|---------|
+| `missions-current` | Read the active mission (read-only) |
+| `missions-precheck` | Submit pre-run check results |
+| `missions-postcheck` | Submit post-run check results |
+| `missions-archive` | Archive the active mission (terminal) |
+| `missions-final-review` | Read/write the holistic final review |
+| `missions-health` | Get staleness/health report |
+
 ```bash
 # Get the active mission
-ateam missions-current getCurrentMission
+ateam missions-current getCurrentMission --json
 
-# List all missions
+# Archive the active mission (makes it terminal — use after mission completes)
+ateam missions-archive archiveMission --json
+
+# Submit precheck results (before pipeline starts)
+ateam missions-precheck missionPrecheck --passed [--blockers "..." ...] [--output '{"lint":"ok"}']
+
+# Submit postcheck results (after all items reach done)
+ateam missions-postcheck missionPostcheck --json
+
+# Get/write the final review report
+ateam missions-final-review getFinalReview --json
+ateam missions-final-review writeFinalReview --missionId <id> --report "..."
+
+# Get health / staleness report
+ateam missions-health getHealthReport --json
+
+# List all missions, aggregate token costs
 ateam missions listMissions
-
-# Aggregate and view token usage/costs for a mission
 ateam missions aggregateTokenUsage --id <missionId>
 ateam missions getTokenUsage --id <missionId>
 ```
+
+### Mission Lifecycle Order
+
+A mission flows through these CLI calls in order:
+
+1. `ateam missions createMission` — creates the mission
+2. `ateam missions-precheck missionPrecheck --passed` — marks it `running`
+3. *(pipeline runs via tick loop)*
+4. `ateam missions-postcheck missionPostcheck` — records post-run results
+5. `ateam missions-archive archiveMission` — marks it `archived` (terminal)
+
+**Never use `curl` or raw PATCH requests to update mission state** — always go through the dedicated CLI subcommands, which enforce valid state transitions and record timestamps correctly.
 
 ### Activity
 

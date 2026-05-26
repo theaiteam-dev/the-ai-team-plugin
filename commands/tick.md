@@ -22,6 +22,14 @@ Use 180s as the safe default. You will update the delay after parsing the tick r
 **Only skip re-arming** (and do not call `ScheduleWakeup` at all) when the mission is already terminal:
 - Mission state is `completed`, `aborted`, or `archived`
 
+**When the tick response returns `missionState: "completed"` or `"aborted"`**, after executing any remaining actions from that tick:
+
+```bash
+ateam missions-archive archiveMission --json
+```
+
+Then stop. Do not output anything else. The `missions-archive` resource group is **separate** from `missions-current` — do not guess; use the exact command above.
+
 ## Step 2 — Run the controller tick
 
 ```bash
