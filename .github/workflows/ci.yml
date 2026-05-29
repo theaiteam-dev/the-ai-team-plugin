@@ -99,8 +99,10 @@ jobs:
       - name: Generate stage-matrix fixture
         run: bun run generate
         working-directory: packages/shared
-      - name: Run Go contract tests
-        run: go test ./internal/stages/...
+      - name: Run Go controller tests
+        run: |
+          go test ./cmd -run 'TestTick|TestCheckpoint|TestController|TestStage|TestRecovery'
+          go test ./internal/controller ./internal/stages
         working-directory: packages/ateam-cli
 
   dist-freshness-check:
