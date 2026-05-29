@@ -53,6 +53,7 @@ type poolSlotState struct {
 	IsIdle         bool
 	IsBusy         bool
 	IdleAgeSeconds float64 // seconds since the .idle file's mtime; 0 when not idle
+	BusyAgeSeconds float64 // seconds since the .busy file's mtime; 0 when not busy
 }
 
 // checkPoolSlot reads the .idle and .busy marker files for instance in poolDir
@@ -67,8 +68,9 @@ func checkPoolSlot(poolDir, instance string) poolSlotState {
 		state.IsIdle = true
 		state.IdleAgeSeconds = time.Since(info.ModTime()).Seconds()
 	}
-	if _, err := os.Stat(busyFile); err == nil {
+	if info, err := os.Stat(busyFile); err == nil {
 		state.IsBusy = true
+		state.BusyAgeSeconds = time.Since(info.ModTime()).Seconds()
 	}
 	return state
 }
@@ -220,6 +222,9 @@ func computeRecovery(
 	// (e.g. probing → ready) are never emitted — those are needsJudgment cases.
 	for _, item := range briefingsItems {
 		if !readySet[item.ID] {
+			continue
+		}
+		if actionAlreadyKnown(checkpoint, cfg.MissionID, item.ID, "move", "controller") {
 			continue
 		}
 		actionID := buildActionID(cfg.MissionID, item.ID, "move", "controller", seq)

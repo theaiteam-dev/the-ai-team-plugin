@@ -525,8 +525,14 @@ func TestRecoveryActionIDsAndActivityLogWriteCitation(t *testing.T) {
 
 		setupStaleIdleSlot(t, poolDir, "murdock-1", 900)
 		m.missionBody = missionResponse(missionID, "running", nil)
+		// The board item must carry assignedAgent matching the health report:
+		// a stale claim being released IS assigned on the board. (An item with an
+		// empty board assignedAgent is an orphan, which the dispatch pass — not
+		// release recovery — handles; in a real non-dry-run tick that pass would
+		// claim the very slot release is trying to free.)
 		m.itemsByStage["testing"] = itemsResponse(map[string]interface{}{
 			"id": "WI-052", "title": "x", "stageId": "testing", "type": "feature",
+			"assignedAgent": "murdock-1",
 		})
 		m.healthBody = healthResponse(inFlightItem(
 			"WI-052", "murdock-1", "testing", 900, "work_log", nil,
@@ -540,22 +546,21 @@ func TestRecoveryActionIDsAndActivityLogWriteCitation(t *testing.T) {
 		if action == nil {
 			t.Fatalf("expected release action for WI-052; plan: %v", plan)
 		}
-		why, _ := action["why"].(string)
-		if why == "" {
-			t.Fatalf("release action must carry a non-empty 'why'; got %v", action)
+		// The rationale is written to ActivityLog, NOT carried in the
+		// model-facing JSON (kept lean — the executor never reads it).
+		if _, hasWhy := action["why"]; hasWhy {
+			t.Errorf("release action must NOT carry 'why' in the JSON plan (it belongs in ActivityLog); got %v", action)
 		}
-
 		posts := m.postsTo("/api/activity")
-		var sawWhy bool
+		var sawRationale bool
 		for _, p := range posts {
-			msg, _ := p["message"].(string)
-			if strings.Contains(msg, why) {
-				sawWhy = true
+			if msg, _ := p["message"].(string); strings.Contains(msg, "WI-052") {
+				sawRationale = true
 				break
 			}
 		}
-		if !sawWhy {
-			t.Errorf("expected an activity-log entry containing the release 'why' (%q); posts were: %v", why, posts)
+		if !sawRationale {
+			t.Errorf("expected an activity-log entry referencing released item WI-052; posts were: %v", posts)
 		}
 	})
 
@@ -578,22 +583,20 @@ func TestRecoveryActionIDsAndActivityLogWriteCitation(t *testing.T) {
 		if action == nil {
 			t.Fatalf("expected move action for WI-053; plan: %v", plan)
 		}
-		why, _ := action["why"].(string)
-		if why == "" {
-			t.Fatalf("move action must carry a non-empty 'why'; got %v", action)
+		// The rationale is written to ActivityLog, NOT carried in the JSON plan.
+		if _, hasWhy := action["why"]; hasWhy {
+			t.Errorf("move action must NOT carry 'why' in the JSON plan (it belongs in ActivityLog); got %v", action)
 		}
-
 		posts := m.postsTo("/api/activity")
-		var sawWhy bool
+		var sawRationale bool
 		for _, p := range posts {
-			msg, _ := p["message"].(string)
-			if strings.Contains(msg, why) {
-				sawWhy = true
+			if msg, _ := p["message"].(string); strings.Contains(msg, "WI-053") {
+				sawRationale = true
 				break
 			}
 		}
-		if !sawWhy {
-			t.Errorf("expected an activity-log entry containing the move 'why' (%q); posts were: %v", why, posts)
+		if !sawRationale {
+			t.Errorf("expected an activity-log entry referencing moved item WI-053; posts were: %v", posts)
 		}
 	})
 }

@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	pflag "github.com/spf13/pflag"
 )
@@ -43,13 +44,16 @@ type tickAPIMocks struct {
 	server *httptest.Server
 
 	// Overrides for GET response bodies (raw JSON). nil → default below.
-	missionBody      []byte
-	itemsByStage     map[string][]byte
-	depsBody         []byte
-	healthBody       []byte
-	checkpointBody   []byte
-	checkpointStatus int
-	activityListBody []byte
+	missionBody          []byte
+	itemsByStage         map[string][]byte
+	depsBody             []byte
+	healthBody           []byte
+	checkpointBody       []byte
+	boardBody            []byte
+	checkpointStatus     int
+	checkpointPostStatus int
+	activityPostStatus   int
+	activityListBody     []byte
 
 	// Behavior overrides.
 	missionMalformed bool
@@ -80,6 +84,20 @@ func newTickAPIMocks(t *testing.T) *tickAPIMocks {
 					"staleClaims": []interface{}{},
 					"stuckItems":  []interface{}{},
 				},
+			})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	})
+
+	mux.HandleFunc("/api/board", func(w http.ResponseWriter, r *http.Request) {
+		m.recordGet(r.URL.Path)
+		body := m.boardBody
+		if body == nil {
+			// Default: no WIP limits (all stages unlimited).
+			body = mustJSON(map[string]interface{}{
+				"success": true,
+				"data":    map[string]interface{}{"stages": []interface{}{}},
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -146,6 +164,14 @@ func newTickAPIMocks(t *testing.T) *tickAPIMocks {
 			body := map[string]interface{}{}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			m.recordPost(r.URL.Path, body)
+			m.mu.Lock()
+			status := m.checkpointPostStatus
+			m.mu.Unlock()
+			if status != 0 {
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"success":false}`))
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"success":true,"data":{}}`))
 			return
@@ -156,6 +182,15 @@ func newTickAPIMocks(t *testing.T) *tickAPIMocks {
 		body := m.checkpointBody
 		m.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			if body != nil {
+				_, _ = w.Write(body)
+			} else {
+				_, _ = w.Write([]byte(`{"success":false}`))
+			}
+			return
+		}
 		if status == http.StatusNotFound || body == nil {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":"not_found"}`))
@@ -169,6 +204,14 @@ func newTickAPIMocks(t *testing.T) *tickAPIMocks {
 			body := map[string]interface{}{}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			m.recordPost(r.URL.Path, body)
+			m.mu.Lock()
+			status := m.activityPostStatus
+			m.mu.Unlock()
+			if status != 0 {
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"success":false}`))
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"success":true}`))
 			return
@@ -360,11 +403,11 @@ func extractFirstJSONObject(s string) string {
 // scenario describes the mock state needed for a typical "happy dispatch" tick.
 // Tests can mutate this before runTick.
 type scenario struct {
-	missionID  string
-	readyItem  map[string]interface{}
-	depsReady  bool
-	poolIdle   bool // murdock-1.idle exists in native pool dir
-	poolDir    string
+	missionID string
+	readyItem map[string]interface{}
+	depsReady bool
+	poolIdle  bool // murdock-1.idle exists in native pool dir
+	poolDir   string
 }
 
 func setupHappyDispatch(t *testing.T, m *tickAPIMocks) scenario {
@@ -410,6 +453,15 @@ func findActionByKind(plan map[string]interface{}, kind string) map[string]inter
 		}
 	}
 	return nil
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 // ===========================================================================
@@ -495,7 +547,7 @@ func TestTickActionIDIsDeterministic(t *testing.T) {
 	s := setupHappyDispatch(t, m)
 
 	idPattern := regexp.MustCompile(
-		`^` + regexp.QuoteMeta(s.missionID) + `:WI-014:dispatch:murdock(-\d+)?:\d+$`,
+		`^` + regexp.QuoteMeta(s.missionID) + `:WI-014:dispatch:g\d+:murdock(-\d+)?:\d+$`,
 	)
 
 	// Run twice with the same (empty) checkpoint and identical mock state.
@@ -526,6 +578,123 @@ func TestTickActionIDIsDeterministic(t *testing.T) {
 	if id1 != id2 {
 		t.Errorf("re-running tick before checkpoint update changed the action id: %q vs %q", id1, id2)
 	}
+}
+
+func TestTickUsesConcreteInstanceForOrphanDispatch(t *testing.T) {
+	m := newTickAPIMocks(t)
+	missionID, poolDir := withTempPoolRoot(t, "orphan-instance")
+	t.Setenv("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS", "1")
+	if err := os.MkdirAll(poolDir, 0o755); err != nil {
+		t.Fatalf("mkdir pool: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(poolDir, "ba-1.idle"), nil, 0o644); err != nil {
+		t.Fatalf("seed ba idle: %v", err)
+	}
+	m.missionBody = missionResponse(missionID, "running", nil)
+	m.itemsByStage["implementing"] = itemsResponse(map[string]interface{}{
+		"id":            "WI-022",
+		"title":         "Orphan impl",
+		"stageId":       "implementing",
+		"type":          "feature",
+		"assignedAgent": "",
+	})
+
+	_, plan, err := runTick(t, m.server.URL, "--dry-run")
+	if err != nil {
+		t.Fatalf("tick returned error: %v", err)
+	}
+	dispatch := findActionByKind(plan, "dispatch")
+	if dispatch == nil {
+		t.Fatalf("expected orphan dispatch action, plan: %v", plan)
+	}
+	if got := dispatch["agent"]; got != "ba-1" {
+		t.Fatalf("orphan dispatch must target concrete idle instance ba-1, got %v; plan: %v", got, plan)
+	}
+}
+
+func TestTickCheckpointIdempotencyForPendingActions(t *testing.T) {
+	t.Run("pending dispatch is not re-emitted", func(t *testing.T) {
+		m := newTickAPIMocks(t)
+		s := setupHappyDispatch(t, m)
+		pendingID := s.missionID + ":WI-014:dispatch:g0:murdock-1:1"
+		m.checkpointBody = mustJSON(map[string]interface{}{
+			"success": true,
+			"data": map[string]interface{}{
+				"tickedAt":           "2026-05-20T00:00:00Z",
+				"activityCursor":     0,
+				"pendingActionIds":   []string{pendingID},
+				"confirmedActionIds": []string{},
+				"retryCounters":      map[string]int{},
+				"lastLaneState":      map[string]string{},
+			},
+		})
+
+		_, plan, err := runTick(t, m.server.URL, "--dry-run")
+		if err != nil {
+			t.Fatalf("tick returned error: %v", err)
+		}
+		if findActionByKind(plan, "dispatch") != nil {
+			t.Fatalf("pending dispatch must not be re-emitted; plan: %v", plan)
+		}
+	})
+
+	t.Run("checkpoint write preserves unresolved pending IDs and drops confirmed ones", func(t *testing.T) {
+		m := newTickAPIMocks(t)
+		s := setupHappyDispatch(t, m)
+		oldPending := s.missionID + ":WI-999:move:controller:1"
+		confirmed := s.missionID + ":WI-998:dispatch:g0:murdock-1:1"
+		m.checkpointBody = mustJSON(map[string]interface{}{
+			"success": true,
+			"data": map[string]interface{}{
+				"tickedAt":           "2026-05-20T00:00:00Z",
+				"activityCursor":     7,
+				"pendingActionIds":   []string{oldPending, confirmed},
+				"confirmedActionIds": []string{confirmed},
+				"retryCounters":      map[string]int{},
+				"lastLaneState":      map[string]string{},
+			},
+		})
+
+		_, plan, err := runTick(t, m.server.URL)
+		if err != nil {
+			t.Fatalf("tick returned error: %v", err)
+		}
+		dispatch := findActionByKind(plan, "dispatch")
+		if dispatch == nil {
+			t.Fatalf("expected dispatch action, plan: %v", plan)
+		}
+		posts := m.postsTo("/api/controller-checkpoint/")
+		if len(posts) == 0 {
+			t.Fatalf("expected checkpoint post")
+		}
+		lastPost := posts[len(posts)-1]
+		strs := func(key string) []string {
+			arr, _ := lastPost[key].([]interface{})
+			var out []string
+			for _, v := range arr {
+				out = append(out, v.(string))
+			}
+			return out
+		}
+		gotPending := strs("pendingActionIds")
+		gotConfirmed := strs("confirmedActionIds")
+		// Non-dispatch pending IDs are preserved for Claude to confirm.
+		if !containsString(gotPending, oldPending) {
+			t.Fatalf("checkpoint pending IDs must preserve unresolved %q, got %v", oldPending, gotPending)
+		}
+		if containsString(gotPending, confirmed) {
+			t.Fatalf("checkpoint pending IDs must not retain confirmed %q, got %v", confirmed, gotPending)
+		}
+		// Dispatch actions are auto-confirmed by the controller (the pool slot is
+		// claimed at tick time) — they land in confirmedActionIds, never pending.
+		dispatchID := dispatch["id"].(string)
+		if containsString(gotPending, dispatchID) {
+			t.Fatalf("auto-confirmed dispatch %q must NOT be in pending, got %v", dispatchID, gotPending)
+		}
+		if !containsString(gotConfirmed, dispatchID) {
+			t.Fatalf("checkpoint confirmed IDs must include auto-confirmed dispatch %q, got %v", dispatchID, gotConfirmed)
+		}
+	})
 }
 
 // ===========================================================================
@@ -806,22 +975,24 @@ func TestTickActivityLogAndCheckpointWrites(t *testing.T) {
 				len(actions), len(activityPosts))
 		}
 
-		// Each activity log entry must include the action's "why" rationale —
-		// the AC explicitly requires this for auditability.
-		actionWhy, _ := dispatch["why"].(string)
-		if actionWhy == "" {
-			t.Fatalf("dispatch action is missing a 'why' field; got %v", dispatch)
+		// The rationale ('why') is written to ActivityLog for auditability, but
+		// is deliberately NOT emitted in the model-facing JSON (kept lean — the
+		// executor never reads it). Verify both halves: absent from JSON, present
+		// in the activity feed (keyed by the dispatched item id).
+		if _, hasWhy := dispatch["why"]; hasWhy {
+			t.Errorf("dispatch action must NOT carry 'why' in the JSON plan (it belongs in ActivityLog); got %v", dispatch)
 		}
-		var sawWhy bool
+		dispatchItemID, _ := dispatch["itemId"].(string)
+		var sawRationale bool
 		for _, p := range activityPosts {
 			msg, _ := p["message"].(string)
-			if strings.Contains(msg, actionWhy) {
-				sawWhy = true
+			if strings.Contains(msg, dispatchItemID) {
+				sawRationale = true
 				break
 			}
 		}
-		if !sawWhy {
-			t.Errorf("expected an activity-log entry containing the action 'why' (%q); posts were: %v", actionWhy, activityPosts)
+		if !sawRationale {
+			t.Errorf("expected an activity-log entry referencing dispatched item %q; posts were: %v", dispatchItemID, activityPosts)
 		}
 
 		// Checkpoint must have been written with a COMPLETE document —
@@ -832,8 +1003,9 @@ func TestTickActivityLogAndCheckpointWrites(t *testing.T) {
 		// also discards POST errors silently, so a wrong-shape body would
 		// fail invisibly in production. This test pins the contract
 		// directly: every field must be present, the field name must be
-		// `tickedAt` (NOT `lastTickAt`), and `pendingActionIds` must include
-		// the emitted dispatch id so Claude can confirm idempotently.
+		// `tickedAt` (NOT `lastTickAt`), and the emitted dispatch id must be
+		// auto-confirmed (in confirmedActionIds, not pending) since the
+		// controller claims the pool slot itself.
 		checkpointPosts := m.postsTo("/api/controller-checkpoint/")
 		if len(checkpointPosts) == 0 {
 			t.Fatalf("expected at least one POST /api/controller-checkpoint/<id> after a non-dry-run tick")
@@ -860,22 +1032,23 @@ func TestTickActivityLogAndCheckpointWrites(t *testing.T) {
 			t.Errorf("checkpoint POST body uses wrong field name 'lastTickAt' — WI-002's contract is 'tickedAt'")
 		}
 
-		// pendingActionIds must include the emitted dispatch action's id so
-		// the next tick can detect duplication and skip re-emitting.
+		// confirmedActionIds must include the emitted dispatch action's id:
+		// dispatch is auto-confirmed by the controller (it claims the pool slot
+		// itself), so the next tick detects duplication and skips re-emitting.
 		dispatchID, _ := dispatch["id"].(string)
-		pending, ok := cp["pendingActionIds"].([]interface{})
+		confirmed, ok := cp["confirmedActionIds"].([]interface{})
 		if !ok {
-			t.Errorf("checkpoint pendingActionIds must be an array, got %T (%v)", cp["pendingActionIds"], cp["pendingActionIds"])
+			t.Errorf("checkpoint confirmedActionIds must be an array, got %T (%v)", cp["confirmedActionIds"], cp["confirmedActionIds"])
 		} else {
 			var found bool
-			for _, id := range pending {
+			for _, id := range confirmed {
 				if s, _ := id.(string); s == dispatchID {
 					found = true
 					break
 				}
 			}
 			if !found {
-				t.Errorf("checkpoint pendingActionIds %v does not contain the emitted dispatch id %q", pending, dispatchID)
+				t.Errorf("checkpoint confirmedActionIds %v does not contain the auto-confirmed dispatch id %q", confirmed, dispatchID)
 			}
 		}
 	})
@@ -936,9 +1109,408 @@ func TestTickActivityLogAndCheckpointWrites(t *testing.T) {
 		// — same mission/item/kind/agent as the deterministic-ID test, just
 		// with the sequence bumped to 2 because of the prior checkpoint.
 		// Agent field is now the specific pool instance (e.g. murdock-1), not generic "murdock"
-		wantID := s.missionID + ":WI-014:dispatch:murdock-1:2"
+		wantID := s.missionID + ":WI-014:dispatch:g0:murdock-1:2"
 		if id != wantID {
 			t.Errorf("dispatch id mismatch: want %q, got %q", wantID, id)
+		}
+	})
+}
+
+// ===========================================================================
+// Controller-side pool claim (#2): a real native-teams dispatch tick claims the
+// idle slot itself (.idle → .busy) so Claude only sends the START message —
+// dropping the per-dispatch `ateam pool claim` round-trip. --dry-run must never
+// mutate the pool.
+// ===========================================================================
+
+func slotState(t *testing.T, poolDir, instance string) (idle, busy bool) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(poolDir, instance+".idle")); err == nil {
+		idle = true
+	}
+	if _, err := os.Stat(filepath.Join(poolDir, instance+".busy")); err == nil {
+		busy = true
+	}
+	return idle, busy
+}
+
+func TestTickClaimsPoolSlotOnDispatch(t *testing.T) {
+	t.Run("real tick claims the idle slot (.idle → .busy)", func(t *testing.T) {
+		m := newTickAPIMocks(t)
+		s := setupHappyDispatch(t, m)
+
+		_, plan, err := runTick(t, m.server.URL) // no --dry-run
+		if err != nil {
+			t.Fatalf("tick failed: %v", err)
+		}
+		if findActionByKind(plan, "dispatch") == nil {
+			t.Fatalf("expected a dispatch action; plan: %v", plan)
+		}
+		idle, busy := slotState(t, s.poolDir, "murdock-1")
+		if idle || !busy {
+			t.Fatalf("controller must claim murdock-1 at dispatch time (want idle=false busy=true), got idle=%v busy=%v", idle, busy)
+		}
+	})
+
+	t.Run("--dry-run never mutates the pool", func(t *testing.T) {
+		m := newTickAPIMocks(t)
+		s := setupHappyDispatch(t, m)
+
+		_, plan, err := runTick(t, m.server.URL, "--dry-run")
+		if err != nil {
+			t.Fatalf("tick failed: %v", err)
+		}
+		if findActionByKind(plan, "dispatch") == nil {
+			t.Fatalf("dry-run should still emit a dispatch action; plan: %v", plan)
+		}
+		idle, busy := slotState(t, s.poolDir, "murdock-1")
+		if !idle || busy {
+			t.Fatalf("--dry-run must not claim the slot (want idle=true busy=false), got idle=%v busy=%v", idle, busy)
+		}
+	})
+}
+
+// ===========================================================================
+// Reclaim (#2 safety net): the controller claims a slot BEFORE Claude sends the
+// START, so a dropped SendMessage would leak a .busy slot. reclaimStuckSlots
+// releases a slot whose dispatched item still has no assignedAgent past the
+// reclaim threshold, and drops the stale confirmed dispatch action so the next
+// tick re-dispatches.
+// ===========================================================================
+
+// confirmedCheckpointBody returns a checkpoint GET envelope seeding the given
+// confirmed action IDs (and no pending IDs).
+func confirmedCheckpointBody(confirmedIDs ...string) []byte {
+	ids := make([]interface{}, 0, len(confirmedIDs))
+	for _, id := range confirmedIDs {
+		ids = append(ids, id)
+	}
+	return mustJSON(map[string]interface{}{
+		"success": true,
+		"data": map[string]interface{}{
+			"tickedAt":           "2026-05-20T00:00:00Z",
+			"activityCursor":     0,
+			"pendingActionIds":   []string{},
+			"confirmedActionIds": ids,
+			"retryCounters":      map[string]int{},
+			"lastLaneState":      map[string]string{},
+		},
+	})
+}
+
+// seedBusySlot writes <instance>.busy with an mtime ageSeconds in the past so
+// reclaim can be exercised deterministically without sleeping.
+func seedBusySlot(t *testing.T, poolDir, instance string, ageSeconds float64) {
+	t.Helper()
+	busy := filepath.Join(poolDir, instance+".busy")
+	if err := os.WriteFile(busy, nil, 0o644); err != nil {
+		t.Fatalf("seed busy slot: %v", err)
+	}
+	past := time.Now().Add(-time.Duration(ageSeconds * float64(time.Second)))
+	if err := os.Chtimes(busy, past, past); err != nil {
+		t.Fatalf("backdate busy slot: %v", err)
+	}
+}
+
+// lastCheckpointConfirmed returns the confirmedActionIds from the most recent
+// checkpoint POST body, or nil if none was posted.
+func lastCheckpointConfirmed(t *testing.T, m *tickAPIMocks) []string {
+	t.Helper()
+	posts := m.postsTo("/api/controller-checkpoint/")
+	if len(posts) == 0 {
+		return nil
+	}
+	arr, _ := posts[len(posts)-1]["confirmedActionIds"].([]interface{})
+	var out []string
+	for _, v := range arr {
+		out = append(out, v.(string))
+	}
+	return out
+}
+
+func TestTickReclaimsStuckSlot(t *testing.T) {
+	t.Run("stale busy slot with unstarted item is released and de-confirmed", func(t *testing.T) {
+		m := newTickAPIMocks(t)
+		missionID, poolDir := withTempPoolRoot(t, "reclaim-stuck")
+		t.Setenv("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS", "1")
+		if err := os.MkdirAll(poolDir, 0o755); err != nil {
+			t.Fatalf("mkdir pool: %v", err)
+		}
+		seedBusySlot(t, poolDir, "murdock-1", 300) // .busy for 5 min, > 120s threshold
+
+		dispatchID := missionID + ":WI-014:dispatch:g0:murdock-1:1"
+		m.missionBody = missionResponse(missionID, "running", nil)
+		// Item is still in ready with no assignedAgent — the START never started.
+		m.itemsByStage["ready"] = itemsResponse(map[string]interface{}{
+			"id": "WI-014", "title": "Add rate-limiting", "stageId": "ready",
+			"type": "feature", "assignedAgent": "",
+		})
+		m.checkpointBody = confirmedCheckpointBody(dispatchID)
+
+		_, plan, err := runTick(t, m.server.URL) // no --dry-run
+		if err != nil {
+			t.Fatalf("tick failed: %v", err)
+		}
+
+		idle, busy := slotState(t, poolDir, "murdock-1")
+		if !idle || busy {
+			t.Fatalf("reclaim must release the stuck slot (want idle=true busy=false), got idle=%v busy=%v", idle, busy)
+		}
+		// A reclaim must schedule a prompt re-tick so the freed slot is
+		// re-dispatched quickly rather than after the long idle cadence.
+		if nw, _ := plan["nextWakeSeconds"].(float64); nw != 5 {
+			t.Fatalf("reclaim should re-tick promptly (nextWakeSeconds=5), got %v", plan["nextWakeSeconds"])
+		}
+		if confirmed := lastCheckpointConfirmed(t, m); containsString(confirmed, dispatchID) {
+			t.Fatalf("reclaim must drop the stale dispatch id from confirmedActionIds, still present: %v", confirmed)
+		}
+		var sawReclaim bool
+		for _, p := range m.postsTo("/api/activity") {
+			if msg, _ := p["message"].(string); strings.Contains(msg, "reclaim stuck slot murdock-1") {
+				sawReclaim = true
+			}
+		}
+		if !sawReclaim {
+			t.Errorf("expected a reclaim activity-log entry for murdock-1")
+		}
+	})
+
+	t.Run("fresh busy slot (below threshold) is NOT reclaimed", func(t *testing.T) {
+		m := newTickAPIMocks(t)
+		missionID, poolDir := withTempPoolRoot(t, "reclaim-fresh")
+		t.Setenv("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS", "1")
+		if err := os.MkdirAll(poolDir, 0o755); err != nil {
+			t.Fatalf("mkdir pool: %v", err)
+		}
+		seedBusySlot(t, poolDir, "murdock-1", 5) // just claimed — worker still starting
+
+		dispatchID := missionID + ":WI-014:dispatch:g0:murdock-1:1"
+		m.missionBody = missionResponse(missionID, "running", nil)
+		m.itemsByStage["ready"] = itemsResponse(map[string]interface{}{
+			"id": "WI-014", "title": "Add rate-limiting", "stageId": "ready",
+			"type": "feature", "assignedAgent": "",
+		})
+		m.checkpointBody = confirmedCheckpointBody(dispatchID)
+
+		_, _, err := runTick(t, m.server.URL)
+		if err != nil {
+			t.Fatalf("tick failed: %v", err)
+		}
+		if _, busy := slotState(t, poolDir, "murdock-1"); !busy {
+			t.Fatalf("a slot busy for only 5s must not be reclaimed")
+		}
+		if confirmed := lastCheckpointConfirmed(t, m); !containsString(confirmed, dispatchID) {
+			t.Fatalf("a non-reclaimed dispatch id must remain confirmed, got %v", confirmed)
+		}
+	})
+
+	t.Run("busy slot whose worker started (assignedAgent set) is NOT reclaimed", func(t *testing.T) {
+		m := newTickAPIMocks(t)
+		missionID, poolDir := withTempPoolRoot(t, "reclaim-working")
+		t.Setenv("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS", "1")
+		if err := os.MkdirAll(poolDir, 0o755); err != nil {
+			t.Fatalf("mkdir pool: %v", err)
+		}
+		seedBusySlot(t, poolDir, "murdock-1", 600) // long-running but legitimate
+
+		dispatchID := missionID + ":WI-014:dispatch:g0:murdock-1:1"
+		m.missionBody = missionResponse(missionID, "running", nil)
+		// Worker picked it up: moved to testing and set assignedAgent.
+		m.itemsByStage["testing"] = itemsResponse(map[string]interface{}{
+			"id": "WI-014", "title": "Add rate-limiting", "stageId": "testing",
+			"type": "feature", "assignedAgent": "murdock-1",
+		})
+		m.checkpointBody = confirmedCheckpointBody(dispatchID)
+
+		_, _, err := runTick(t, m.server.URL)
+		if err != nil {
+			t.Fatalf("tick failed: %v", err)
+		}
+		if _, busy := slotState(t, poolDir, "murdock-1"); !busy {
+			t.Fatalf("a busy slot with active work (assignedAgent set) must never be reclaimed")
+		}
+		if confirmed := lastCheckpointConfirmed(t, m); !containsString(confirmed, dispatchID) {
+			t.Fatalf("an in-progress dispatch id must remain confirmed, got %v", confirmed)
+		}
+	})
+}
+
+// ===========================================================================
+// Rejection-generation IDs + planner-side cap: an item that hit the rejection
+// cap is routed to `blocked` by the controller (not re-dispatched), and a
+// legitimate rework bounce (a new generation) IS re-dispatchable despite a
+// prior-generation dispatch sitting in the checkpoint.
+// ===========================================================================
+
+func TestTickPlannerSideRejectionCap(t *testing.T) {
+	t.Run("item at the rejection cap is blocked, not dispatched", func(t *testing.T) {
+		m := newTickAPIMocks(t)
+		missionID, poolDir := withTempPoolRoot(t, "cap-block")
+		t.Setenv("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS", "1")
+		t.Setenv("ATEAM_REJECTION_CAP", "4")
+		if err := os.MkdirAll(poolDir, 0o755); err != nil {
+			t.Fatalf("mkdir pool: %v", err)
+		}
+		_ = os.WriteFile(filepath.Join(poolDir, "ba-1.idle"), nil, 0o644)
+		m.missionBody = missionResponse(missionID, "running", nil)
+		m.itemsByStage["implementing"] = itemsResponse(map[string]interface{}{
+			"id": "WI-020", "title": "cycler", "stageId": "implementing",
+			"type": "feature", "assignedAgent": "", "rejectionCount": 4,
+		})
+
+		_, plan, err := runTick(t, m.server.URL, "--dry-run")
+		if err != nil {
+			t.Fatalf("tick failed: %v", err)
+		}
+		if d := findActionForItem(plan, "dispatch", "WI-020"); d != nil {
+			t.Fatalf("an item at the rejection cap must NOT be dispatched; got %v", d)
+		}
+		block := findActionForItem(plan, "move", "WI-020")
+		if block == nil {
+			t.Fatalf("expected a move-to-blocked action for the capped item; plan: %v", plan)
+		}
+		if block["toStage"] != "blocked" {
+			t.Fatalf("capped item must be routed to 'blocked', got toStage=%v", block["toStage"])
+		}
+	})
+
+	t.Run("a reworked item (new generation) is re-dispatched despite a prior-gen dispatch in the checkpoint", func(t *testing.T) {
+		m := newTickAPIMocks(t)
+		missionID, poolDir := withTempPoolRoot(t, "rework-redispatch")
+		t.Setenv("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS", "1")
+		if err := os.MkdirAll(poolDir, 0o755); err != nil {
+			t.Fatalf("mkdir pool: %v", err)
+		}
+		_ = os.WriteFile(filepath.Join(poolDir, "murdock-1.idle"), nil, 0o644)
+		m.missionBody = missionResponse(missionID, "running", nil)
+		// Item bounced back to testing: rejectionCount=1 (generation 1), no agent.
+		m.itemsByStage["testing"] = itemsResponse(map[string]interface{}{
+			"id": "WI-021", "title": "reworked", "stageId": "testing",
+			"type": "feature", "assignedAgent": "", "rejectionCount": 1,
+		})
+		// The generation-0 dispatch from the first pass is already confirmed.
+		m.checkpointBody = confirmedCheckpointBody(missionID + ":WI-021:dispatch:g0:murdock-1:1")
+
+		_, plan, err := runTick(t, m.server.URL, "--dry-run")
+		if err != nil {
+			t.Fatalf("tick failed: %v", err)
+		}
+		d := findActionForItem(plan, "dispatch", "WI-021")
+		if d == nil {
+			t.Fatalf("a reworked item (gen 1) must be re-dispatchable even though gen 0 is confirmed; plan: %v", plan)
+		}
+		if id, _ := d["id"].(string); !strings.Contains(id, ":dispatch:g1:") {
+			t.Fatalf("re-dispatch must carry the new generation g1, got id=%q", id)
+		}
+	})
+}
+
+// ===========================================================================
+// Per-stage WIP gate: the ready-dispatch loop respects the entry stage's WIP
+// limit, not just idle pool capacity.
+// ===========================================================================
+
+func boardWIPResponse(stageLimits map[string]int) []byte {
+	stages := make([]interface{}, 0, len(stageLimits))
+	for id, lim := range stageLimits {
+		stages = append(stages, map[string]interface{}{
+			"id": id, "name": id, "order": 0, "wipLimit": lim,
+		})
+	}
+	return mustJSON(map[string]interface{}{
+		"success": true,
+		"data":    map[string]interface{}{"stages": stages},
+	})
+}
+
+func TestTickGatesDispatchOnStageWIP(t *testing.T) {
+	m := newTickAPIMocks(t)
+	missionID, poolDir := withTempPoolRoot(t, "wip-gate")
+	t.Setenv("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS", "1")
+	if err := os.MkdirAll(poolDir, 0o755); err != nil {
+		t.Fatalf("mkdir pool: %v", err)
+	}
+	// Two idle lanes — physical capacity alone would allow 2 dispatches.
+	_ = os.WriteFile(filepath.Join(poolDir, "murdock-1.idle"), nil, 0o644)
+	_ = os.WriteFile(filepath.Join(poolDir, "murdock-2.idle"), nil, 0o644)
+	m.missionBody = missionResponse(missionID, "running", nil)
+	// testing WIP = 1 (currently empty).
+	m.boardBody = boardWIPResponse(map[string]int{"testing": 1})
+	m.itemsByStage["ready"] = itemsResponse(
+		map[string]interface{}{"id": "WI-100", "title": "a", "stageId": "ready", "type": "feature"},
+		map[string]interface{}{"id": "WI-101", "title": "b", "stageId": "ready", "type": "feature"},
+	)
+	m.depsBody = depsReadyResponse("WI-100", "WI-101")
+
+	_, plan, err := runTick(t, m.server.URL, "--dry-run")
+	if err != nil {
+		t.Fatalf("tick failed: %v", err)
+	}
+	count := 0
+	actions, _ := plan["actions"].([]interface{})
+	for _, a := range actions {
+		if am, _ := a.(map[string]interface{}); am != nil && am["kind"] == "dispatch" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("testing WIP=1 must allow exactly 1 dispatch despite 2 idle lanes + 2 ready items, got %d; plan: %v", count, plan)
+	}
+}
+
+// ===========================================================================
+// Runaway backstop: an active mission past the wall-clock budget halts dispatch
+// and escalates, rather than ticking hot forever (the 40-hour-runaway class).
+// ===========================================================================
+
+func missionResponseStarted(id, state, startedAt string) []byte {
+	return mustJSON(map[string]interface{}{
+		"success": true,
+		"data": map[string]interface{}{
+			"id": id, "name": "Test mission", "state": state,
+			"finalReview": nil, "startedAt": startedAt,
+		},
+	})
+}
+
+func TestTickRunawayBackstop(t *testing.T) {
+	t.Run("mission past the wall-clock budget halts dispatch and escalates", func(t *testing.T) {
+		m := newTickAPIMocks(t)
+		s := setupHappyDispatch(t, m) // a ready item + idle lane that WOULD dispatch
+		t.Setenv("ATEAM_MAX_MISSION_HOURS", "24")
+		started := time.Now().Add(-25 * time.Hour).UTC().Format(time.RFC3339)
+		m.missionBody = missionResponseStarted(s.missionID, "running", started)
+
+		_, plan, err := runTick(t, m.server.URL, "--dry-run")
+		if err != nil {
+			t.Fatalf("tick failed: %v", err)
+		}
+		if findActionByKind(plan, "dispatch") != nil {
+			t.Fatalf("a runaway mission must NOT dispatch; plan: %v", plan)
+		}
+		nj, _ := plan["needsJudgment"].(map[string]interface{})
+		if nj == nil || nj["kind"] != "runaway-backstop" {
+			t.Fatalf("expected needsJudgment kind=runaway-backstop; got %v", plan["needsJudgment"])
+		}
+		// Idles (~hourly) rather than re-arming hot.
+		if nw, _ := plan["nextWakeSeconds"].(float64); nw < 600 {
+			t.Fatalf("runaway backstop should idle the loop (long nextWake), got %v", plan["nextWakeSeconds"])
+		}
+	})
+
+	t.Run("mission within budget dispatches normally", func(t *testing.T) {
+		m := newTickAPIMocks(t)
+		s := setupHappyDispatch(t, m)
+		t.Setenv("ATEAM_MAX_MISSION_HOURS", "24")
+		started := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+		m.missionBody = missionResponseStarted(s.missionID, "running", started)
+
+		_, plan, err := runTick(t, m.server.URL, "--dry-run")
+		if err != nil {
+			t.Fatalf("tick failed: %v", err)
+		}
+		if findActionByKind(plan, "dispatch") == nil {
+			t.Fatalf("a mission within budget must still dispatch; plan: %v", plan)
 		}
 	})
 }
@@ -997,6 +1569,66 @@ func TestTickFailsClosedOnAPIError(t *testing.T) {
 		}
 		if _, ok := plan["needsJudgment"].(map[string]interface{}); !ok {
 			t.Errorf("expected needsJudgment object on JSON parse failure, got %T", plan["needsJudgment"])
+		}
+	})
+
+	t.Run("checkpoint read 500 → non-zero exit + needsJudgment + no dispatch", func(t *testing.T) {
+		m := newTickAPIMocks(t)
+		setupHappyDispatch(t, m)
+		m.checkpointStatus = http.StatusInternalServerError
+		m.checkpointBody = []byte(`{"success":false,"error":{"message":"boom"}}`)
+
+		output, plan, err := runTick(t, m.server.URL, "--dry-run")
+		if err == nil {
+			t.Fatalf("expected checkpoint read failure to fail closed, got nil error; output:\n%s", output)
+		}
+		if findActionByKind(plan, "dispatch") != nil {
+			t.Fatalf("checkpoint read failure must not emit dispatch; plan: %v", plan)
+		}
+		if _, ok := plan["needsJudgment"].(map[string]interface{}); !ok {
+			t.Fatalf("expected needsJudgment object, got %T; plan: %v", plan["needsJudgment"], plan)
+		}
+	})
+
+	t.Run("stage item fetch malformed → non-zero exit + needsJudgment + no dispatch", func(t *testing.T) {
+		m := newTickAPIMocks(t)
+		setupHappyDispatch(t, m)
+		m.itemsByStage["testing"] = []byte(`{not-json`)
+
+		output, plan, err := runTick(t, m.server.URL, "--dry-run")
+		if err == nil {
+			t.Fatalf("expected stage fetch failure to fail closed, got nil error; output:\n%s", output)
+		}
+		if findActionByKind(plan, "dispatch") != nil {
+			t.Fatalf("stage fetch failure must not emit dispatch; plan: %v", plan)
+		}
+	})
+
+	t.Run("activity write non-2xx → non-zero exit after fail-closed write error", func(t *testing.T) {
+		m := newTickAPIMocks(t)
+		setupHappyDispatch(t, m)
+		m.activityPostStatus = http.StatusInternalServerError
+
+		output, _, err := runTick(t, m.server.URL)
+		if err == nil {
+			t.Fatalf("expected activity write failure to return non-zero, got nil; output:\n%s", output)
+		}
+		if !strings.Contains(err.Error(), "HTTP 500") {
+			t.Fatalf("expected HTTP 500 error, got %v", err)
+		}
+	})
+
+	t.Run("checkpoint write non-2xx → non-zero exit after fail-closed write error", func(t *testing.T) {
+		m := newTickAPIMocks(t)
+		setupHappyDispatch(t, m)
+		m.checkpointPostStatus = http.StatusInternalServerError
+
+		output, _, err := runTick(t, m.server.URL)
+		if err == nil {
+			t.Fatalf("expected checkpoint write failure to return non-zero, got nil; output:\n%s", output)
+		}
+		if !strings.Contains(err.Error(), "HTTP 500") {
+			t.Fatalf("expected HTTP 500 error, got %v", err)
 		}
 	})
 }

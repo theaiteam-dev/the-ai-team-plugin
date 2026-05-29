@@ -81,7 +81,9 @@ func printTickOutput(cmd *cobra.Command, plan *controller.TickOutput, jsonMode b
 	// The --json flag is still accepted (for consistency with the rest of the
 	// CLI) but does not change the output format.
 	_ = jsonMode
-	b, err := json.MarshalIndent(plan, "", "  ")
+	// Compact (not indented): the tick plan is machine-consumed by the tick
+	// skill on every wake. Indentation whitespace is pure context cost.
+	b, err := json.Marshal(plan)
 	if err != nil {
 		return fmt.Errorf("marshal tick output: %w", err)
 	}
