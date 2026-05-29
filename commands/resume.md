@@ -1,5 +1,5 @@
 ---
-model: haiku
+model: sonnet
 ---
 # /ai-team:resume
 
@@ -16,18 +16,17 @@ Resume an interrupted mission from where it left off.
 Before doing anything else, check your current model. Your system prompt contains your model ID (e.g., "You are powered by the model named Opus 4.6").
 
 ```
-if model is NOT haiku AND model is NOT sonnet:
+if model is NOT sonnet:
     Output to user:
-    "Hannibal orchestration runs on Haiku (tick loop) or Sonnet (legacy).
-    You're currently on [model name].
+    "Hannibal orchestration runs on Sonnet. You're currently on [model name].
 
-    Please switch first:  /model haiku
+    Please switch first:  /model sonnet
     Then re-run:          /ai-team:resume"
 
     STOP. Do not proceed.
 ```
 
-Hannibal's job is now mechanical tick execution — the Go controller handles all orchestration reasoning. Haiku is sufficient and ~75% cheaper on cache reads.
+Hannibal's job is mechanical tick execution — the Go controller handles the orchestration reasoning. Even so, driving the loop reliably to completion needs Sonnet: Haiku was trialed and produced a runaway that never converged. Sonnet is the required floor.
 
 ## Behavior
 

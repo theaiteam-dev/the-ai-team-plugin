@@ -62,22 +62,24 @@ For each entry in `actions`, act based on `kind`. The `mode` field in the respon
 
 | Kind | How to execute |
 |------|----------------|
-| `dispatch` | The `agent` field names the specific idle instance (e.g. `murdock-2`). Fetch the item prompt: `ateam items renderItem <itemId>`. Then dispatch based on `mode`:<br>**Legacy mode**: `Agent(subagent_type: "ai-team:murdock", prompt: <renderItem output>)`.<br>**Native-teams mode**: (1) atomically claim the pool slot first: `ateam pool claim <agent>` — if this fails (slot already `.busy`), **skip this action without confirming it** and move to the next action; the next tick will re-evaluate; (2) if claim succeeds, send work: `SendMessage(to: "<agent>", message: "START: <itemId> — <title>\nRun: ateam items renderItem <itemId>")`; (3) confirm the action normally. The instance is already alive (it sent READY during lane setup). Do NOT spawn a new lane. Do NOT inline prompts — always use `renderItem`. |
+| `dispatch` | The `agent` field names the specific idle instance (e.g. `murdock-2`). Dispatch based on `mode`:<br>**Legacy mode**: fetch the prompt with `ateam items renderItem <itemId>`, then `Agent(subagent_type: "ai-team:murdock", prompt: <renderItem output>)`.<br>**Native-teams mode**: the controller has **already claimed the pool slot** for `<agent>` and **pre-confirmed** this dispatch — your only step is to send the work: `SendMessage(to: "<agent>", message: "START: <itemId> — <title>\nRun: ateam items renderItem <itemId>")`. Do **NOT** run `ateam pool claim` and do **NOT** run `checkpoint confirm` for dispatch actions. The instance is already alive (it sent READY during lane setup). Do NOT spawn a new lane. Do NOT inline prompts — the worker runs `renderItem` itself. |
 | `message` | `SendMessage` to the named instance with the literal text from the action |
 | `final-review` | Spawn `Stockwell` via the appropriate Claude primitive (`Task` in legacy mode, `TeamCreate` in native-teams mode) |
 | `release` | `ateam board-release releaseItem --itemId <id>` **and** `ateam pool release <name>` as named by the action |
 | `move` | `ateam board-move moveItem --itemId <id> --toStage <stage>` using the action's target stage |
 | `setup-lane` | **If multiple setup-lane actions are present, batch them:** spawn ALL agents for ALL lanes in a single message before waiting for any READY. (1) if no team exists, `TeamCreate(team_name: "mission-<projectId>-<missionId>")`; (2) for each setup-lane action, spawn all 4 instances: `Agent(team_name, name: "murdock-N", ...)`, `Agent(... "ba-N" ...)`, `Agent(... "lynch-N" ...)`, `Agent(... "amy-N" ...)` — send all spawns in one message for all lanes simultaneously; (3) wait for READY from all spawned agents across all lanes; (4) `ateam pool mark-idle <instance>` for each that sent READY. **Do not dispatch work yet** — the next tick will see idle agents and emit `dispatch` actions. |
 
-## Step 4 — Confirm each action
+## Step 4 — Confirm each NON-dispatch action
 
-After each action succeeds, atomically append its id to the server-side checkpoint:
+`dispatch` actions are **pre-confirmed by the controller** (it claimed the pool slot when it planned them) — do NOT confirm them.
+
+For every **other** action you execute (`message`, `release`, `move`, `final-review`), atomically append its id to the server-side checkpoint after it succeeds:
 
 ```bash
 ateam controller checkpoint confirm --action-id <id>
 ```
 
-This ensures the next tick is idempotent — already-confirmed actions are skipped by the controller.
+This ensures the next tick is idempotent — already-confirmed actions are skipped by the controller. (A dropped dispatch SendMessage is recovered automatically: the controller reclaims the unstarted pool slot and re-dispatches on a later tick.)
 
 ## Step 5 — Stop. Do not poll.
 
@@ -87,22 +89,16 @@ After confirming all actions, **stop immediately**. No Bash calls, no text outpu
 
 When the response includes a `needsJudgment` payload:
 
-1. Load ONLY the `needsJudgment.evidence` packet: item ids, signals, and suggested investigation step
+1. Load ONLY the `needsJudgment` evidence (item ids, signals, suggested investigation step)
 2. Evaluate the signals and write the decision to ActivityLog:
    ```bash
    ateam activity createActivityEntry --agent "Hannibal" --message "<decision and rationale>" --level info
    ```
 
+**Special case — `needsJudgment.kind == "runaway-backstop"`:** the mission has exceeded its wall-clock budget and the controller has **halted dispatch** (zero actions, long `nextWakeSeconds`). Do NOT dispatch or auto-recover. Print one alert line and log it (`--level warn`), then stop:
+```
+[Hannibal] ⚠ RUNAWAY BACKSTOP — {needsJudgment.reason}. Dispatch halted; awaiting operator (resume with /ai-team:resume after triage, or abort).
+```
+Re-arm at the controller's `nextWakeSeconds` (intentionally long so the loop idles instead of ticking hot) — do NOT shorten it.
+
 Do NOT load any orchestration playbook — mode is determined from the `mode` field in the tick response, not from a playbook file.
-
-## CLI Commands Used
-
-| Command | Purpose |
-|---------|---------|
-| `ateam controller tick --json` | Compute the action plan from board/pool/checkpoint state |
-| `ateam items renderItem <itemId>` | Fetch item prompt for agent dispatch |
-| `ateam board-move moveItem --itemId <id> --toStage <stage>` | Move item to new stage |
-| `ateam board-release releaseItem --itemId <id>` | Release a stale board claim |
-| `ateam pool release <name>` | Release a stale pool slot |
-| `ateam controller checkpoint confirm --action-id <id>` | Confirm an executed action server-side |
-| `ateam activity createActivityEntry --agent <name> --message <msg> --level info` | Write decision to ActivityLog |

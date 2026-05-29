@@ -1,5 +1,5 @@
 ---
-model: haiku
+model: sonnet
 ---
 # /ai-team:run
 
@@ -119,18 +119,17 @@ do not block dispatch because other stages are full.
 Before doing anything else, check your current model. Your system prompt contains your model ID (e.g., "You are powered by the model named Opus 4.6").
 
 ```text
-if model is NOT haiku AND model is NOT sonnet:
+if model is NOT sonnet:
     Output to user:
-    "Hannibal orchestration runs on Haiku (tick loop) or Sonnet (legacy).
-    You're currently on [model name].
+    "Hannibal orchestration runs on Sonnet. You're currently on [model name].
 
-    Please switch first:  /model haiku
+    Please switch first:  /model sonnet
     Then re-run:          /ai-team:run"
 
     STOP. Do not proceed.
 ```
 
-Hannibal's job is coordination, not deep reasoning. Sonnet handles dispatch loops faster while the heavy thinking happens in subagents (which use their own models via frontmatter).
+Hannibal's job is coordination, not deep reasoning — but it must reliably drive the tick loop to completion. Haiku was trialed for the tick loop and produced a runaway that never converged (it kept ticking while the pipeline sat idle), so Sonnet is the required floor. The heavy thinking still happens in subagents, which set their own models via frontmatter.
 
 ## Pipeline Flow (ALL STAGES MANDATORY)
 

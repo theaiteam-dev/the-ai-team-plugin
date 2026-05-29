@@ -152,12 +152,14 @@ describe('commands/run.md (WI-008: default invokes /ai-team:tick; --legacy prese
   });
 
   // -------------------------------------------------------------------------
-  // AC9: pre-flight model check is preserved unchanged.
-  // We pin distinctive phrases from the existing pre-flight section.
+  // AC9: pre-flight model check preserves the intentional model guard:
+  // Sonnet is required for orchestration (Haiku could not drive the tick loop
+  // to completion — observed runaway).
   // -------------------------------------------------------------------------
   test('AC9 pre-flight: model check is still present', () => {
     expect(content).toMatch(/if model is NOT sonnet/i);
-    expect(content).toContain('Hannibal orchestration runs best on Sonnet');
+    expect(content).toContain('Hannibal orchestration runs on Sonnet');
+    expect(content).toContain('Please switch first:  /model sonnet');
   });
 });
 

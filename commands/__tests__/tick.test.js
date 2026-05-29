@@ -49,9 +49,9 @@ describe('commands/tick.md (WI-007: /ai-team:tick slash command)', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Sanity: file exists and has the cost-targeted sonnet frontmatter so Claude
-  // executes the routine on a fast/cheap model, not whatever the user happens
-  // to be on. The work item context names this explicitly.
+  // Sanity: file exists and pins `model: sonnet` so Claude executes the tick
+  // routine on the model that can reliably drive orchestration to completion.
+  // (Haiku was trialed and produced a runaway loop that never converged.)
   // ---------------------------------------------------------------------------
 
   test('the file exists at commands/tick.md with `model: sonnet` frontmatter', () => {
@@ -110,9 +110,12 @@ describe('commands/tick.md (WI-007: /ai-team:tick slash command)', () => {
       expect(content).toMatch(/\blegacy\b/i);
     });
 
-    test('AC2: `dispatch` prompt comes from `ateam items renderItem --id <itemId>` — NOT inlined', () => {
+    test('AC2: `dispatch` prompt comes from `ateam items renderItem <itemId>` — NOT inlined', () => {
       // The CLI call that produces the prompt at dispatch time must appear.
-      expect(content).toMatch(/ateam items renderItem\s+--id/);
+      // The item ID is passed positionally (per the --id → <id> convention
+      // change in commit 8c5e734), either run by Hannibal (legacy) or by the
+      // worker itself (native-teams).
+      expect(content).toMatch(/ateam items renderItem\s+<?itemId>?/);
 
       // Negative half: there must be no inlined per-item prompt template in
       // the slash command — the PRD says "No prompts in the action JSON",

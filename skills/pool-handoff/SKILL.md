@@ -14,7 +14,7 @@ Pipeline agents (Murdock → B.A. → Lynch → Amy) coordinate via a file-based
 | Exit | Meaning | Treat as |
 |------|---------|----------|
 | `0` | Slot claimed (you won) | Success — proceed to `agentStart` |
-| `2` | Already claimed (upstream `agentStop` pre-claimed your slot) | Success — proceed to `agentStart` |
+| `2` | Already claimed (the controller pre-claimed your slot at dispatch time, or an upstream `agentStop` pre-claimed it on handoff) | Success — proceed to `agentStart` |
 | `3` | No such instance (.idle and .busy both missing) | Real failure — ALERT Hannibal |
 | `4` | Corrupted state (both .idle and .busy present with distinct inodes) | Real failure — ALERT Hannibal |
 | `5` | Pool dir does not exist (mission not initialized) | Real failure — ALERT Hannibal |
