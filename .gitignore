@@ -9,6 +9,7 @@ bun.lockb
 
 # Local settings
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # OS files
 .DS_Store
@@ -26,6 +27,10 @@ REVIEW_TEAMMATE_TOOL_INTEGRATION.md
 bin/ateam-bin
 
 # Local SQLite databases — never commit runtime DB files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 data/*.db
 data/*.db-journal
 data/*.db-wal
