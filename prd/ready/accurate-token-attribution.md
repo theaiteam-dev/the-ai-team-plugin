@@ -4,7 +4,7 @@ missionId: ~
 
 # Accurate Per-Message Token Attribution
 
-**Author:** Josh / Claude  **Date:** 2026-06-06  **Status:** Draft
+**Author:** Josh / Claude  **Date:** 2026-06-06 (revised 2026-06-28)  **Status:** Ready
 
 ## 1. Context & Background
 
@@ -100,7 +100,7 @@ The target makes the four previously-identified robustness gaps largely moot: mo
 3. **Delta semantics, never cumulative snapshots.** Because storage is per-message deltas keyed by message id, the aggregator shall never sum two snapshots of the same session. Mission/agent totals are a `SUM` over distinct per-message rows.
 4. **Correct per-model pricing.** Each (agent, model) pair shall be priced at that model's configured rate; cache-creation at input rate, cache-read at the discounted rate (unchanged pricing math, correct inputs).
 5. **Agent-variant consolidation.** `murdock`, `murdock-1`, `murdock-2`, … shall roll up to base role `murdock` in the reported breakdown, summing genuinely-independent instance totals without double-counting (preserving the already-landed `baseAgentName` logic).
-6. **Re-aggregation.** A re-aggregation entry point shall recompute `MissionTokenUsage` for a given mission from the stored per-message rows, so a re-run or post-check-extended mission reflects current data. Per OQ1 (resolved: forward-only) this is NOT swept across archived missions; old missions captured under the legacy cumulative scheme are left as-is, with an optional one-off script for the recent `M-test-harness-20260531-*` set.
+6. **Re-aggregation.** A re-aggregation entry point shall recompute `MissionTokenUsage` for a given mission from the stored per-message rows, so a re-run or post-check-extended mission reflects current data. Per OQ1 (resolved: forward-only) this is NOT swept across archived missions; old missions captured under the legacy cumulative scheme are left as-is. No one-off backfill script for the `M-test-harness-20260531-*` set ships either (Resolved Decision 8); that mission stays the §12 *reference* the new aggregation must reproduce on a live run.
 7. **Per-turn queryability.** It shall be possible to answer "which messages/turns in this agent-session consumed the most tokens" from stored data (the capability that diagnosed the Murdock thinking spike), without reading transcripts.
 8. **Dashboard — dual views (per OQ3).** The token-usage surface shall present both: (a) a **per-agent rollup** (summed across that agent's models) as the default decision view, and (b) a **per-model view** — per-agent-per-model and a mission-wide per-model total. Both derive from the `MissionTokenUsage` `(agentName, model)` rows; the per-agent rollup is a sum across an agent's model rows. An agent spanning >1 model shall be visually flagged as a model-drift indicator.
 
@@ -139,7 +139,7 @@ MessageTokenUsage (new):
 
 - **Idempotency** is structural: re-emitting a message upserts on `messageId`. This subsumes the stop-event correlationId dedup concern for token data specifically — every message is its own dedup key.
 - **Volume**: ~150–400 rows per agent-session. Acceptable for SQLite at dogfood scale; `@@index([missionId, agentName])` keeps rollup queries fast. If volume becomes a concern at larger scale, a retention/prune policy on archived missions can follow (out of scope here).
-- Token fields currently on `HookEvent` may remain for backward compatibility / legacy missions but are **no longer the basis** for new aggregation. (Decomposition decides whether to stop populating them or keep them as a redundant per-session denormalization.)
+- Token fields currently on `HookEvent` are **kept and still populated** for new events as a redundant per-session denormalization (backward compat / legacy missions), but are **no longer the basis** for new aggregation — aggregation reads only `MessageTokenUsage` (Resolved Decision 7).
 
 ### 8.2 Derived: MissionTokenUsage (unchanged shape)
 
@@ -147,17 +147,17 @@ MessageTokenUsage (new):
 
 ### 8.3 Capture path change
 
-`parseTranscriptUsage` (in `scripts/hooks/lib/parse-transcript.js`) changes from "sum-all + last-model" to returning the per-message records of §6 FR-1. The Stop/SubagentStop hooks POST those records; the `POST /api/hooks/events` route (or a sibling endpoint) upserts them into `MessageTokenUsage` keyed by `messageId`. Because a stop fires every turn and re-reads the full transcript, most messages will be re-sent many times — upsert-on-messageId makes that idempotent and is the mechanism that finally kills the cumulative double-count at the source.
+`parseTranscriptUsage` (in `scripts/hooks/lib/parse-transcript.js`) changes from "sum-all + last-model" to returning the per-message records of §6 FR-1. The Stop/SubagentStop hooks POST those records to a **dedicated sibling endpoint** (`POST /api/hooks/token-usage`, per Resolved Decision 6) that upserts them into `MessageTokenUsage` keyed by `messageId`; `/api/hooks/events` is unchanged. Because a stop fires every turn and re-reads the full transcript, most messages will be re-sent many times — upsert-on-messageId makes that idempotent and is the mechanism that finally kills the cumulative double-count at the source. For the rare message lacking an `id`, the key is synthesized from `(sessionId, message-index)` (Resolved Decision 5).
 
 ## 9. Edge Cases & Error States
 
 - **Single-model session (the common case):** must produce identical results to today (minus the pricing correction). Regression-tested.
 - **Model drift mid-session (Hannibal):** each model's tokens attributed and priced separately; mission total equals the true cumulative, not 2×.
-- **Pre-change historical missions:** left under the legacy cumulative scheme (forward-only, per OQ1). Their dashboard figures retain the known double-count/mis-attribution; not recomputed except by the optional one-off script for the recent test-harness set. The new per-message table only backs missions run after the change.
+- **Pre-change historical missions:** left under the legacy cumulative scheme (forward-only, per OQ1). Their dashboard figures retain the known double-count/mis-attribution and are not recomputed (no one-off corrective script ships — Resolved Decision 8). The new per-message table only backs missions run after the change.
 - **Transcript missing/unreadable:** unchanged behavior — skip token emission rather than fail the hook; the message rows simply aren't written.
 - **Empty / no-assistant-message transcript:** no `MessageTokenUsage` rows written; agent contributes zero, no row inflation.
 - **Same message re-sent across many stops (normal case):** upsert on `messageId` — one row regardless of how many stops re-read it. This is the primary mechanism preventing cumulative double-count.
-- **Message with no `id` in transcript:** cannot be deduped by key; define fallback (skip, or synthesize a stable key from session+index) in the technical approach so it neither duplicates nor silently drops.
+- **Message with no `id` in transcript:** synthesize a stable key from `(sessionId, message-index)` and upsert on it (Resolved Decision 5), so the message's tokens are counted once and stay stable across re-reads — neither duplicated nor silently dropped.
 - **Pool instances completing in parallel:** each message carries its own raw `agentName` (e.g. `murdock-1`); rollup sums under base role without collapsing distinct sessions.
 
 ## 10. Dependencies
@@ -165,7 +165,7 @@ MessageTokenUsage (new):
 ### Internal
 - `scripts/hooks/lib/parse-transcript.js` — `parseTranscriptUsage` rewrite (per-message records, not sum + last-model).
 - `scripts/hooks/observe-stop.js`, `observe-subagent.js` — emit per-message records.
-- `packages/kanban-viewer/src/app/api/hooks/events/route.ts` (or sibling endpoint) — accept + upsert per-message records on `messageId`.
+- `packages/kanban-viewer/src/app/api/hooks/token-usage/route.ts` (new sibling endpoint, per Resolved Decision 6) — accept + upsert per-message records on `messageId`. `/api/hooks/events` is left unchanged.
 - `packages/kanban-viewer/prisma/schema.prisma` + migration — new `MessageTokenUsage` table (additive; `ALTER`/`CREATE TABLE`, never recreate live tables).
 - `packages/kanban-viewer/src/app/api/missions/[missionId]/token-usage/route.ts` — aggregation reads/sums `MessageTokenUsage`; re-aggregation entry point.
 - `packages/kanban-viewer/src/lib/agent-name.ts` — base-role consolidation (already landed).
@@ -175,18 +175,26 @@ MessageTokenUsage (new):
 
 ## 11. Risks & Decisions
 
-- **Interaction with in-flight fixes.** Three related fixes already sit uncommitted in the working tree (opus pricing, correlationId dedup + failure logging, agent-variant consolidation). Risk of conflicting edits to the same files. *Mitigation:* commit those first; this work branches from that baseline. Note the per-message `messageId` upsert (§8.3) largely subsumes the stop correlationId dedup for token data — decomposition should reconcile the two so they don't fight.
+- **Interaction with in-flight fixes.** Three related fixes already sit uncommitted in the working tree (opus pricing, correlationId dedup + failure logging, agent-variant consolidation). Risk of conflicting edits to the same files. *Mitigation:* commit those first; this work branches from that baseline. The reconciliation between the new per-message `messageId` upsert and the stop correlationId dedup is settled in Resolved Decision 4 (split by route).
 - **New-table volume.** ~150–400 rows/agent/mission. Fine at dogfood scale; a prune/retention policy for archived missions is a possible follow-up if it grows.
-- **Messages lacking a stable id.** Dedup keys on `messageId`; the rare id-less message needs a defined fallback (see §9) to avoid duplicate or dropped rows.
+- **Messages lacking a stable id.** Dedup keys on `messageId`; id-less messages use the synthesized-key fallback in Resolved Decision 5 (no dropped or duplicated rows).
 
 ### Resolved Decisions
-1. **Backfill: forward-only (DECIDED 2026-06-16).** No general in-place backfill of archived missions. Historical events were captured cumulatively with last-model-wins, so a true per-model split is unrecoverable for them; a full backfill would run fragile code over old data only to produce authoritative-looking-but-approximate splits — recreating the trust problem this PRD exists to kill. Instead: the re-aggregation entry point (FR-6) remains (needed to re-aggregate a live/re-run mission), but it is NOT swept across all archived missions. A small one-off corrective script may write the hand-verified figures for the recent `M-test-harness-20260531-*` missions if needed. The deliverable is "new runs are correct," not "rewrite history."
+1. **Backfill: forward-only (DECIDED 2026-06-16).** No general in-place backfill of archived missions. Historical events were captured cumulatively with last-model-wins, so a true per-model split is unrecoverable for them; a full backfill would run fragile code over old data only to produce authoritative-looking-but-approximate splits — recreating the trust problem this PRD exists to kill. Instead: the re-aggregation entry point (FR-6) remains (needed to re-aggregate a live/re-run mission), but it is NOT swept across all archived missions. The deliverable is "new runs are correct," not "rewrite history." (The one-off corrective script for the `M-test-harness-20260531-*` set once floated here is **not** part of the deliverable — see Resolved Decision 8.)
 
 2. **Storage grain: per-message rows retained (DECIDED 2026-06-16).** Persist each assistant message's usage + its own model individually, rather than only a per-(session, model) rollup. Rationale: the per-message grain is what made the Murdock extended-thinking spike diagnosable (25K thinking tokens per trivial ACK turn), and we do not want that capability to depend on Claude Code transcripts remaining on disk — transcripts are not a guaranteed-durable record (temp dirs, rotation, cleanup). The DB becomes the durable per-message source of truth; `MissionTokenUsage` is a derived rollup over it. Cost: a new high-volume table (~150–400 rows/agent/mission) and aggregation that groups over the larger set. This makes per-turn cost analysis a first-class, queryable capability instead of a manual transcript dig. See §8 for the resulting data-model shape.
 
-3. **Dashboard views: both per-agent and per-model, first-class (DECIDED 2026-06-16).** Surface a per-agent rollup (default decision view) AND a per-model view (per-agent-per-model + mission-wide per-model totals). Pure presentation over the `(agentName, model)` rows; no extra data-model cost. An agent appearing under >1 model is surfaced as a model-drift indicator. See FR-8.
+3. **Dashboard views: both per-agent and per-model, first-class (DECIDED 2026-06-16).** Surface two complementary views: (a) a **per-agent rollup** (sum across that agent's models) as the decision-useful default — "Murdock cost $245," "Hannibal cost $62"; and (b) a **per-model view** — both per-agent-per-model (Hannibal's opus portion vs sonnet portion when it drifts) and a mission-wide per-model total (how much opus vs sonnet vs haiku did this whole mission burn). Both are pure presentations over the `MissionTokenUsage` `(agentName, model)` rows that OQ2's per-message store already produces, so this is a UI/route concern, not a data-model one. Emergent benefit: an agent appearing under >1 model in the per-agent view is an at-a-glance **model-drift indicator** (a config-bug signal worth flagging visually), not just an accounting detail. See FR-8.
 
-3. **Dashboard views: both per-agent and per-model, first-class (DECIDED 2026-06-16).** Surface two complementary views: (a) a **per-agent rollup** (sum across that agent's models) as the decision-useful default — "Murdock cost $245," "Hannibal cost $62"; and (b) a **per-model view** — both per-agent-per-model (Hannibal's opus portion vs sonnet portion when it drifts) and a mission-wide per-model total (how much opus vs sonnet vs haiku did this whole mission burn). Both are pure presentations over the `MissionTokenUsage` `(agentName, model)` rows that OQ2's per-message store already produces, so this is a UI/route concern, not a data-model one. Emergent benefit: an agent appearing under >1 model in the per-agent view is an at-a-glance **model-drift indicator** (a config-bug signal worth flagging visually), not just an accounting detail.
+4. **Dedup split by route (DECIDED 2026-06-28).** Token data is captured on a dedicated endpoint (see Decision 6) and deduplicated **solely on `messageId`** via upsert. The previously-landed stop **correlationId** dedup stays on `/api/hooks/events`, where it continues to guard non-token stop events from double-emission. The two mechanisms no longer overlap: they live on different routes and guard different data, so there is nothing to reconcile and no risk of them fighting. The `messageId` upsert is the single source of idempotency for token records.
+
+5. **No-id message fallback: synthesize a stable key (DECIDED 2026-06-28).** Most assistant messages carry a stable `id` (e.g. `msg_01FK…`), used directly as the `messageId` dedup key. For the rare message lacking an `id`, synthesize a deterministic key from `(sessionId, message-index)` (or a content hash) rather than skipping the message. This keeps the message's tokens counted while remaining stable across the many re-reads of the same transcript, so it neither drops tokens (under-count) nor inserts duplicate rows. Skipping was rejected because it silently under-reports turns whose cost we still want visible.
+
+6. **Token capture endpoint: dedicated sibling route (DECIDED 2026-06-28).** Per-message token records are POSTed to a **new sibling endpoint** (e.g. `POST /api/hooks/token-usage`) that upserts `MessageTokenUsage` on `messageId`, rather than overloading the existing `/api/hooks/events` route. This gives token capture its own payload contract, keeps the two concerns independently testable, and is what makes the route-based dedup split in Decision 4 clean. `/api/hooks/events` is unchanged.
+
+7. **HookEvent token fields: keep as redundant denormalization (DECIDED 2026-06-28).** The existing per-event token columns on `HookEvent` continue to be populated for new events, but are **no longer the basis for aggregation** — `MessageTokenUsage` is authoritative. They are retained as a backward-compatible, per-session denormalization (and keep legacy missions readable). Aggregation never reads them; this avoids any drift between the two surfacing in reported numbers.
+
+8. **Validation: forward-only, no fixture backfill (DECIDED 2026-06-28).** Correctness is proven on the **next live run**, not by writing corrected figures into the historical `M-test-harness-20260531-*` missions. The §12 hand-computed table for `M-test-harness-20260531-002` remains the *reference* the new aggregation must reproduce from freshly-captured per-message data, but we do **not** ship a one-off script to overwrite that mission's stored DB figures. This holds the strict forward-only line (consistent with Decision 1) and avoids fragile one-off code over legacy data. The optional corrective script floated in Decision 1 / §9 is therefore **not** part of this mission's deliverable.
 
 ## 12. Validation Plan
 
