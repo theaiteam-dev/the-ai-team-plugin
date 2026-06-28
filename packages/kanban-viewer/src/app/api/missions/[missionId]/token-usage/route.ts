@@ -9,6 +9,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getAndValidateProjectId } from '@/lib/project-utils';
 import { calculateTokenCost } from '@/lib/token-cost';
+import { baseAgentName } from '@/lib/agent-name';
 import { createDatabaseError } from '@/lib/errors';
 import type { ApiError } from '@/types/api';
 
@@ -57,7 +58,14 @@ function sumTotals(agents: AgentRow[]): Totals {
  *   This prevents double-counting for legacy subagents (which have both event types)
  *   while correctly capturing native teammates (which only fire stop events).
  *
- * Groups by agentName+model, calculates cost, upserts MissionTokenUsage.
+ * Groups by base-role agentName+model, calculates cost, upserts MissionTokenUsage.
+ *
+ * Pool instances of one role (e.g. murdock, murdock-1, murdock-2) are
+ * consolidated into a single base-role row via `baseAgentName`, so the
+ * per-agent breakdown reads as one line per logical role rather than being
+ * fragmented across N instance rows. Normalization only changes how events
+ * are bucketed — every event is still counted exactly once, so the mission
+ * grand total is unchanged and never double-counted.
  */
 export async function POST(request: Request, context: RouteContext) {
   try {
@@ -115,7 +123,12 @@ export async function POST(request: Request, context: RouteContext) {
       orderBy: { id: 'desc' },
     });
 
-    // Keep only the latest stop event per agent+model
+    // Keep only the latest stop event per RAW instance agent+model.
+    // stop events report cumulative session-to-date totals, so within a single
+    // session/instance we take only the latest. We key by the raw agentName
+    // (NOT the base role) here because distinct pool instances (amy-1, amy-2)
+    // are independent sessions, each with its own cumulative total — those must
+    // be summed across instances when rolled into the base-role group below.
     const latestStopByKey = new Map<string, typeof stopEvents[number]>();
     for (const event of stopEvents) {
       const key = `${event.agentName}:${event.model}`;
@@ -146,11 +159,21 @@ export async function POST(request: Request, context: RouteContext) {
       );
     }
 
-    // Group subagent events by agentName+model (sum all)
+    // Group events by base-role agentName+model. Pool instances of one role
+    // (murdock, murdock-1, murdock-2, ...) consolidate into a single row.
     const groups = new Map<string, { agentName: string; model: string; inputTokens: number; outputTokens: number; cacheCreationTokens: number; cacheReadTokens: number }>();
 
-    for (const event of subagentEvents) {
-      const key = `${event.agentName}:${event.model}`;
+    // Track which base-role keys were populated from subagent_stop data so the
+    // stop-event fallback can skip them (legacy subagents fire BOTH event types
+    // with identical token counts — using both would double-count).
+    const keysFromSubagent = new Set<string>();
+
+    function addToGroup(
+      role: string,
+      model: string,
+      event: { inputTokens: number | null; outputTokens: number | null; cacheCreationTokens: number | null; cacheReadTokens: number | null }
+    ) {
+      const key = `${role}:${model}`;
       const existing = groups.get(key);
       if (existing) {
         existing.inputTokens += event.inputTokens ?? 0;
@@ -159,32 +182,38 @@ export async function POST(request: Request, context: RouteContext) {
         existing.cacheReadTokens += event.cacheReadTokens ?? 0;
       } else {
         groups.set(key, {
-          agentName: event.agentName,
-          model: event.model!,
+          agentName: role,
+          model,
           inputTokens: event.inputTokens ?? 0,
           outputTokens: event.outputTokens ?? 0,
           cacheCreationTokens: event.cacheCreationTokens ?? 0,
           cacheReadTokens: event.cacheReadTokens ?? 0,
         });
       }
+      return key;
     }
 
-    // Add latest stop events as FALLBACK only (no summing — each is already cumulative).
-    // Only populate if no subagent_stop data exists for this agent+model.
-    // This prevents double-counting for legacy subagents (which have both event types)
-    // while correctly capturing native teammates and hannibal (which only fire stop).
+    // subagent_stop events are independent (one per subagent process) → sum all,
+    // consolidating pool instances into their base role.
+    for (const event of subagentEvents) {
+      const role = baseAgentName(event.agentName);
+      const key = addToGroup(role, event.model!, event);
+      keysFromSubagent.add(key);
+    }
+
+    // Add latest stop events as FALLBACK. Each per-instance latest stop event is
+    // already cumulative for that session, so we SUM the per-instance latests
+    // across pool instances of a role (amy-1 + amy-2 are distinct sessions), but
+    // NOT across turns of one instance (dedup handled in latestStopByKey above).
+    // Skip a role entirely if subagent_stop already populated it — that prevents
+    // double-counting legacy subagents that fire both event types.
     for (const event of latestStopByKey.values()) {
-      const key = `${event.agentName}:${event.model}`;
-      if (!groups.has(key)) {
-        groups.set(key, {
-          agentName: event.agentName,
-          model: event.model!,
-          inputTokens: event.inputTokens ?? 0,
-          outputTokens: event.outputTokens ?? 0,
-          cacheCreationTokens: event.cacheCreationTokens ?? 0,
-          cacheReadTokens: event.cacheReadTokens ?? 0,
-        });
+      const role = baseAgentName(event.agentName);
+      const key = `${role}:${event.model}`;
+      if (keysFromSubagent.has(key)) {
+        continue;
       }
+      addToGroup(role, event.model!, event);
     }
 
     // Upsert each group into MissionTokenUsage atomically

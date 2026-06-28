@@ -701,6 +701,183 @@ describe('POST /api/missions/:missionId/token-usage - multiple agents and models
   });
 });
 
+describe('POST /api/missions/:missionId/token-usage - pool instance consolidation', () => {
+  it('should consolidate murdock + murdock-1 + murdock-2 subagent_stop events into one base-role row', async () => {
+    // Pipeline pool runs spawn instances named murdock, murdock-1, murdock-2.
+    // Each subagent_stop is an independent process → its tokens should be summed
+    // under the single base role "murdock", not fragmented across N rows.
+    const ts = new Date();
+    await prisma.hookEvent.createMany({
+      data: [
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'subagent_stop',
+          agentName: 'murdock',
+          status: 'completed',
+          summary: 'murdock instance 0',
+          timestamp: new Date(ts.getTime()),
+          inputTokens: 1000,
+          outputTokens: 200,
+          cacheCreationTokens: 100,
+          cacheReadTokens: 500,
+          model: 'claude-sonnet-4-6',
+        },
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'subagent_stop',
+          agentName: 'murdock-1',
+          status: 'completed',
+          summary: 'murdock instance 1',
+          timestamp: new Date(ts.getTime() + 1000),
+          inputTokens: 2000,
+          outputTokens: 300,
+          cacheCreationTokens: 200,
+          cacheReadTokens: 700,
+          model: 'claude-sonnet-4-6',
+        },
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'subagent_stop',
+          agentName: 'murdock-2',
+          status: 'completed',
+          summary: 'murdock instance 2',
+          timestamp: new Date(ts.getTime() + 2000),
+          inputTokens: 3000,
+          outputTokens: 500,
+          cacheCreationTokens: 300,
+          cacheReadTokens: 800,
+          model: 'claude-sonnet-4-6',
+        },
+        // hannibal stop event — distinct role, must remain its own row
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'stop',
+          agentName: 'hannibal',
+          status: 'stopped',
+          summary: 'hannibal stop',
+          timestamp: new Date(ts.getTime() + 3000),
+          inputTokens: 5000,
+          outputTokens: 1000,
+          cacheCreationTokens: 2000,
+          cacheReadTokens: 8000,
+          model: 'claude-opus-4-6',
+        },
+      ],
+    });
+
+    const response = await POST(makeRequest('POST'), routeParams);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+
+    const agents: Array<{
+      agentName: string;
+      model: string;
+      inputTokens: number;
+      outputTokens: number;
+      cacheCreationTokens: number;
+      cacheReadTokens: number;
+    }> = data.data.agents;
+
+    // Exactly one consolidated murdock row (not three instance rows)
+    const murdockRows = agents.filter((a) => a.agentName === 'murdock');
+    expect(murdockRows).toHaveLength(1);
+    // No raw instance names leak into the breakdown
+    expect(agents.some((a) => /-\d+$/.test(a.agentName))).toBe(false);
+
+    const murdock = murdockRows[0];
+    expect(murdock.model).toBe('claude-sonnet-4-6');
+    expect(murdock.inputTokens).toBe(6000);        // 1000 + 2000 + 3000
+    expect(murdock.outputTokens).toBe(1000);       // 200 + 300 + 500
+    expect(murdock.cacheCreationTokens).toBe(600); // 100 + 200 + 300
+    expect(murdock.cacheReadTokens).toBe(2000);    // 500 + 700 + 800
+
+    // Mission grand total preserved (murdock 6000 + hannibal 5000), no double-count
+    expect(data.data.totals.inputTokens).toBe(11000);
+    expect(data.data.totals.outputTokens).toBe(2000);
+
+    // Persisted rows: one consolidated murdock row + one hannibal row
+    const persisted = await prisma.missionTokenUsage.findMany({ where: { missionId: MISSION_ID } });
+    expect(persisted).toHaveLength(2);
+    const persistedMurdock = persisted.filter((r) => r.agentName === 'murdock');
+    expect(persistedMurdock).toHaveLength(1);
+    expect(persistedMurdock[0].inputTokens).toBe(6000);
+  });
+
+  it('should sum distinct pool-instance stop events (native teammates) under one base role', async () => {
+    // Native teammate pool instances (amy, amy-1) each fire their own series of
+    // cumulative stop events. Within an instance we take the latest; across
+    // instances of the role we SUM (they are independent sessions).
+    const ts = new Date();
+    await prisma.hookEvent.createMany({
+      data: [
+        // amy instance 0 — two cumulative turns, latest is 3000
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'stop',
+          agentName: 'amy',
+          status: 'stopped',
+          summary: 'amy turn 1',
+          timestamp: new Date(ts.getTime()),
+          inputTokens: 1500,
+          outputTokens: 200,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 500,
+          model: 'claude-sonnet-4-6',
+        },
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'stop',
+          agentName: 'amy',
+          status: 'stopped',
+          summary: 'amy turn 2 (cumulative)',
+          timestamp: new Date(ts.getTime() + 1000),
+          inputTokens: 3000,
+          outputTokens: 400,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 1000,
+          model: 'claude-sonnet-4-6',
+        },
+        // amy instance 1 — single cumulative turn at 2000
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'stop',
+          agentName: 'amy-1',
+          status: 'stopped',
+          summary: 'amy-1 final',
+          timestamp: new Date(ts.getTime() + 2000),
+          inputTokens: 2000,
+          outputTokens: 600,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 800,
+          model: 'claude-sonnet-4-6',
+        },
+      ],
+    });
+
+    const response = await POST(makeRequest('POST'), routeParams);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    const agents: Array<{ agentName: string; inputTokens: number; outputTokens: number }> = data.data.agents;
+
+    const amyRows = agents.filter((a) => a.agentName === 'amy');
+    expect(amyRows).toHaveLength(1);
+    // instance 0 latest (3000) + instance 1 (2000) = 5000; NOT 1500+3000+2000
+    expect(amyRows[0].inputTokens).toBe(5000);
+    expect(amyRows[0].outputTokens).toBe(1000); // 400 + 600
+    expect(data.data.totals.inputTokens).toBe(5000);
+  });
+});
+
 describe('POST /api/missions/:missionId/token-usage - excluded event warning', () => {
   it('should warn via console.warn when hook events are excluded due to missing token/model data', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
