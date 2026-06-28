@@ -29,10 +29,19 @@ export function parseTranscriptUsage(transcriptPath) {
     return { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, model: null };
   }
 
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let cacheCreationTokens = 0;
-  let cacheReadTokens = 0;
+  // Claude Code writes the SAME assistant message to the transcript multiple
+  // times as it streams and then finalizes (typically 2-3 emissions per message,
+  // each carrying the message's usage). Naively summing every line over-counts
+  // token usage by ~2.6-3.4x (measured across real transcripts). We therefore
+  // dedup by `message.id`: each distinct message contributes its usage exactly
+  // once. The per-message usage is a DELTA (not a running cumulative), so summing
+  // the deduped per-message values is correct.
+  //
+  // Lines that carry usage but no message.id (older transcripts, malformed
+  // entries) cannot be deduped — they are summed under a synthetic per-line key
+  // so behavior is unchanged for them (no id => assume distinct).
+  const usageById = new Map();
+  let syntheticKey = 0;
   let model = null;
 
   for (const line of lines) {
@@ -40,17 +49,35 @@ export function parseTranscriptUsage(transcriptPath) {
       const entry = JSON.parse(line);
       const usage = entry?.message?.usage;
       if (usage) {
-        inputTokens += usage.input_tokens || 0;
-        outputTokens += usage.output_tokens || 0;
-        cacheCreationTokens += usage.cache_creation_input_tokens || 0;
-        cacheReadTokens += usage.cache_read_input_tokens || 0;
-      }
-      if (usage && entry?.message?.model) {
-        model = entry.message.model;
+        const id = entry?.message?.id;
+        // No id => cannot dedup; use a unique synthetic key so it still counts once.
+        const key = id != null ? `id:${id}` : `line:${syntheticKey++}`;
+        // last-write-wins for a repeated id: every emission of a message carries
+        // the same final usage, so overwriting is equivalent and idempotent.
+        usageById.set(key, {
+          input: usage.input_tokens || 0,
+          output: usage.output_tokens || 0,
+          cacheCreation: usage.cache_creation_input_tokens || 0,
+          cacheRead: usage.cache_read_input_tokens || 0,
+        });
+        if (entry?.message?.model) {
+          model = entry.message.model;
+        }
       }
     } catch {
       // Skip malformed lines
     }
+  }
+
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheCreationTokens = 0;
+  let cacheReadTokens = 0;
+  for (const u of usageById.values()) {
+    inputTokens += u.input;
+    outputTokens += u.output;
+    cacheCreationTokens += u.cacheCreation;
+    cacheReadTokens += u.cacheRead;
   }
 
   // If no valid lines had usage data at all, still return zero counts
