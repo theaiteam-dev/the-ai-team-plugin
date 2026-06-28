@@ -9,13 +9,28 @@
  * Agent name is passed as CLI arg (process.argv[2]) from frontmatter hooks.
  */
 
-import { readHookInput, buildObserverPayload, sendObserverEvent } from './lib/observer.js';
+import { readHookInput, buildObserverPayload, sendObserverEvent, readLastAssistantMessageId } from './lib/observer.js';
 import { parseTranscriptUsage, parseAdvanceFlagUsage, parseAgentStopItemId } from './lib/parse-transcript.js';
 
 const hookInput = readHookInput();
 const agentName = process.argv[2] || undefined;
 
-const payload = buildObserverPayload(hookInput, agentName);
+// Build a per-turn-stable correlationId for Stop events so retries of the SAME
+// stop firing dedup to a single row, while distinct per-turn cumulative stops
+// remain separate rows. Composition: `${session_id}:${lastAssistantMessageId}`.
+//   - session_id scopes the id to this session (avoids cross-session collisions
+//     on the globally-but-not-guaranteed-unique message id).
+//   - lastAssistantMessageId is identical on retry (same transcript) but
+//     changes every turn (each turn ends with a new assistant message id).
+// Fallback when no assistant message id is available: omit the correlationId
+// (the route then always stores the event — no dedup, but no data loss either).
+const sessionId = hookInput.session_id || '';
+const lastAssistantMessageId = readLastAssistantMessageId(hookInput.transcript_path);
+const stopCorrelationId = lastAssistantMessageId
+  ? (sessionId ? `${sessionId}:${lastAssistantMessageId}` : lastAssistantMessageId)
+  : undefined;
+
+const payload = buildObserverPayload(hookInput, agentName, { correlationId: stopCorrelationId });
 if (payload) {
   // On Stop events, parse transcript for token usage and advance flag, then merge into payload
   const transcriptPath = hookInput.transcript_path;
