@@ -1,6 +1,7 @@
 ---
 name: face
 model: opus
+effort: medium
 description: Decomposer - breaks PRDs into work items
 skills:
   - ateam-cli
@@ -108,9 +109,11 @@ ateam items createItem \
   --acceptance "Running 'pnpm test' executes vitest with zero tests passing" \
   --acceptance "vitest.config.ts exists and resolves src/ paths" \
   --context "No existing test infrastructure. This is a Wave 0 dependency for all items with outputs.test." \
-  --outputImpl "vitest.config.ts" \
+  --outputs.impl "vitest.config.ts" \
   --priority critical
 ```
+
+**Output flags are dotted, not camelCase:** `--outputs.test`, `--outputs.impl`, `--outputs.types`. Do NOT write `--outputImpl`, `--outputTest`, or `--output-test` — the CLI rejects them with `Error: unknown flag`.
 
 Then reference its ID in dependencies for items that need tests.
 
@@ -173,9 +176,11 @@ Murdock (tests) → B.A. (implements) → Lynch (reviews all together)
 ```
 
 The outputs field tells each agent what to create:
-- Murdock creates `outputs.test` (and `outputs.types` if specified)
-- B.A. creates `outputs.impl`
+- Murdock creates `outputs.test` (and `outputs.types` if specified) — set on the CLI with `--outputs.test` / `--outputs.types`
+- B.A. creates `outputs.impl` — set on the CLI with `--outputs.impl`
 - Lynch reviews all files together
+
+The CLI flags are **dotted** (`--outputs.test`, `--outputs.impl`, `--outputs.types`), NOT camelCase (`--outputTest`) or kebab-case (`--output-test`). Wrong forms are rejected with `Error: unknown flag`.
 
 ## ID Convention
 
@@ -184,6 +189,8 @@ The outputs field tells each agent what to create:
 ## Creating Work Items
 
 **CRITICAL: Use `ateam items createItem` to create all work items.** Consult the `ateam-cli` skill for full flag reference.
+
+**Create items one at a time — never batch.** Issue each `ateam items createItem` as its own sequential `Bash` call. Wait for it to succeed, capture the returned ID, then create the next. Do **NOT** put several `createItem` calls into a single parallel tool block: if the first call errors (e.g. a mistyped flag), the harness cancels every other call in that block, turning one typo into a mass failure and burning item IDs (leaving gaps in the WI-XXX sequence). One bad flag should cost you one retry, not the whole decomposition.
 
 **Create items in dependency order:**
 1. First, create all items with NO dependencies (Wave 0)
