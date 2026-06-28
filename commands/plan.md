@@ -147,7 +147,7 @@ This command:
 ### 3. Invoke Face - First Pass
 
 ```
-Task(
+Agent(
   subagent_type: "ai-team:face",
   prompt: "You are Face from the A(i)-Team. [full face.md prompt]
 
@@ -177,7 +177,7 @@ If validation fails, report errors and stop.
 ### 5. Invoke Sosa (skip with --skip-refinement)
 
 ```
-Task(
+Agent(
   subagent_type: "ai-team:sosa",
   prompt: "You are Sosa from the A(i)-Team. [full sosa.md prompt]
 
@@ -206,7 +206,7 @@ Sosa will:
 ### 6. Invoke Face - Second Pass (skip with --skip-refinement)
 
 ```
-Task(
+Agent(
   subagent_type: "ai-team:face",
   prompt: "You are Face from the A(i)-Team. [full face.md prompt]
 

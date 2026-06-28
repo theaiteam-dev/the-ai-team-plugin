@@ -1,6 +1,7 @@
 ---
 name: stockwell
 model: opus
+effort: medium
 description: Reviewer - Final Mission Review (holistic codebase review)
 skills:
   - test-writing

@@ -210,7 +210,7 @@ Main Claude (as Hannibal)
     └── subagent → Tawnia (documentation)
 ```
 
-The dispatch mode (legacy Task/TaskOutput vs. native TeamCreate/SendMessage) is determined by the orchestration playbook loaded in step 4.
+The dispatch mode (legacy Task/TaskOutput vs. native Agent/SendMessage) is determined by the orchestration playbook loaded in step 4.
 
 ## CLI Commands Used
 

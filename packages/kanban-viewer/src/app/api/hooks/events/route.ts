@@ -279,8 +279,41 @@ export async function POST(
             err.message.includes('correlationId') &&
             err.message.includes('eventType');
           if (targetMatchesFields || messageMatchesFields) {
+            // For `stop` events the correlationId is per-turn-stable, so a
+            // duplicate is a NETWORK RETRY of the same turn's stop. Each retry
+            // may carry NEWER cumulative token totals, so we UPSERT — update the
+            // existing row to keep the latest values rather than skipping (which
+            // would freeze stale/smaller totals). The aggregation route keeps
+            // the latest stop per (agentName, model), so this yields one
+            // correct row per turn even across retries.
+            //
+            // All other event types use a random per-call correlationId, so a
+            // duplicate there is a true idempotent retry with identical data —
+            // skip-first preserves the original behavior and is harmless.
+            if (event.eventType === 'stop' && event.correlationId) {
+              await prisma.hookEvent.updateMany({
+                where: {
+                  correlationId: event.correlationId,
+                  eventType: event.eventType,
+                },
+                data: {
+                  agentName: event.agentName,
+                  toolName: event.toolName ?? null,
+                  status: event.status,
+                  durationMs: event.durationMs ?? null,
+                  summary: event.summary,
+                  payload: event.payload ?? '{}',
+                  timestamp: new Date(event.timestamp),
+                  inputTokens: event.inputTokens ?? null,
+                  outputTokens: event.outputTokens ?? null,
+                  cacheCreationTokens: event.cacheCreationTokens ?? null,
+                  cacheReadTokens: event.cacheReadTokens ?? null,
+                  model: event.model ?? null,
+                },
+              });
+            }
             skipped++;
-            continue; // Skip duplicate
+            continue; // Duplicate handled (upserted for stop, skipped otherwise)
           }
         }
         // Re-throw other errors

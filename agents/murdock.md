@@ -1,6 +1,7 @@
 ---
 name: murdock
 model: opus
+effort: low
 description: QA Engineer - writes tests before implementation
 permissionMode: acceptEdits
 skills:

@@ -38,6 +38,16 @@ export interface TokenCostResult {
 /** Built-in pricing config (USD per 1M tokens). */
 const DEFAULT_PRICING: PricingConfig = {
   models: {
+    'claude-opus-4-8': {
+      input_per_1m: 5.00,
+      output_per_1m: 25.00,
+      cache_read_per_1m: 0.50,
+    },
+    'claude-opus-4-7': {
+      input_per_1m: 5.00,
+      output_per_1m: 25.00,
+      cache_read_per_1m: 0.50,
+    },
     'claude-opus-4-6': {
       input_per_1m: 15.00,
       output_per_1m: 75.00,

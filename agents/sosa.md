@@ -1,6 +1,7 @@
 ---
 name: sosa
 model: opus
+effort: medium
 description: Requirements Critic - reviews decomposition before execution
 skills:
   - ateam-cli
