@@ -463,4 +463,81 @@ describe('POST /api/hooks/events', () => {
     expect(data.error.code).toBe('VALIDATION_ERROR');
     expect(data.error.message).toMatch(/batch|limit|100/i);
   });
+
+  /**
+   * FIX 1: Stop-event dedup via per-turn-stable correlationId.
+   *
+   * observe-stop.js sets correlationId = `${session_id}:${lastAssistantMessageId}`,
+   * which is identical across retries of the same turn's stop but distinct
+   * across different turns. The route must:
+   *   (a) collapse retries of the SAME stop into ONE row, keeping the LATEST
+   *       (largest) cumulative token totals (upsert, not skip-first), and
+   *   (b) store DIFFERENT turns' stops as SEPARATE rows (never collapse).
+   */
+  describe('stop-event dedup (FIX 1)', () => {
+    function stopEvent(correlationId: string, outputTokens: number, inputTokens: number) {
+      return {
+        eventType: 'stop',
+        agentName: 'hannibal',
+        status: 'stopped',
+        summary: 'hannibal stopped',
+        timestamp: new Date().toISOString(),
+        correlationId,
+        model: 'claude-sonnet-4-6',
+        inputTokens,
+        outputTokens,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+      };
+    }
+
+    async function post(body: unknown) {
+      const request = new NextRequest('http://localhost:3000/api/hooks/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Project-ID': 'test-project' },
+        body: JSON.stringify(body),
+      });
+      const response = await POST(request);
+      return response.json();
+    }
+
+    it('(a) two retries of the SAME stop → ONE row, keeping the latest token totals', async () => {
+      const correlationId = 'sess-A:msg_turn1';
+
+      // First send (e.g. network glitch caused a retry) with smaller cumulative totals.
+      await post(stopEvent(correlationId, 100, 1000));
+      // Retry of the SAME turn's stop, carrying NEWER (larger) cumulative totals.
+      const retry = await post(stopEvent(correlationId, 175, 1800));
+
+      // Retry is reported as skipped-create (it was an upsert of the existing row).
+      expect(retry.data.created).toBe(0);
+      expect(retry.data.skipped).toBe(1);
+
+      const rows = await prisma.hookEvent.findMany({
+        where: { projectId: 'test-project', eventType: 'stop', correlationId },
+      });
+      expect(rows).toHaveLength(1); // collapsed to a single row
+      // Latest values win — NOT the stale first-write values.
+      expect(rows[0].outputTokens).toBe(175);
+      expect(rows[0].inputTokens).toBe(1800);
+    });
+
+    it('(b) two DIFFERENT turns’ stops → TWO rows (not collapsed)', async () => {
+      const turn1 = await post(stopEvent('sess-A:msg_turn1', 100, 1000));
+      const turn2 = await post(stopEvent('sess-A:msg_turn2', 250, 2500));
+
+      expect(turn1.data.id ?? turn1.data.created).toBeTruthy();
+      expect(turn2.data.id ?? turn2.data.created).toBeTruthy();
+
+      const rows = await prisma.hookEvent.findMany({
+        where: { projectId: 'test-project', eventType: 'stop' },
+        orderBy: { outputTokens: 'asc' },
+      });
+      expect(rows).toHaveLength(2); // per-turn stops remain distinct
+      expect(rows.map((r) => r.correlationId).sort()).toEqual([
+        'sess-A:msg_turn1',
+        'sess-A:msg_turn2',
+      ]);
+    });
+  });
 });

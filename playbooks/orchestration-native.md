@@ -1,6 +1,8 @@
 # Orchestration Playbook: Native Teams Mode (Multi-Instance)
 
-> **You are in NATIVE TEAMS mode.** Use `TeamCreate`, `Task` with `team_name`/`name` params, and `SendMessage` for coordination.
+> **You are in NATIVE TEAMS mode.** Spawn teammates with `Agent` (passing `name`), and coordinate with `SendMessage`.
+>
+> **API CHANGE (Claude Code ≥ 2.1.178):** `TeamCreate` and `TeamDelete` **no longer exist**. The team is **implicit** — every session with `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` has exactly one team, created automatically; cleanup is automatic on session exit. **Do NOT call `TeamCreate`/`TeamDelete`, and do NOT treat their absence as a reason to fall back to legacy mode.** Native teams is available whenever `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`; spawn teammates directly with `Agent`.
 
 This playbook EXTENDS the base native teams orchestration with **stage concurrency**: up to N items can be processed within the same stage simultaneously, each by its own agent instance. N is determined by `ateam scaling compute` (dep graph width × memory budget). When N=1, behaviour is identical to the base playbook (single instance per agent type, no suffixes).
 
@@ -10,28 +12,21 @@ Read `docs/ORCHESTRATION.md` for environment setup, permissions, and dispatch re
 
 | Tool | Purpose | Key Parameters |
 |------|---------|----------------|
-| `TeamCreate` | Create a team for the mission | `team_name`, `description` |
-| `Task` | Spawn a teammate agent | `team_name`, `name`, `subagent_type`, `prompt` |
-| `SendMessage` | Send messages to teammates | `type`, `recipient`, `content`, `summary` |
-| `SendMessage` (broadcast) | Message all teammates | `type: "broadcast"`, `content`, `summary` |
-| `SendMessage` (shutdown) | Request teammate shutdown | `type: "shutdown_request"`, `recipient` |
-| `TeamDelete` | Clean up team resources | (no params) |
+| `Agent` | Spawn a teammate agent | `name`, `subagent_type`, `description`, `prompt`, `run_in_background` |
+| `SendMessage` | Send a message to a teammate | `to`, `message`, `summary` |
 
-### SendMessage Types
+> **Team lifecycle is implicit** — there is no `TeamCreate` or `TeamDelete` (removed in 2.1.178). Spawning the first `Agent` participates in the session's implicit team automatically; cleanup happens on session exit.
+
+### SendMessage
+
+`SendMessage({ to, message, summary })` is the single coordination call — see the `teams-messaging` skill for the full message protocol (START / ACK / FYI / ALERT / DONE / shutdown). Canonical shape:
 
 ```text
 # Direct message to a specific teammate
-SendMessage(type: "message", recipient: "murdock-1", content: "...", summary: "Brief 5-10 word summary")
-
-# Broadcast to all teammates (use sparingly - expensive)
-SendMessage(type: "broadcast", content: "...", summary: "Brief summary")
-
-# Request teammate shutdown
-SendMessage(type: "shutdown_request", recipient: "murdock-1", content: "Work complete")
-
-# Approve/reject plan from teammate
-SendMessage(type: "plan_approval_response", request_id: "...", recipient: "ba-1", approve: true)
+SendMessage(to: "murdock-1", message: "...", summary: "Brief 5-10 word summary")
 ```
+
+Shutdown is requested with a `shutdown_request` message body to a teammate (see `teams-messaging`); there is no separate broadcast or team-teardown tool.
 
 ## Precheck Flow
 
@@ -179,13 +174,7 @@ ateam pool init
 
 ## Team Initialization
 
-At mission start, create a team:
-
-```text
-TeamCreate(team_name: "mission-{projectId}-{missionId}", description: "A(i)-Team mission: {mission name}")
-
-> **`projectId`** is `$ATEAM_PROJECT_ID` from the environment. Including it in the team name prevents cross-project message-bus collisions when two deployments independently generate the same mission ID on the same day.
-```
+**No explicit team creation.** The team is implicit (see the API-change note at the top) — there is nothing to call before spawning. Proceed directly to instance-pool initialization and lazy pre-warming. The first `Agent` spawn joins the session's implicit team automatically.
 
 ## Agent Pre-Warming (Lazy)
 
@@ -223,17 +212,17 @@ function spawn_lane(lane_number):
     Bash("ateam activity createActivityEntry --agent hannibal --message 'Spawning lane {lane_number} (lazy pre-warm triggered by capacity demand)' --level info")
 
     for instance in lane_instances:
-        Task(
-            team_name:    "mission-{projectId}-{missionId}",
+        Agent(
             name:         instance.name,
             subagent_type: agentTypeToSubagent(instance.agentType),
+            run_in_background: true,
             description:  "{instance.name}: standby",
             prompt:       "You are {instance.name} ({instance.agentType} instance {lane_number}).
                            Environment: export ATEAM_MISSION_ID='{missionId}' ATEAM_PROJECT_ID='{projectId}' ATEAM_API_URL='{apiUrl}'
                            Your FIRST action on startup:
                              1. Run: export ATEAM_MISSION_ID='{missionId}' ATEAM_PROJECT_ID='{projectId}' ATEAM_API_URL='{apiUrl}'
                              2. Send Hannibal a ready signal:
-                                SendMessage(to: 'hannibal', content: 'READY: {instance.name}')
+                                SendMessage(to: 'hannibal', message: 'READY: {instance.name}', summary: 'READY {instance.name}')
                            Then await work item assignments via SendMessage.
                            When receiving work, use exactly '--agent \"{instance.name}\"' in all
                            ateam agents-start and ateam agents-stop commands.
@@ -320,8 +309,8 @@ if ready != lane_agents:
     for agent in missing:
         Bash("ateam activity createActivityEntry --agent hannibal --message 'TIMEOUT: {agent} did not send READY within 60s — respawning' --level warning")
         # Kill the silent agent and respawn
-        SendMessage(type: "shutdown_request", recipient: agent, content: "No READY received — shutting down for respawn")
-        Task(... same params as original spawn for this agent ...)
+        SendMessage(to: agent, message: {type: "shutdown_request", reason: "No READY received — shutting down for respawn"}, summary: "shutdown {agent}")
+        Agent(... same params as original spawn for this agent ...)
 
     # Wait another 60s for respawned agents only
     respawn_deadline = now() + 60s
@@ -351,7 +340,7 @@ return len(ready)
 ```text
 # Mission start — spawn lane 1 only
 spawn_lane(1)
-# → Task spawn for murdock-1, ba-1, lynch-1, amy-1
+# → Agent spawn for murdock-1, ba-1, lynch-1, amy-1
 # → receive READY from all 4
 # → ateam pool mark-idle murdock-1 (then ba-1, lynch-1, amy-1)
 # → next_lane_to_spawn = 2
@@ -574,7 +563,7 @@ LOOP CONTINUOUSLY:
 
 ## Dispatch Helper
 
-The `dispatch(instance, item_id)` function decides whether to send a `SendMessage` (if instance already alive) or spawn a fresh `Task` (if never spawned or after shutdown):
+The `dispatch(instance, item_id)` function decides whether to send a `SendMessage` (if instance already alive) or spawn a fresh `Agent` (if never spawned or after shutdown):
 
 ```text
 function dispatch(instance, item_id):
@@ -582,16 +571,15 @@ function dispatch(instance, item_id):
 
     if instance was already spawned and is alive:
         SendMessage(
-            type:      "message",
-            recipient: instance.name,
-            content:   "New work: {item_id} - {title}\n{relevant file paths}\nFetch full details with `ateam items renderItem {item_id}`.\nUse '--agent \"{instance.name}\"' in agentStart/agentStop.",
+            to:        instance.name,
+            message:   "New work: {item_id} - {title}\n{relevant file paths}\nFetch full details with `ateam items renderItem {item_id}`.\nUse '--agent \"{instance.name}\"' in agentStart/agentStop.",
             summary:   "New {instance.agentType} work for {item_id}"
         )
     else:
-        Task(
-            team_name:    "mission-{projectId}-{missionId}",
+        Agent(
             name:         instance.name,
             subagent_type: agentTypeToSubagent(instance.agentType),
+            run_in_background: true,
             description:  "{instance.name}: {item title}",
             prompt:       "[agent prompt + work item context]
                            Use '--agent \"{instance.name}\"' in agentStart/agentStop.
@@ -601,7 +589,7 @@ function dispatch(instance, item_id):
 
 ## Dispatch Timeout Enforcement
 
-After dispatching work to any agent (via `SendMessage` or `Task`), Hannibal must enforce a **60-second acknowledgment timeout**. The expected signals are:
+After dispatching work to any agent (via `SendMessage` or `Agent`), Hannibal must enforce a **60-second acknowledgment timeout**. The expected signals are:
 
 - **ACK or FYI message** from the dispatched agent, OR
 - **`teammate_idle` event** (agent went idle, meaning it picked up the work)
@@ -629,8 +617,8 @@ function dispatch_with_timeout(instance, item_id):
     Bash("ateam pool release {instance.name}")
 
     # Respawn and redispatch
-    SendMessage(type: "shutdown_request", recipient: instance.name, content: "No ACK — shutting down for respawn")
-    Task(... same params as original spawn for this instance ...)
+    SendMessage(to: instance.name, message: {type: "shutdown_request", reason: "No ACK — shutting down for respawn"}, summary: "shutdown {instance.name}")
+    Agent(... same params as original spawn for this instance ...)
 
     # Wait 60s for the respawned agent's READY
     msg = receive next SendMessage (timeout: 60s)
@@ -660,8 +648,7 @@ active_instances[001] = "murdock-2"
 
 **First spawn (or re-spawn):**
 ```text
-Task(
-  team_name: "mission-{projectId}-{missionId}",
+Agent(
   name: "murdock-2",                          ← instance name, NOT "murdock"
   subagent_type: "ai-team:murdock",
   description: "murdock-2: {feature title}",
@@ -685,9 +672,8 @@ Task(
 **Subsequent work (instance already alive):**
 ```text
 SendMessage(
-  type: "message",
-  recipient: "murdock-2",
-  content: "New work: WI-005 - {title}\nTest file: {outputs.test}\nTypes file: {outputs.types}\nFetch full details with `ateam items renderItem WI-005`.\nFirst run: `ateam agents-start agentStart --itemId WI-005 --agent \"murdock-2\"`",
+  to: "murdock-2",
+  message: "New work: WI-005 - {title}\nTest file: {outputs.test}\nTypes file: {outputs.types}\nFetch full details with `ateam items renderItem WI-005`.\nFirst run: `ateam agents-start agentStart --itemId WI-005 --agent \"murdock-2\"`",
   summary: "New test work for WI-005"
 )
 ```
@@ -704,8 +690,7 @@ active_instances[001] = "ba-1"
 
 **First spawn:**
 ```text
-Task(
-  team_name: "mission-{projectId}-{missionId}",
+Agent(
   name: "ba-1",
   subagent_type: "ai-team:ba",
   description: "ba-1: {feature title}",
@@ -740,8 +725,7 @@ active_instances[001] = "lynch-1"
 
 **First spawn:**
 ```text
-Task(
-  team_name: "mission-{projectId}-{missionId}",
+Agent(
   name: "lynch-1",
   subagent_type: "ai-team:lynch",
   description: "lynch-1: {feature title}",
@@ -774,8 +758,7 @@ active_instances[001] = "amy-2"
 
 **First spawn:**
 ```text
-Task(
-  team_name: "mission-{projectId}-{missionId}",
+Agent(
   name: "amy-2",
   subagent_type: "ai-team:amy",
   description: "amy-2: {feature title}",
@@ -803,8 +786,7 @@ Task(
 After post-checks pass (Tawnia is never pre-warmed):
 
 ```text
-Task(
-  team_name: "mission-{projectId}-{missionId}",
+Agent(
   name: "tawnia",
   subagent_type: "ai-team:tawnia",
   description: "Tawnia: Documentation and final commit",
@@ -825,8 +807,7 @@ Task(
 **MANDATORY** — runs after Tawnia's DONE message confirms the final commit. Retro pulls token-usage, tool-histogram, skill-usage, and work-log data from the API to produce the structured retrospective report. **Without this step, MissionTokenUsage is never aggregated** (the retro subagent's POST is what triggers materialization) and no `retroReport` is written.
 
 ```text
-Task(
-  team_name: "mission-{projectId}-{missionId}",
+Agent(
   name: "retro",
   subagent_type: "ai-team:retro",
   description: "Retro: Mission retrospective",
@@ -905,7 +886,7 @@ The heartbeat is **mandatory** in native mode, not optional. It is the only thin
 
 ### First wakeup at mission start
 
-Schedule the first heartbeat immediately after `TeamCreate` and pre-warming lane 1, **before** entering the orchestration loop:
+Schedule the first heartbeat immediately after pre-warming lane 1, **before** entering the orchestration loop:
 
 ```text
 ScheduleWakeup(
@@ -1048,8 +1029,7 @@ When ALL items reach `done` stage, fetch `prdPath` from `ateam missions-current 
 **Always spawn a new Stockwell agent** (not pre-warmed, runs once):
 
 ```text
-Task(
-  team_name: "mission-{projectId}-{missionId}",
+Agent(
   name: "stockwell",
   subagent_type: "ai-team:stockwell",
   description: "Stockwell: Final Mission Review",
@@ -1150,7 +1130,7 @@ When the mission is complete (Tawnia DONE received), run these in order — **re
 2. **Shutdown all pre-warmed instances:**
 ```text
 for instance in instance_pool:
-    SendMessage(type: "shutdown_request", recipient: instance.name, content: "Mission complete")
+    SendMessage(to: instance.name, message: {type: "shutdown_request", reason: "Mission complete"}, summary: "shutdown {instance.name}")
 ```
 
 3. **Wait for shutdown approvals** (teammates auto-approve unless busy)
@@ -1160,10 +1140,7 @@ for instance in instance_pool:
 ateam pool destroy
 ```
 
-5. **Delete the team:**
-```text
-TeamDelete()
-```
+5. **Team teardown is automatic.** There is no `TeamDelete` (removed in 2.1.178) — the implicit team is cleaned up when the session exits. Nothing to call.
 
 Only send shutdown requests to instances that were actually spawned. Skip any that were never needed.
 
@@ -1178,10 +1155,7 @@ Native teams are ephemeral — they don't survive session restarts. On resume:
 
 2. **Re-determine N** (same concurrency detection logic as mission start)
 
-3. **Create fresh team:**
-   ```
-   TeamCreate(team_name: "mission-{projectId}-{missionId}", description: "Resumed A(i)-Team mission")
-   ```
+3. **No team to re-create.** The resumed session has its own implicit team — there is no `TeamCreate` step. Proceed directly to re-initializing the pool and respawning teammates with `Agent`.
 
 4. **Re-initialize instance pool** (same structure as before)
 
@@ -1197,7 +1171,7 @@ Native teams are ephemeral — they don't survive session restarts. On resume:
 
 6. **Read board state and re-spawn at current stages, marking idle only on confirmed READY:**
 
-   Mirror normal startup: re-spawn the lane (`Task` calls), wait for READY (use the same `wait_for_lane_ready(lane_number)` helper from "Lazy Lane Pre-Warming" above), and only then issue `ateam pool mark-idle <instance>` for each agent that actually sent READY. If a respawned agent fails to send READY within the 60s timeout, mark the lane failed (do NOT create its `.idle` file) and surface ALERT.
+   Mirror normal startup: re-spawn the lane (`Agent` calls), wait for READY (use the same `wait_for_lane_ready(lane_number)` helper from "Lazy Lane Pre-Warming" above), and only then issue `ateam pool mark-idle <instance>` for each agent that actually sent READY. If a respawned agent fails to send READY within the 60s timeout, mark the lane failed (do NOT create its `.idle` file) and surface ALERT.
    ```
    board = Bash("ateam board getBoard --json")
    active_instances = {}
@@ -1205,28 +1179,28 @@ Native teams are ephemeral — they don't survive session restarts. On resume:
    for item in testing stage:
        Bash("ateam board-release releaseItem --itemId {item_id}")
        claimed = claimInstance("murdock")
-       Task(team_name: "mission-{projectId}-{missionId}", name: claimed,
+       Agent(name: claimed,
             subagent_type: "ai-team:murdock", ...)
        active_instances[item_id] = claimed
 
    for item in implementing stage:
        Bash("ateam board-release releaseItem --itemId {item_id}")
        claimed = claimInstance("ba")
-       Task(team_name: "mission-{projectId}-{missionId}", name: claimed,
+       Agent(name: claimed,
             subagent_type: "ai-team:ba", ...)
        active_instances[item_id] = claimed
 
    for item in review stage:
        Bash("ateam board-release releaseItem --itemId {item_id}")
        claimed = claimInstance("lynch")
-       Task(team_name: "mission-{projectId}-{missionId}", name: claimed,
+       Agent(name: claimed,
             subagent_type: "ai-team:lynch", ...)
        active_instances[item_id] = claimed
 
    for item in probing stage:
        Bash("ateam board-release releaseItem --itemId {item_id}")
        claimed = claimInstance("amy")
-       Task(team_name: "mission-{projectId}-{missionId}", name: claimed,
+       Agent(name: claimed,
             subagent_type: "ai-team:amy", ...)
        active_instances[item_id] = claimed
    ```

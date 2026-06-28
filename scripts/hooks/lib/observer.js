@@ -10,13 +10,94 @@
  * CLAUDE_PLUGIN_ROOT, CLAUDE_PROJECT_DIR.
  */
 
-import { readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, unlinkSync, mkdirSync, appendFileSync } from 'fs';
 import { randomUUID, createHash } from 'crypto';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { resolveAgent } from './resolve-agent.js';
 
 const AGENT_MAP_DIR = join(tmpdir(), 'ateam-agent-map');
+
+/**
+ * Path for the best-effort observer failure log (FIX 3). One JSON object per
+ * line. Lives under CLAUDE_PROJECT_DIR when available so failures are visible
+ * alongside the project, falling back to the OS tmp dir otherwise.
+ */
+function observerFailureLogPath() {
+  const base = process.env.CLAUDE_PROJECT_DIR || tmpdir();
+  return join(base, '.ateam-observer-failures.log');
+}
+
+/**
+ * Appends a one-line structured record describing an observer send failure.
+ *
+ * This makes silent network failures observable without breaking the
+ * fire-and-forget contract: it is fully synchronous, wrapped in try/catch,
+ * and never throws back into the caller. It deliberately does NOT await any
+ * network/IO that could stall the agent — a local append is the only side
+ * effect.
+ *
+ * @param {Object} record - { url, status, error, agentName, eventType }
+ */
+function logObserverFailure(record) {
+  try {
+    const line = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      url: record.url ?? null,
+      status: record.status ?? null,
+      error: record.error ?? null,
+      agentName: record.agentName ?? null,
+      eventType: record.eventType ?? null,
+    });
+    appendFileSync(observerFailureLogPath(), line + '\n');
+  } catch {
+    // Never let failure logging break the hook.
+  }
+}
+
+/**
+ * Reads the `id` of the LAST assistant message in a Claude Code JSONL
+ * transcript. Used to build a per-turn-stable correlationId for Stop events.
+ *
+ * Why the last assistant message id:
+ *   - It is STABLE across network retries of the same Stop hook firing (the
+ *     transcript is identical on retry), so a retry dedups to one row.
+ *   - It is DISTINCT across different turns (each turn ends with a new
+ *     assistant message id), so legitimate per-turn cumulative Stop events are
+ *     NOT collapsed into one row.
+ *
+ * Returns null if the file is unreadable or no assistant message id is found,
+ * in which case the caller falls back to a non-deduping random id.
+ *
+ * @param {string} transcriptPath - Absolute path to the .jsonl transcript
+ * @returns {string|null}
+ */
+function readLastAssistantMessageId(transcriptPath) {
+  if (!transcriptPath) return null;
+  let content;
+  try {
+    content = readFileSync(transcriptPath, 'utf8');
+  } catch {
+    return null;
+  }
+
+  const lines = content.split('\n');
+  // Walk from the end to find the most recent assistant message id.
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line);
+      const id = entry?.message?.id;
+      if ((entry?.type === 'assistant' || entry?.message?.role === 'assistant') && typeof id === 'string' && id) {
+        return id;
+      }
+    } catch {
+      // Skip malformed lines.
+    }
+  }
+  return null;
+}
 
 function hashArgs(args) {
   const input = typeof args === 'string' ? args : JSON.stringify(args ?? '');
@@ -101,9 +182,13 @@ function readHookInput() {
  *
  * @param {Object} hookInput - Parsed stdin JSON from Claude Code
  * @param {string} agentNameArg - Agent name passed as CLI arg (process.argv[2])
+ * @param {Object} [options] - Optional overrides
+ * @param {string} [options.correlationId] - Explicit correlationId (used for
+ *   Stop events, where a per-turn-stable id enables retry dedup). When omitted,
+ *   a random UUID is generated (matching the previous behavior).
  * @returns {Object|null} Payload object or null if invalid
  */
-function buildObserverPayload(hookInput, agentNameArg) {
+function buildObserverPayload(hookInput, agentNameArg, options = {}) {
   try {
     const toolName = hookInput.tool_name || '';
     const sessionId = hookInput.session_id || '';
@@ -161,8 +246,13 @@ function buildObserverPayload(hookInput, agentNameArg) {
       summary = `${eventType}: ${agentName}`;
     }
 
-    // Generate a correlation ID (UUID v4)
-    const correlationId = randomUUID();
+    // Correlation ID.
+    // For Stop events the caller passes a per-turn-stable id (session_id +
+    // last assistant message id) so that network retries of the SAME stop
+    // firing dedup to one row, while legitimate per-turn cumulative stops stay
+    // distinct. For all other events we keep a fresh UUID (no dedup intended
+    // beyond the pre/post tool-use pairing the caller may supply).
+    const correlationId = options.correlationId || randomUUID();
 
     // Include session_id in payload for grouping events by agent session
     const payloadData = {};
@@ -242,13 +332,41 @@ async function sendObserverEvent(payload) {
     if (!response.ok) {
       const text = await response.text().catch(() => '');
       process.stderr.write(`[observer] POST ${url} → ${response.status}: ${text}\n`);
+      // FIX 3: record the failure to a local log so dropped token events are
+      // observable (stderr alone is invisible once the hook process exits).
+      logObserverFailure({
+        url,
+        status: response.status,
+        error: text || null,
+        agentName: payload?.agentName,
+        eventType: payload?.eventType,
+      });
     }
 
     return response.ok;
   } catch (err) {
     process.stderr.write(`[observer] POST ${url} failed: ${err.message}\n`);
+    // FIX 3: a thrown fetch (network error, DNS, CF Access redirect, etc.)
+    // drops the event silently — capture it in the local failure log.
+    logObserverFailure({
+      url,
+      status: null,
+      error: err.message,
+      agentName: payload?.agentName,
+      eventType: payload?.eventType,
+    });
     return false;
   }
 }
 
-export { readHookInput, buildObserverPayload, sendObserverEvent, registerAgent, unregisterAgent, lookupAgent };
+export {
+  readHookInput,
+  buildObserverPayload,
+  sendObserverEvent,
+  registerAgent,
+  unregisterAgent,
+  lookupAgent,
+  readLastAssistantMessageId,
+  logObserverFailure,
+  observerFailureLogPath,
+};

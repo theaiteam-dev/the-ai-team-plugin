@@ -110,7 +110,7 @@ work_log:                                   # Populated by agentStop
     summary: "Created 5 test cases"
 ```
 
-The `outputs` field is critical - without it, Murdock and B.A. don't know where to create files.
+The `outputs` field is critical - without it, Murdock and B.A. don't know where to create files. On the `ateam items createItem` command line, the outputs are set with **dotted** flags — `--outputs.test`, `--outputs.impl`, `--outputs.types` (NOT `--outputTest` or `--output-test`; the CLI rejects those with `Error: unknown flag`). `--outputs.types` is optional. **Create items one at a time** (one sequential `Bash` call each), never several `createItem` calls batched into a single parallel tool block — if the first call errors, the harness cancels the rest of the batch and burns item IDs.
 
 **All four text fields are required** when creating work items via `ateam items createItem`:
 - **`description`**: Human-readable executive summary — synthesizes objective + context into 1-3 sentences a PM could skim on the kanban board. Not a dump of structured data; a prose narrative of the work item.

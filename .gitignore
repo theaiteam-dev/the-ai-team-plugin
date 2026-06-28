@@ -35,3 +35,6 @@ data/*.db
 data/*.db-journal
 data/*.db-wal
 data/*.db-shm
+
+# Observer hook failure log (runtime telemetry, not source)
+.ateam-observer-failures.log

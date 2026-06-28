@@ -108,7 +108,30 @@ ateam items updateItem WI-001 --title "New title" --objective "..."
 # ateam items getItem --id WI-001    ← error: unknown flag --id
 # ateam items renderItem --id WI-001 ← error: unknown flag --id
 # ateam items updateItem --id WI-001 ← error: unknown flag --id
+
+# Create an item — output flags are DOTTED, not camelCase
+ateam items createItem \
+  --title "User can filter products by category" \
+  --type feature \
+  --description "Executive summary for the kanban board" \
+  --objective "One behavioral sentence describing the outcome" \
+  --acceptance "POST /api/x returns 201" \
+  --acceptance "Invalid input returns 400" \
+  --context "Integrates with ProductService (src/services/product.ts)" \
+  --outputs.test "src/__tests__/feature.test.ts" \
+  --outputs.impl "src/services/feature.ts" \
+  --outputs.types "src/types/feature.ts"
 ```
+
+> **createItem flag gotchas — these cause the most failed planning runs:**
+>
+> - **Output flags are dotted:** `--outputs.test`, `--outputs.impl`, `--outputs.types`. NOT `--outputTest`, `--output-test`, `--outputs-test`, or `--outputImpl`. Wrong forms fail with `Error: unknown flag`. `--outputs.types` is optional; provide `--outputs.test` and `--outputs.impl` for every code-bearing item.
+> - **`--acceptance` is repeatable** — pass it once per criterion.
+> - **`--type` is one of** `feature | bug | enhancement | task`.
+> - **Create items one at a time, sequentially — never batch.** Issue each `createItem` as its own `Bash` call, confirm success, then run the next. If you put several `createItem` calls in a single parallel tool block and the first errors, the harness cancels the rest of the batch, turning one typo into a mass failure and burning item IDs.
+> - **When a flag is rejected, run `ateam items createItem --help`** to see the real flag names instead of guessing.
+
+After creating, verify with `ateam items listItems` or `ateam board getBoard`.
 
 ### Missions
 

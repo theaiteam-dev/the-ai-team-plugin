@@ -30,7 +30,14 @@ COPY packages/kanban-viewer/ .
 # Seed the database into data.init/ — this is the factory-fresh DB baked into
 # the image. At runtime the entrypoint copies it to the volume mount path on
 # first boot so users get stages pre-configured without needing prisma at runtime.
-ENV DATABASE_URL="file:./prisma/data.init/ateam.db"
+#
+# DATABASE_URL must be ABSOLUTE here. With Prisma 7 + the libSQL config,
+# `prisma migrate deploy` resolves a relative `file:` path against a different
+# base than the adapter connection, so a relative URL silently reports
+# "No pending migrations to apply" and writes an empty DB — seed then fails
+# with "no such table: main.Project". An absolute path makes migrate and seed
+# agree on the same physical file.
+ENV DATABASE_URL="file:/app/prisma/data.init/ateam.db"
 RUN mkdir -p prisma/data.init && \
     npx prisma generate && \
     npx prisma migrate deploy --config ./prisma/prisma.config.ts && \

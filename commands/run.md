@@ -370,7 +370,7 @@ This flat structure:
 - Allows mid-run intervention
 - Avoids nested subagent memory overhead
 
-The dispatch mode (legacy Task/TaskOutput vs. native TeamCreate/SendMessage) is determined by the orchestration playbook loaded in step 3.
+The dispatch mode (legacy Task/TaskOutput vs. native Agent/SendMessage) is determined by the orchestration playbook loaded in step 3.
 
 ## CLI Commands Used
 

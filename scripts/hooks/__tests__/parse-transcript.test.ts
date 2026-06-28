@@ -85,6 +85,77 @@ describe('parseTranscriptUsage() - happy path', () => {
   });
 });
 
+describe('parseTranscriptUsage() - duplicate message emissions', () => {
+  it('should count each message.id exactly once when the same message is written multiple times', () => {
+    // Claude Code writes the same assistant message to the transcript several
+    // times as it streams then finalizes; each emission carries the SAME usage.
+    // Summing all emissions over-counts (~2.6-3.4x in real transcripts). The
+    // parser must dedup by message.id so each message contributes usage once.
+    const msgA = {
+      type: 'assistant',
+      message: {
+        id: 'msg_A',
+        model: 'claude-sonnet-4-6',
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 200,
+          cache_creation_input_tokens: 5000,
+          cache_read_input_tokens: 100,
+        },
+      },
+    };
+    const msgB = {
+      type: 'assistant',
+      message: {
+        id: 'msg_B',
+        model: 'claude-sonnet-4-6',
+        usage: {
+          input_tokens: 50,
+          output_tokens: 300,
+          cache_creation_input_tokens: 2000,
+          cache_read_input_tokens: 6000,
+        },
+      },
+    };
+    // msgA emitted 3x, msgB emitted 2x — as Claude Code actually does.
+    const path = writeTempTranscript([msgA, msgA, msgA, msgB, msgB]);
+    tempFiles.push(path);
+
+    const result = parseTranscriptUsage(path);
+
+    // Each distinct message counted once: A + B
+    expect(result.inputTokens).toBe(1050);        // 1000 + 50, NOT 3*1000 + 2*50
+    expect(result.outputTokens).toBe(500);        // 200 + 300
+    expect(result.cacheCreationTokens).toBe(7000); // 5000 + 2000, NOT 15000 + 4000
+    expect(result.cacheReadTokens).toBe(6100);     // 100 + 6000
+    expect(result.model).toBe('claude-sonnet-4-6');
+  });
+
+  it('should sum usage from messages that lack an id (cannot dedup, assume distinct)', () => {
+    // Older/malformed transcripts may omit message.id. Those cannot be deduped,
+    // so each usage-bearing line counts once (summed) — preserving prior behavior.
+    const noId = {
+      type: 'assistant',
+      message: {
+        model: 'claude-sonnet-4-6',
+        usage: {
+          input_tokens: 100,
+          output_tokens: 10,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+      },
+    };
+    const path = writeTempTranscript([noId, noId]);
+    tempFiles.push(path);
+
+    const result = parseTranscriptUsage(path);
+    // No id => both lines count (summed): 100 + 100
+    expect(result.inputTokens).toBe(200);
+    expect(result.outputTokens).toBe(20);
+  });
+});
+
 describe('parseTranscriptUsage() - missing/unreadable file', () => {
   it('should return null values when file does not exist', () => {
     const result = parseTranscriptUsage('/nonexistent/path/transcript.jsonl');
