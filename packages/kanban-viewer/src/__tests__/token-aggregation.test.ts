@@ -414,6 +414,77 @@ describe('POST /api/missions/:missionId/token-usage - double-counting prevention
     expect(murdock.inputTokens).toBe(1000);  // NOT 2000
     expect(murdock.outputTokens).toBe(500);  // NOT 1000
   });
+
+  it('should drop phantom main-session stop bleed-through on a subagent (different model)', async () => {
+    // Subagents that run inside the main context (retro, tawnia, stockwell) emit:
+    //   1. subagent_stop = their REAL work (e.g. retro on opus)
+    //   2. a phantom stop = the MAIN (hannibal) session cumulative total, tagged
+    //      with the subagent's name, on the MAIN session's model (sonnet)
+    // The phantom is a different model than the real work, so a per-(role,model)
+    // skip misses it. It must be dropped because the role already has
+    // subagent_stop data.
+    await prisma.hookEvent.createMany({
+      data: [
+        // retro's REAL work (opus subagent_stop)
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'subagent_stop',
+          agentName: 'retro',
+          status: 'success',
+          summary: 'retro report',
+          timestamp: new Date(),
+          inputTokens: 6000,
+          outputTokens: 10000,
+          cacheCreationTokens: 100000,
+          cacheReadTokens: 1100000,
+          model: 'claude-opus-4-8',
+        },
+        // PHANTOM: main-session cumulative tagged as retro, on sonnet
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'stop',
+          agentName: 'retro',
+          status: 'stopped',
+          summary: 'phantom main-session total',
+          timestamp: new Date(),
+          inputTokens: 2000,
+          outputTokens: 377000,
+          cacheCreationTokens: 800000,
+          cacheReadTokens: 29000000,
+          model: 'claude-sonnet-4-6',
+        },
+        // hannibal's real main-session stop (the true owner of that total)
+        {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          eventType: 'stop',
+          agentName: 'hannibal',
+          status: 'stopped',
+          summary: 'hannibal cumulative',
+          timestamp: new Date(),
+          inputTokens: 2000,
+          outputTokens: 377000,
+          cacheCreationTokens: 800000,
+          cacheReadTokens: 29000000,
+          model: 'claude-sonnet-4-6',
+        },
+      ],
+    });
+
+    const postData = await (await POST(makeRequest('POST'), routeParams)).json();
+    const rows = postData.data.agents.filter((a: { agentName: string }) => a.agentName === 'retro');
+
+    // retro must appear ONLY as its real opus subagent_stop work — no phantom sonnet row
+    expect(rows).toHaveLength(1);
+    expect(rows[0].model).toBe('claude-opus-4-8');
+    expect(rows[0].outputTokens).toBe(10000);   // real work, NOT the 377000 phantom
+    // hannibal still carries the real main-session total exactly once
+    const hannibal = postData.data.agents.filter((a: { agentName: string }) => a.agentName === 'hannibal');
+    expect(hannibal).toHaveLength(1);
+    expect(hannibal[0].outputTokens).toBe(377000);
+  });
 });
 
 describe('POST /api/missions/:missionId/token-usage - native teammate stop events', () => {

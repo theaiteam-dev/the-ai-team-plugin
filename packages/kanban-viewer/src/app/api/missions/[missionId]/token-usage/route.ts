@@ -168,6 +168,20 @@ export async function POST(request: Request, context: RouteContext) {
     // with identical token counts — using both would double-count).
     const keysFromSubagent = new Set<string>();
 
+    // Track which base ROLES ran as a subagent at all (any model). An agent that
+    // ran via the Task/Agent subagent mechanism (face, sosa, stockwell, retro,
+    // tawnia, ...) reports its real work via subagent_stop. It does NOT have its
+    // own top-level session, so any `stop` event bearing its name is the MAIN
+    // (hannibal) session's cumulative total bleeding through — these subagents
+    // finish inside the main context, and the main-session stop hook tags the
+    // cumulative total with whichever agent name was active. Those phantom stop
+    // rows (e.g. retro/tawnia/stockwell each carrying ~Hannibal's full total)
+    // must be dropped entirely, not just skipped per-(role,model): the phantom
+    // stop is sonnet while the real subagent_stop is opus, so a per-key skip
+    // misses it. Only genuine top-level sessions (hannibal, and native teammates
+    // that emit ONLY stop) should contribute stop-event cost.
+    const rolesFromSubagent = new Set<string>();
+
     function addToGroup(
       role: string,
       model: string,
@@ -199,6 +213,7 @@ export async function POST(request: Request, context: RouteContext) {
       const role = baseAgentName(event.agentName);
       const key = addToGroup(role, event.model!, event);
       keysFromSubagent.add(key);
+      rolesFromSubagent.add(role);
     }
 
     // Add latest stop events as FALLBACK. Each per-instance latest stop event is
@@ -213,6 +228,12 @@ export async function POST(request: Request, context: RouteContext) {
       if (keysFromSubagent.has(key)) {
         continue;
       }
+      // Drop phantom main-session bleed-through: if this role ran as a subagent
+      // (any model), its real cost is already counted via subagent_stop and any
+      // stop event under its name is the main-session cumulative total.
+      if (rolesFromSubagent.has(role)) {
+        continue;
+      }
       addToGroup(role, event.model!, event);
     }
 
@@ -220,6 +241,12 @@ export async function POST(request: Request, context: RouteContext) {
     const agents: AgentRow[] = [];
 
     await prisma.$transaction(async (tx) => {
+      // Clear prior rows for this mission first so re-aggregation is idempotent.
+      // Without this, re-running aggregation after the agent-variant consolidation
+      // change leaves stale per-instance rows (murdock-1, murdock-2, ...) alongside
+      // the new consolidated base-role row (murdock), double-listing the cost.
+      await tx.missionTokenUsage.deleteMany({ where: { missionId } });
+
       for (const group of groups.values()) {
         const { totalUsd } = calculateTokenCost(
           {
