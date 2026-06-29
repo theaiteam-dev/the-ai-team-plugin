@@ -216,6 +216,33 @@ describe('POST /api/hooks/token-usage', () => {
     expect(count).toBe(0);
   });
 
+  it('rejects a record with a negative token count with 400 and writes no rows', async () => {
+    const response = await POST(
+      makeRequest([record({ messageId: 'msg_negative', inputTokens: -5 })], PROJECT_ID)
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.success).toBe(false);
+    expect(data.error.code).toBe('VALIDATION_ERROR');
+
+    const row = await prisma.messageTokenUsage.findUnique({
+      where: { messageId: 'msg_negative' },
+    });
+    expect(row).toBeNull();
+  });
+
+  it('rejects a record with a non-numeric token count with 400', async () => {
+    const response = await POST(
+      makeRequest([record({ messageId: 'msg_nan', outputTokens: 'lots' })], PROJECT_ID)
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.success).toBe(false);
+    expect(data.error.code).toBe('VALIDATION_ERROR');
+  });
+
   it('does not collide synthetic sessionId-namespaced messageIds at the same index across agents', async () => {
     // Two id-less messages from different sessions arrive with synthetic keys
     // namespaced by sessionId (`${sessionId}:idx:0`). They must upsert into two

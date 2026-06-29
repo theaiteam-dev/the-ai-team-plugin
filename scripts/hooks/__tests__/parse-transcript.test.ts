@@ -28,7 +28,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { writeFileSync, unlinkSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { parseTranscriptUsage } from '../lib/parse-transcript.js';
+import { parseTranscriptUsage, dominantModel } from '../lib/parse-transcript.js';
 
 /** Helper to write a temporary JSONL transcript file for testing. */
 function writeTempTranscript(lines: unknown[]): string {
@@ -420,6 +420,64 @@ describe('parseTranscriptUsage() - missing usage subfields default to zero', () 
       cacheCreationTokens: 0,
       cacheReadTokens: 0,
     });
+  });
+});
+
+describe('parseTranscriptUsage() - usage-bearing message with no model', () => {
+  it("attributes a missing model to 'unknown' rather than dropping the tokens", () => {
+    // A usage block with real token counts but no model must NOT be lost — cost
+    // is preserved under the 'unknown' label (model can be inferred later).
+    const path = writeTempTranscript([
+      {
+        type: 'assistant',
+        sessionId: 'sess_1',
+        message: {
+          id: 'no_model',
+          // model intentionally omitted
+          usage: { input_tokens: 4000, output_tokens: 900, cache_creation_input_tokens: 100, cache_read_input_tokens: 7000 },
+        },
+      },
+    ]);
+    tempFiles.push(path);
+
+    const result = parseTranscriptUsage(path);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({
+      messageId: 'no_model',
+      model: 'unknown',
+      inputTokens: 4000,
+      outputTokens: 900,
+      cacheCreationTokens: 100,
+      cacheReadTokens: 7000,
+    });
+  });
+});
+
+describe('dominantModel() - representative model for the collapsed legacy scalar', () => {
+  it('returns the model accounting for the most total tokens, not the last record', () => {
+    const records = [
+      // Opus drives the most tokens overall, but appears first (not last).
+      { model: 'claude-opus-4-8', inputTokens: 5000, outputTokens: 1200, cacheCreationTokens: 2000, cacheReadTokens: 8000 },
+      { model: 'claude-sonnet-4-6', inputTokens: 100, outputTokens: 50, cacheCreationTokens: 0, cacheReadTokens: 0 },
+    ];
+    expect(dominantModel(records)).toBe('claude-opus-4-8');
+  });
+
+  it('sums tokens across repeated models before picking the dominant one', () => {
+    const records = [
+      { model: 'claude-sonnet-4-6', inputTokens: 1000, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 },
+      { model: 'claude-opus-4-8', inputTokens: 1500, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 },
+      { model: 'claude-sonnet-4-6', inputTokens: 1000, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 },
+    ];
+    // sonnet total = 2000 > opus 1500
+    expect(dominantModel(records)).toBe('claude-sonnet-4-6');
+  });
+
+  it('returns null for an empty or non-array input', () => {
+    expect(dominantModel([])).toBeNull();
+    // @ts-expect-error - exercising the defensive guard
+    expect(dominantModel(undefined)).toBeNull();
   });
 });
 

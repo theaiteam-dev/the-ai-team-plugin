@@ -129,19 +129,26 @@ function CostBar({ widthPercent }: { widthPercent: number }) {
 export function TokenUsagePanel({ agents, totals }: TokenUsagePanelProps) {
   const [viewMode, setViewMode] = React.useState<ViewMode>('rollup');
 
+  const isPerModel = viewMode === 'per-model';
+
+  // Derive once per `agents` change — not on every render (e.g. the view toggle).
+  // All hooks must run before any early return (rules of hooks).
+  const sortedRollup = React.useMemo(
+    () => buildRollup(agents).sort((a, b) => b.estimatedCostUsd - a.estimatedCostUsd),
+    [agents]
+  );
+  const modelTotals = React.useMemo(() => buildModelTotals(agents), [agents]);
+  const sortedPerModel = React.useMemo(
+    () => [...agents].sort((a, b) => b.estimatedCostUsd - a.estimatedCostUsd),
+    [agents]
+  );
+
+  const maxRollupCost = sortedRollup[0]?.estimatedCostUsd ?? 0;
+  const maxPerModelCost = sortedPerModel[0]?.estimatedCostUsd ?? 0;
+
   if (agents.length === 0) {
     return <EmptyState />;
   }
-
-  const isPerModel = viewMode === 'per-model';
-  const rollup = buildRollup(agents);
-  const modelTotals = buildModelTotals(agents);
-
-  const sortedRollup = [...rollup].sort((a, b) => b.estimatedCostUsd - a.estimatedCostUsd);
-  const maxRollupCost = sortedRollup[0]?.estimatedCostUsd ?? 0;
-
-  const sortedPerModel = [...agents].sort((a, b) => b.estimatedCostUsd - a.estimatedCostUsd);
-  const maxPerModelCost = sortedPerModel[0]?.estimatedCostUsd ?? 0;
 
   function barWidthRollup(cost: number): number {
     if (maxRollupCost === 0) return 0;

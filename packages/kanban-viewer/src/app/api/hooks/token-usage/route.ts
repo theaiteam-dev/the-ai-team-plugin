@@ -61,7 +61,14 @@ export async function POST(
       );
     }
 
-    // Validate ALL records before writing any (no partial writes)
+    // Validate EVERY record up front, then write them all in one transaction
+    // below — so a single bad record rejects the batch without any partial write.
+    const TOKEN_FIELDS = [
+      'inputTokens',
+      'outputTokens',
+      'cacheCreationTokens',
+      'cacheReadTokens',
+    ] as const;
     for (const record of body) {
       if (!record.messageId || typeof record.messageId !== 'string') {
         return NextResponse.json(
@@ -81,40 +88,64 @@ export async function POST(
           { status: 400 }
         );
       }
+      // Token counts are optional (default 0), but when present must be
+      // non-negative finite numbers — a negative or NaN delta is corrupt data,
+      // not a value to store silently.
+      for (const field of TOKEN_FIELDS) {
+        const value = (record as unknown as Record<string, unknown>)[field];
+        if (value === undefined || value === null) continue;
+        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+          return NextResponse.json(
+            createValidationError(`${field} must be a non-negative number`).toResponse(),
+            { status: 400 }
+          );
+        }
+      }
     }
 
+    // Attribute to the project's current (non-archived) mission at write time.
+    // This is "current mission when the hook fired", NOT timestamp-accurate
+    // attribution — a hook firing just after a mission flips could land on the
+    // newer mission. Acceptable for telemetry. Note `update` intentionally does
+    // not re-stamp missionId: a message keeps the mission it was first seen under.
     const currentMission = await prisma.mission.findFirst({
       where: { projectId, archivedAt: null },
       orderBy: { startedAt: 'desc' },
     });
     const missionId = currentMission?.id ?? null;
 
-    for (const record of body) {
-      await prisma.messageTokenUsage.upsert({
-        where: { messageId: record.messageId },
-        update: {
-          agentName: record.agentName,
-          model: record.model,
-          inputTokens: record.inputTokens ?? 0,
-          outputTokens: record.outputTokens ?? 0,
-          cacheCreationTokens: record.cacheCreationTokens ?? 0,
-          cacheReadTokens: record.cacheReadTokens ?? 0,
-          timestamp: record.timestamp ? new Date(record.timestamp) : new Date(),
-        },
-        create: {
-          messageId: record.messageId,
-          projectId,
-          missionId,
-          agentName: record.agentName,
-          model: record.model,
-          inputTokens: record.inputTokens ?? 0,
-          outputTokens: record.outputTokens ?? 0,
-          cacheCreationTokens: record.cacheCreationTokens ?? 0,
-          cacheReadTokens: record.cacheReadTokens ?? 0,
-          timestamp: record.timestamp ? new Date(record.timestamp) : new Date(),
-        },
-      });
-    }
+    // Batch all upserts into a single transaction — atomic (no partial writes on
+    // a mid-batch DB error) and one round trip instead of N sequential awaits.
+    // Idempotent re-POSTs (the Stop hook re-sends the whole transcript each turn)
+    // collapse to no-op updates via the messageId unique key.
+    await prisma.$transaction(
+      body.map((record) =>
+        prisma.messageTokenUsage.upsert({
+          where: { messageId: record.messageId },
+          update: {
+            agentName: record.agentName,
+            model: record.model,
+            inputTokens: record.inputTokens ?? 0,
+            outputTokens: record.outputTokens ?? 0,
+            cacheCreationTokens: record.cacheCreationTokens ?? 0,
+            cacheReadTokens: record.cacheReadTokens ?? 0,
+            timestamp: record.timestamp ? new Date(record.timestamp) : new Date(),
+          },
+          create: {
+            messageId: record.messageId,
+            projectId,
+            missionId,
+            agentName: record.agentName,
+            model: record.model,
+            inputTokens: record.inputTokens ?? 0,
+            outputTokens: record.outputTokens ?? 0,
+            cacheCreationTokens: record.cacheCreationTokens ?? 0,
+            cacheReadTokens: record.cacheReadTokens ?? 0,
+            timestamp: record.timestamp ? new Date(record.timestamp) : new Date(),
+          },
+        })
+      )
+    );
 
     const response: UpsertTokenUsageResponse = {
       success: true,

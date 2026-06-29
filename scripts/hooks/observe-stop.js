@@ -10,7 +10,7 @@
  */
 
 import { readHookInput, buildObserverPayload, sendObserverEvent, readLastAssistantMessageId } from './lib/observer.js';
-import { parseTranscriptUsage, parseAdvanceFlagUsage, parseAgentStopItemId } from './lib/parse-transcript.js';
+import { parseTranscriptUsage, parseAdvanceFlagUsage, parseAgentStopItemId, dominantModel } from './lib/parse-transcript.js';
 
 const hookInput = readHookInput();
 const agentName = process.argv[2] || undefined;
@@ -68,7 +68,9 @@ if (payload) {
         }),
         { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 }
       );
-      const representativeModel = perMessageRecords[perMessageRecords.length - 1].model;
+      // Approximate model for the collapsed legacy scalar: the one driving the
+      // most tokens, not just the last message's (per-message rows stay exact).
+      const representativeModel = dominantModel(perMessageRecords);
       tokenFields = {
         inputTokens: tokenSum.inputTokens,
         outputTokens: tokenSum.outputTokens,

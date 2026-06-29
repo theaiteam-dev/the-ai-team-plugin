@@ -15,8 +15,13 @@ import { readFileSync } from 'fs';
  * prevents over-counting. Id-less messages each emit their own record under a synthetic key
  * scoped by sessionId so records from different sessions never collide.
  *
+ * Messages whose usage entry carries no model are attributed to the literal
+ * 'unknown' rather than dropped — preserving their (often substantial) token
+ * counts so cost is never silently lost. The model can be inferred later (e.g.
+ * from the owning agent's typical model) without re-reading the transcript.
+ *
  * @param {string} transcriptPath - Absolute path to the .jsonl transcript file
- * @returns {Array<{ messageId: string, model: string|null, inputTokens: number, outputTokens: number, cacheCreationTokens: number, cacheReadTokens: number }>}
+ * @returns {Array<{ messageId: string, model: string, inputTokens: number, outputTokens: number, cacheCreationTokens: number, cacheReadTokens: number }>}
  */
 export function parseTranscriptUsage(transcriptPath) {
   let content;
@@ -45,7 +50,10 @@ export function parseTranscriptUsage(transcriptPath) {
       if (!usage) continue;
 
       const id = entry?.message?.id;
-      const model = entry?.message?.model ?? null;
+      // Never drop usage-bearing messages that lack a model — attribute them to
+      // 'unknown' so their token counts (and cost) survive. The downstream route
+      // requires a non-empty model string; 'unknown' satisfies that contract.
+      const model = entry?.message?.model || 'unknown';
       const sessionId = entry?.sessionId ?? 'unknown';
 
       let key;
@@ -75,6 +83,41 @@ export function parseTranscriptUsage(transcriptPath) {
   }
 
   return Array.from(usageByKey.values());
+}
+
+/**
+ * Picks a representative model for a set of per-message records collapsed into a
+ * single legacy scalar event. Chooses the model accounting for the most total
+ * tokens (the cost driver) rather than just the last message's model, so a
+ * multi-model agent's summed legacy total is attributed to its dominant model.
+ *
+ * This is an approximation used ONLY for the legacy /api/hooks/events scalar
+ * bridge — the per-message MessageTokenUsage rows always carry each message's
+ * own exact model.
+ *
+ * @param {Array<{ model: string, inputTokens: number, outputTokens: number, cacheCreationTokens: number, cacheReadTokens: number }>} records
+ * @returns {string|null} The dominant model, or null if there are no records.
+ */
+export function dominantModel(records) {
+  if (!Array.isArray(records) || records.length === 0) return null;
+  const totals = new Map();
+  for (const r of records) {
+    const tokens =
+      (r.inputTokens ?? 0) +
+      (r.outputTokens ?? 0) +
+      (r.cacheCreationTokens ?? 0) +
+      (r.cacheReadTokens ?? 0);
+    totals.set(r.model, (totals.get(r.model) ?? 0) + tokens);
+  }
+  let best = null;
+  let bestTokens = -1;
+  for (const [model, tokens] of totals) {
+    if (tokens > bestTokens) {
+      best = model;
+      bestTokens = tokens;
+    }
+  }
+  return best;
 }
 
 /**
