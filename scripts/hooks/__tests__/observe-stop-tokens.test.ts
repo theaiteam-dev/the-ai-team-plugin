@@ -1,20 +1,25 @@
 /**
- * Tests for observe-stop.js token integration (WI-275).
+ * Tests for observe-stop.js token integration (per-message attribution).
  *
- * observe-stop.js is extended to:
- * 1. Read transcript_path from hookInput (Stop event stdin)
- * 2. Call parseTranscriptUsage(transcript_path) from lib/parse-transcript.js
- * 3. Merge token fields into the sendObserverEvent payload
- * 4. Always send the event — token data is best-effort (graceful degradation)
+ * observe-stop.js:
+ * 1. Reads transcript_path from hookInput (Stop event stdin)
+ * 2. Calls parseTranscriptUsage(transcript_path) from lib/parse-transcript.js
+ * 3. Attaches the per-message usage records to the sendObserverEvent payload
+ * 4. Always sends the event — token data is best-effort (graceful degradation)
  *
- * The updated script uses agentName "hannibal" (stop events always belong
- * to the main session, i.e. Hannibal).
+ * parseTranscriptUsage now returns an ARRAY of per-message records
+ * ({ messageId, model, inputTokens, outputTokens, cacheCreationTokens,
+ * cacheReadTokens }) rather than one collapsed scalar { inputTokens, model }
+ * object. This suite asserts the payload carries those per-message records.
+ *
+ * The updated script uses agentName "hannibal" (stop events always belong to
+ * the main session, i.e. Hannibal).
  *
  * We test the payload construction logic directly rather than running the
  * script as a subprocess, following the pattern in observe-hooks.test.ts.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { writeFileSync, mkdirSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -40,17 +45,11 @@ function buildStopPayload(hookInput: Record<string, unknown>) {
   const transcriptPath = hookInput.transcript_path as string | undefined;
   if (!transcriptPath) return base;
 
-  const tokenUsage = parseTranscriptUsage(transcriptPath);
+  const messages = parseTranscriptUsage(transcriptPath);
 
-  // Step 3: merge token fields (only when non-null)
-  return {
-    ...base,
-    ...(tokenUsage.inputTokens !== null && { inputTokens: tokenUsage.inputTokens }),
-    ...(tokenUsage.outputTokens !== null && { outputTokens: tokenUsage.outputTokens }),
-    ...(tokenUsage.cacheCreationTokens !== null && { cacheCreationTokens: tokenUsage.cacheCreationTokens }),
-    ...(tokenUsage.cacheReadTokens !== null && { cacheReadTokens: tokenUsage.cacheReadTokens }),
-    ...(tokenUsage.model !== null && { model: tokenUsage.model }),
-  };
+  // Step 3: attach per-message records only when the transcript yielded usage.
+  if (messages.length === 0) return base;
+  return { ...base, messages };
 }
 
 const tempFiles: string[] = [];
@@ -63,106 +62,93 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('observe-stop.js token integration - happy path', () => {
-  it('should include token fields in stop payload when transcript_path is present', () => {
+describe('observe-stop.js token integration - per-message records', () => {
+  it('attaches a per-message record array preserving each message model and deltas', () => {
     const transcriptPath = writeTempTranscript([
       {
         type: 'assistant',
+        sessionId: 'sess_stop',
         message: {
+          id: 'stop_msg_1',
           model: 'claude-opus-4-6',
-          usage: {
-            input_tokens: 5000,
-            output_tokens: 1200,
-            cache_creation_input_tokens: 2000,
-            cache_read_input_tokens: 8000,
-          },
+          usage: { input_tokens: 5000, output_tokens: 1200, cache_creation_input_tokens: 2000, cache_read_input_tokens: 8000 },
         },
       },
       {
         type: 'assistant',
+        sessionId: 'sess_stop',
         message: {
-          model: 'claude-opus-4-6',
-          usage: {
-            input_tokens: 3000,
-            output_tokens: 800,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 6000,
-          },
+          id: 'stop_msg_2',
+          model: 'claude-sonnet-4-6',
+          usage: { input_tokens: 3000, output_tokens: 800, cache_creation_input_tokens: 0, cache_read_input_tokens: 6000 },
         },
       },
     ]);
     tempFiles.push(transcriptPath);
 
-    const hookInput = {
-      hook_event_name: 'Stop',
-      transcript_path: transcriptPath,
-    };
-
-    const payload = buildStopPayload(hookInput);
+    const payload = buildStopPayload({ hook_event_name: 'Stop', transcript_path: transcriptPath });
 
     expect(payload).not.toBeNull();
     expect(payload!.eventType).toBe('stop');
     expect(payload!.agentName).toBe('hannibal');
-    // Token sums across both turns
-    expect(payload!.inputTokens).toBe(8000);          // 5000 + 3000
-    expect(payload!.outputTokens).toBe(2000);         // 1200 + 800
-    expect(payload!.cacheCreationTokens).toBe(2000);  // 2000 + 0
-    expect(payload!.cacheReadTokens).toBe(14000);     // 8000 + 6000
-    expect(payload!.model).toBe('claude-opus-4-6');
+
+    // Two separate records — NOT one summed total stamped with the last model.
+    expect(payload!.messages).toHaveLength(2);
+    expect(payload!.messages[0]).toEqual({
+      messageId: 'stop_msg_1',
+      model: 'claude-opus-4-6',
+      inputTokens: 5000,
+      outputTokens: 1200,
+      cacheCreationTokens: 2000,
+      cacheReadTokens: 8000,
+    });
+    expect(payload!.messages[1]).toEqual({
+      messageId: 'stop_msg_2',
+      model: 'claude-sonnet-4-6',
+      inputTokens: 3000,
+      outputTokens: 800,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 6000,
+    });
   });
 });
 
 describe('observe-stop.js token integration - missing transcript_path', () => {
-  it('should send stop event without token fields when transcript_path is absent', () => {
-    const hookInput = {
-      hook_event_name: 'Stop',
-      // No transcript_path
-    };
-
-    const payload = buildStopPayload(hookInput);
+  it('sends the stop event without a messages field when transcript_path is absent', () => {
+    const payload = buildStopPayload({ hook_event_name: 'Stop' });
 
     expect(payload).not.toBeNull();
     expect(payload!.eventType).toBe('stop');
     expect(payload!.agentName).toBe('hannibal');
-    // Token fields must be absent (not null, not undefined-keyed)
-    expect(payload).not.toHaveProperty('inputTokens');
-    expect(payload).not.toHaveProperty('outputTokens');
-    expect(payload).not.toHaveProperty('cacheCreationTokens');
-    expect(payload).not.toHaveProperty('cacheReadTokens');
-    expect(payload).not.toHaveProperty('model');
+    expect(payload).not.toHaveProperty('messages');
   });
 });
 
 describe('observe-stop.js token integration - failed transcript parsing', () => {
-  it('should send stop event without token fields when parseTranscriptUsage returns nulls', () => {
-    const hookInput = {
+  it('sends the stop event without a messages field when parsing yields no records', () => {
+    const payload = buildStopPayload({
       hook_event_name: 'Stop',
-      transcript_path: '/nonexistent/hannibal-transcript.jsonl', // File does not exist
-    };
+      transcript_path: '/nonexistent/hannibal-transcript.jsonl',
+    });
 
-    const payload = buildStopPayload(hookInput);
-
-    // Event is still sent (fire-and-forget — never block the agent)
+    // Event is still sent (fire-and-forget — never block the agent).
     expect(payload).not.toBeNull();
     expect(payload!.eventType).toBe('stop');
     expect(payload!.agentName).toBe('hannibal');
-    // Token fields are absent because parsing returned nulls
-    expect(payload).not.toHaveProperty('inputTokens');
-    expect(payload).not.toHaveProperty('outputTokens');
-    expect(payload).not.toHaveProperty('cacheCreationTokens');
-    expect(payload).not.toHaveProperty('cacheReadTokens');
-    expect(payload).not.toHaveProperty('model');
+    // parseTranscriptUsage returned [] for the unreadable file, so no records attach.
+    expect(payload).not.toHaveProperty('messages');
   });
 });
 
 describe('observe-stop.js token integration - agentName is always hannibal', () => {
-  it('should always attribute stop events to hannibal regardless of other hook input', () => {
+  it('attributes stop events to hannibal and carries the per-message record', () => {
     // Stop events fire in the main session (Hannibal), not in subagent sessions.
-    // Even if agent_type or other fields are present, stop belongs to hannibal.
     const transcriptPath = writeTempTranscript([
       {
         type: 'assistant',
+        sessionId: 'sess_stop',
         message: {
+          id: 'only_msg',
           model: 'claude-opus-4-6',
           usage: { input_tokens: 100, output_tokens: 50, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
         },
@@ -170,20 +156,19 @@ describe('observe-stop.js token integration - agentName is always hannibal', () 
     ]);
     tempFiles.push(transcriptPath);
 
-    const hookInput = {
-      hook_event_name: 'Stop',
-      transcript_path: transcriptPath,
-      // No CLI arg agent override — stop always belongs to hannibal
-    };
-
-    const payload = buildStopPayload(hookInput);
+    const payload = buildStopPayload({ hook_event_name: 'Stop', transcript_path: transcriptPath });
 
     expect(payload).not.toBeNull();
     expect(payload!.agentName).toBe('hannibal');
     expect(payload!.eventType).toBe('stop');
-    // Token data present because transcript is valid
-    expect(payload!.inputTokens).toBe(100);
-    expect(payload!.outputTokens).toBe(50);
-    expect(payload!.model).toBe('claude-opus-4-6');
+    expect(payload!.messages).toHaveLength(1);
+    expect(payload!.messages[0]).toEqual({
+      messageId: 'only_msg',
+      model: 'claude-opus-4-6',
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+    });
   });
 });

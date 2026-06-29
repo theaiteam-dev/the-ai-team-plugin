@@ -17,11 +17,12 @@ model Project {
   updatedAt  DateTime      @updatedAt
 
   // Relations
-  items        Item[]
-  missions     Mission[]
-  activities   ActivityLog[]
-  hookEvents   HookEvent[]
-  tokenUsage   MissionTokenUsage[]
+  items               Item[]
+  missions            Mission[]
+  activities          ActivityLog[]
+  hookEvents          HookEvent[]
+  tokenUsage          MissionTokenUsage[]
+  messageTokenUsage   MessageTokenUsage[]
 }
 
 model Stage {
@@ -133,10 +134,11 @@ model Mission {
   finalReview       String?                   // Markdown final review report (Stockwell)
   scalingRationale  String?                   // JSON blob: ScalingRationale
 
-  items       MissionItem[]
-  activities  ActivityLog[]
-  hookEvents  HookEvent[]
-  tokenUsage  MissionTokenUsage[]
+  items               MissionItem[]
+  activities          ActivityLog[]
+  hookEvents          HookEvent[]
+  tokenUsage          MissionTokenUsage[]
+  messageTokenUsage   MessageTokenUsage[]
 
   // Indexes for common queries
   @@index([archivedAt])
@@ -215,4 +217,24 @@ model MissionTokenUsage {
   @@unique([missionId, agentName, model])
   @@index([missionId])
   @@index([projectId])
+}
+
+model MessageTokenUsage {
+  id                  Int      @id @default(autoincrement())
+  messageId           String
+  projectId           String
+  project             Project  @relation(fields: [projectId], references: [id])
+  missionId           String?
+  mission             Mission? @relation(fields: [missionId], references: [id], onDelete: SetNull)
+  agentName           String
+  model               String
+  inputTokens         Int
+  outputTokens        Int
+  cacheCreationTokens Int
+  cacheReadTokens     Int
+  timestamp           DateTime @default(now())
+
+  @@unique([messageId])
+  @@index([missionId])
+  @@index([missionId, agentName])
 }

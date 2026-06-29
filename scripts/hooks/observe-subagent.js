@@ -66,32 +66,66 @@ try {
     agent_type: agentType || undefined,
   });
 
-  // On SubagentStop, parse token usage from transcript if available
+  // On SubagentStop, parse token usage from transcript if available.
   let tokenFields = {};
+  let tokenUsagePromise;
   if (hookEventName === 'SubagentStop') {
     const transcriptPath = hookInput.agent_transcript_path;
     if (transcriptPath) {
-      const tokenUsage = parseTranscriptUsage(transcriptPath);
-      tokenFields = {
-        ...(tokenUsage.inputTokens !== null && { inputTokens: tokenUsage.inputTokens }),
-        ...(tokenUsage.outputTokens !== null && { outputTokens: tokenUsage.outputTokens }),
-        ...(tokenUsage.cacheCreationTokens !== null && { cacheCreationTokens: tokenUsage.cacheCreationTokens }),
-        ...(tokenUsage.cacheReadTokens !== null && { cacheReadTokens: tokenUsage.cacheReadTokens }),
-        ...(tokenUsage.model !== null && { model: tokenUsage.model }),
-      };
+      // parseTranscriptUsage now returns an array of per-message records (WI-170).
+      const perMessageRecords = parseTranscriptUsage(transcriptPath);
+
+      if (perMessageRecords.length > 0) {
+        // POST per-message records to /api/hooks/token-usage (fire-and-forget).
+        const apiUrl = (process.env.ATEAM_API_URL || 'http://localhost:3000').replace(/\/+$/, '');
+        const projectId = process.env.ATEAM_PROJECT_ID || 'default';
+        const timestamp = new Date().toISOString();
+        const enrichedRecords = perMessageRecords.map((r) => ({
+          ...r,
+          agentName,
+          timestamp,
+        }));
+        tokenUsagePromise = fetch(`${apiUrl}/api/hooks/token-usage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Project-ID': projectId },
+          body: JSON.stringify(enrichedRecords),
+        }).catch(() => {});
+
+        // Sum array back to scalars for the legacy /api/hooks/events subagent_stop payload.
+        const tokenSum = perMessageRecords.reduce(
+          (acc, r) => ({
+            inputTokens: acc.inputTokens + r.inputTokens,
+            outputTokens: acc.outputTokens + r.outputTokens,
+            cacheCreationTokens: acc.cacheCreationTokens + r.cacheCreationTokens,
+            cacheReadTokens: acc.cacheReadTokens + r.cacheReadTokens,
+          }),
+          { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 }
+        );
+        const representativeModel = perMessageRecords[perMessageRecords.length - 1].model;
+        tokenFields = {
+          inputTokens: tokenSum.inputTokens,
+          outputTokens: tokenSum.outputTokens,
+          cacheCreationTokens: tokenSum.cacheCreationTokens,
+          cacheReadTokens: tokenSum.cacheReadTokens,
+          ...(representativeModel && { model: representativeModel }),
+        };
+      }
     }
   }
 
-  await sendObserverEvent({
-    eventType,
-    agentName,
-    status,
-    summary,
-    payload,
-    correlationId: agentId || undefined,
-    timestamp: new Date().toISOString(),
-    ...tokenFields,
-  }).catch(() => {});
+  await Promise.all([
+    sendObserverEvent({
+      eventType,
+      agentName,
+      status,
+      summary,
+      payload,
+      correlationId: agentId || undefined,
+      timestamp: new Date().toISOString(),
+      ...tokenFields,
+    }).catch(() => {}),
+    tokenUsagePromise,
+  ]);
 } catch {
   // Fire-and-forget: never block the agent
 }

@@ -51,21 +51,13 @@ function sumTotals(agents: AgentRow[]): Totals {
 /**
  * POST /api/missions/:missionId/token-usage
  *
- * Reads HookEvent rows for the mission using dedup logic:
- * - subagent_stop events: SUM all (each is an independent process with its own totals)
- * - stop events (all agents): take LATEST only per agent+model (cumulative session totals)
- *   Used as FALLBACK — only populates a group if no subagent_stop data exists for that key.
- *   This prevents double-counting for legacy subagents (which have both event types)
- *   while correctly capturing native teammates (which only fire stop events).
+ * Reads MessageTokenUsage rows for the mission, groups by (baseAgentName, model),
+ * SUMs the four token fields per group, prices each group at its own model rate,
+ * then upserts one MissionTokenUsage row per (baseAgent, model).
  *
- * Groups by base-role agentName+model, calculates cost, upserts MissionTokenUsage.
- *
- * Pool instances of one role (e.g. murdock, murdock-1, murdock-2) are
- * consolidated into a single base-role row via `baseAgentName`, so the
- * per-agent breakdown reads as one line per logical role rather than being
- * fragmented across N instance rows. Normalization only changes how events
- * are bucketed — every event is still counted exactly once, so the mission
- * grand total is unchanged and never double-counted.
+ * Pool instances of one role (murdock, murdock-1, murdock-2) roll up into a
+ * single base-role row via `baseAgentName`. Re-aggregation is idempotent:
+ * prior MissionTokenUsage rows are cleared before re-computing.
  */
 export async function POST(request: Request, context: RouteContext) {
   try {
@@ -78,16 +70,9 @@ export async function POST(request: Request, context: RouteContext) {
     }
     const projectId = projectValidation.projectId;
 
-    // --- Subagent events: sum all (each subagent_stop is independent) ---
-    const subagentEvents = await prisma.hookEvent.findMany({
-      where: {
-        missionId,
-        projectId,
-        eventType: 'subagent_stop',
-        agentName: { not: 'hannibal' },
-        inputTokens: { not: null },
-        model: { not: null },
-      },
+    // Fetch all per-message usage rows for this mission.
+    const messageRows = await prisma.messageTokenUsage.findMany({
+      where: { missionId, projectId },
       select: {
         agentName: true,
         model: true,
@@ -98,143 +83,28 @@ export async function POST(request: Request, context: RouteContext) {
       },
     });
 
-    // --- Stop events (all agents): take only the latest per agent+model ---
-    // stop events report cumulative session-to-date totals, so summing
-    // multiple stop events would massively over-count. We take only the
-    // most recent event (highest id) per agent+model combination.
-    // No agentName filter — include hannibal AND native teammates (murdock, ba, etc.)
-    const stopEvents = await prisma.hookEvent.findMany({
-      where: {
-        missionId,
-        projectId,
-        eventType: 'stop',
-        inputTokens: { not: null },
-        model: { not: null },
-      },
-      select: {
-        id: true,
-        agentName: true,
-        model: true,
-        inputTokens: true,
-        outputTokens: true,
-        cacheCreationTokens: true,
-        cacheReadTokens: true,
-      },
-      orderBy: { id: 'desc' },
-    });
-
-    // Keep only the latest stop event per RAW instance agent+model.
-    // stop events report cumulative session-to-date totals, so within a single
-    // session/instance we take only the latest. We key by the raw agentName
-    // (NOT the base role) here because distinct pool instances (amy-1, amy-2)
-    // are independent sessions, each with its own cumulative total — those must
-    // be summed across instances when rolled into the base-role group below.
-    const latestStopByKey = new Map<string, typeof stopEvents[number]>();
-    for (const event of stopEvents) {
-      const key = `${event.agentName}:${event.model}`;
-      if (!latestStopByKey.has(key)) {
-        latestStopByKey.set(key, event);
-      }
-    }
-
-    // Warn if hook events were excluded due to missing token data
-    const totalEventCount = await prisma.hookEvent.count({
-      where: {
-        missionId,
-        projectId,
-        OR: [
-          { eventType: 'subagent_stop', agentName: { not: 'hannibal' } },
-          { eventType: 'stop' },
-        ],
-      },
-    });
-
-    const includedCount = subagentEvents.length + latestStopByKey.size;
-    // Note: for stop events, we intentionally use only the latest per agent+model,
-    // so excluded count reflects both missing-data exclusions and cumulative dedup
-    const excludedForMissingData = totalEventCount - subagentEvents.length - stopEvents.length;
-    if (excludedForMissingData > 0) {
-      console.warn(
-        `[token-aggregation] Mission ${missionId}: ${excludedForMissingData} hook event(s) excluded (missing token/model data)`
-      );
-    }
-
-    // Group events by base-role agentName+model. Pool instances of one role
-    // (murdock, murdock-1, murdock-2, ...) consolidate into a single row.
+    // Group by (baseAgentName, model), summing token deltas per group.
     const groups = new Map<string, { agentName: string; model: string; inputTokens: number; outputTokens: number; cacheCreationTokens: number; cacheReadTokens: number }>();
 
-    // Track which base-role keys were populated from subagent_stop data so the
-    // stop-event fallback can skip them (legacy subagents fire BOTH event types
-    // with identical token counts — using both would double-count).
-    const keysFromSubagent = new Set<string>();
-
-    // Track which base ROLES ran as a subagent at all (any model). An agent that
-    // ran via the Task/Agent subagent mechanism (face, sosa, stockwell, retro,
-    // tawnia, ...) reports its real work via subagent_stop. It does NOT have its
-    // own top-level session, so any `stop` event bearing its name is the MAIN
-    // (hannibal) session's cumulative total bleeding through — these subagents
-    // finish inside the main context, and the main-session stop hook tags the
-    // cumulative total with whichever agent name was active. Those phantom stop
-    // rows (e.g. retro/tawnia/stockwell each carrying ~Hannibal's full total)
-    // must be dropped entirely, not just skipped per-(role,model): the phantom
-    // stop is sonnet while the real subagent_stop is opus, so a per-key skip
-    // misses it. Only genuine top-level sessions (hannibal, and native teammates
-    // that emit ONLY stop) should contribute stop-event cost.
-    const rolesFromSubagent = new Set<string>();
-
-    function addToGroup(
-      role: string,
-      model: string,
-      event: { inputTokens: number | null; outputTokens: number | null; cacheCreationTokens: number | null; cacheReadTokens: number | null }
-    ) {
-      const key = `${role}:${model}`;
+    for (const row of messageRows) {
+      const role = baseAgentName(row.agentName);
+      const key = `${role}:${row.model}`;
       const existing = groups.get(key);
       if (existing) {
-        existing.inputTokens += event.inputTokens ?? 0;
-        existing.outputTokens += event.outputTokens ?? 0;
-        existing.cacheCreationTokens += event.cacheCreationTokens ?? 0;
-        existing.cacheReadTokens += event.cacheReadTokens ?? 0;
+        existing.inputTokens += row.inputTokens;
+        existing.outputTokens += row.outputTokens;
+        existing.cacheCreationTokens += row.cacheCreationTokens;
+        existing.cacheReadTokens += row.cacheReadTokens;
       } else {
         groups.set(key, {
           agentName: role,
-          model,
-          inputTokens: event.inputTokens ?? 0,
-          outputTokens: event.outputTokens ?? 0,
-          cacheCreationTokens: event.cacheCreationTokens ?? 0,
-          cacheReadTokens: event.cacheReadTokens ?? 0,
+          model: row.model,
+          inputTokens: row.inputTokens,
+          outputTokens: row.outputTokens,
+          cacheCreationTokens: row.cacheCreationTokens,
+          cacheReadTokens: row.cacheReadTokens,
         });
       }
-      return key;
-    }
-
-    // subagent_stop events are independent (one per subagent process) → sum all,
-    // consolidating pool instances into their base role.
-    for (const event of subagentEvents) {
-      const role = baseAgentName(event.agentName);
-      const key = addToGroup(role, event.model!, event);
-      keysFromSubagent.add(key);
-      rolesFromSubagent.add(role);
-    }
-
-    // Add latest stop events as FALLBACK. Each per-instance latest stop event is
-    // already cumulative for that session, so we SUM the per-instance latests
-    // across pool instances of a role (amy-1 + amy-2 are distinct sessions), but
-    // NOT across turns of one instance (dedup handled in latestStopByKey above).
-    // Skip a role entirely if subagent_stop already populated it — that prevents
-    // double-counting legacy subagents that fire both event types.
-    for (const event of latestStopByKey.values()) {
-      const role = baseAgentName(event.agentName);
-      const key = `${role}:${event.model}`;
-      if (keysFromSubagent.has(key)) {
-        continue;
-      }
-      // Drop phantom main-session bleed-through: if this role ran as a subagent
-      // (any model), its real cost is already counted via subagent_stop and any
-      // stop event under its name is the main-session cumulative total.
-      if (rolesFromSubagent.has(role)) {
-        continue;
-      }
-      addToGroup(role, event.model!, event);
     }
 
     // Upsert each group into MissionTokenUsage atomically

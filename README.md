@@ -180,12 +180,14 @@ The dashboard provides two views:
 - **Filtering controls** to view specific agents, tools, or event types
 - **Live updates** via SSE as agents execute tools
 
-### Token Usage Panel (NEW)
-- **Per-agent cost breakdown** with estimated USD for each agent (Face, Murdock, B.A., Lynch, Amy, Tawnia, Hannibal)
-- **Proportional bars** showing relative token consumption across agents
+### Token Usage Panel (Dual-View)
+- **Per-agent rollup view** with estimated USD for each agent (Face, Murdock, B.A., Lynch, Amy, Tawnia, Hannibal) and proportional bars showing relative token consumption
+- **Per-model breakdown view** showing cost breakdown by Opus/Sonnet/Haiku within each agent; toggle between views via "View" button
+- **Model-drift badge** highlights agents with heterogeneous model usage (mixed Opus + Sonnet) for potential optimization opportunities
 - **Model-aware pricing** loaded from `ateam.config.json` (Opus, Sonnet, Haiku rates)
 - **Input/output/cache token counts** with K/M notation
 - **Mission totals** including cache savings
+- **Full accessibility support** with keyboard navigation (arrow keys, Enter), ARIA labels, and focus management
 - Appears in the right sidebar after mission completes; populated via SSE `mission-token-usage` event
 
 ### Mission History & Archive (NEW)

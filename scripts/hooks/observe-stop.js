@@ -32,20 +32,51 @@ const stopCorrelationId = lastAssistantMessageId
 
 const payload = buildObserverPayload(hookInput, agentName, { correlationId: stopCorrelationId });
 if (payload) {
-  // On Stop events, parse transcript for token usage and advance flag, then merge into payload
   const transcriptPath = hookInput.transcript_path;
   let tokenFields = {};
   let advanceFields = {};
   let handoffStopPromise;
+  let tokenUsagePromise;
+
   if (transcriptPath) {
-    const tokenUsage = parseTranscriptUsage(transcriptPath);
-    tokenFields = {
-      ...(tokenUsage.inputTokens !== null && { inputTokens: tokenUsage.inputTokens }),
-      ...(tokenUsage.outputTokens !== null && { outputTokens: tokenUsage.outputTokens }),
-      ...(tokenUsage.cacheCreationTokens !== null && { cacheCreationTokens: tokenUsage.cacheCreationTokens }),
-      ...(tokenUsage.cacheReadTokens !== null && { cacheReadTokens: tokenUsage.cacheReadTokens }),
-      ...(tokenUsage.model !== null && { model: tokenUsage.model }),
-    };
+    // parseTranscriptUsage now returns an array of per-message records (WI-170).
+    const perMessageRecords = parseTranscriptUsage(transcriptPath);
+
+    if (perMessageRecords.length > 0) {
+      // POST per-message records to /api/hooks/token-usage (fire-and-forget).
+      const apiUrl = (process.env.ATEAM_API_URL || 'http://localhost:3000').replace(/\/+$/, '');
+      const projectId = process.env.ATEAM_PROJECT_ID || 'default';
+      const timestamp = new Date().toISOString();
+      const enrichedRecords = perMessageRecords.map((r) => ({
+        ...r,
+        agentName: agentName || 'unknown',
+        timestamp,
+      }));
+      tokenUsagePromise = fetch(`${apiUrl}/api/hooks/token-usage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Project-ID': projectId },
+        body: JSON.stringify(enrichedRecords),
+      }).catch(() => {});
+
+      // Sum array back to scalars for the legacy /api/hooks/events stop payload.
+      const tokenSum = perMessageRecords.reduce(
+        (acc, r) => ({
+          inputTokens: acc.inputTokens + r.inputTokens,
+          outputTokens: acc.outputTokens + r.outputTokens,
+          cacheCreationTokens: acc.cacheCreationTokens + r.cacheCreationTokens,
+          cacheReadTokens: acc.cacheReadTokens + r.cacheReadTokens,
+        }),
+        { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 }
+      );
+      const representativeModel = perMessageRecords[perMessageRecords.length - 1].model;
+      tokenFields = {
+        inputTokens: tokenSum.inputTokens,
+        outputTokens: tokenSum.outputTokens,
+        cacheCreationTokens: tokenSum.cacheCreationTokens,
+        cacheReadTokens: tokenSum.cacheReadTokens,
+        ...(representativeModel && { model: representativeModel }),
+      };
+    }
 
     const { advanceFlagUsed } = parseAdvanceFlagUsage(transcriptPath);
     advanceFields = advanceFlagUsed !== null ? { advanceFlagUsed } : {};
@@ -64,6 +95,7 @@ if (payload) {
   await Promise.all([
     sendObserverEvent({ ...payload, ...tokenFields, ...advanceFields }).catch(() => {}),
     handoffStopPromise,
+    tokenUsagePromise,
   ]);
 }
 

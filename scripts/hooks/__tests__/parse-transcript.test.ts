@@ -1,24 +1,30 @@
 /**
- * Tests for parseTranscriptUsage() and observe-subagent.js integration.
+ * Tests for parseTranscriptUsage() — per-message token attribution.
  *
- * parseTranscriptUsage(filePath) reads a JSONL transcript file and sums
- * token usage across all assistant messages:
- *   - inputTokens: sum of usage.input_tokens
- *   - outputTokens: sum of usage.output_tokens
- *   - cacheCreationTokens: sum of usage.cache_creation_input_tokens
- *   - cacheReadTokens: sum of usage.cache_read_input_tokens
- *   - model: last model value found in a message that ALSO has usage data
+ * parseTranscriptUsage(filePath) reads a JSONL transcript file and returns an
+ * ARRAY of per-message usage records. Each element corresponds to one distinct
+ * assistant message and carries that message's OWN model and token deltas:
  *
- * Returns null values for all fields when the file cannot be read.
- * Skips malformed JSONL lines and sums remaining valid ones.
+ *   { messageId, model, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens }
+ *
+ * Key contract (replaces the old lossy "sum-all + last-model" scalar object):
+ *   - One record per distinct assistant message — tokens are NOT summed across
+ *     messages and models are NOT collapsed to "the last one".
+ *   - Repeated emissions of the same message.id (Claude Code streams a message
+ *     2-3 times) collapse to a single record keyed by messageId, using the
+ *     message's FINAL usage (last-write-wins, no over-count).
+ *   - A message whose usage block has no message.id is still emitted as its own
+ *     record under a synthetic key `${sessionId}:idx:${n}` so no usage is dropped
+ *     and id-less messages from different sessions cannot collide.
+ *   - No usage data / unreadable / missing file => empty array (never throws).
  *
  * The function lives at: scripts/hooks/lib/parse-transcript.js
  *
- * MODULE FORMAT NOTE: Implementation uses ESM (export function) to match
- * the observer hook ecosystem which uses ESM imports.
+ * MODULE FORMAT NOTE: Implementation uses ESM (export function) to match the
+ * observer hook ecosystem which uses ESM imports.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { writeFileSync, unlinkSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -43,14 +49,16 @@ afterEach(() => {
   tempFiles.length = 0;
 });
 
-describe('parseTranscriptUsage() - happy path', () => {
-  it('should sum token counts across all assistant messages and return last model', () => {
+describe('parseTranscriptUsage() - per-message records preserve each message model', () => {
+  it('returns one record per distinct message, each carrying its own model and deltas (NOT summed)', () => {
     const path = writeTempTranscript([
-      // First assistant turn
+      // First assistant turn — opus
       {
         type: 'assistant',
+        sessionId: 'sess_1',
         message: {
-          model: 'claude-sonnet-4-6',
+          id: 'msg_opus',
+          model: 'claude-opus-4-6',
           usage: {
             input_tokens: 1000,
             output_tokens: 200,
@@ -59,11 +67,13 @@ describe('parseTranscriptUsage() - happy path', () => {
           },
         },
       },
-      // Second assistant turn (different model — last one wins)
+      // Second assistant turn — sonnet (DIFFERENT model)
       {
         type: 'assistant',
+        sessionId: 'sess_1',
         message: {
-          model: 'claude-opus-4-6',
+          id: 'msg_sonnet',
+          model: 'claude-sonnet-4-6',
           usage: {
             input_tokens: 800,
             output_tokens: 150,
@@ -77,182 +87,286 @@ describe('parseTranscriptUsage() - happy path', () => {
 
     const result = parseTranscriptUsage(path);
 
-    expect(result.inputTokens).toBe(1800);       // 1000 + 800
-    expect(result.outputTokens).toBe(350);        // 200 + 150
-    expect(result.cacheCreationTokens).toBe(500); // 500 + 0
-    expect(result.cacheReadTokens).toBe(300);     // 0 + 300
-    expect(result.model).toBe('claude-opus-4-6'); // last model wins
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(2);
+
+    // Records preserve first-seen order; each keeps its own model — not collapsed.
+    expect(result[0]).toEqual({
+      messageId: 'msg_opus',
+      model: 'claude-opus-4-6',
+      inputTokens: 1000,
+      outputTokens: 200,
+      cacheCreationTokens: 500,
+      cacheReadTokens: 0,
+    });
+    expect(result[1]).toEqual({
+      messageId: 'msg_sonnet',
+      model: 'claude-sonnet-4-6',
+      inputTokens: 800,
+      outputTokens: 150,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 300,
+    });
   });
 });
 
-describe('parseTranscriptUsage() - duplicate message emissions', () => {
-  it('should count each message.id exactly once when the same message is written multiple times', () => {
-    // Claude Code writes the same assistant message to the transcript several
-    // times as it streams then finalizes; each emission carries the SAME usage.
-    // Summing all emissions over-counts (~2.6-3.4x in real transcripts). The
-    // parser must dedup by message.id so each message contributes usage once.
-    const msgA = {
+describe('parseTranscriptUsage() - duplicate message emissions collapse by messageId', () => {
+  it('collapses repeated emissions of the same id to one record using FINAL usage (last-write-wins)', () => {
+    // Claude Code writes the same assistant message several times as it streams
+    // then finalizes. Early emissions can carry partial usage; the final emission
+    // carries the message's authoritative totals. The record must reflect the
+    // FINAL emission — neither the first, nor the sum of emissions.
+    const partialA = {
       type: 'assistant',
+      sessionId: 'sess_1',
       message: {
         id: 'msg_A',
         model: 'claude-sonnet-4-6',
-        usage: {
-          input_tokens: 1000,
-          output_tokens: 200,
-          cache_creation_input_tokens: 5000,
-          cache_read_input_tokens: 100,
-        },
+        usage: { input_tokens: 400, output_tokens: 50, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
       },
     };
-    const msgB = {
+    const finalA = {
       type: 'assistant',
+      sessionId: 'sess_1',
+      message: {
+        id: 'msg_A',
+        model: 'claude-sonnet-4-6',
+        usage: { input_tokens: 1000, output_tokens: 200, cache_creation_input_tokens: 5000, cache_read_input_tokens: 100 },
+      },
+    };
+    const finalB = {
+      type: 'assistant',
+      sessionId: 'sess_1',
       message: {
         id: 'msg_B',
         model: 'claude-sonnet-4-6',
-        usage: {
-          input_tokens: 50,
-          output_tokens: 300,
-          cache_creation_input_tokens: 2000,
-          cache_read_input_tokens: 6000,
-        },
+        usage: { input_tokens: 50, output_tokens: 300, cache_creation_input_tokens: 2000, cache_read_input_tokens: 6000 },
       },
     };
-    // msgA emitted 3x, msgB emitted 2x — as Claude Code actually does.
-    const path = writeTempTranscript([msgA, msgA, msgA, msgB, msgB]);
+    // msg_A emitted 3x (partial, partial, final), msg_B emitted 2x (final, final).
+    const path = writeTempTranscript([partialA, partialA, finalA, finalB, finalB]);
     tempFiles.push(path);
 
     const result = parseTranscriptUsage(path);
 
-    // Each distinct message counted once: A + B
-    expect(result.inputTokens).toBe(1050);        // 1000 + 50, NOT 3*1000 + 2*50
-    expect(result.outputTokens).toBe(500);        // 200 + 300
-    expect(result.cacheCreationTokens).toBe(7000); // 5000 + 2000, NOT 15000 + 4000
-    expect(result.cacheReadTokens).toBe(6100);     // 100 + 6000
-    expect(result.model).toBe('claude-sonnet-4-6');
-  });
+    expect(result).toHaveLength(2);
 
-  it('should sum usage from messages that lack an id (cannot dedup, assume distinct)', () => {
+    const recA = result.find((r) => r.messageId === 'msg_A');
+    const recB = result.find((r) => r.messageId === 'msg_B');
+
+    // msg_A reflects the FINAL emission's usage, not the partial and not the sum.
+    expect(recA).toEqual({
+      messageId: 'msg_A',
+      model: 'claude-sonnet-4-6',
+      inputTokens: 1000,
+      outputTokens: 200,
+      cacheCreationTokens: 5000,
+      cacheReadTokens: 100,
+    });
+    expect(recB).toEqual({
+      messageId: 'msg_B',
+      model: 'claude-sonnet-4-6',
+      inputTokens: 50,
+      outputTokens: 300,
+      cacheCreationTokens: 2000,
+      cacheReadTokens: 6000,
+    });
+  });
+});
+
+describe('parseTranscriptUsage() - id-less messages emitted under synthetic keys', () => {
+  it('emits each id-less usage-bearing message as its own record (no usage dropped)', () => {
     // Older/malformed transcripts may omit message.id. Those cannot be deduped,
-    // so each usage-bearing line counts once (summed) — preserving prior behavior.
-    const noId = {
+    // so each usage-bearing line must still surface as its own record — never
+    // dropped and never merged into another message's totals.
+    const noIdA = {
       type: 'assistant',
+      sessionId: 'sess_X',
       message: {
         model: 'claude-sonnet-4-6',
-        usage: {
-          input_tokens: 100,
-          output_tokens: 10,
-          cache_creation_input_tokens: 0,
-          cache_read_input_tokens: 0,
-        },
+        usage: { input_tokens: 100, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
       },
     };
-    const path = writeTempTranscript([noId, noId]);
+    const noIdB = {
+      type: 'assistant',
+      sessionId: 'sess_X',
+      message: {
+        model: 'claude-sonnet-4-6',
+        usage: { input_tokens: 70, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+      },
+    };
+    const path = writeTempTranscript([noIdA, noIdB]);
     tempFiles.push(path);
 
     const result = parseTranscriptUsage(path);
-    // No id => both lines count (summed): 100 + 100
-    expect(result.inputTokens).toBe(200);
-    expect(result.outputTokens).toBe(20);
+
+    // Two distinct records — neither dropped, neither merged.
+    expect(result).toHaveLength(2);
+
+    // Each carries its own deltas.
+    expect(result[0].inputTokens).toBe(100);
+    expect(result[0].outputTokens).toBe(10);
+    expect(result[1].inputTokens).toBe(70);
+    expect(result[1].outputTokens).toBe(5);
+
+    // Synthetic keys are session-scoped (`${sessionId}:idx:${n}`), not bare indices.
+    expect(result[0].messageId).toMatch(/^sess_X:idx:\d+$/);
+    expect(result[1].messageId).toMatch(/^sess_X:idx:\d+$/);
+    // And distinct from each other within the session.
+    expect(result[0].messageId).not.toBe(result[1].messageId);
+  });
+
+  it('scopes synthetic keys by sessionId so id-less messages from different sessions cannot collide', () => {
+    // Two id-less messages that would share a bare index — but they belong to
+    // different sessions. Session-scoped keys must keep them distinct.
+    const session1 = {
+      type: 'assistant',
+      sessionId: 'sess_1',
+      message: {
+        model: 'claude-sonnet-4-6',
+        usage: { input_tokens: 100, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+      },
+    };
+    const session2 = {
+      type: 'assistant',
+      sessionId: 'sess_2',
+      message: {
+        model: 'claude-opus-4-6',
+        usage: { input_tokens: 200, output_tokens: 20, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+      },
+    };
+    const path = writeTempTranscript([session1, session2]);
+    tempFiles.push(path);
+
+    const result = parseTranscriptUsage(path);
+
+    expect(result).toHaveLength(2);
+    const ids = result.map((r) => r.messageId);
+    expect(ids[0]).toMatch(/^sess_1:idx:\d+$/);
+    expect(ids[1]).toMatch(/^sess_2:idx:\d+$/);
+    // Cross-session keys never collide.
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
+  it('keeps id-bearing and id-less messages as separate records in one transcript', () => {
+    const withId = {
+      type: 'assistant',
+      sessionId: 'sess_1',
+      message: {
+        id: 'msg_real',
+        model: 'claude-opus-4-6',
+        usage: { input_tokens: 900, output_tokens: 90, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+      },
+    };
+    const withoutId = {
+      type: 'assistant',
+      sessionId: 'sess_1',
+      message: {
+        model: 'claude-sonnet-4-6',
+        usage: { input_tokens: 100, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+      },
+    };
+    const path = writeTempTranscript([withId, withoutId]);
+    tempFiles.push(path);
+
+    const result = parseTranscriptUsage(path);
+
+    expect(result).toHaveLength(2);
+    expect(result.find((r) => r.messageId === 'msg_real')).toEqual({
+      messageId: 'msg_real',
+      model: 'claude-opus-4-6',
+      inputTokens: 900,
+      outputTokens: 90,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+    });
+    const synthetic = result.find((r) => r.messageId !== 'msg_real');
+    expect(synthetic!.messageId).toMatch(/^sess_1:idx:\d+$/);
+    expect(synthetic!.inputTokens).toBe(100);
   });
 });
 
 describe('parseTranscriptUsage() - missing/unreadable file', () => {
-  it('should return null values when file does not exist', () => {
+  it('returns an empty array when the file does not exist (never throws)', () => {
     const result = parseTranscriptUsage('/nonexistent/path/transcript.jsonl');
-
-    expect(result.inputTokens).toBeNull();
-    expect(result.outputTokens).toBeNull();
-    expect(result.cacheCreationTokens).toBeNull();
-    expect(result.cacheReadTokens).toBeNull();
-    expect(result.model).toBeNull();
+    expect(result).toEqual([]);
   });
 });
 
-describe('parseTranscriptUsage() - malformed JSONL lines', () => {
-  it('should skip bad lines and sum token counts from valid lines', () => {
-    const path = writeTempTranscript([
-      'not valid json at all {{{',
-      // Valid line
-      {
-        type: 'assistant',
-        message: {
-          model: 'claude-sonnet-4-6',
-          usage: {
-            input_tokens: 500,
-            output_tokens: 100,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
-          },
-        },
-      },
-      '{"incomplete": true',  // Truncated JSON
-      // Another valid line
-      {
-        type: 'assistant',
-        message: {
-          model: 'claude-sonnet-4-6',
-          usage: {
-            input_tokens: 300,
-            output_tokens: 50,
-            cache_creation_input_tokens: 100,
-            cache_read_input_tokens: 200,
-          },
-        },
-      },
-    ]);
-    tempFiles.push(path);
-
-    const result = parseTranscriptUsage(path);
-
-    // Only valid lines are summed — bad lines are skipped
-    expect(result.inputTokens).toBe(800);         // 500 + 300
-    expect(result.outputTokens).toBe(150);         // 100 + 50
-    expect(result.cacheCreationTokens).toBe(100);  // 0 + 100
-    expect(result.cacheReadTokens).toBe(200);      // 0 + 200
-    expect(result.model).toBe('claude-sonnet-4-6');
-  });
-});
-
-describe('parseTranscriptUsage() - empty transcript', () => {
-  it('should return zero counts and null model for an empty file', () => {
+describe('parseTranscriptUsage() - no usage data', () => {
+  it('returns an empty array for an empty file', () => {
     const path = writeTempTranscript([]);
     tempFiles.push(path);
 
     const result = parseTranscriptUsage(path);
+    expect(result).toEqual([]);
+  });
 
-    expect(result.inputTokens).toBe(0);
-    expect(result.outputTokens).toBe(0);
-    expect(result.cacheCreationTokens).toBe(0);
-    expect(result.cacheReadTokens).toBe(0);
-    expect(result.model).toBeNull();
+  it('returns an empty array when no message carries a usage block', () => {
+    // Messages with a model but no usage produce no records — only usage-bearing
+    // assistant messages become records.
+    const path = writeTempTranscript([
+      { type: 'assistant', sessionId: 'sess_1', message: { id: 'm1', model: 'claude-opus-4-6' } },
+      { type: 'user', sessionId: 'sess_1', message: { content: 'hello' } },
+    ]);
+    tempFiles.push(path);
+
+    const result = parseTranscriptUsage(path);
+    expect(result).toEqual([]);
+  });
+
+  it('does not emit a record for a trailing message that has a model but no usage', () => {
+    const path = writeTempTranscript([
+      {
+        type: 'assistant',
+        sessionId: 'sess_1',
+        message: {
+          id: 'm_with_usage',
+          model: 'claude-sonnet-4-6',
+          usage: { input_tokens: 500, output_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        },
+      },
+      // Trailing message: model but NO usage — must NOT produce a record and must
+      // NOT alter the prior record's model.
+      { type: 'assistant', sessionId: 'sess_1', message: { id: 'm_no_usage', model: 'claude-opus-4-6' } },
+    ]);
+    tempFiles.push(path);
+
+    const result = parseTranscriptUsage(path);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({
+      messageId: 'm_with_usage',
+      model: 'claude-sonnet-4-6',
+      inputTokens: 500,
+      outputTokens: 100,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+    });
   });
 });
 
-describe('parseTranscriptUsage() - model only from messages with usage data', () => {
-  it('should ignore model from a trailing message that has no usage data', () => {
-    // Bug scenario: a message with a model but no usage appearing AFTER a message
-    // that has both a model and usage should NOT override the model — the "last
-    // model wins" logic must only consider entries that also carry usage data.
+describe('parseTranscriptUsage() - malformed JSONL lines', () => {
+  it('skips unparseable lines and emits records from valid usage-bearing messages', () => {
     const path = writeTempTranscript([
-      // First message: has both model and usage — this model should be returned
+      'not valid json at all {{{',
       {
         type: 'assistant',
+        sessionId: 'sess_1',
         message: {
+          id: 'good_1',
           model: 'claude-sonnet-4-6',
-          usage: {
-            input_tokens: 500,
-            output_tokens: 100,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
-          },
+          usage: { input_tokens: 500, output_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
         },
       },
-      // Last message: has a model but NO usage — should NOT override the model
+      '{"incomplete": true',
       {
         type: 'assistant',
+        sessionId: 'sess_1',
         message: {
-          model: 'claude-opus-4-6',
-          // No usage field
+          id: 'good_2',
+          model: 'claude-sonnet-4-6',
+          usage: { input_tokens: 300, output_tokens: 50, cache_creation_input_tokens: 100, cache_read_input_tokens: 200 },
         },
       },
     ]);
@@ -260,65 +374,124 @@ describe('parseTranscriptUsage() - model only from messages with usage data', ()
 
     const result = parseTranscriptUsage(path);
 
-    // Token totals come only from the first message
-    expect(result.inputTokens).toBe(500);
-    expect(result.outputTokens).toBe(100);
-    expect(result.cacheCreationTokens).toBe(0);
-    expect(result.cacheReadTokens).toBe(0);
-    // Model must come from the message that had usage data, not the trailing one
-    expect(result.model).toBe('claude-sonnet-4-6');
+    expect(result).toHaveLength(2);
+    expect(result.find((r) => r.messageId === 'good_1')).toEqual({
+      messageId: 'good_1',
+      model: 'claude-sonnet-4-6',
+      inputTokens: 500,
+      outputTokens: 100,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+    });
+    expect(result.find((r) => r.messageId === 'good_2')).toEqual({
+      messageId: 'good_2',
+      model: 'claude-sonnet-4-6',
+      inputTokens: 300,
+      outputTokens: 50,
+      cacheCreationTokens: 100,
+      cacheReadTokens: 200,
+    });
   });
 });
 
-describe('observe-subagent.js integration - SubagentStop payload construction', () => {
-  it('should include token fields in SubagentStop event payload when transcript path is present', () => {
-    // The SubagentStop handler reads agent_transcript_path from hook input,
-    // calls parseTranscriptUsage(), and includes token fields in the POST payload.
-    //
-    // We test the payload construction logic by verifying that a SubagentStop
-    // payload with token data has the expected shape.
+describe('parseTranscriptUsage() - missing usage subfields default to zero', () => {
+  it('treats absent token subfields as 0 within a record', () => {
+    const path = writeTempTranscript([
+      {
+        type: 'assistant',
+        sessionId: 'sess_1',
+        message: {
+          id: 'sparse',
+          model: 'claude-sonnet-4-6',
+          usage: { input_tokens: 123 }, // other subfields absent
+        },
+      },
+    ]);
+    tempFiles.push(path);
 
+    const result = parseTranscriptUsage(path);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({
+      messageId: 'sparse',
+      model: 'claude-sonnet-4-6',
+      inputTokens: 123,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+    });
+  });
+});
+
+describe('observe-subagent.js integration - SubagentStop payload carries per-message records', () => {
+  it('attaches the per-message usage array to the SubagentStop payload', () => {
+    // The SubagentStop handler reads agent_transcript_path from hook input, calls
+    // parseTranscriptUsage(), and attaches the per-message records so downstream
+    // attribution can persist tokens per message (and per model) rather than one
+    // collapsed total. We verify the array of records flows into the payload.
     const transcriptPath = writeTempTranscript([
       {
         type: 'assistant',
+        sessionId: 'sess_sub',
         message: {
+          id: 'sub_msg_1',
+          model: 'claude-opus-4-6',
+          usage: { input_tokens: 2000, output_tokens: 400, cache_creation_input_tokens: 1000, cache_read_input_tokens: 500 },
+        },
+      },
+      {
+        type: 'assistant',
+        sessionId: 'sess_sub',
+        message: {
+          id: 'sub_msg_2',
           model: 'claude-sonnet-4-6',
-          usage: {
-            input_tokens: 2000,
-            output_tokens: 400,
-            cache_creation_input_tokens: 1000,
-            cache_read_input_tokens: 500,
-          },
+          usage: { input_tokens: 300, output_tokens: 60, cache_creation_input_tokens: 0, cache_read_input_tokens: 900 },
         },
       },
     ]);
     tempFiles.push(transcriptPath);
 
-    // Parse as observe-subagent.js would
-    const tokenUsage = parseTranscriptUsage(transcriptPath);
+    const messages = parseTranscriptUsage(transcriptPath);
 
-    // Simulate building the payload for sendObserverEvent
     const payload = {
       eventType: 'subagent_stop',
       agentName: 'murdock',
       status: 'completed',
       summary: 'murdock completed',
       timestamp: new Date().toISOString(),
-      // Token fields spread in from transcript parsing
-      ...(tokenUsage.inputTokens !== null && { inputTokens: tokenUsage.inputTokens }),
-      ...(tokenUsage.outputTokens !== null && { outputTokens: tokenUsage.outputTokens }),
-      ...(tokenUsage.cacheCreationTokens !== null && { cacheCreationTokens: tokenUsage.cacheCreationTokens }),
-      ...(tokenUsage.cacheReadTokens !== null && { cacheReadTokens: tokenUsage.cacheReadTokens }),
-      ...(tokenUsage.model !== null && { model: tokenUsage.model }),
+      ...(messages.length > 0 && { messages }),
     };
 
-    // Token fields should be present when transcript path is provided
-    expect(payload.inputTokens).toBe(2000);
-    expect(payload.outputTokens).toBe(400);
-    expect(payload.cacheCreationTokens).toBe(1000);
-    expect(payload.cacheReadTokens).toBe(500);
-    expect(payload.model).toBe('claude-sonnet-4-6');
     expect(payload.eventType).toBe('subagent_stop');
     expect(payload.agentName).toBe('murdock');
+    expect(payload.messages).toHaveLength(2);
+    expect(payload.messages![0]).toEqual({
+      messageId: 'sub_msg_1',
+      model: 'claude-opus-4-6',
+      inputTokens: 2000,
+      outputTokens: 400,
+      cacheCreationTokens: 1000,
+      cacheReadTokens: 500,
+    });
+    expect(payload.messages![1].model).toBe('claude-sonnet-4-6');
+    expect(payload.messages![1].cacheReadTokens).toBe(900);
+  });
+
+  it('omits the messages field when the transcript yields no usage', () => {
+    const transcriptPath = writeTempTranscript([
+      { type: 'assistant', sessionId: 'sess_sub', message: { id: 'no_usage', model: 'claude-opus-4-6' } },
+    ]);
+    tempFiles.push(transcriptPath);
+
+    const messages = parseTranscriptUsage(transcriptPath);
+
+    const payload = {
+      eventType: 'subagent_stop',
+      agentName: 'murdock',
+      ...(messages.length > 0 && { messages }),
+    };
+
+    expect(messages).toEqual([]);
+    expect(payload).not.toHaveProperty('messages');
   });
 });
