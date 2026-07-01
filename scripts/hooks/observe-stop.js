@@ -47,9 +47,16 @@ if (payload) {
       const apiUrl = (process.env.ATEAM_API_URL || 'http://localhost:3000').replace(/\/+$/, '');
       const projectId = process.env.ATEAM_PROJECT_ID || 'default';
       const timestamp = new Date().toISOString();
+      // Attribute per-message rows with the SAME resolved identity as the
+      // legacy events/histogram path (payload.agentName), not the raw CLI arg.
+      // For the main orchestrator session `agentName` (process.argv[2]) is empty
+      // — it fires the generic hooks.json Stop hook, not its frontmatter hook —
+      // so a bare `agentName || 'unknown'` mislabels Hannibal's tokens as
+      // 'unknown'. buildObserverPayload already ran the full resolve chain
+      // (CLI arg → resolveAgent(stdin) → session map → 'hannibal').
       const enrichedRecords = perMessageRecords.map((r) => ({
         ...r,
-        agentName: agentName || 'unknown',
+        agentName: payload.agentName,
         timestamp,
       }));
       tokenUsagePromise = fetch(`${apiUrl}/api/hooks/token-usage`, {

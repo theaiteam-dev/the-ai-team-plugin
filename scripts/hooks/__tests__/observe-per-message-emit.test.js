@@ -275,6 +275,33 @@ describe('observe-stop.js — per-message token-usage emission', () => {
     expect(requestsTo('/api/hooks/token-usage')).toHaveLength(1);
   });
 
+  it('attributes per-message records to the resolved agent (hannibal) when no CLI agent arg is passed — the main orchestrator session fires the generic hooks.json Stop hook', async () => {
+    // The main orchestrator session is not a spawned subagent, so its
+    // ai-team:hannibal frontmatter Stop hook does not apply; it fires the
+    // plugin-level hooks.json Stop hook, which passes NO agent name (no argv[2]).
+    // stdin carries neither teammate_name nor agent_type. The records must still
+    // resolve to 'hannibal', not fall through to a bogus 'unknown' bucket.
+    const transcriptPath = writeTranscript([
+      assistantLine({ id: 'orch1', sessionId: 'sess_orch', model: 'claude-sonnet-4-6', input: 78, output: 20563, cacheCreate: 120610, cacheRead: 3444236 }),
+    ]);
+
+    const { exitCode } = await runHook(
+      STOP_HOOK,
+      { hook_event_name: 'Stop', session_id: 'sess_orch', transcript_path: transcriptPath },
+      [] // no agent arg — mirrors the generic hooks.json Stop wiring
+    );
+    await drain();
+
+    expect(exitCode).toBe(0);
+
+    const tu = requestsTo('/api/hooks/token-usage');
+    expect(tu).toHaveLength(1);
+    const records = tu[0].body;
+    expect(records).toHaveLength(1);
+    expect(records[0].agentName).toBe('hannibal');
+    expect(records[0].agentName).not.toBe('unknown');
+  });
+
   it('mints sessionId-namespaced synthetic messageIds for id-less assistant messages', async () => {
     const transcriptPath = writeTranscript([
       assistantLine({ sessionId: 'sess_idless', model: 'claude-opus-4-8', input: 1, output: 2, cacheCreate: 0, cacheRead: 0 }),
