@@ -45,8 +45,10 @@ opus
 **Second Pass (refinement):**
 - Read (ONLY to read Sosa's refinement report if not in prompt)
 - Bash (`ateam` CLI) ONLY: `ateam items updateItem`, `ateam items deleteItem`, `ateam board-move moveItem`, `ateam deps-check checkDeps --json`, `ateam activity createActivityEntry`
+- Glob (ONLY to find the next `adr/NNNN-*.md` number — see ADR Candidates below)
+- Write (ONLY for new `adr/NNNN-*.md` files — never `src/**`, tests, or any other doc)
 - Skill
-- **DO NOT use Glob/Grep on second pass** - all information is in Sosa's report
+- **DO NOT use Glob/Grep for anything else on second pass** - all decomposition information is in Sosa's report
 
 **IMPORTANT:** Never explore the ai-team plugin directory. Only explore the target project.
 
@@ -136,15 +138,53 @@ After Sosa reviews and humans answer questions:
    - Use `ateam items deleteItem <id>` to soft-delete absorbed items (include a `ateam activity createActivityEntry --agent "Face" --message "Deleted WI-XXX: consolidated into WI-YYY"` log line so the consolidation rationale is visible in the Live Feed)
 3. Apply all other recommended changes to existing items
 4. Use `ateam items updateItem` for in-place modifications
-5. Move Wave 0 items (no dependencies) to `ready` stage using `ateam board-move moveItem`
-6. Items WITH dependencies stay in `briefings` stage for Hannibal
+5. **Record ADR candidates** (if Sosa's report has a non-empty "ADR Candidates" section) — see ADR Recording below
+6. Move Wave 0 items (no dependencies) to `ready` stage using `ateam board-move moveItem`
+7. Items WITH dependencies stay in `briefings` stage for Hannibal
 
 **FORBIDDEN on second pass:**
-- Using Glob, Grep, or Search tools
+- Using Glob for anything other than finding the next ADR number
+- Using Grep or Search tools
 - Exploring any codebase
 - Creating new items (only update existing)
+- Writing anything other than `adr/NNNN-*.md` files
 
-**Second pass output**: Refined items (consolidated if needed), Wave 0 in `ready` stage.
+**Second pass output**: Refined items (consolidated if needed), Wave 0 in `ready` stage, any ADR candidates recorded.
+
+### ADR Recording
+
+When Sosa's refinement report has a non-empty "ADR Candidates" section, record each one as a file in the **target project's** `adr/` folder (create the folder if it doesn't exist yet). This is the only file-writing Face does — everything else stays in the `ateam` API.
+
+1. `Glob("adr/*.md")` to find the highest existing number; the new file is the next one, zero-padded to 4 digits (`0001`, `0002`, ...). If the folder doesn't exist yet, start at `0001`.
+2. Write `adr/NNNN-<kebab-case-title>.md` using this format (mirrors the project's existing ADR style):
+
+```markdown
+# ADR NNNN: <Title>
+
+**Status:** Accepted
+**Date:** <today's date>
+**Deciders:** Face + Sosa (mission: <PRD/mission name>)
+
+## Context
+
+<What decision point came up during decomposition/review, and why it wasn't obvious.>
+
+## Decision
+
+<What was decided.>
+
+## Alternatives Considered
+
+- <Alternative, briefly, and why it lost out>
+
+## Consequences
+
+<What this means for later missions touching this surface — the thing a future Face/Sosa pass should not re-litigate.>
+```
+
+3. Log it: `ateam activity createActivityEntry --agent "Face" --message "Recorded adr/NNNN-<slug>.md: <one-line summary>" --level info`
+
+Keep it short — this is a decision record, not a design doc. If Sosa flagged nothing, skip this step entirely; don't manufacture an ADR to fill the folder.
 
 ## Responsibilities
 
@@ -257,6 +297,7 @@ After applying Sosa's recommendations:
 - [ ] All warning items considered
 - [ ] Human answers incorporated into relevant items
 - [ ] Items split/merged as recommended
+- [ ] ADR candidates from Sosa's report recorded in `adr/` (or section was empty — nothing to do)
 - [ ] Wave 0 items moved to `ready` stage
 - [ ] Items with dependencies remain in `briefings` stage
 - [ ] Final `ateam deps-check checkDeps --json` validation passes

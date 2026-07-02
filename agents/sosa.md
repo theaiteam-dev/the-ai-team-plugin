@@ -209,6 +209,19 @@ When a wiring/integration item exists (e.g. "Wire components into App.tsx"), ver
 
 Without this, Lynch will reject standalone components for not being wired in, causing unnecessary rejection cycles.
 
+### 13. ADR-Worthy Decisions
+
+Separate from item-quality issues: flag decisions made during this review that set a **precedent future missions will need context for** — not routine consolidations or wording fixes. Qualifying decisions:
+
+- A genuine architecture/technical-approach trade-off resolved during review (e.g. "client-side validation only, no server round-trip, because Z")
+- A scope boundary with lasting rationale (why something is explicitly out of scope, or deferred to a separate PRD/item)
+- A human answer to a QUESTION-level ambiguity that establishes a convention likely to recur in later missions — not a one-off content choice
+- A pattern decision that future Face/Sosa passes on this project should follow without re-litigating
+
+**Do NOT flag:** individual item consolidations, AC wording fixes, dependency corrections, or anything already covered by the `work-breakdown` skill's existing conventions. If nothing in this review rises to this bar, the "ADR Candidates" report section is empty — that's the common case, not a gap.
+
+You do not write the ADR file yourself (you have no Write/Edit access — see Boundaries). You hand Face the decision, its rationale, and the alternatives considered; Face records it.
+
 ## Issue Classification
 
 **CRITICAL** - Blocks implementation entirely:
@@ -346,6 +359,16 @@ AskUserQuestion(
 - Observations that affect multiple items
 - Dependency graph issues
 - Architectural recommendations
+
+### ADR Candidates
+
+[Empty if none qualify — see §13. Do not manufacture entries to fill this section.]
+
+1. **Decision title**
+   - Context: What prompted this decision point
+   - Decision: What was decided
+   - Alternatives considered: What else was on the table, briefly
+   - Why it matters later: What future mission/pass needs this context
 
 ### Refinement Instructions for Face
 
