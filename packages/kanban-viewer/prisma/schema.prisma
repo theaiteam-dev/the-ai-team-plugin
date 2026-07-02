@@ -23,6 +23,7 @@ model Project {
   hookEvents          HookEvent[]
   tokenUsage          MissionTokenUsage[]
   messageTokenUsage   MessageTokenUsage[]
+  retroLearnings      RetroLearning[]
 }
 
 model Stage {
@@ -139,6 +140,7 @@ model Mission {
   hookEvents          HookEvent[]
   tokenUsage          MissionTokenUsage[]
   messageTokenUsage   MessageTokenUsage[]
+  retroLearnings      RetroLearning[]
 
   // Indexes for common queries
   @@index([archivedAt])
@@ -237,4 +239,27 @@ model MessageTokenUsage {
   @@unique([projectId, messageId])
   @@index([missionId])
   @@index([missionId, agentName])
+}
+
+model RetroLearning {
+  id               Int      @id @default(autoincrement())
+  projectId        String
+  project          Project  @relation(fields: [projectId], references: [id])
+  missionId        String?
+  mission          Mission? @relation(fields: [missionId], references: [id], onDelete: SetNull)
+  source           String                   // 'stockwell' | 'amy' | 'lynch' | etc. — agent that surfaced the learning
+  severity         String                   // 'low' | 'medium' | 'high' | 'critical'
+  attributedAgent  String                   // agent whose behavior the learning is about
+  targetSurface    String                   // file the learning would change, e.g. 'agents/ba.md'
+  pattern          String                   // short pattern slug
+  fingerprint      String                   // dedup key, computed in application code
+  title            String
+  detail           String?
+  status           String   @default("open")
+  proposalId       Int?                     // Phase 2 will add the TuningProposal FK additively; bare Int for now
+  createdAt        DateTime @default(now())
+
+  @@index([projectId, status])
+  @@index([fingerprint])
+  @@index([missionId])
 }
