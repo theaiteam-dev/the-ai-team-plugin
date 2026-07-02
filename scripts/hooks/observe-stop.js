@@ -10,7 +10,7 @@
  */
 
 import { readHookInput, buildObserverPayload, sendObserverEvent, readLastAssistantMessageId } from './lib/observer.js';
-import { parseTranscriptUsage, parseAdvanceFlagUsage, parseAgentStopItemId } from './lib/parse-transcript.js';
+import { parseTranscriptUsage, parseAdvanceFlagUsage, parseAgentStopItemId, dominantModel } from './lib/parse-transcript.js';
 
 const hookInput = readHookInput();
 const agentName = process.argv[2] || undefined;
@@ -32,20 +32,66 @@ const stopCorrelationId = lastAssistantMessageId
 
 const payload = buildObserverPayload(hookInput, agentName, { correlationId: stopCorrelationId });
 if (payload) {
-  // On Stop events, parse transcript for token usage and advance flag, then merge into payload
   const transcriptPath = hookInput.transcript_path;
   let tokenFields = {};
   let advanceFields = {};
   let handoffStopPromise;
+  let tokenUsagePromise;
+
   if (transcriptPath) {
-    const tokenUsage = parseTranscriptUsage(transcriptPath);
-    tokenFields = {
-      ...(tokenUsage.inputTokens !== null && { inputTokens: tokenUsage.inputTokens }),
-      ...(tokenUsage.outputTokens !== null && { outputTokens: tokenUsage.outputTokens }),
-      ...(tokenUsage.cacheCreationTokens !== null && { cacheCreationTokens: tokenUsage.cacheCreationTokens }),
-      ...(tokenUsage.cacheReadTokens !== null && { cacheReadTokens: tokenUsage.cacheReadTokens }),
-      ...(tokenUsage.model !== null && { model: tokenUsage.model }),
-    };
+    // parseTranscriptUsage now returns an array of per-message records (WI-170).
+    const perMessageRecords = parseTranscriptUsage(transcriptPath);
+
+    if (perMessageRecords.length > 0) {
+      // POST per-message records to /api/hooks/token-usage (fire-and-forget).
+      const apiUrl = (process.env.ATEAM_API_URL || 'http://localhost:3000').replace(/\/+$/, '');
+      const projectId = process.env.ATEAM_PROJECT_ID || 'default';
+      const timestamp = new Date().toISOString();
+      // Attribute per-message rows with the SAME resolved identity as the
+      // legacy events/histogram path (payload.agentName), not the raw CLI arg.
+      // For the main orchestrator session `agentName` (process.argv[2]) is empty
+      // — it fires the generic hooks.json Stop hook, not its frontmatter hook —
+      // so a bare `agentName || 'unknown'` mislabels Hannibal's tokens as
+      // 'unknown'. buildObserverPayload already ran the full resolve chain
+      // (CLI arg → resolveAgent(stdin) → session map → 'hannibal').
+      const enrichedRecords = perMessageRecords.map((r) => ({
+        ...r,
+        agentName: payload.agentName,
+        timestamp,
+      }));
+      // Bounded: this is a best-effort fetch awaited in Promise.all below. If the
+      // endpoint accepts the connection but never responds, an unbounded fetch
+      // would hang the Stop hook indefinitely. Abort after a short timeout so
+      // token attribution can never block the agent.
+      const tokenUsageTimeoutMs = Number(process.env.ATEAM_TOKEN_USAGE_TIMEOUT_MS) || 5000;
+      tokenUsagePromise = fetch(`${apiUrl}/api/hooks/token-usage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Project-ID': projectId },
+        body: JSON.stringify(enrichedRecords),
+        signal: AbortSignal.timeout(tokenUsageTimeoutMs),
+      }).catch(() => {});
+
+      // Sum array back to scalars for the legacy /api/hooks/events stop payload.
+      const tokenSum = perMessageRecords.reduce(
+        (acc, r) => ({
+          inputTokens: acc.inputTokens + r.inputTokens,
+          outputTokens: acc.outputTokens + r.outputTokens,
+          cacheCreationTokens: acc.cacheCreationTokens + r.cacheCreationTokens,
+          cacheReadTokens: acc.cacheReadTokens + r.cacheReadTokens,
+        }),
+        { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 }
+      );
+      // Approximate model for the collapsed legacy scalar: the one driving the
+      // most tokens, not just the last message's (per-message rows stay exact).
+      const representativeModel = dominantModel(perMessageRecords);
+      tokenFields = {
+        inputTokens: tokenSum.inputTokens,
+        outputTokens: tokenSum.outputTokens,
+        cacheCreationTokens: tokenSum.cacheCreationTokens,
+        cacheReadTokens: tokenSum.cacheReadTokens,
+        ...(representativeModel && { model: representativeModel }),
+      };
+    }
 
     const { advanceFlagUsed } = parseAdvanceFlagUsage(transcriptPath);
     advanceFields = advanceFlagUsed !== null ? { advanceFlagUsed } : {};
@@ -64,6 +110,7 @@ if (payload) {
   await Promise.all([
     sendObserverEvent({ ...payload, ...tokenFields, ...advanceFields }).catch(() => {}),
     handoffStopPromise,
+    tokenUsagePromise,
   ]);
 }
 

@@ -25,7 +25,11 @@ REVIEW_TEAMMATE_TOOL_INTEGRATION.md
 # Downloaded CLI binary (wrapper script bin/ateam is tracked)
 bin/ateam-bin
 
-# Local SQLite databases — never commit runtime DB files
+# Local SQLite databases — never commit runtime DB files (any depth)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 data/*.db
 data/*.db-journal
 data/*.db-wal

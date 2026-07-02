@@ -7,82 +7,126 @@
  */
 
 import { readFileSync } from 'fs';
+import { createHash } from 'crypto';
 
 /**
- * Parses a JSONL transcript file and sums token usage across all messages.
+ * Parses a JSONL transcript file and returns one usage record per distinct assistant message.
+ *
+ * Claude Code streams the same assistant message 2-3 times; dedup by message.id (last-write-wins)
+ * prevents over-counting. Id-less messages each emit their own record under a synthetic key
+ * scoped by sessionId (or snake_case session_id) so records from different sessions never
+ * collide. When a transcript carries neither, the synthetic key is scoped by a hash of the
+ * transcript path instead of a shared literal — otherwise id-less/sessionId-less records from
+ * unrelated transcripts would land on the same key and overwrite each other's MessageTokenUsage
+ * upsert (messageId is the upsert key).
+ *
+ * Messages whose usage entry carries no model are attributed to the literal
+ * 'unknown' rather than dropped — preserving their (often substantial) token
+ * counts so cost is never silently lost. The model can be inferred later (e.g.
+ * from the owning agent's typical model) without re-reading the transcript.
  *
  * @param {string} transcriptPath - Absolute path to the .jsonl transcript file
- * @returns {{ inputTokens: number|null, outputTokens: number|null, cacheCreationTokens: number|null, cacheReadTokens: number|null, model: string|null }}
+ * @returns {Array<{ messageId: string, model: string, inputTokens: number, outputTokens: number, cacheCreationTokens: number, cacheReadTokens: number }>}
  */
 export function parseTranscriptUsage(transcriptPath) {
   let content;
   try {
     content = readFileSync(transcriptPath, 'utf8');
   } catch {
-    return { inputTokens: null, outputTokens: null, cacheCreationTokens: null, cacheReadTokens: null, model: null };
+    return [];
   }
 
   const lines = content.split('\n').filter((line) => line.trim().length > 0);
 
-  // If file is empty (no non-blank lines), return zero counts
   if (lines.length === 0) {
-    return { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, model: null };
+    return [];
   }
 
-  // Claude Code writes the SAME assistant message to the transcript multiple
-  // times as it streams and then finalizes (typically 2-3 emissions per message,
-  // each carrying the message's usage). Naively summing every line over-counts
-  // token usage by ~2.6-3.4x (measured across real transcripts). We therefore
-  // dedup by `message.id`: each distinct message contributes its usage exactly
-  // once. The per-message usage is a DELTA (not a running cumulative), so summing
-  // the deduped per-message values is correct.
-  //
-  // Lines that carry usage but no message.id (older transcripts, malformed
-  // entries) cannot be deduped — they are summed under a synthetic per-line key
-  // so behavior is unchanged for them (no id => assume distinct).
-  const usageById = new Map();
-  let syntheticKey = 0;
-  let model = null;
+  // Map from dedup key -> per-message record. Named messages dedup by id (last-write-wins).
+  // Id-less messages get a unique synthetic key per session so they are never collapsed.
+  const usageByKey = new Map();
+  // Per-session counters for synthetic keys on id-less messages.
+  const sessionCounters = new Map();
+  // Stable fallback namespace when an entry carries neither sessionId nor session_id —
+  // scoped to this transcript file so id-less records from different transcripts can
+  // never collide on a shared literal.
+  const transcriptNamespace = createHash('sha256').update(transcriptPath).digest('hex').slice(0, 12);
 
   for (const line of lines) {
     try {
       const entry = JSON.parse(line);
       const usage = entry?.message?.usage;
-      if (usage) {
-        const id = entry?.message?.id;
-        // No id => cannot dedup; use a unique synthetic key so it still counts once.
-        const key = id != null ? `id:${id}` : `line:${syntheticKey++}`;
-        // last-write-wins for a repeated id: every emission of a message carries
-        // the same final usage, so overwriting is equivalent and idempotent.
-        usageById.set(key, {
-          input: usage.input_tokens || 0,
-          output: usage.output_tokens || 0,
-          cacheCreation: usage.cache_creation_input_tokens || 0,
-          cacheRead: usage.cache_read_input_tokens || 0,
-        });
-        if (entry?.message?.model) {
-          model = entry.message.model;
-        }
+      if (!usage) continue;
+
+      const id = entry?.message?.id;
+      // Never drop usage-bearing messages that lack a model — attribute them to
+      // 'unknown' so their token counts (and cost) survive. The downstream route
+      // requires a non-empty model string; 'unknown' satisfies that contract.
+      const model = entry?.message?.model || 'unknown';
+      const sessionId = entry?.sessionId ?? entry?.session_id ?? transcriptNamespace;
+
+      let key;
+      let messageId;
+
+      if (id != null) {
+        key = `id:${id}`;
+        messageId = id;
+      } else {
+        const n = sessionCounters.get(sessionId) ?? 0;
+        sessionCounters.set(sessionId, n + 1);
+        messageId = `${sessionId}:idx:${n}`;
+        key = messageId;
       }
+
+      usageByKey.set(key, {
+        messageId,
+        model,
+        inputTokens: usage.input_tokens ?? 0,
+        outputTokens: usage.output_tokens ?? 0,
+        cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
+        cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+      });
     } catch {
       // Skip malformed lines
     }
   }
 
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let cacheCreationTokens = 0;
-  let cacheReadTokens = 0;
-  for (const u of usageById.values()) {
-    inputTokens += u.input;
-    outputTokens += u.output;
-    cacheCreationTokens += u.cacheCreation;
-    cacheReadTokens += u.cacheRead;
-  }
+  return Array.from(usageByKey.values());
+}
 
-  // If no valid lines had usage data at all, still return zero counts
-  // (file was readable, just no usage data found)
-  return { inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, model };
+/**
+ * Picks a representative model for a set of per-message records collapsed into a
+ * single legacy scalar event. Chooses the model accounting for the most total
+ * tokens (the cost driver) rather than just the last message's model, so a
+ * multi-model agent's summed legacy total is attributed to its dominant model.
+ *
+ * This is an approximation used ONLY for the legacy /api/hooks/events scalar
+ * bridge — the per-message MessageTokenUsage rows always carry each message's
+ * own exact model.
+ *
+ * @param {Array<{ model: string, inputTokens: number, outputTokens: number, cacheCreationTokens: number, cacheReadTokens: number }>} records
+ * @returns {string|null} The dominant model, or null if there are no records.
+ */
+export function dominantModel(records) {
+  if (!Array.isArray(records) || records.length === 0) return null;
+  const totals = new Map();
+  for (const r of records) {
+    const tokens =
+      (r.inputTokens ?? 0) +
+      (r.outputTokens ?? 0) +
+      (r.cacheCreationTokens ?? 0) +
+      (r.cacheReadTokens ?? 0);
+    totals.set(r.model, (totals.get(r.model) ?? 0) + tokens);
+  }
+  let best = null;
+  let bestTokens = -1;
+  for (const [model, tokens] of totals) {
+    if (tokens > bestTokens) {
+      best = model;
+      bestTokens = tokens;
+    }
+  }
+  return best;
 }
 
 /**

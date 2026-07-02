@@ -20,6 +20,83 @@ export interface TokenUsagePanelProps {
   };
 }
 
+type ViewMode = 'rollup' | 'per-model';
+
+interface RollupEntry {
+  agentName: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  estimatedCostUsd: number;
+  distinctModels: string[];
+}
+
+interface ModelTotal {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  estimatedCostUsd: number;
+}
+
+// ============================================================================
+// Data derivation helpers
+// ============================================================================
+
+function buildRollup(agents: MissionTokenUsageData[]): RollupEntry[] {
+  const map = new Map<string, RollupEntry>();
+  for (const row of agents) {
+    const existing = map.get(row.agentName);
+    if (existing) {
+      existing.inputTokens += row.inputTokens;
+      existing.outputTokens += row.outputTokens;
+      existing.cacheCreationTokens += row.cacheCreationTokens;
+      existing.cacheReadTokens += row.cacheReadTokens;
+      existing.estimatedCostUsd += row.estimatedCostUsd;
+      if (!existing.distinctModels.includes(row.model)) {
+        existing.distinctModels.push(row.model);
+      }
+    } else {
+      map.set(row.agentName, {
+        agentName: row.agentName,
+        inputTokens: row.inputTokens,
+        outputTokens: row.outputTokens,
+        cacheCreationTokens: row.cacheCreationTokens,
+        cacheReadTokens: row.cacheReadTokens,
+        estimatedCostUsd: row.estimatedCostUsd,
+        distinctModels: [row.model],
+      });
+    }
+  }
+  return Array.from(map.values());
+}
+
+function buildModelTotals(agents: MissionTokenUsageData[]): ModelTotal[] {
+  const map = new Map<string, ModelTotal>();
+  for (const row of agents) {
+    const existing = map.get(row.model);
+    if (existing) {
+      existing.inputTokens += row.inputTokens;
+      existing.outputTokens += row.outputTokens;
+      existing.cacheCreationTokens += row.cacheCreationTokens;
+      existing.cacheReadTokens += row.cacheReadTokens;
+      existing.estimatedCostUsd += row.estimatedCostUsd;
+    } else {
+      map.set(row.model, {
+        model: row.model,
+        inputTokens: row.inputTokens,
+        outputTokens: row.outputTokens,
+        cacheCreationTokens: row.cacheCreationTokens,
+        cacheReadTokens: row.cacheReadTokens,
+        estimatedCostUsd: row.estimatedCostUsd,
+      });
+    }
+  }
+  return Array.from(map.values());
+}
+
 // ============================================================================
 // Sub-components
 // ============================================================================
@@ -45,46 +122,42 @@ function CostBar({ widthPercent }: { widthPercent: number }) {
   );
 }
 
-interface AgentRowProps {
-  agent: MissionTokenUsageData;
-  barWidthPercent: number;
-}
-
-function AgentRow({ agent, barWidthPercent }: AgentRowProps) {
-  return (
-    <tr data-testid="token-usage-agent-row">
-      <td className="py-2 pr-4 font-medium">{agent.agentName}</td>
-      <td className="py-2 pr-4 text-gray-400 text-sm">{agent.model}</td>
-      <td className="py-2 pr-4 text-right text-sm">{formatTokenCount(agent.inputTokens)}</td>
-      <td className="py-2 pr-4 text-right text-sm">{formatTokenCount(agent.outputTokens)}</td>
-      <td className="py-2 pr-4 text-right text-sm">{formatTokenCount(agent.cacheCreationTokens)}</td>
-      <td className="py-2 pr-4 text-right text-sm">{formatTokenCount(agent.cacheReadTokens)}</td>
-      <td className="py-2 min-w-[120px]">
-        <div className="text-right text-sm font-medium">{formatCostUsd(agent.estimatedCostUsd)}</div>
-        <CostBar widthPercent={barWidthPercent} />
-      </td>
-    </tr>
-  );
-}
-
 // ============================================================================
 // Main component
 // ============================================================================
 
 export function TokenUsagePanel({ agents, totals }: TokenUsagePanelProps) {
+  const [viewMode, setViewMode] = React.useState<ViewMode>('rollup');
+
+  const isPerModel = viewMode === 'per-model';
+
+  // Derive once per `agents` change — not on every render (e.g. the view toggle).
+  // All hooks must run before any early return (rules of hooks).
+  const sortedRollup = React.useMemo(
+    () => buildRollup(agents).sort((a, b) => b.estimatedCostUsd - a.estimatedCostUsd),
+    [agents]
+  );
+  const modelTotals = React.useMemo(() => buildModelTotals(agents), [agents]);
+  const sortedPerModel = React.useMemo(
+    () => [...agents].sort((a, b) => b.estimatedCostUsd - a.estimatedCostUsd),
+    [agents]
+  );
+
+  const maxRollupCost = sortedRollup[0]?.estimatedCostUsd ?? 0;
+  const maxPerModelCost = sortedPerModel[0]?.estimatedCostUsd ?? 0;
+
   if (agents.length === 0) {
     return <EmptyState />;
   }
 
-  const sortedAgents = [...agents].sort(
-    (a, b) => b.estimatedCostUsd - a.estimatedCostUsd
-  );
+  function barWidthRollup(cost: number): number {
+    if (maxRollupCost === 0) return 0;
+    return Math.round((cost / maxRollupCost) * 100);
+  }
 
-  const maxCost = sortedAgents[0].estimatedCostUsd;
-
-  function barWidthFor(cost: number): number {
-    if (maxCost === 0) return 0;
-    return Math.round((cost / maxCost) * 100);
+  function barWidthPerModel(cost: number): number {
+    if (maxPerModelCost === 0) return 0;
+    return Math.round((cost / maxPerModelCost) * 100);
   }
 
   return (
@@ -100,7 +173,21 @@ export function TokenUsagePanel({ agents, totals }: TokenUsagePanelProps) {
         </span>
       </div>
 
-      {/* Per-agent breakdown table */}
+      {/* View toggle */}
+      <div className="mb-4">
+        <button
+          type="button"
+          data-testid="token-usage-view-toggle"
+          aria-pressed={isPerModel ? 'true' : 'false'}
+          aria-label={isPerModel ? 'Show per-agent rollup' : 'Show per-model breakdown'}
+          onClick={() => setViewMode(isPerModel ? 'rollup' : 'per-model')}
+          className="text-sm text-blue-400 hover:text-blue-300 border border-blue-400 rounded px-2 py-1"
+        >
+          {isPerModel ? 'Show per-agent rollup' : 'Show per-model breakdown'}
+        </button>
+      </div>
+
+      {/* Breakdown table */}
       <table data-testid="token-usage-table" className="w-full text-white text-sm">
         <thead>
           <tr className="text-gray-400 border-b border-gray-700">
@@ -114,13 +201,65 @@ export function TokenUsagePanel({ agents, totals }: TokenUsagePanelProps) {
           </tr>
         </thead>
         <tbody>
-          {sortedAgents.map((agent, index) => (
-            <AgentRow
-              key={`${agent.agentName}-${index}`}
-              agent={agent}
-              barWidthPercent={barWidthFor(agent.estimatedCostUsd)}
-            />
-          ))}
+          {isPerModel ? (
+            <>
+              {sortedPerModel.map((agent, index) => (
+                <tr key={`${agent.agentName}-${agent.model}-${index}`} data-testid="token-usage-agent-row">
+                  <td className="py-2 pr-4 font-medium">{agent.agentName}</td>
+                  <td className="py-2 pr-4 text-gray-400 text-sm">{agent.model}</td>
+                  <td className="py-2 pr-4 text-right text-sm">{formatTokenCount(agent.inputTokens)}</td>
+                  <td className="py-2 pr-4 text-right text-sm">{formatTokenCount(agent.outputTokens)}</td>
+                  <td className="py-2 pr-4 text-right text-sm">{formatTokenCount(agent.cacheCreationTokens)}</td>
+                  <td className="py-2 pr-4 text-right text-sm">{formatTokenCount(agent.cacheReadTokens)}</td>
+                  <td className="py-2 min-w-[120px]">
+                    <div className="text-right text-sm font-medium">{formatCostUsd(agent.estimatedCostUsd)}</div>
+                    <CostBar widthPercent={barWidthPerModel(agent.estimatedCostUsd)} />
+                  </td>
+                </tr>
+              ))}
+              {modelTotals.map((mt) => (
+                <tr key={`model-total-${mt.model}`} data-testid="token-usage-model-total-row">
+                  <td className="py-2 pr-4 font-bold text-gray-300">Total</td>
+                  <td className="py-2 pr-4 text-gray-300 font-bold text-sm">{mt.model}</td>
+                  <td className="py-2 pr-4 text-right text-sm">{formatTokenCount(mt.inputTokens)}</td>
+                  <td className="py-2 pr-4 text-right text-sm">{formatTokenCount(mt.outputTokens)}</td>
+                  <td className="py-2 pr-4 text-right text-sm">{formatTokenCount(mt.cacheCreationTokens)}</td>
+                  <td className="py-2 pr-4 text-right text-sm">{formatTokenCount(mt.cacheReadTokens)}</td>
+                  <td className="py-2 min-w-[120px]">
+                    <div className="text-right text-sm font-bold">{formatCostUsd(mt.estimatedCostUsd)}</div>
+                  </td>
+                </tr>
+              ))}
+            </>
+          ) : (
+            sortedRollup.map((entry, index) => (
+              <tr key={`${entry.agentName}-${index}`} data-testid="token-usage-agent-row">
+                <td className="py-2 pr-4 font-medium">
+                  {entry.agentName}
+                  {entry.distinctModels.length > 1 && (
+                    <span
+                      data-testid="token-usage-drift-badge"
+                      aria-label={`spans ${entry.distinctModels.length} models`}
+                      className="ml-2 text-xs text-yellow-400 border border-yellow-400 rounded px-1"
+                    >
+                      spans {entry.distinctModels.length} models
+                    </span>
+                  )}
+                </td>
+                <td className="py-2 pr-4 text-gray-400 text-sm">
+                  {entry.distinctModels.length === 1 ? entry.distinctModels[0] : ''}
+                </td>
+                <td className="py-2 pr-4 text-right text-sm">{formatTokenCount(entry.inputTokens)}</td>
+                <td className="py-2 pr-4 text-right text-sm">{formatTokenCount(entry.outputTokens)}</td>
+                <td className="py-2 pr-4 text-right text-sm">{formatTokenCount(entry.cacheCreationTokens)}</td>
+                <td className="py-2 pr-4 text-right text-sm">{formatTokenCount(entry.cacheReadTokens)}</td>
+                <td className="py-2 min-w-[120px]">
+                  <div className="text-right text-sm font-medium">{formatCostUsd(entry.estimatedCostUsd)}</div>
+                  <CostBar widthPercent={barWidthRollup(entry.estimatedCostUsd)} />
+                </td>
+              </tr>
+            ))
+          )}
         </tbody>
       </table>
     </div>
