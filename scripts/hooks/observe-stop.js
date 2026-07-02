@@ -59,10 +59,16 @@ if (payload) {
         agentName: payload.agentName,
         timestamp,
       }));
+      // Bounded: this is a best-effort fetch awaited in Promise.all below. If the
+      // endpoint accepts the connection but never responds, an unbounded fetch
+      // would hang the Stop hook indefinitely. Abort after a short timeout so
+      // token attribution can never block the agent.
+      const tokenUsageTimeoutMs = Number(process.env.ATEAM_TOKEN_USAGE_TIMEOUT_MS) || 5000;
       tokenUsagePromise = fetch(`${apiUrl}/api/hooks/token-usage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Project-ID': projectId },
         body: JSON.stringify(enrichedRecords),
+        signal: AbortSignal.timeout(tokenUsageTimeoutMs),
       }).catch(() => {});
 
       // Sum array back to scalars for the legacy /api/hooks/events stop payload.

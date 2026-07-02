@@ -176,6 +176,7 @@ export function TokenUsagePanel({ agents, totals }: TokenUsagePanelProps) {
       {/* View toggle */}
       <div className="mb-4">
         <button
+          type="button"
           data-testid="token-usage-view-toggle"
           aria-pressed={isPerModel ? 'true' : 'false'}
           aria-label={isPerModel ? 'Show per-agent rollup' : 'Show per-model breakdown'}

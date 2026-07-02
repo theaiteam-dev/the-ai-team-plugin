@@ -7,13 +7,18 @@
  */
 
 import { readFileSync } from 'fs';
+import { createHash } from 'crypto';
 
 /**
  * Parses a JSONL transcript file and returns one usage record per distinct assistant message.
  *
  * Claude Code streams the same assistant message 2-3 times; dedup by message.id (last-write-wins)
  * prevents over-counting. Id-less messages each emit their own record under a synthetic key
- * scoped by sessionId so records from different sessions never collide.
+ * scoped by sessionId (or snake_case session_id) so records from different sessions never
+ * collide. When a transcript carries neither, the synthetic key is scoped by a hash of the
+ * transcript path instead of a shared literal — otherwise id-less/sessionId-less records from
+ * unrelated transcripts would land on the same key and overwrite each other's MessageTokenUsage
+ * upsert (messageId is the upsert key).
  *
  * Messages whose usage entry carries no model are attributed to the literal
  * 'unknown' rather than dropped — preserving their (often substantial) token
@@ -42,6 +47,10 @@ export function parseTranscriptUsage(transcriptPath) {
   const usageByKey = new Map();
   // Per-session counters for synthetic keys on id-less messages.
   const sessionCounters = new Map();
+  // Stable fallback namespace when an entry carries neither sessionId nor session_id —
+  // scoped to this transcript file so id-less records from different transcripts can
+  // never collide on a shared literal.
+  const transcriptNamespace = createHash('sha256').update(transcriptPath).digest('hex').slice(0, 12);
 
   for (const line of lines) {
     try {
@@ -54,7 +63,7 @@ export function parseTranscriptUsage(transcriptPath) {
       // 'unknown' so their token counts (and cost) survive. The downstream route
       // requires a non-empty model string; 'unknown' satisfies that contract.
       const model = entry?.message?.model || 'unknown';
-      const sessionId = entry?.sessionId ?? 'unknown';
+      const sessionId = entry?.sessionId ?? entry?.session_id ?? transcriptNamespace;
 
       let key;
       let messageId;

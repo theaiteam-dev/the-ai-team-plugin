@@ -234,7 +234,7 @@ model MessageTokenUsage {
   cacheReadTokens     Int
   timestamp           DateTime @default(now())
 
-  @@unique([messageId])
+  @@unique([projectId, messageId])
   @@index([missionId])
   @@index([missionId, agentName])
 }

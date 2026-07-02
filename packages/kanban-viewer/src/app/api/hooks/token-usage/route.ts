@@ -89,14 +89,29 @@ export async function POST(
         );
       }
       // Token counts are optional (default 0), but when present must be
-      // non-negative finite numbers — a negative or NaN delta is corrupt data,
-      // not a value to store silently.
+      // non-negative integers — MessageTokenUsage stores these as Int columns,
+      // so a fractional, negative, or NaN delta is corrupt data, not a value
+      // to store silently (and would otherwise fail later as a 500 mid-batch).
       for (const field of TOKEN_FIELDS) {
         const value = (record as unknown as Record<string, unknown>)[field];
         if (value === undefined || value === null) continue;
-        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+        if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
           return NextResponse.json(
-            createValidationError(`${field} must be a non-negative number`).toResponse(),
+            createValidationError(`${field} must be a non-negative integer`).toResponse(),
+            { status: 400 }
+          );
+        }
+      }
+      // timestamp is optional (defaults to now), but when present must parse to
+      // a valid Date — MessageTokenUsage.timestamp is a DateTime column, so a
+      // malformed string would otherwise fail later as a 500 mid-batch.
+      if (record.timestamp !== undefined && record.timestamp !== null) {
+        if (
+          typeof record.timestamp !== 'string' ||
+          Number.isNaN(new Date(record.timestamp).getTime())
+        ) {
+          return NextResponse.json(
+            createValidationError('timestamp must be a valid ISO date string').toResponse(),
             { status: 400 }
           );
         }
@@ -121,7 +136,7 @@ export async function POST(
     await prisma.$transaction(
       body.map((record) =>
         prisma.messageTokenUsage.upsert({
-          where: { messageId: record.messageId },
+          where: { projectId_messageId: { projectId, messageId: record.messageId } },
           update: {
             agentName: record.agentName,
             model: record.model,

@@ -32,6 +32,8 @@ const SUBAGENT_HOOK = join(HOOKS_DIR, 'observe-subagent.js');
 let captured = [];
 /** When true, the server returns 500 for /api/hooks/token-usage requests. */
 let failTokenUsage = false;
+/** When > 0, the server accepts the /api/hooks/token-usage connection but delays the response by this many ms (simulates a hung endpoint). */
+let hangTokenUsageMs = 0;
 let mockServer;
 let mockPort;
 
@@ -44,6 +46,14 @@ beforeAll(async () => {
         let body;
         try { body = JSON.parse(raw); } catch { body = raw; }
         captured.push({ url: req.url, headers: req.headers, body });
+        if (hangTokenUsageMs > 0 && req.url.includes('/api/hooks/token-usage')) {
+          // Connection accepted, response deliberately withheld to simulate a hang.
+          setTimeout(() => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true }));
+          }, hangTokenUsageMs);
+          return;
+        }
         if (failTokenUsage && req.url.includes('/api/hooks/token-usage')) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false }));
@@ -67,6 +77,7 @@ afterAll(async () => {
 beforeEach(() => {
   captured = [];
   failTokenUsage = false;
+  hangTokenUsageMs = 0;
 });
 
 // ============ Helpers ============
@@ -119,11 +130,12 @@ function agentStopLine(itemId, extra = '') {
  * mock server lives in this same process, so a synchronous spawn would block the
  * event loop and deadlock the child's fetch against the unresponsive server.
  */
-function runHook(scriptPath, stdin, extraArgs = []) {
+function runHook(scriptPath, stdin, extraArgs = [], extraEnv = {}) {
   const env = {
     ...process.env,
     ATEAM_API_URL: `http://127.0.0.1:${mockPort}`,
     ATEAM_PROJECT_ID: 'test-project',
+    ...extraEnv,
   };
   return new Promise((resolve) => {
     const child = execFile('node', [scriptPath, ...extraArgs], { env, encoding: 'utf8', timeout: 5000 });
@@ -221,8 +233,9 @@ describe('observe-stop.js — per-message token-usage emission', () => {
     expect(stop.outputTokens).toBe(2000);
     expect(stop.cacheCreationTokens).toBe(2000);
     expect(stop.cacheReadTokens).toBe(14000);
-    // Representative model is one of the per-message models.
-    expect(['claude-opus-4-8', 'claude-sonnet-4-6']).toContain(stop.model);
+    // Representative model is the token-dominant one: m1 (opus) totals 16200
+    // tokens (5000+1200+2000+8000) vs m2 (sonnet) 9800 (3000+800+0+6000).
+    expect(stop.model).toBe('claude-opus-4-8');
   });
 
   it('is fire-and-forget: a failing token-usage POST does not block the hook (exit 0) and the legacy stop event is still delivered', async () => {
@@ -300,6 +313,31 @@ describe('observe-stop.js — per-message token-usage emission', () => {
     expect(records).toHaveLength(1);
     expect(records[0].agentName).toBe('hannibal');
     expect(records[0].agentName).not.toBe('unknown');
+  });
+
+  it('aborts a hanging token-usage POST via timeout so the hook still exits 0 promptly and delivers the legacy stop event', async () => {
+    hangTokenUsageMs = 2000; // the mock server never responds within the low timeout below
+    const transcriptPath = writeTranscript([
+      assistantLine({ id: 'm1', sessionId: 'sess_hang', model: 'claude-opus-4-8', input: 100, output: 50, cacheCreate: 0, cacheRead: 0 }),
+    ]);
+
+    const start = Date.now();
+    const { exitCode } = await runHook(
+      STOP_HOOK,
+      { hook_event_name: 'Stop', session_id: 'sess_hang', transcript_path: transcriptPath },
+      ['hannibal'],
+      { ATEAM_TOKEN_USAGE_TIMEOUT_MS: '100' }
+    );
+    const elapsedMs = Date.now() - start;
+    await drain();
+
+    expect(exitCode).toBe(0);
+    // The hook must not have waited out the full 2000ms hang.
+    expect(elapsedMs).toBeLessThan(1500);
+
+    // The legacy stop event still went through unaffected by the aborted POST.
+    const stopEvents = requestsTo('/api/hooks/events').map((r) => r.body).filter((b) => b && b.eventType === 'stop');
+    expect(stopEvents).toHaveLength(1);
   });
 
   it('mints sessionId-namespaced synthetic messageIds for id-less assistant messages', async () => {
@@ -382,8 +420,40 @@ describe('observe-subagent.js — per-message token-usage emission on SubagentSt
     expect(ev.outputTokens).toBe(100);
     expect(ev.cacheCreationTokens).toBe(15);
     expect(ev.cacheReadTokens).toBe(100);
+    // Representative model is the token-dominant one: s1 (opus) totals 820
+    // tokens (700+90+10+20) vs s2 (sonnet) 395 (300+10+5+80).
+    expect(ev.model).toBe('claude-opus-4-8');
 
     // Control returns to the main session: hannibal is re-registered for this session.
     expect(lookupAgent('sub_b')).toBe('hannibal');
+  });
+
+  it('aborts a hanging token-usage POST via timeout so the hook still exits 0 promptly and delivers the legacy subagent_stop event', async () => {
+    hangTokenUsageMs = 2000; // the mock server never responds within the low timeout below
+    const transcriptPath = writeTranscript([
+      assistantLine({ id: 's1', sessionId: 'sub_hang', model: 'claude-opus-4-8', input: 100, output: 50, cacheCreate: 0, cacheRead: 0 }),
+    ]);
+
+    const start = Date.now();
+    const { exitCode } = await runHook(
+      SUBAGENT_HOOK,
+      {
+        hook_event_name: 'SubagentStop',
+        session_id: 'sub_hang',
+        agent_id: 'agent-hang',
+        agent_type: 'ai-team:murdock',
+        agent_transcript_path: transcriptPath,
+      },
+      [],
+      { ATEAM_TOKEN_USAGE_TIMEOUT_MS: '100' }
+    );
+    const elapsedMs = Date.now() - start;
+    await drain();
+
+    expect(exitCode).toBe(0);
+    expect(elapsedMs).toBeLessThan(1500);
+
+    const subStops = requestsTo('/api/hooks/events').map((r) => r.body).filter((b) => b && b.eventType === 'subagent_stop');
+    expect(subStops).toHaveLength(1);
   });
 });

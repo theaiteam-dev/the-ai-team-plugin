@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen, within, fireEvent } from '@testing-library/react';
 import type { MissionTokenUsageData } from '@/types';
-import { TokenUsagePanel } from '../components/token-usage-panel';
+import { TokenUsagePanel } from '@/components/token-usage-panel';
 
 /**
  * Tests for the TokenUsagePanel per-agent rollup + per-model views (WI-174).
@@ -204,6 +204,8 @@ describe('TokenUsagePanel - view toggle accessibility', () => {
     // Native <button> ⇒ Enter/Space activation is provided by the platform.
     expect(toggle.tagName).toBe('BUTTON');
     expect(toggle).not.toBeDisabled();
+    // Explicit type="button" so it never submits a surrounding form.
+    expect(toggle).toHaveAttribute('type', 'button');
 
     // Reachable/operable by keyboard: it can hold focus (Tab target).
     toggle.focus();

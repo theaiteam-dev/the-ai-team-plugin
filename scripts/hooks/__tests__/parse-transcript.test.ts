@@ -286,6 +286,104 @@ describe('parseTranscriptUsage() - id-less messages emitted under synthetic keys
   });
 });
 
+describe('parseTranscriptUsage() - synthetic key namespace when sessionId is absent', () => {
+  it('accepts snake_case session_id as a sessionId source for the synthetic key', () => {
+    // Some transcript producers emit session_id (snake_case) instead of sessionId.
+    const path = writeTempTranscript([
+      {
+        type: 'assistant',
+        session_id: 'sess_snake',
+        message: {
+          model: 'claude-sonnet-4-6',
+          usage: { input_tokens: 100, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        },
+      },
+    ]);
+    tempFiles.push(path);
+
+    const result = parseTranscriptUsage(path);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].messageId).toMatch(/^sess_snake:idx:\d+$/);
+  });
+
+  it('prefers camelCase sessionId over snake_case session_id when both are present', () => {
+    const path = writeTempTranscript([
+      {
+        type: 'assistant',
+        sessionId: 'sess_camel',
+        session_id: 'sess_snake',
+        message: {
+          model: 'claude-sonnet-4-6',
+          usage: { input_tokens: 100, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        },
+      },
+    ]);
+    tempFiles.push(path);
+
+    const result = parseTranscriptUsage(path);
+
+    expect(result[0].messageId).toMatch(/^sess_camel:idx:\d+$/);
+  });
+
+  it('derives a stable per-transcript namespace (not the literal "unknown") when neither sessionId nor session_id is present', () => {
+    // Regression: two unrelated transcripts, each with id-less/sessionId-less
+    // usage entries, must not collapse onto the shared literal 'unknown' — that
+    // would let the second transcript's upsert overwrite the first transcript's
+    // MessageTokenUsage rows since messageId is the upsert key.
+    const pathA = writeTempTranscript([
+      {
+        type: 'assistant',
+        message: {
+          model: 'claude-sonnet-4-6',
+          usage: { input_tokens: 100, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        },
+      },
+    ]);
+    const pathB = writeTempTranscript([
+      {
+        type: 'assistant',
+        message: {
+          model: 'claude-opus-4-6',
+          usage: { input_tokens: 200, output_tokens: 20, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        },
+      },
+    ]);
+    tempFiles.push(pathA, pathB);
+
+    const resultA = parseTranscriptUsage(pathA);
+    const resultB = parseTranscriptUsage(pathB);
+
+    expect(resultA).toHaveLength(1);
+    expect(resultB).toHaveLength(1);
+
+    // Neither uses the shared literal 'unknown' as its namespace.
+    expect(resultA[0].messageId).not.toMatch(/^unknown:idx:\d+$/);
+    expect(resultB[0].messageId).not.toMatch(/^unknown:idx:\d+$/);
+
+    // The two transcripts get distinct namespaces, so their synthetic keys never collide.
+    expect(resultA[0].messageId).not.toBe(resultB[0].messageId);
+  });
+
+  it('derives the same namespace for the same transcript path across separate parses (stable, not random)', () => {
+    const path = writeTempTranscript([
+      {
+        type: 'assistant',
+        message: {
+          model: 'claude-sonnet-4-6',
+          usage: { input_tokens: 100, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        },
+      },
+    ]);
+    tempFiles.push(path);
+
+    const first = parseTranscriptUsage(path);
+    const second = parseTranscriptUsage(path);
+
+    expect(first[0].messageId).toBe(second[0].messageId);
+  });
+});
+
 describe('parseTranscriptUsage() - missing/unreadable file', () => {
   it('returns an empty array when the file does not exist (never throws)', () => {
     const result = parseTranscriptUsage('/nonexistent/path/transcript.jsonl');

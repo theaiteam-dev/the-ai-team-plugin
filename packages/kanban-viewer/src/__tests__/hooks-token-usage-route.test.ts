@@ -145,6 +145,35 @@ describe('POST /api/hooks/token-usage', () => {
     });
   });
 
+  it('lets two projects store the same messageId as separate rows, each upserting idempotently on repost', async () => {
+    // First project.
+    await POST(makeRequest([record({ messageId: 'msg_shared', inputTokens: 1 })], PROJECT_ID));
+    // Second project reuses the same messageId — must not overwrite the first project's row.
+    await POST(
+      makeRequest([record({ messageId: 'msg_shared', inputTokens: 2 })], NO_MISSION_PROJECT_ID)
+    );
+
+    const rows = await prisma.messageTokenUsage.findMany({
+      where: { messageId: 'msg_shared' },
+      orderBy: { projectId: 'asc' },
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.projectId === PROJECT_ID)).toMatchObject({ inputTokens: 1 });
+    expect(rows.find((r) => r.projectId === NO_MISSION_PROJECT_ID)).toMatchObject({ inputTokens: 2 });
+
+    // Reposting to the first project again must still upsert in place (same (projectId, messageId)).
+    const repost = await POST(
+      makeRequest([record({ messageId: 'msg_shared', inputTokens: 999 })], PROJECT_ID)
+    );
+    expect(repost.status).toBe(200);
+
+    const rowsAfterRepost = await prisma.messageTokenUsage.findMany({
+      where: { messageId: 'msg_shared' },
+    });
+    expect(rowsAfterRepost).toHaveLength(2);
+    expect(rowsAfterRepost.find((r) => r.projectId === PROJECT_ID)).toMatchObject({ inputTokens: 999 });
+  });
+
   it('stamps missionId as null when the project has no current (non-archived) mission', async () => {
     const response = await POST(
       makeRequest([record({ messageId: 'msg_nomission' })], NO_MISSION_PROJECT_ID)
@@ -152,7 +181,7 @@ describe('POST /api/hooks/token-usage', () => {
     expect(response.status).toBe(200);
 
     const row = await prisma.messageTokenUsage.findUnique({
-      where: { messageId: 'msg_nomission' },
+      where: { projectId_messageId: { projectId: NO_MISSION_PROJECT_ID, messageId: 'msg_nomission' } },
     });
     expect(row).not.toBeNull();
     expect(row!.projectId).toBe(NO_MISSION_PROJECT_ID);
@@ -167,7 +196,7 @@ describe('POST /api/hooks/token-usage', () => {
     expect(data.success).toBe(false);
     expect(data.error.code).toBe('VALIDATION_ERROR');
 
-    const row = await prisma.messageTokenUsage.findUnique({
+    const row = await prisma.messageTokenUsage.findFirst({
       where: { messageId: 'msg_noheader' },
     });
     expect(row).toBeNull();
@@ -227,7 +256,7 @@ describe('POST /api/hooks/token-usage', () => {
     expect(data.error.code).toBe('VALIDATION_ERROR');
 
     const row = await prisma.messageTokenUsage.findUnique({
-      where: { messageId: 'msg_negative' },
+      where: { projectId_messageId: { projectId: PROJECT_ID, messageId: 'msg_negative' } },
     });
     expect(row).toBeNull();
   });
@@ -241,6 +270,54 @@ describe('POST /api/hooks/token-usage', () => {
     expect(response.status).toBe(400);
     expect(data.success).toBe(false);
     expect(data.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects a record with a fractional token count with 400 and writes no rows', async () => {
+    const response = await POST(
+      makeRequest([record({ messageId: 'msg_fractional', inputTokens: 1.5 })], PROJECT_ID)
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.success).toBe(false);
+    expect(data.error.code).toBe('VALIDATION_ERROR');
+
+    const row = await prisma.messageTokenUsage.findUnique({
+      where: { projectId_messageId: { projectId: PROJECT_ID, messageId: 'msg_fractional' } },
+    });
+    expect(row).toBeNull();
+  });
+
+  it('rejects a record with an unparseable timestamp with 400 and writes no rows', async () => {
+    const response = await POST(
+      makeRequest([record({ messageId: 'msg_badtimestamp', timestamp: 'not-a-date' })], PROJECT_ID)
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.success).toBe(false);
+    expect(data.error.code).toBe('VALIDATION_ERROR');
+
+    const row = await prisma.messageTokenUsage.findUnique({
+      where: { projectId_messageId: { projectId: PROJECT_ID, messageId: 'msg_badtimestamp' } },
+    });
+    expect(row).toBeNull();
+  });
+
+  it('accepts a record with a valid ISO timestamp', async () => {
+    const response = await POST(
+      makeRequest(
+        [record({ messageId: 'msg_goodtimestamp', timestamp: '2026-06-28T12:00:00.000Z' })],
+        PROJECT_ID
+      )
+    );
+    expect(response.status).toBe(200);
+
+    const row = await prisma.messageTokenUsage.findUnique({
+      where: { projectId_messageId: { projectId: PROJECT_ID, messageId: 'msg_goodtimestamp' } },
+    });
+    expect(row).not.toBeNull();
+    expect(row!.timestamp.toISOString()).toBe('2026-06-28T12:00:00.000Z');
   });
 
   it('does not collide synthetic sessionId-namespaced messageIds at the same index across agents', async () => {
