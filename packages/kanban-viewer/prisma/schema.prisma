@@ -262,4 +262,7 @@ model RetroLearning {
   @@index([projectId, status])
   @@index([fingerprint])
   @@index([missionId])
+  // Backs the per-mission dedupe in POST /api/learnings. SQLite treats NULLs as
+  // distinct, so null-missionId backfill rows are intentionally unconstrained.
+  @@unique([projectId, missionId, fingerprint])
 }

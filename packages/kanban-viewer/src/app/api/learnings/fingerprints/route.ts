@@ -53,6 +53,11 @@ export async function GET(request: Request) {
 
     const rows = await prisma.retroLearning.findMany({
       where: { projectId: projectValidation.projectId },
+      // Project only the columns the grouping/ranking uses so the query never
+      // hauls the `detail` text blob (or any other unused column) across the
+      // wire — the learnings table is designed to accumulate over many
+      // missions, so per-row width matters.
+      select: { fingerprint: true, pattern: true, title: true, createdAt: true },
     });
 
     const groups = new Map<string, FingerprintGroup>();

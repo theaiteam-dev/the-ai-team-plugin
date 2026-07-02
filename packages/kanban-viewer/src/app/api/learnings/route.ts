@@ -21,6 +21,20 @@ const REQUIRED_FIELDS = [
   'title',
 ] as const;
 
+/**
+ * Prisma raises P2002 when an insert violates a unique constraint. We match on
+ * the code alone (not `instanceof PrismaClientKnownRequestError`) so the check
+ * survives mocked errors in tests and any client-bundling quirks.
+ */
+function isUniqueConstraintViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'P2002'
+  );
+}
+
 interface LearningCaptureBody {
   source: string;
   severity: string;
@@ -105,9 +119,26 @@ export async function POST(request: Request) {
       }
     }
 
-    const created = await prisma.retroLearning.create({ data });
-
-    return NextResponse.json({ success: true, data: { id: created.id } }, { status: 201 });
+    // The findFirst above is a fast-path, not a guarantee: two concurrent POSTs
+    // can both pass it before either inserts. The @@unique([projectId, missionId,
+    // fingerprint]) index is the real dedupe backstop — on a P2002 collision,
+    // re-fetch the row the winning insert created and return it (200), matching
+    // the deduped-row semantics instead of surfacing a 500. Null-missionId rows
+    // are never constrained, so this branch only fires for real missions.
+    try {
+      const created = await prisma.retroLearning.create({ data });
+      return NextResponse.json({ success: true, data: { id: created.id } }, { status: 201 });
+    } catch (error) {
+      if (isUniqueConstraintViolation(error) && missionId !== null) {
+        const existing = await prisma.retroLearning.findFirst({
+          where: { projectId, missionId, fingerprint: data.fingerprint },
+        });
+        if (existing) {
+          return NextResponse.json({ success: true, data: { id: existing.id } }, { status: 200 });
+        }
+      }
+      throw error;
+    }
   } catch (error) {
     console.error('POST /api/learnings error:', error);
     return NextResponse.json(

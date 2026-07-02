@@ -198,6 +198,71 @@ describe('POST /api/learnings', () => {
     expect(mockPrisma.mission.findFirst).not.toHaveBeenCalled();
   });
 
+  it('serializes concurrent duplicate captures via the unique constraint: both succeed, one row, same id', async () => {
+    // The app-level findFirst is only a fast-path; two concurrent POSTs can both
+    // pass it before either inserts (TOCTOU). The DB-level
+    // @@unique([projectId, missionId, fingerprint]) is the real backstop. This
+    // in-memory store enforces that same uniqueness and raises P2002 on the
+    // losing insert, so the test proves the route converts the race into a safe
+    // upsert-on-conflict (200 with the winner's row) rather than a 500.
+    const rows: Array<{ id: number; projectId: string; missionId: string | null; fingerprint: string }> = [];
+    let nextId = 1;
+
+    mockPrisma.retroLearning.findFirst.mockImplementation(async ({ where }) => {
+      return (
+        rows.find(
+          (r) =>
+            r.projectId === where.projectId &&
+            r.missionId === where.missionId &&
+            r.fingerprint === where.fingerprint
+        ) ?? null
+      );
+    });
+
+    mockPrisma.retroLearning.create.mockImplementation(async ({ data }) => {
+      const conflict = rows.find(
+        (r) =>
+          r.projectId === data.projectId &&
+          r.missionId === data.missionId &&
+          r.fingerprint === data.fingerprint
+      );
+      if (conflict) {
+        const err = new Error('Unique constraint failed') as Error & { code: string };
+        err.code = 'P2002';
+        throw err;
+      }
+      const row = {
+        id: nextId++,
+        projectId: data.projectId,
+        missionId: data.missionId,
+        fingerprint: data.fingerprint,
+      };
+      rows.push(row);
+      return row;
+    });
+
+    const body = validBody({ fingerprint: 'race', missionId: 'm-race' });
+    const [resA, resB] = await Promise.all([
+      POST(buildRequest('project-a', body)),
+      POST(buildRequest('project-a', body)),
+    ]);
+
+    // Neither request may surface the race as a 500.
+    expect(resA.status).not.toBe(500);
+    expect(resB.status).not.toBe(500);
+
+    const dataA = await resA.json();
+    const dataB = await resB.json();
+    expect(dataA.success).toBe(true);
+    expect(dataB.success).toBe(true);
+    // Both requests resolve to the same persisted row.
+    expect(dataA.data.id).toBe(dataB.data.id);
+
+    // Exactly one insert survived: one 201 (created), one 200 (deduped), one row.
+    expect([resA.status, resB.status].sort()).toEqual([200, 201]);
+    expect(rows).toHaveLength(1);
+  });
+
   it.each([
     ['belonging to a different project', 'm-victim-mission'],
     ['that does not exist', 'm-does-not-exist'],

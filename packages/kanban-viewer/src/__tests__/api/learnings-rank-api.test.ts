@@ -43,7 +43,13 @@ async function seed(
   projectId: string,
   fingerprint: string,
   status: string,
-  opts: { missionId?: string | null; pattern?: string; targetSurface?: string; severity?: string } = {}
+  opts: {
+    missionId?: string | null;
+    pattern?: string;
+    targetSurface?: string;
+    severity?: string;
+    createdAt?: Date;
+  } = {}
 ) {
   return prisma.retroLearning.create({
     data: {
@@ -58,6 +64,7 @@ async function seed(
       title: `title:${fingerprint}`,
       detail: null,
       status,
+      ...(opts.createdAt ? { createdAt: opts.createdAt } : {}),
     },
   });
 }
@@ -162,6 +169,40 @@ describe('GET /api/learnings/rank', () => {
     expect(data.map((r: { fingerprint: string }) => r.fingerprint)).toEqual(['fp-recurred', 'fp-fresh']);
     const recurred = data.find((r: { fingerprint: string }) => r.fingerprint === 'fp-recurred');
     expect(recurred.hits).toBe(3);
+  });
+
+  it('reports the max-ordinal severity and the most-recent pattern/targetSurface for a fingerprint whose severity escalated on recurrence, not the first-filed row', async () => {
+    // Mirrors the gitignore-db corpus case: filed `low` first, then refiled
+    // `critical` weeks later with a drifted pattern/targetSurface. rank must
+    // surface what's currently hottest (critical) and the latest surface, not
+    // the stale low-severity first insert.
+    await seed(PROJECT_ID, 'fp-escalated', 'open', {
+      missionId: MISSION_IDS[0],
+      severity: 'low',
+      pattern: 'pat-first-filed',
+      targetSurface: 'agents/old-surface.md',
+      createdAt: new Date('2026-05-17T00:00:00.000Z'),
+    });
+    await seed(PROJECT_ID, 'fp-escalated', 'open', {
+      missionId: MISSION_IDS[1],
+      severity: 'critical',
+      pattern: 'pat-recurred',
+      targetSurface: 'agents/new-surface.md',
+      createdAt: new Date('2026-06-20T00:00:00.000Z'),
+    });
+
+    const res = await GET(buildRequest(PROJECT_ID));
+
+    expect(res.status).toBe(200);
+    const { data } = await res.json();
+    const group = data.find((r: { fingerprint: string }) => r.fingerprint === 'fp-escalated');
+    expect(group).toMatchObject({
+      fingerprint: 'fp-escalated',
+      severity: 'critical',
+      pattern: 'pat-recurred',
+      targetSurface: 'agents/new-surface.md',
+      hits: 2,
+    });
   });
 
   it('scopes results to the requesting project', async () => {
