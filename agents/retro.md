@@ -75,7 +75,7 @@ gh pr list --state all --search "{missionId}" --json number,url
 gh pr view {prNumber} --json reviews,comments
 ```
 
-**No code review of your own.** You ingest what Stockwell and PR reviewers already recorded — you do not read diffs and form independent opinions about code quality. Your job is pattern-mining across what already happened, not re-reviewing.
+**No code review of your own.** You ingest what Stockwell and PR reviewers already recorded — you do not read diffs and form independent opinions about code quality. Your job is pattern-mining across what already happened, not re-reviewing. The independent branch-vs-`main` review is a separate operator-initiated step (`/ai-team:sweep`) that files its own rows with `--source code-review` — you may see those fingerprints in the corpus, and that is expected, not a signal to review anything yourself.
 
 **Log unavailable review inputs — never silently skip them.** If `getFinalReview` returns no stored report, or no PR is found for the mission, note it explicitly in the report (e.g., "Stockwell final review: unavailable — mission has no persisted report" / "PR review comments: unavailable — no PR found for this mission"). Degrade gracefully to whichever surfaces *are* available (telemetry-only is a valid degraded mode) rather than treating a missing surface as "nothing to report."
 

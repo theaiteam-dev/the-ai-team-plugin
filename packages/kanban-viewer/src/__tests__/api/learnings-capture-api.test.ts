@@ -33,6 +33,10 @@ const mockPrisma = vi.hoisted(() => ({
   mission: {
     findFirst: vi.fn(),
   },
+  project: {
+    findUnique: vi.fn(),
+    create: vi.fn(),
+  },
 }));
 
 vi.mock('@/lib/db', () => ({
@@ -83,6 +87,9 @@ describe('POST /api/learnings', () => {
     // the ownership guard passes and the dedupe/create path runs. Tests that
     // exercise a missing/foreign mission override this to resolve null.
     mockPrisma.mission.findFirst.mockResolvedValue({ id: 'owned-mission', projectId: 'project-a' });
+    // Default: the requesting project already exists, so ensureProject's
+    // findUnique short-circuits and create is never reached.
+    mockPrisma.project.findUnique.mockResolvedValue({ id: 'project-a', name: 'project-a' });
   });
 
   afterEach(() => {
@@ -307,6 +314,35 @@ describe('POST /api/learnings', () => {
     }
   );
 
+  it.each(['low', 'medium', 'high', 'critical'])(
+    'accepts severity "%s"',
+    async (severity) => {
+      mockPrisma.retroLearning.findFirst.mockResolvedValue(null);
+      mockPrisma.retroLearning.create.mockResolvedValue({ id: 1 });
+
+      const res = await POST(
+        buildRequest('project-a', validBody({ severity, fingerprint: `fp-${severity}` }))
+      );
+
+      expect(res.status).toBe(201);
+    }
+  );
+
+  it.each([
+    ['a typo', 'hihg'],
+    ['the review vocabulary, which maps at the capture boundary, not here', 'must'],
+    ['uppercase', 'High'],
+  ])('returns 400 VALIDATION_ERROR when severity is %s ("%s")', async (_label, severity) => {
+    const res = await POST(buildRequest('project-a', validBody({ severity })));
+
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.success).toBe(false);
+    expect(data.error.code).toBe('VALIDATION_ERROR');
+    expect(data.error.message).toContain('low, medium, high, critical');
+    expect(mockPrisma.retroLearning.create).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['missing', null],
     ['an empty string', ''],
@@ -320,5 +356,28 @@ describe('POST /api/learnings', () => {
     expect(data.success).toBe(false);
     expect(data.error.code).toBe('VALIDATION_ERROR');
     expect(mockPrisma.retroLearning.create).not.toHaveBeenCalled();
+  });
+
+  it('auto-creates an unknown-but-valid-format project instead of surfacing an FK 500', async () => {
+    // A well-formed X-Project-ID that has never been seen before must not reach
+    // retroLearning.create() until the project row exists — otherwise the
+    // insert violates the FK constraint and the route degrades to a 500.
+    mockPrisma.project.findUnique.mockResolvedValue(null);
+    mockPrisma.project.create.mockResolvedValue({ id: 'brand-new-project', name: 'brand-new-project' });
+    mockPrisma.retroLearning.findFirst.mockResolvedValue(null);
+    mockPrisma.retroLearning.create.mockResolvedValue({ id: 1 });
+
+    const res = await POST(
+      buildRequest('brand-new-project', validBody({ fingerprint: 'fp-new-project' }))
+    );
+
+    expect(res.status).toBe(201);
+    expect(mockPrisma.project.create).toHaveBeenCalledWith({
+      data: { id: 'brand-new-project', name: 'brand-new-project' },
+    });
+    // The project must be created before the learning row is inserted.
+    expect(mockPrisma.project.create.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPrisma.retroLearning.create.mock.invocationCallOrder[0]
+    );
   });
 });

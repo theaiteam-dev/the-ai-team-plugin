@@ -24,6 +24,7 @@ model Project {
   tokenUsage          MissionTokenUsage[]
   messageTokenUsage   MessageTokenUsage[]
   retroLearnings      RetroLearning[]
+  tuningProposals     TuningProposal[]
 }
 
 model Stage {
@@ -256,7 +257,8 @@ model RetroLearning {
   title            String
   detail           String?
   status           String   @default("open")
-  proposalId       Int?                     // Phase 2 will add the TuningProposal FK additively; bare Int for now
+  proposalId       Int?
+  proposal         TuningProposal? @relation(fields: [proposalId], references: [id])
   createdAt        DateTime @default(now())
 
   @@index([projectId, status])
@@ -265,4 +267,23 @@ model RetroLearning {
   // Backs the per-mission dedupe in POST /api/learnings. SQLite treats NULLs as
   // distinct, so null-missionId backfill rows are intentionally unconstrained.
   @@unique([projectId, missionId, fingerprint])
+}
+
+model TuningProposal {
+  id               Int      @id @default(autoincrement())
+  projectId        String
+  project          Project  @relation(fields: [projectId], references: [id])
+  targetSurface    String                   // file the proposal would change, e.g. 'agents/ba.md'
+  altitude         String                   // scope of the change, e.g. 'agent' | 'skill' | 'command'
+  proposalText     String
+  status           String   @default("draft") // 'draft' | 'accepted' | 'eval-running' | 'eval-failed' | 'shipped' | 'shipped-unverified' | 'dismissed'
+  evalResult       String?
+  dismissalNote    String?
+  shippedInCommit  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  learnings        RetroLearning[]
+
+  @@index([projectId, status])
 }

@@ -1456,6 +1456,172 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  # ── Tuning (Phase 2 — stubs only; fleshed out by WI-212/213/214/215a/215b) ────
+  /api/tuning/proposals:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+
+    post:
+      operationId: createTuningProposal
+      summary: Create a TuningProposal (stub)
+      description: |
+        Creates a new TuningProposal row. Stubbed by WI-211; request/response
+        schema is fleshed out by a downstream Phase 2 tuning-api work item.
+      tags: [tuning]
+      responses:
+        '201':
+          description: Proposal created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+    get:
+      operationId: listTuningProposals
+      summary: List TuningProposals (stub)
+      description: |
+        Lists TuningProposal rows for the requesting project. Stubbed by
+        WI-211; filtering/response schema is fleshed out by a downstream
+        Phase 2 tuning-api work item.
+      tags: [tuning]
+      responses:
+        '200':
+          description: Proposal list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: array
+                    items:
+                      type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/tuning/proposals/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+
+    patch:
+      operationId: updateTuningProposal
+      summary: Update a TuningProposal's status or metadata (stub)
+      description: |
+        Patches a TuningProposal row (e.g. status transitions, evalResult,
+        dismissalNote, shippedInCommit). Stubbed by WI-211; request/response
+        schema is fleshed out by a downstream Phase 2 tuning-api work item.
+      tags: [tuning]
+      responses:
+        '200':
+          description: Proposal updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: PROPOSAL_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/tuning/corroboration:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+
+    get:
+      operationId: getTuningCorroboration
+      summary: Cross-mission corroboration signal for tuning candidates (stub)
+      description: |
+        Returns corroboration data used to rank tuning candidates. Stubbed by
+        WI-211; response schema is fleshed out by a downstream Phase 2
+        tuning-api work item.
+      tags: [tuning]
+      responses:
+        '200':
+          description: Corroboration data
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/tuning/candidates:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+
+    get:
+      operationId: listTuningCandidates
+      summary: List candidate targetSurfaces eligible for a tuning proposal (stub)
+      description: |
+        Lists RetroLearning-derived candidates eligible for a new
+        TuningProposal. Stubbed by WI-211; response schema is fleshed out by
+        a downstream Phase 2 tuning-api work item.
+      tags: [tuning]
+      responses:
+        '200':
+          description: Candidate list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: array
+                    items:
+                      type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
   # ── Missions ─────────────────────────────────────────────────────────────────
   /api/missions:
     get:
@@ -2367,6 +2533,8 @@ tags:
     description: Mission lifecycle and token tracking
   - name: learnings
     description: RetroLearning capture (structured mission-retro learnings)
+  - name: tuning
+    description: Tuning proposals (Phase 2 Mission Learning Loop)
   - name: activity
     description: Activity log
   - name: deps

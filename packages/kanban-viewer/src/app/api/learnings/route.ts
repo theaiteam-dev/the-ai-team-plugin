@@ -7,7 +7,7 @@
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { getAndValidateProjectId } from '@/lib/project-utils';
+import { getAndValidateProjectId, ensureProject } from '@/lib/project-utils';
 import { createDatabaseError, createValidationError } from '@/lib/errors';
 import type { ApiError } from '@/types/api';
 
@@ -20,6 +20,12 @@ const REQUIRED_FIELDS = [
   'fingerprint',
   'title',
 ] as const;
+
+// The column vocabulary. Review-surface terms (Must Fix / Should Fix /
+// Consider) are mapped to these at the capture boundary (sweep/retro prompts),
+// never stored raw — a typo here would silently never match rank/tuning.
+const VALID_SEVERITIES = ['low', 'medium', 'high', 'critical'] as const;
+type Severity = (typeof VALID_SEVERITIES)[number];
 
 /**
  * Prisma raises P2002 when an insert violates a unique constraint. We match on
@@ -66,6 +72,7 @@ export async function POST(request: Request) {
       return NextResponse.json(errorResponse, { status: 400 });
     }
     const projectId = projectValidation.projectId;
+    await ensureProject(projectId);
 
     const body = (await request.json()) as Partial<LearningCaptureBody> & Record<string, unknown>;
 
@@ -77,6 +84,13 @@ export async function POST(request: Request) {
           { status: 400 }
         );
       }
+    }
+
+    if (!VALID_SEVERITIES.includes(body.severity as Severity)) {
+      return NextResponse.json(
+        createValidationError(`severity must be one of: ${VALID_SEVERITIES.join(', ')}`).toResponse(),
+        { status: 400 }
+      );
     }
 
     const missionId = body.missionId === undefined || body.missionId === null ? null : body.missionId;

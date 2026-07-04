@@ -152,8 +152,29 @@ happen, and code review is an entirely separate operator habit.
 The Debrief runs **no reviewer of its own**. Stockwell's Final Mission Review
 is already a PRD+diff-scoped review and is already persisted (`ateam
 missions-final-review getFinalReview`); PR review comments already exist on
-any branch with an open PR. Spawning a third reviewer at mission end would
-duplicate both, at exactly the moment the operator wants to merge.
+any branch with an open PR. Spawning a reviewer *inside the Debrief* would
+blur its pattern-mining role at exactly the moment the operator wants to
+merge.
+
+An earlier revision of this section went further and claimed a third reviewer
+at mission end would merely *duplicate* Stockwell + PR comments. Phase 1's own
+mission falsified that: Stockwell approved M-20260702-001, and the operator's
+habitual post-mission branch review then found three real bugs (a dedup race,
+unbounded projections, stale severity in rank — RetroLearning rows 5–7).
+Stockwell reviews from inside the mission, anchored on the PRD's acceptance
+criteria; a cold-eyes diff-scoped review sees the blind spots §1 attributes to
+code review. That review is therefore captured — but as a **separate,
+operator-initiated one-shot** (`/ai-team:sweep`, shipped alongside Phase 1),
+not as part of the Debrief: it runs the branch-vs-`main` review, files Must
+Fix / Should Fix findings as `RetroLearning` rows with `source: code-review`
+(severity mapped must→high/critical, should→medium; Consider items reported
+but never captured), then auto-fixes them TDD-style in a single `fix(...)`
+commit referencing the row IDs. The `@@unique(projectId, missionId,
+fingerprint)` constraint keeps sweep rows and Debrief rows deduplicated to
+once-per-mission per pattern. Auto-dispatching the sweep from the run command
+is deliberately deferred until the one-shot has earned trust over several
+missions — an unattended agent committing fixes at merge time needs a track
+record first.
 
 The tuning round is **not** part of the per-mission loop. It is a separate,
 operator-initiated batch (`ateam tuning ...`) that runs across *accumulated*
@@ -333,8 +354,9 @@ model RetroLearning {
   project         Project  @relation(fields: [projectId], references: [id])
   missionId       String?
   mission         Mission? @relation(fields: [missionId], references: [id], onDelete: SetNull)
-  source          String   // stockwell | pr-review | rejection | amy | telemetry | cost
-  severity        String   // must | should | consider
+  source          String   // stockwell | pr-review | rejection | amy | telemetry | cost | retro | code-review
+  severity        String   // low | medium | high | critical (API-enforced enum; review vocab
+                           // must/should/consider maps to this at the capture boundary — sweep/retro)
   attributedAgent String   // murdock | ba | lynch | amy | stockwell | tawnia | hannibal | process
   targetSurface   String   // skill:defensive-coding | agent:lynch | hook | gitignore | docs
   pattern         String   // curated slug via match-or-create — "api-input-validation-depth"

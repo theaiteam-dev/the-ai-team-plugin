@@ -12,8 +12,8 @@ import { prisma } from '@/lib/db';
  * As a "task"-type item, a few smoke tests suffice. They prove behavior the
  * Prisma client actually exposes:
  *   1. a row can be created with every Phase 1 field, `status` defaults to
- *      'open', `createdAt` defaults to now, and `proposalId` is a plain nullable
- *      Int with NO foreign key (an arbitrary id that references nothing persists);
+ *      'open', `createdAt` defaults to now, and `proposalId` defaults to null
+ *      (it is a nullable FK relation to TuningProposal, added in WI-211);
  *   2. deleting a mission NULLs `missionId` (onDelete: SetNull) instead of
  *      deleting the learning row;
  *   3. Project and Mission expose a `retroLearnings` back-relation.
@@ -62,7 +62,7 @@ describe('RetroLearning table', () => {
         title: 'B.A. skips error handling on async calls',
         detail: 'Three rejections traced to unhandled promise rejections.',
         // status omitted -> should default to 'open'
-        // proposalId omitted -> should default to null (nullable Int, no FK)
+        // proposalId omitted -> should default to null (nullable FK to TuningProposal)
         // createdAt omitted -> should default to now
       },
     });
@@ -106,11 +106,40 @@ describe('RetroLearning table', () => {
     expect(created.detail).toBeNull();
   });
 
-  it('stores proposalId as a plain Int with no foreign key (an id referencing nothing persists)', async () => {
-    // Phase 2 will add the TuningProposal FK additively. For now proposalId must
-    // be a bare nullable Int: writing an id that matches no existing proposal
-    // must NOT raise a foreign-key constraint error.
-    const created = await prisma.retroLearning.create({
+  it('enforces the TuningProposal foreign key on proposalId (WI-211 upgraded it to a real relation)', async () => {
+    // WI-211 upgraded proposalId from a bare Int into a real FK relation to
+    // TuningProposal. A proposalId that references no existing proposal must now
+    // raise a foreign-key constraint error instead of persisting a dangling id.
+    await expect(
+      prisma.retroLearning.create({
+        data: {
+          projectId: PROJECT_ID,
+          missionId: MISSION_ID,
+          source: 'stockwell',
+          severity: 'medium',
+          attributedAgent: 'lynch',
+          targetSurface: 'agents/lynch.md',
+          pattern: 'shallow-review',
+          fingerprint: 'fp-proposal-dangling',
+          title: 'Lynch approved without checking coverage',
+          detail: null,
+          proposalId: 987654,
+        },
+      })
+    ).rejects.toThrow();
+
+    // A valid proposalId links to a real TuningProposal and resolves through the
+    // relation.
+    const proposal = await prisma.tuningProposal.create({
+      data: {
+        projectId: PROJECT_ID,
+        targetSurface: 'agents/lynch.md',
+        altitude: 'agent-prompt',
+        proposalText: '',
+      },
+    });
+
+    const learning = await prisma.retroLearning.create({
       data: {
         projectId: PROJECT_ID,
         missionId: MISSION_ID,
@@ -119,16 +148,20 @@ describe('RetroLearning table', () => {
         attributedAgent: 'lynch',
         targetSurface: 'agents/lynch.md',
         pattern: 'shallow-review',
-        fingerprint: 'fp-proposal',
+        fingerprint: 'fp-proposal-linked',
         title: 'Lynch approved without checking coverage',
         detail: null,
-        proposalId: 987654,
+        proposalId: proposal.id,
       },
     });
 
-    const reloaded = await prisma.retroLearning.findUnique({ where: { id: created.id } });
+    const reloaded = await prisma.retroLearning.findUnique({
+      where: { id: learning.id },
+      include: { proposal: true },
+    });
     expect(reloaded).not.toBeNull();
-    expect(reloaded!.proposalId).toBe(987654);
+    expect(reloaded!.proposalId).toBe(proposal.id);
+    expect(reloaded!.proposal!.id).toBe(proposal.id);
   });
 
   it('sets missionId to NULL when the mission is deleted (onDelete: SetNull), keeping the learning row', async () => {
