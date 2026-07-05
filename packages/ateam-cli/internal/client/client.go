@@ -46,6 +46,18 @@ func NewClient(baseURL, token string) *Client {
 	}
 }
 
+// apiErrorEnvelope mirrors the {success:false,error:{code,message}} shape
+// returned by API error responses (see e.g. createValidationError /
+// createDatabaseError and hand-rolled ApiError literals like
+// NOT_CORROBORATED / SAME_MISSION_MERGE in the kanban-viewer API routes).
+type apiErrorEnvelope struct {
+	Success bool `json:"success"`
+	Error   struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
 // execute injects authentication headers into req, sends it, reads the response
 // body, and returns an error for non-2xx status codes. Both Do and DoMultipart
 // delegate to this method so auth injection is defined exactly once.
@@ -74,8 +86,19 @@ func (c *Client) execute(req *http.Request) ([]byte, error) {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	// Return a descriptive error for non-2xx responses.
+	// Return a descriptive error for non-2xx responses. Prefer the structured
+	// {success:false,error:{code,message}} envelope when present (untruncated
+	// — messages like SAME_MISSION_MERGE's are longer than the 200-char
+	// fallback and would otherwise be cut off mid-sentence); fall back to a
+	// truncated raw-body dump for non-enveloped error responses.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var envelope apiErrorEnvelope
+		if err := json.Unmarshal(responseBody, &envelope); err == nil && !envelope.Success && envelope.Error.Message != "" {
+			if envelope.Error.Code != "" {
+				return nil, fmt.Errorf("%s: %s", envelope.Error.Code, envelope.Error.Message)
+			}
+			return nil, fmt.Errorf("%s", envelope.Error.Message)
+		}
 		bodyStr := string(responseBody)
 		if len(bodyStr) > 200 {
 			bodyStr = bodyStr[:200] + "... (truncated)"
