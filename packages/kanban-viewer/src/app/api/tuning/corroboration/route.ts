@@ -1,9 +1,11 @@
 /**
  * API Route: /api/tuning/corroboration
  *
- * GET - Thin wrapper over getCorroboration(), reporting in-project hits,
- *       cross-project presence, and the derived corroborated flag for a
- *       given fingerprint.
+ * GET - Thin wrapper over getCorroboration(), reporting the global
+ *       distinct-mission count and the derived corroborated flag for a
+ *       given fingerprint. Global — NOT scoped to the requesting project;
+ *       X-Project-ID is still required for auth/consistency with the rest
+ *       of the API surface, but it does not filter the count.
  */
 
 import { NextResponse } from 'next/server';
@@ -27,7 +29,7 @@ export async function GET(request: Request) {
       return NextResponse.json(error.toResponse(), { status: 400 });
     }
 
-    const data = await getCorroboration(projectValidation.projectId, fingerprint);
+    const data = await getCorroboration(fingerprint);
 
     return NextResponse.json({ success: true, data });
   } catch (error) {

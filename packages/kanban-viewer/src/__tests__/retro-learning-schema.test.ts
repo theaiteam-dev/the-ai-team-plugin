@@ -2,25 +2,53 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { prisma } from '@/lib/db';
 
 /**
- * Smoke tests for the RetroLearning table (WI-195).
+ * Smoke tests for the RetroLearning table (WI-195), updated for Phase A's
+ * global fingerprint-centric model (Stage 1 migration
+ * `global_fingerprint_tuning`).
  *
  * RetroLearning is the structured-learning table that lives alongside the
  * existing Mission.retroReport markdown blob. Each row is one captured learning
  * from a mission retro, attributed to an agent and a target surface, ranked by
  * severity, and deduplicated in application code via `fingerprint`.
  *
+ * Phase A replaced the old `proposalId` -> TuningProposal relation (a learning
+ * no longer links directly to a proposal) with:
+ *   - `origin` (defaults to 'local' — the trust-provenance seam for a future
+ *     federation phase; unenforced today)
+ *   - a required FK `fingerprint -> Fingerprint.slug` (a learning MUST
+ *     reference an existing global Fingerprint row)
+ *
  * As a "task"-type item, a few smoke tests suffice. They prove behavior the
  * Prisma client actually exposes:
- *   1. a row can be created with every Phase 1 field, `status` defaults to
- *      'open', `createdAt` defaults to now, and `proposalId` defaults to null
- *      (it is a nullable FK relation to TuningProposal, added in WI-211);
+ *   1. a row can be created with every field, `status` defaults to 'open',
+ *      `origin` defaults to 'local', `createdAt` defaults to now;
  *   2. deleting a mission NULLs `missionId` (onDelete: SetNull) instead of
  *      deleting the learning row;
- *   3. Project and Mission expose a `retroLearnings` back-relation.
+ *   3. Project and Mission expose a `retroLearnings` back-relation;
+ *   4. the `fingerprint` column is a real FK to Fingerprint.slug — a learning
+ *      referencing a nonexistent slug is rejected, and a valid one resolves
+ *      through the `fingerprintRef` relation.
  */
 
 const PROJECT_ID = 'test-retro-learning-project';
 const MISSION_ID = 'M-20260702-retro-learning-test';
+
+const TEST_FINGERPRINTS = [
+  'fp-abc123',
+  'fp-null-mission',
+  'fp-dangling-check',
+  'fp-fingerprint-linked',
+  'fp-setnull',
+  'fp-backrel',
+];
+
+async function seedFingerprint(slug: string) {
+  return prisma.fingerprint.upsert({
+    where: { slug },
+    update: {},
+    create: { slug, pattern: `pat:${slug}`, severity: 'medium' },
+  });
+}
 
 beforeEach(async () => {
   await prisma.project.upsert({
@@ -42,11 +70,22 @@ beforeEach(async () => {
     },
   });
 
+  // RetroLearning first (FKs to Fingerprint), then the Fingerprint rows
+  // themselves, so re-seeding in each test starts from a clean slate.
   await prisma.retroLearning.deleteMany({ where: { projectId: PROJECT_ID } });
+  await prisma.fingerprint.deleteMany({ where: { slug: { in: TEST_FINGERPRINTS } } });
+
+  for (const slug of TEST_FINGERPRINTS) {
+    if (slug !== 'fp-dangling-check') {
+      // fp-dangling-check is deliberately NOT seeded — it exercises the FK
+      // rejection case below.
+      await seedFingerprint(slug);
+    }
+  }
 });
 
 describe('RetroLearning table', () => {
-  it('creates a row with all Phase 1 fields, defaulting status to "open" and createdAt to now', async () => {
+  it('creates a row with all fields, defaulting status to "open", origin to "local", and createdAt to now', async () => {
     const before = Date.now();
 
     const created = await prisma.retroLearning.create({
@@ -62,7 +101,7 @@ describe('RetroLearning table', () => {
         title: 'B.A. skips error handling on async calls',
         detail: 'Three rejections traced to unhandled promise rejections.',
         // status omitted -> should default to 'open'
-        // proposalId omitted -> should default to null (nullable FK to TuningProposal)
+        // origin omitted -> should default to 'local'
         // createdAt omitted -> should default to now
       },
     });
@@ -80,7 +119,7 @@ describe('RetroLearning table', () => {
       title: 'B.A. skips error handling on async calls',
       detail: 'Three rejections traced to unhandled promise rejections.',
       status: 'open',
-      proposalId: null,
+      origin: 'local',
     });
     expect(created.createdAt).toBeInstanceOf(Date);
     expect(created.createdAt.getTime()).toBeGreaterThanOrEqual(before);
@@ -106,10 +145,11 @@ describe('RetroLearning table', () => {
     expect(created.detail).toBeNull();
   });
 
-  it('enforces the TuningProposal foreign key on proposalId (WI-211 upgraded it to a real relation)', async () => {
-    // WI-211 upgraded proposalId from a bare Int into a real FK relation to
-    // TuningProposal. A proposalId that references no existing proposal must now
-    // raise a foreign-key constraint error instead of persisting a dangling id.
+  it('enforces the Fingerprint foreign key on `fingerprint` (Stage 1 upgraded it to a real relation)', async () => {
+    // Phase A's migration added a real FK: RetroLearning.fingerprint ->
+    // Fingerprint.slug. A fingerprint referencing no existing Fingerprint row
+    // must raise a foreign-key constraint error instead of silently
+    // persisting an orphaned slug.
     await expect(
       prisma.retroLearning.create({
         data: {
@@ -120,25 +160,15 @@ describe('RetroLearning table', () => {
           attributedAgent: 'lynch',
           targetSurface: 'agents/lynch.md',
           pattern: 'shallow-review',
-          fingerprint: 'fp-proposal-dangling',
+          fingerprint: 'fp-dangling-check',
           title: 'Lynch approved without checking coverage',
           detail: null,
-          proposalId: 987654,
         },
       })
     ).rejects.toThrow();
 
-    // A valid proposalId links to a real TuningProposal and resolves through the
-    // relation.
-    const proposal = await prisma.tuningProposal.create({
-      data: {
-        projectId: PROJECT_ID,
-        targetSurface: 'agents/lynch.md',
-        altitude: 'agent-prompt',
-        proposalText: '',
-      },
-    });
-
+    // A fingerprint referencing an EXISTING Fingerprint row links and
+    // resolves through the fingerprintRef relation.
     const learning = await prisma.retroLearning.create({
       data: {
         projectId: PROJECT_ID,
@@ -148,20 +178,19 @@ describe('RetroLearning table', () => {
         attributedAgent: 'lynch',
         targetSurface: 'agents/lynch.md',
         pattern: 'shallow-review',
-        fingerprint: 'fp-proposal-linked',
+        fingerprint: 'fp-fingerprint-linked',
         title: 'Lynch approved without checking coverage',
         detail: null,
-        proposalId: proposal.id,
       },
     });
 
     const reloaded = await prisma.retroLearning.findUnique({
       where: { id: learning.id },
-      include: { proposal: true },
+      include: { fingerprintRef: true },
     });
     expect(reloaded).not.toBeNull();
-    expect(reloaded!.proposalId).toBe(proposal.id);
-    expect(reloaded!.proposal!.id).toBe(proposal.id);
+    expect(reloaded!.fingerprint).toBe('fp-fingerprint-linked');
+    expect(reloaded!.fingerprintRef.slug).toBe('fp-fingerprint-linked');
   });
 
   it('sets missionId to NULL when the mission is deleted (onDelete: SetNull), keeping the learning row', async () => {

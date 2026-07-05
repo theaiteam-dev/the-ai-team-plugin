@@ -2,23 +2,20 @@
  * API Route: /api/tuning/candidates
  *
  * GET - The tuning walk's ordered candidate list (FR-8): recurrence-ranked
- *       live fingerprints (same semantics as /api/learnings/rank) PLUS
- *       previously-dismissed fingerprints that new evidence resurfaces.
+ *       GLOBAL fingerprints (across every project — tuning improves the
+ *       plugin itself, a surface shared by every installation), each carrying
+ *       an `actionable` flag driven by the defer watermark (see DEFER_MARGIN
+ *       below) rather than a hard dismiss/resurface toggle.
  */
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getAndValidateProjectId } from '@/lib/project-utils';
 import { createDatabaseError } from '@/lib/errors';
-import { getCorroboration } from '@/lib/corroboration';
+import { CORROBORATION_THRESHOLD, DEFER_MARGIN } from '@/lib/corroboration';
 import type { ApiError } from '@/types/api';
 
 const LIVE_STATUSES = new Set(['open', 'recurred']);
-
-// A dismissed fingerprint resurfaces once it accrues this many new
-// RetroLearning rows since dismissal — see getCorroboration for the
-// single-source-of-truth threshold this mirrors for the cross-project leg.
-const NEW_HITS_RESURFACE_THRESHOLD = 3;
 
 const SEVERITY_ORDINAL: Record<string, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 function severityOrdinal(severity: string): number {
@@ -31,8 +28,10 @@ interface CandidateRow {
   targetSurface: string;
   severity: string;
   hits: number;
-  resurfaced?: true;
-  dismissalNote?: string | null;
+  distinctMissions: number;
+  corroborated: boolean;
+  deferredAtMissions: number | null;
+  actionable: boolean;
 }
 
 interface FingerprintGroup {
@@ -42,25 +41,32 @@ interface FingerprintGroup {
   severity: string;
   hits: number;
   hasLiveRow: boolean;
-  createdAts: Date[];
-  proposalIds: Set<number>;
+  missionIds: Set<string>;
 }
 
 /**
  * GET /api/tuning/candidates
  *
- * Builds on the grouping logic in /api/learnings/rank: groups the project's
- * RetroLearning rows by fingerprint, with hits = full historical row count
- * (incl. resolved/dismissed) and a representative pattern/targetSurface
- * (latest row wins) / severity (hottest-seen wins).
+ * Groups ALL RetroLearning rows (across every project) by fingerprint, with
+ * hits = full historical row count (incl resolved/dismissed) and a
+ * representative pattern/targetSurface (latest row wins) / severity
+ * (hottest-seen wins). X-Project-ID is still required for auth consistency
+ * with the rest of the API, but the candidate set itself is NOT scoped by it.
  *
- * A fingerprint whose latest linked TuningProposal (via RetroLearning.proposalId)
- * is status='dismissed' is excluded UNLESS it resurfaces: >=3 new RetroLearning
- * rows created after the proposal's updatedAt (DISMISSAL-CLOCK ASSUMPTION: a
- * dismissed proposal receives no further writes, so updatedAt is a stable proxy
- * for the dismissal timestamp), OR a cross-project hit per WI-212's
- * getCorroboration. Resurfaced entries carry resurfaced:true and the original
- * dismissalNote so the operator re-decides with memory.
+ * distinctMissions/corroborated are computed here from the same aggregated
+ * pass (COUNT(DISTINCT missionId), missionId NOT NULL) rather than by calling
+ * getCorroboration() per fingerprint, to avoid N+1 queries — but the
+ * threshold itself is imported from the shared lib so it is never re-derived.
+ *
+ * A corroborated fingerprint is `actionable` only if it has never been
+ * deferred (Fingerprint.deferredAtMissions is null) OR distinctMissions has
+ * climbed at least DEFER_MARGIN past the watermark recorded at defer time
+ * (POST /api/tuning/fingerprints/{slug}/defer). This replaces the old
+ * Fingerprint.status dismiss/resurface toggle: deferring never hides a row
+ * from this listing, it only flips `actionable` to false until enough new
+ * evidence arrives — every candidate is always visible here.
+ *
+ * ?actionable=true restricts the response to `actionable: true` rows only.
  */
 export async function GET(request: Request) {
   try {
@@ -69,21 +75,21 @@ export async function GET(request: Request) {
       const errorResponse: ApiError = { success: false, error: projectValidation.error };
       return NextResponse.json(errorResponse, { status: 400 });
     }
-    const projectId = projectValidation.projectId;
+
+    const { searchParams } = new URL(request.url);
+    const actionableOnly = searchParams.get('actionable') === 'true';
 
     const rows = await prisma.retroLearning.findMany({
-      where: { projectId },
       select: {
         fingerprint: true,
         pattern: true,
         targetSurface: true,
         severity: true,
         status: true,
-        createdAt: true,
-        proposalId: true,
+        missionId: true,
       },
       // Oldest-first so the last row iterated per fingerprint is the most
-      // recent, matching the rank route's representative-field selection.
+      // recent, matching the representative-field selection below.
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
 
@@ -98,8 +104,7 @@ export async function GET(request: Request) {
           severity: row.severity,
           hits: 0,
           hasLiveRow: false,
-          createdAts: [],
-          proposalIds: new Set(),
+          missionIds: new Set(),
         };
         groups.set(row.fingerprint, group);
       }
@@ -112,70 +117,51 @@ export async function GET(request: Request) {
       if (severityOrdinal(row.severity) > severityOrdinal(group.severity)) {
         group.severity = row.severity;
       }
-      group.createdAts.push(row.createdAt);
-      if (row.proposalId !== null) {
-        group.proposalIds.add(row.proposalId);
+      if (row.missionId !== null) {
+        group.missionIds.add(row.missionId);
       }
     }
 
-    const allProposalIds = Array.from(
-      new Set(Array.from(groups.values()).flatMap((g) => Array.from(g.proposalIds)))
-    );
-    const proposals = allProposalIds.length
-      ? await prisma.tuningProposal.findMany({ where: { id: { in: allProposalIds } } })
+    const fingerprintRows = groups.size
+      ? await prisma.fingerprint.findMany({
+          where: { slug: { in: Array.from(groups.keys()) } },
+          select: { slug: true, deferredAtMissions: true },
+        })
       : [];
-    const proposalsById = new Map(proposals.map((p) => [p.id, p]));
+    const fingerprintsBySlug = new Map(fingerprintRows.map((f) => [f.slug, f]));
 
     const candidates: CandidateRow[] = [];
 
     for (const group of groups.values()) {
-      const linkedProposals = Array.from(group.proposalIds)
-        .map((id) => proposalsById.get(id))
-        .filter((p): p is NonNullable<typeof p> => p !== undefined);
-
-      const latestProposal = linkedProposals.length
-        ? linkedProposals.reduce((latest, p) => (p.updatedAt > latest.updatedAt ? p : latest))
-        : null;
-
-      if (!latestProposal || latestProposal.status !== 'dismissed') {
-        if (group.hasLiveRow) {
-          candidates.push({
-            fingerprint: group.fingerprint,
-            pattern: group.pattern,
-            targetSurface: group.targetSurface,
-            severity: group.severity,
-            hits: group.hits,
-          });
-        }
+      if (!group.hasLiveRow) {
         continue;
       }
 
-      const newHitsSinceDismissal = group.createdAts.filter(
-        (createdAt) => createdAt > latestProposal.updatedAt
-      ).length;
+      const distinctMissions = group.missionIds.size;
+      const corroborated = distinctMissions >= CORROBORATION_THRESHOLD;
+      const deferredAtMissions = fingerprintsBySlug.get(group.fingerprint)?.deferredAtMissions ?? null;
+      const actionable =
+        corroborated &&
+        (deferredAtMissions === null || distinctMissions >= deferredAtMissions + DEFER_MARGIN);
 
-      let resurfaces = newHitsSinceDismissal >= NEW_HITS_RESURFACE_THRESHOLD;
-      if (!resurfaces) {
-        const corroboration = await getCorroboration(projectId, group.fingerprint);
-        resurfaces = corroboration.crossProject;
-      }
-
-      if (resurfaces) {
-        candidates.push({
-          fingerprint: group.fingerprint,
-          pattern: group.pattern,
-          targetSurface: group.targetSurface,
-          severity: group.severity,
-          hits: group.hits,
-          resurfaced: true,
-          dismissalNote: latestProposal.dismissalNote,
-        });
-      }
+      candidates.push({
+        fingerprint: group.fingerprint,
+        pattern: group.pattern,
+        targetSurface: group.targetSurface,
+        severity: group.severity,
+        hits: group.hits,
+        distinctMissions,
+        corroborated,
+        deferredAtMissions,
+        actionable,
+      });
     }
 
     candidates.sort((a, b) => b.hits - a.hits);
 
-    return NextResponse.json({ success: true, data: candidates });
+    const data = actionableOnly ? candidates.filter((c) => c.actionable) : candidates;
+
+    return NextResponse.json({ success: true, data });
   } catch (error) {
     console.error('GET /api/tuning/candidates error:', error);
     return NextResponse.json(

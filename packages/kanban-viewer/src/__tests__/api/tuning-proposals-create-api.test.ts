@@ -1,197 +1,95 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { prisma } from '@/lib/db';
+import { POST } from '@/app/api/tuning/proposals/route';
 
 /**
- * Tests for POST /api/tuning/proposals (WI-213).
+ * Integration tests for POST /api/tuning/proposals, rewritten for Phase A's
+ * global, post-agreement TuningProposal model.
  *
- * The tuning walk drafts one TuningProposal per target surface, clustering that
- * surface's LIVE learnings (status 'open' or 'recurred') into the proposal and
- * linking them by stamping their proposalId. Behavior under test:
+ * A proposal is no longer eagerly drafted for browsing — /api/tuning/candidates
+ * is the VIEW a maintainer walks. This POST *is* the agreement: it links one
+ * or more (already corroborated) fingerprints to a new proposal, carrying the
+ * agreed targetSurface/altitude/proposalText, and is created directly with
+ * status='accepted'. It shares the exact FR-9 corroboration gate that the
+ * accept/edit verbs on /api/tuning/proposals/{id} use (see
+ * @/lib/corroboration's areAllCorroborated) — every linked fingerprint must
+ * be corroborated (>=3 distinct missions), or nothing is created and the
+ * route returns 422.
  *
- * 1. A valid POST creates a draft TuningProposal (status='draft'), links every
- *    live learning for that surface, and returns 201 with { id, linkedLearningIds }.
- * 2. Only open/recurred learnings are linked — resolved and dismissed rows for
- *    the same surface are left unlinked (their proposalId stays null).
- * 3. proposalText is optional at draft time; omitting it persists ''
- *    (synthesis is deferred to accept/edit, FR-7).
- * 4. Missing targetSurface -> 400; an altitude outside
- *    skill-text|agent-prompt|hook -> 400; the three valid altitudes are accepted.
- * 5. A surface with no live learnings -> 400 with a 'no live learnings' message,
- *    and no proposal is created (no silent empty proposal).
- * 6. A second POST for a surface that already has an open draft resumes that
- *    draft (idempotent) instead of creating a second one.
- *
- * Approach: a stateful in-memory prisma mock backs the RetroLearning and
- * TuningProposal stores, so the tests assert on HTTP responses and the resulting
- * DB state rather than on the exact prisma calls the route makes — leaving the
- * implementation latitude in how it queries and links.
+ * Runs against the real SQLite dev DB (like the sibling tuning-* API tests)
+ * rather than a prisma mock: the ACs here — the corroboration gate actually
+ * querying distinct missionId counts, the m-n fingerprint connect, and the
+ * unknown-fingerprint 400 — all execute inside real DB reads/writes that a
+ * mock would have to reimplement and could silently drift from.
  */
 
-// ── In-memory stores (reset per test) ────────────────────────────────────────
+const PROJECT_ID = 'test-proposals-create-project';
 
-interface LearningRow {
-  id: number;
-  projectId: string;
-  targetSurface: string;
-  status: string;
-  proposalId: number | null;
-}
+// Every fingerprint slug used anywhere in this file — cleaned up in
+// beforeEach so a proposal created in one test never leaks into the next
+// (TuningProposal is global now, with no projectId to scope a deleteMany by).
+const TEST_FINGERPRINTS = [
+  'fp-create-a',
+  'fp-create-b',
+  'fp-strong',
+  'fp-weak',
+  'fp-known',
+  'fp-notarget',
+  'fp-badaltitude',
+  'fp-notext',
+  'fp-anything',
+];
 
-interface ProposalRow {
-  id: number;
-  projectId: string;
-  targetSurface: string;
-  altitude: string;
-  status: string;
-  proposalText: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-const store = vi.hoisted(() => ({
-  learnings: [] as {
-    id: number;
-    projectId: string;
-    targetSurface: string;
-    status: string;
-    proposalId: number | null;
-  }[],
-  proposals: [] as {
-    id: number;
-    projectId: string;
-    targetSurface: string;
-    altitude: string;
-    status: string;
-    proposalText: string;
-    createdAt: Date;
-    updatedAt: Date;
-  }[],
-  nextProposalId: 1,
-}));
-
-/** Minimal prisma `where` matcher: scalar equality plus { in }, { not }, { equals }. */
-function matchWhere(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
-  return Object.entries(where).every(([key, cond]) => {
-    if (cond !== null && typeof cond === 'object' && !Array.isArray(cond)) {
-      const c = cond as Record<string, unknown>;
-      if ('in' in c) return (c.in as unknown[]).includes(row[key]);
-      if ('not' in c) return row[key] !== c.not;
-      if ('equals' in c) return row[key] === c.equals;
-      return false;
-    }
-    return row[key] === cond;
+async function seedFingerprint(slug: string) {
+  return prisma.fingerprint.upsert({
+    where: { slug },
+    update: {},
+    create: { slug, pattern: `pat:${slug}`, severity: 'medium' },
   });
 }
 
-const mockPrisma = vi.hoisted(() => {
-  return {} as Record<string, unknown>;
-});
+async function seedMission(missionId: string) {
+  return prisma.mission.upsert({
+    where: { id: missionId },
+    update: {},
+    create: {
+      id: missionId,
+      name: `Mission ${missionId}`,
+      state: 'running',
+      prdPath: '/prd/test.md',
+      projectId: PROJECT_ID,
+      startedAt: new Date(),
+    },
+  });
+}
 
-vi.mock('@/lib/db', () => ({ prisma: mockPrisma }));
+async function seedLearning(fingerprint: string, missionId: string) {
+  return prisma.retroLearning.create({
+    data: {
+      projectId: PROJECT_ID,
+      missionId,
+      source: 'stockwell',
+      severity: 'high',
+      attributedAgent: 'ba',
+      targetSurface: `surface:${fingerprint}`,
+      pattern: `pat:${fingerprint}`,
+      fingerprint,
+      title: `title:${fingerprint}`,
+      detail: null,
+      status: 'open',
+    },
+  });
+}
 
-// Wire the mock to the stores. Done once; each method reads current store state.
-Object.assign(mockPrisma, {
-  // The route wraps its check-then-act in prisma.$transaction to close a TOCTOU
-  // race (AC6). The store ops are synchronous, so aliasing the transaction
-  // client to mockPrisma itself preserves every assertion while letting the
-  // callback run. Both the interactive (callback) and batch (array) forms are
-  // supported so the test doesn't pin which the route uses.
-  $transaction: vi.fn(async (arg: unknown) => {
-    if (typeof arg === 'function') return (arg as (tx: unknown) => unknown)(mockPrisma);
-    if (Array.isArray(arg)) return Promise.all(arg);
-    return undefined;
-  }),
-  project: {
-    findUnique: vi.fn(async ({ where }: { where: { id: string } }) => ({
-      id: where.id,
-      name: where.id,
-    })),
-    create: vi.fn(async ({ data }: { data: { id: string; name: string } }) => data),
-  },
-  retroLearning: {
-    findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) =>
-      store.learnings.filter((r) => matchWhere(r, where)).map((r) => ({ ...r })),
-    ),
-    count: vi.fn(async ({ where }: { where: Record<string, unknown> }) =>
-      store.learnings.filter((r) => matchWhere(r, where)).length,
-    ),
-    updateMany: vi.fn(
-      async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
-        let count = 0;
-        for (const r of store.learnings) {
-          if (matchWhere(r as unknown as Record<string, unknown>, where)) {
-            Object.assign(r, data);
-            count += 1;
-          }
-        }
-        return { count };
-      },
-    ),
-    update: vi.fn(
-      async ({ where, data }: { where: { id: number }; data: Record<string, unknown> }) => {
-        const row = store.learnings.find((r) => r.id === where.id);
-        if (row) Object.assign(row, data);
-        return { ...row };
-      },
-    ),
-  },
-  tuningProposal: {
-    findFirst: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
-      const row = store.proposals.find((p) => matchWhere(p as unknown as Record<string, unknown>, where));
-      return row ? { ...row } : null;
-    }),
-    create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
-      const row: ProposalRow = {
-        id: store.nextProposalId++,
-        projectId: data.projectId as string,
-        targetSurface: data.targetSurface as string,
-        altitude: data.altitude as string,
-        status: (data.status as string) ?? 'draft',
-        proposalText: (data.proposalText as string) ?? '',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      store.proposals.push(row);
-      return { ...row };
-    }),
-    upsert: vi.fn(
-      async ({
-        where,
-        create,
-        update,
-      }: {
-        where: Record<string, unknown>;
-        create: Record<string, unknown>;
-        update: Record<string, unknown>;
-      }) => {
-        const existing = store.proposals.find((p) =>
-          matchWhere(p as unknown as Record<string, unknown>, where),
-        );
-        if (existing) {
-          Object.assign(existing, update);
-          return { ...existing };
-        }
-        const row: ProposalRow = {
-          id: store.nextProposalId++,
-          projectId: create.projectId as string,
-          targetSurface: create.targetSurface as string,
-          altitude: create.altitude as string,
-          status: (create.status as string) ?? 'draft',
-          proposalText: (create.proposalText as string) ?? '',
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        };
-        store.proposals.push(row);
-        return { ...row };
-      },
-    ),
-  },
-});
-
-import { POST } from '@/app/api/tuning/proposals/route';
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-const PROJECT = 'project-a';
+/** Corroborates a fingerprint by giving it 3 distinct-mission learnings. */
+async function corroborate(fingerprint: string, missionPrefix: string) {
+  await seedFingerprint(fingerprint);
+  for (const suffix of ['a', 'b', 'c']) {
+    const missionId = `M-${missionPrefix}-${suffix}`;
+    await seedMission(missionId);
+    await seedLearning(fingerprint, missionId);
+  }
+}
 
 function buildRequest(projectId: string | null, body?: unknown): Request {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -203,197 +101,187 @@ function buildRequest(projectId: string | null, body?: unknown): Request {
   });
 }
 
-let seq = 0;
-function seedLearning(overrides: Partial<LearningRow> = {}): LearningRow {
-  const row: LearningRow = {
-    id: ++seq,
-    projectId: PROJECT,
-    targetSurface: 'skill:defensive-coding',
-    status: 'open',
-    proposalId: null,
-    ...overrides,
-  };
-  store.learnings.push(row);
-  return row;
-}
-
-function seedProposal(overrides: Partial<ProposalRow> = {}): ProposalRow {
-  const row: ProposalRow = {
-    id: store.nextProposalId++,
-    projectId: PROJECT,
-    targetSurface: 'skill:defensive-coding',
-    altitude: 'skill-text',
-    status: 'draft',
-    proposalText: '',
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    ...overrides,
-  };
-  store.proposals.push(row);
-  return row;
-}
-
-beforeEach(() => {
-  store.learnings.length = 0;
-  store.proposals.length = 0;
-  store.nextProposalId = 1;
-  seq = 0;
+beforeEach(async () => {
+  await prisma.project.upsert({
+    where: { id: PROJECT_ID },
+    update: {},
+    create: { id: PROJECT_ID, name: 'Proposals Create Test Project' },
+  });
+  await prisma.retroLearning.deleteMany({ where: { projectId: PROJECT_ID } });
+  await prisma.tuningProposal.deleteMany({
+    where: { fingerprints: { some: { slug: { in: TEST_FINGERPRINTS } } } },
+  });
+  await prisma.mission.deleteMany({ where: { projectId: PROJECT_ID } });
 });
-
-afterEach(() => {
-  vi.clearAllMocks();
-});
-
-// ── AC1: draft + cluster + link ──────────────────────────────────────────────
 
 describe('POST /api/tuning/proposals', () => {
-  it('creates a draft proposal, links the surface\'s live learnings, and returns 201 with linkedLearningIds', async () => {
-    const a = seedLearning({ status: 'open' });
-    const b = seedLearning({ status: 'recurred' });
+  it('creates an accepted proposal linking every corroborated fingerprint, returning 201', async () => {
+    await corroborate('fp-create-a', 'create-a');
+    await corroborate('fp-create-b', 'create-b');
 
     const res = await POST(
-      buildRequest(PROJECT, { targetSurface: 'skill:defensive-coding', altitude: 'skill-text' }),
+      buildRequest(PROJECT_ID, {
+        fingerprints: ['fp-create-a', 'fp-create-b'],
+        targetSurface: 'agents/ba.md',
+        altitude: 'agent-prompt',
+        proposalText: 'Tighten error handling guidance.',
+      })
     );
 
     expect(res.status).toBe(201);
     const { success, data } = await res.json();
     expect(success).toBe(true);
     expect(typeof data.id).toBe('number');
-    expect([...data.linkedLearningIds].sort()).toEqual([a.id, b.id].sort());
+    expect(data.status).toBe('accepted');
+    expect([...data.fingerprints].sort()).toEqual(['fp-create-a', 'fp-create-b']);
 
-    // A draft proposal now exists for the surface.
-    const proposal = store.proposals.find((p) => p.id === data.id);
-    expect(proposal).toBeDefined();
-    expect(proposal!.status).toBe('draft');
-    expect(proposal!.projectId).toBe(PROJECT);
-    expect(proposal!.targetSurface).toBe('skill:defensive-coding');
-
-    // Every linked learning was stamped with the new proposal id.
-    expect(store.learnings.filter((l) => l.proposalId === data.id).map((l) => l.id).sort()).toEqual(
-      [a.id, b.id].sort(),
-    );
+    const persisted = await prisma.tuningProposal.findUnique({
+      where: { id: data.id },
+      include: { fingerprints: { select: { slug: true } } },
+    });
+    expect(persisted?.status).toBe('accepted');
+    expect(persisted?.targetSurface).toBe('agents/ba.md');
+    expect(persisted?.fingerprints.map((f) => f.slug).sort()).toEqual(['fp-create-a', 'fp-create-b']);
   });
 
-  // ── AC2: only open/recurred are linked ────────────────────────────────────
-
-  it('links only open/recurred learnings and leaves resolved/dismissed unlinked', async () => {
-    const open1 = seedLearning({ status: 'open' });
-    const open2 = seedLearning({ status: 'open' });
-    const recurred = seedLearning({ status: 'recurred' });
-    const resolved = seedLearning({ status: 'resolved' });
-    const dismissed = seedLearning({ status: 'dismissed' });
+  it('returns 422 and creates nothing when any linked fingerprint is not corroborated', async () => {
+    await corroborate('fp-strong', 'strong');
+    // fp-weak: only 1 distinct mission — below the threshold.
+    await seedFingerprint('fp-weak');
+    await seedMission('M-weak-a');
+    await seedLearning('fp-weak', 'M-weak-a');
 
     const res = await POST(
-      buildRequest(PROJECT, { targetSurface: 'skill:defensive-coding', altitude: 'skill-text' }),
+      buildRequest(PROJECT_ID, {
+        fingerprints: ['fp-strong', 'fp-weak'],
+        targetSurface: 'agents/ba.md',
+        altitude: 'agent-prompt',
+        proposalText: 'Should not be created.',
+      })
     );
 
-    expect(res.status).toBe(201);
-    const { data } = await res.json();
+    expect(res.status).toBe(422);
+    const { success, error } = await res.json();
+    expect(success).toBe(false);
+    expect(JSON.stringify(error)).toMatch(/corroborat/i);
 
-    expect([...data.linkedLearningIds].sort()).toEqual([open1.id, open2.id, recurred.id].sort());
-    expect(data.linkedLearningIds).toHaveLength(3);
-
-    // resolved + dismissed rows keep proposalId null.
-    expect(store.learnings.find((l) => l.id === resolved.id)!.proposalId).toBeNull();
-    expect(store.learnings.find((l) => l.id === dismissed.id)!.proposalId).toBeNull();
+    const count = await prisma.tuningProposal.count({
+      where: { fingerprints: { some: { slug: { in: ['fp-strong', 'fp-weak'] } } } },
+    });
+    expect(count).toBe(0);
   });
 
-  // ── AC3: proposalText optional at draft time ──────────────────────────────
-
-  it('persists an empty proposalText when none is supplied', async () => {
-    seedLearning({ status: 'open' });
+  it('returns 400 when an unknown fingerprint slug is referenced', async () => {
+    await corroborate('fp-known', 'known');
 
     const res = await POST(
-      buildRequest(PROJECT, { targetSurface: 'skill:defensive-coding', altitude: 'skill-text' }),
+      buildRequest(PROJECT_ID, {
+        fingerprints: ['fp-known', 'fp-does-not-exist'],
+        targetSurface: 'agents/ba.md',
+        altitude: 'agent-prompt',
+        proposalText: 'text',
+      })
     );
 
-    expect(res.status).toBe(201);
-    const { data } = await res.json();
-    expect(store.proposals.find((p) => p.id === data.id)!.proposalText).toBe('');
+    expect(res.status).toBe(400);
+    const { success, error } = await res.json();
+    expect(success).toBe(false);
+    expect(error.message).toContain('fp-does-not-exist');
   });
 
-  // ── AC4: validation ───────────────────────────────────────────────────────
+  it('returns 400 when fingerprints is missing, empty, or not an array', async () => {
+    for (const fingerprints of [undefined, [], 'fp-a', 123]) {
+      const body: Record<string, unknown> = {
+        targetSurface: 'agents/ba.md',
+        altitude: 'agent-prompt',
+        proposalText: 'text',
+      };
+      if (fingerprints !== undefined) body.fingerprints = fingerprints;
 
-  it('returns 400 when targetSurface is missing and creates no proposal', async () => {
-    const res = await POST(buildRequest(PROJECT, { altitude: 'skill-text' }));
+      const res = await POST(buildRequest(PROJECT_ID, body));
+
+      expect(res.status).toBe(400);
+      const { success, error } = await res.json();
+      expect(success).toBe(false);
+      expect(error.code).toBe('VALIDATION_ERROR');
+    }
+  });
+
+  it('returns 400 when targetSurface is missing', async () => {
+    await corroborate('fp-notarget', 'notarget');
+
+    const res = await POST(
+      buildRequest(PROJECT_ID, {
+        fingerprints: ['fp-notarget'],
+        altitude: 'agent-prompt',
+        proposalText: 'text',
+      })
+    );
 
     expect(res.status).toBe(400);
     const { success, error } = await res.json();
     expect(success).toBe(false);
     expect(error.code).toBe('VALIDATION_ERROR');
-    expect(store.proposals).toHaveLength(0);
   });
 
   it.each(['file-text', 'skilltext', '', 'SKILL-TEXT', 'agent'])(
     'returns 400 when altitude "%s" is outside skill-text|agent-prompt|hook',
     async (altitude) => {
-      seedLearning({ status: 'open' });
+      await corroborate('fp-badaltitude', 'badaltitude');
 
       const res = await POST(
-        buildRequest(PROJECT, { targetSurface: 'skill:defensive-coding', altitude }),
+        buildRequest(PROJECT_ID, {
+          fingerprints: ['fp-badaltitude'],
+          targetSurface: 'agents/ba.md',
+          altitude,
+          proposalText: 'text',
+        })
       );
 
       expect(res.status).toBe(400);
       const { success, error } = await res.json();
       expect(success).toBe(false);
       expect(error.code).toBe('VALIDATION_ERROR');
-      expect(store.proposals).toHaveLength(0);
-    },
+    }
   );
 
-  it.each(['skill-text', 'agent-prompt', 'hook'])(
-    'accepts the valid altitude "%s"',
-    async (altitude) => {
-      seedLearning({ status: 'open', targetSurface: `surface-${altitude}` });
+  it('returns 400 when proposalText is missing or empty', async () => {
+    await corroborate('fp-notext', 'notext');
 
-      const res = await POST(
-        buildRequest(PROJECT, { targetSurface: `surface-${altitude}`, altitude }),
-      );
+    for (const proposalText of [undefined, '']) {
+      const body: Record<string, unknown> = {
+        fingerprints: ['fp-notext'],
+        targetSurface: 'agents/ba.md',
+        altitude: 'agent-prompt',
+      };
+      if (proposalText !== undefined) body.proposalText = proposalText;
 
-      expect(res.status).toBe(201);
-    },
-  );
+      const res = await POST(buildRequest(PROJECT_ID, body));
 
-  // ── AC5: no live learnings -> 400, no silent empty proposal ────────────────
+      expect(res.status).toBe(400);
+      const { success, error } = await res.json();
+      expect(success).toBe(false);
+      expect(error.code).toBe('VALIDATION_ERROR');
+    }
+  });
 
   it.each([
-    ['the surface has no learnings at all', [] as string[]],
-    ['the surface has only resolved/dismissed learnings', ['resolved', 'dismissed']],
-  ])('returns 400 with a "no live learnings" message when %s', async (_label, statuses) => {
-    for (const status of statuses) seedLearning({ status });
-
+    ['missing', null],
+    ['an empty string', ''],
+    ['invalid (contains a space)', 'bad id'],
+  ])('returns 400 VALIDATION_ERROR when the X-Project-ID header is %s', async (_label, projectId) => {
     const res = await POST(
-      buildRequest(PROJECT, { targetSurface: 'skill:defensive-coding', altitude: 'skill-text' }),
+      buildRequest(projectId as string | null, {
+        fingerprints: ['fp-anything'],
+        targetSurface: 'agents/ba.md',
+        altitude: 'agent-prompt',
+        proposalText: 'text',
+      })
     );
 
     expect(res.status).toBe(400);
     const { success, error } = await res.json();
     expect(success).toBe(false);
-    expect(error.message.toLowerCase()).toContain('no live learnings');
-    // No proposal was drafted.
-    expect(store.proposals).toHaveLength(0);
-  });
-
-  // ── AC6: resumed round is idempotent ──────────────────────────────────────
-
-  it('resumes an existing open draft instead of creating a second one for the same surface', async () => {
-    const existing = seedProposal({ status: 'draft' });
-    seedLearning({ status: 'open' });
-    seedLearning({ status: 'open' });
-
-    const res = await POST(
-      buildRequest(PROJECT, { targetSurface: 'skill:defensive-coding', altitude: 'skill-text' }),
-    );
-
-    // Idempotent resume: not an error, references the pre-existing draft.
-    expect([200, 201]).toContain(res.status);
-    const { data } = await res.json();
-    expect(data.id).toBe(existing.id);
-
-    // Exactly one draft proposal exists for this (project, surface).
-    const drafts = store.proposals.filter(
-      (p) => p.projectId === PROJECT && p.targetSurface === 'skill:defensive-coding' && p.status === 'draft',
-    );
-    expect(drafts).toHaveLength(1);
+    expect(error.code).toBe('VALIDATION_ERROR');
   });
 });

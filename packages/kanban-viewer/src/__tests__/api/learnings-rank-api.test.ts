@@ -51,6 +51,15 @@ async function seed(
     createdAt?: Date;
   } = {}
 ) {
+  // RetroLearning.fingerprint is a real FK to Fingerprint.slug (Phase A's
+  // global_fingerprint_tuning migration) — ensure the parent row exists
+  // before inserting a learning that references it.
+  await prisma.fingerprint.upsert({
+    where: { slug: fingerprint },
+    update: {},
+    create: { slug: fingerprint, pattern: opts.pattern ?? `pat:${fingerprint}`, severity: opts.severity ?? 'high' },
+  });
+
   return prisma.retroLearning.create({
     data: {
       projectId,

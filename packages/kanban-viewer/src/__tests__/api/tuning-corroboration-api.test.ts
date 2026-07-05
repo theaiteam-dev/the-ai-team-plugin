@@ -1,51 +1,57 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { prisma } from '@/lib/db';
-import { getCorroboration } from '@/lib/corroboration';
+import { getCorroboration, CORROBORATION_THRESHOLD } from '@/lib/corroboration';
 import { GET } from '@/app/api/tuning/corroboration/route';
 
 /**
- * Integration tests for WI-212: the corroboration signal.
+ * Integration tests for the Phase A corroboration signal (global,
+ * fingerprint-centric — see /tmp/.../phase-a-spec.md "Target model").
  *
  * Two surfaces are under test:
- *   1. getCorroboration(projectId, fingerprint) — the shared lib in
- *      packages/kanban-viewer/src/lib/corroboration.ts. It is the single source
- *      of truth for the ">=3 in-project OR >=1 cross-project" threshold that
- *      FR-8 resurfacing and FR-9/FR-15 promotion gating both depend on, so the
- *      threshold logic is asserted here directly rather than only through HTTP.
- *   2. GET /api/tuning/corroboration — a thin route wrapper over getCorroboration
- *      (X-Project-ID + fingerprint validation, envelope), following the
- *      src/app/api/learnings/rank/route.ts conventions.
+ *   1. getCorroboration(fingerprint) — the shared lib in
+ *      packages/kanban-viewer/src/lib/corroboration.ts. It is the single
+ *      source of truth for the corroboration threshold: a fingerprint is
+ *      corroborated once its learnings span CORROBORATION_THRESHOLD (3)
+ *      DISTINCT missions, GLOBALLY (no project split, no per-project
+ *      counting) — rows with a null missionId (backfill rows) never count.
+ *   2. GET /api/tuning/corroboration — a thin route wrapper over
+ *      getCorroboration (X-Project-ID + fingerprint validation, envelope).
+ *      The project header is still required for auth consistency with the
+ *      rest of the API, but it does NOT scope the corroboration count.
  *
- * These run against the real SQLite dev DB (like the rank/schema tests) ON
- * PURPOSE: the ACs — in-project COUNT, cross-project presence, and the derived
- * corroborated flag — all execute inside the DB query. A mocked Prisma client
- * would return whatever rows the test handed it, so deleting the cross-project
- * scoping or miscounting would not fail a mocked test. Seeding real rows across
- * two projects and asserting the aggregate is the only way to verify the ACs.
+ * These run against the real SQLite dev DB ON PURPOSE: the ACs — the
+ * DISTINCT missionId aggregation and the derived corroborated flag — all
+ * execute inside the DB query. A mocked Prisma client would return whatever
+ * rows the test handed it, so miscounting or losing the missionId-NOT-NULL
+ * filter would not fail a mocked test.
  *
- * Rows are inserted directly via the Prisma client (not the capture route), so
- * the ownership guard on POST /api/learnings does not apply here.
- *
- * Envelope: the route follows the rank sibling — { success: true, data: {...} }
- * where data = { inProjectHits, crossProject, corroborated }.
+ * Rows are inserted directly via the Prisma client (not the capture route),
+ * so the ownership guard on POST /api/learnings does not apply here. Each
+ * RetroLearning row's `fingerprint` is a real FK to Fingerprint.slug (Stage 1
+ * migration), so every fingerprint used here is seeded first.
  */
 
 const P1 = 'test-corrob-p1';
 const P2 = 'test-corrob-p2';
 const FP = 'api-input-validation-depth';
 
+async function seedFingerprint(slug: string) {
+  return prisma.fingerprint.upsert({
+    where: { slug },
+    update: {},
+    create: { slug, pattern: `pat:${slug}`, severity: 'medium' },
+  });
+}
+
 async function seed(
   projectId: string,
   fingerprint: string,
-  opts: { title?: string; detail?: string | null; status?: string } = {}
+  opts: { missionId?: string | null; title?: string; detail?: string | null; status?: string } = {}
 ) {
   return prisma.retroLearning.create({
     data: {
       projectId,
-      // missionId stays null so the @@unique([projectId, missionId, fingerprint])
-      // constraint (NULLs distinct in SQLite) lets us stack many rows of one
-      // fingerprint in one project to exercise the in-project hit count.
-      missionId: null,
+      missionId: opts.missionId ?? null,
       source: 'stockwell',
       severity: 'high',
       attributedAgent: 'ba',
@@ -73,6 +79,21 @@ function buildRequest(
   return new Request(url.toString(), { method: 'GET', headers });
 }
 
+async function seedMission(projectId: string, missionId: string) {
+  await prisma.mission.upsert({
+    where: { id: missionId },
+    update: {},
+    create: {
+      id: missionId,
+      name: `Mission ${missionId}`,
+      state: 'running',
+      prdPath: '/prd/test.md',
+      projectId,
+      startedAt: new Date(),
+    },
+  });
+}
+
 beforeEach(async () => {
   for (const id of [P1, P2]) {
     await prisma.project.upsert({
@@ -82,99 +103,129 @@ beforeEach(async () => {
     });
   }
   await prisma.retroLearning.deleteMany({ where: { projectId: { in: [P1, P2] } } });
+  await prisma.mission.deleteMany({ where: { projectId: { in: [P1, P2] } } });
+  await seedFingerprint(FP);
 });
 
-describe('getCorroboration(projectId, fingerprint)', () => {
-  it('returns all-zero/false for a fingerprint with no rows anywhere', async () => {
-    const result = await getCorroboration(P1, FP);
-    expect(result).toEqual({ inProjectHits: 0, crossProject: false, corroborated: false });
+describe('getCorroboration(fingerprint)', () => {
+  it('returns zero/false for a fingerprint with no rows anywhere', async () => {
+    const result = await getCorroboration(FP);
+    expect(result).toEqual({ distinctMissions: 0, corroborated: false });
   });
 
-  it('is not corroborated at 2 in-project hits with no cross-project rows', async () => {
-    await seed(P1, FP);
-    await seed(P1, FP);
+  it('excludes rows with a null missionId from the distinct-mission count', async () => {
+    await seed(P1, FP, { missionId: null });
+    await seed(P1, FP, { missionId: null });
+    await seed(P1, FP, { missionId: null });
 
-    const result = await getCorroboration(P1, FP);
-    expect(result).toMatchObject({ inProjectHits: 2, crossProject: false, corroborated: false });
+    const result = await getCorroboration(FP);
+    expect(result).toEqual({ distinctMissions: 0, corroborated: false });
   });
 
-  it('is corroborated at 3 in-project hits via the >=3 threshold alone (no cross-project)', async () => {
-    await seed(P1, FP);
-    await seed(P1, FP);
-    await seed(P1, FP);
+  it('is not corroborated at 2 distinct missions', async () => {
+    await seedMission(P1, 'M-corrob-1');
+    await seedMission(P1, 'M-corrob-2');
+    await seed(P1, FP, { missionId: 'M-corrob-1' });
+    await seed(P1, FP, { missionId: 'M-corrob-2' });
 
-    const result = await getCorroboration(P1, FP);
-    expect(result).toMatchObject({ inProjectHits: 3, crossProject: false, corroborated: true });
+    const result = await getCorroboration(FP);
+    expect(result).toMatchObject({ distinctMissions: 2, corroborated: false });
   });
 
-  it('is corroborated at 1 in-project hit when the same fingerprint exists under another project', async () => {
-    await seed(P1, FP);
-    await seed(P2, FP);
+  it('is corroborated at exactly the threshold (3) distinct missions in ONE project', async () => {
+    await seedMission(P1, 'M-corrob-3a');
+    await seedMission(P1, 'M-corrob-3b');
+    await seedMission(P1, 'M-corrob-3c');
+    await seed(P1, FP, { missionId: 'M-corrob-3a' });
+    await seed(P1, FP, { missionId: 'M-corrob-3b' });
+    await seed(P1, FP, { missionId: 'M-corrob-3c' });
 
-    const result = await getCorroboration(P1, FP);
-    expect(result).toMatchObject({ inProjectHits: 1, crossProject: true, corroborated: true });
+    const result = await getCorroboration(FP);
+    expect(result).toEqual({ distinctMissions: 3, corroborated: true });
   });
 
-  it('is corroborated purely on cross-project presence when the requesting project has zero rows', async () => {
-    await seed(P2, FP);
+  it('is corroborated at the threshold when the 3 distinct missions span TWO different projects (global, not per-project)', async () => {
+    await seedMission(P1, 'M-corrob-cross-a');
+    await seedMission(P1, 'M-corrob-cross-b');
+    await seedMission(P2, 'M-corrob-cross-c');
+    await seed(P1, FP, { missionId: 'M-corrob-cross-a' });
+    await seed(P1, FP, { missionId: 'M-corrob-cross-b' });
+    await seed(P2, FP, { missionId: 'M-corrob-cross-c' });
 
-    const result = await getCorroboration(P1, FP);
-    expect(result).toMatchObject({ inProjectHits: 0, crossProject: true, corroborated: true });
+    const result = await getCorroboration(FP);
+    expect(result).toEqual({ distinctMissions: 3, corroborated: true });
   });
 
-  it('never sets crossProject from the requesting project\'s own rows, even at high hit counts', async () => {
-    // 10 rows, all in P1, none elsewhere: crossProject counts ONLY rows whose
-    // projectId differs from the requester, so it must stay false regardless of
-    // how many in-project rows exist (tenant isolation of the signal).
-    for (let i = 0; i < 10; i++) await seed(P1, FP);
+  it('does not double-count multiple rows from the same mission (distinct, not row count)', async () => {
+    await seedMission(P1, 'M-corrob-dup');
+    // Two learnings referencing the SAME mission (one per project, since
+    // @@unique([projectId, missionId, fingerprint]) forbids a second row for
+    // the identical (project, mission, fingerprint) triple) — still just 1
+    // distinct mission for the corroboration count.
+    await seed(P1, FP, { missionId: 'M-corrob-dup' });
+    await seed(P2, FP, { missionId: 'M-corrob-dup' });
 
-    const result = await getCorroboration(P1, FP);
-    expect(result).toMatchObject({ inProjectHits: 10, crossProject: false });
+    const result = await getCorroboration(FP);
+    expect(result).toMatchObject({ distinctMissions: 1, corroborated: false });
   });
 
-  it('counts only the requested fingerprint, not other fingerprints in the project', async () => {
-    await seed(P1, FP);
-    await seed(P1, 'some-other-fingerprint');
-    await seed(P1, 'some-other-fingerprint');
+  it('counts only the requested fingerprint, not other fingerprints', async () => {
+    await seedFingerprint('some-other-fingerprint');
+    await seedMission(P1, 'M-corrob-scope-a');
+    await seedMission(P1, 'M-corrob-scope-b');
+    await seedMission(P1, 'M-corrob-scope-c');
+    await seed(P1, FP, { missionId: 'M-corrob-scope-a' });
+    await seed(P1, 'some-other-fingerprint', { missionId: 'M-corrob-scope-b' });
+    await seed(P1, 'some-other-fingerprint', { missionId: 'M-corrob-scope-c' });
 
-    const result = await getCorroboration(P1, FP);
-    expect(result.inProjectHits).toBe(1);
+    const result = await getCorroboration(FP);
+    expect(result.distinctMissions).toBe(1);
+  });
+
+  it('exports CORROBORATION_THRESHOLD as the single source of truth (currently 3)', () => {
+    expect(CORROBORATION_THRESHOLD).toBe(3);
   });
 });
 
 describe('GET /api/tuning/corroboration', () => {
   it('returns 200 with the corroboration object for a valid fingerprint + X-Project-ID', async () => {
-    await seed(P1, FP);
-    await seed(P1, FP);
-    await seed(P1, FP);
+    await seedMission(P1, 'M-route-a');
+    await seedMission(P1, 'M-route-b');
+    await seedMission(P1, 'M-route-c');
+    await seed(P1, FP, { missionId: 'M-route-a' });
+    await seed(P1, FP, { missionId: 'M-route-b' });
+    await seed(P1, FP, { missionId: 'M-route-c' });
 
     const res = await GET(buildRequest(P1, FP));
 
     expect(res.status).toBe(200);
     const { success, data } = await res.json();
     expect(success).toBe(true);
-    expect(data).toMatchObject({ inProjectHits: 3, crossProject: false, corroborated: true });
+    expect(data).toEqual({ distinctMissions: 3, corroborated: true });
   });
 
-  it('reflects cross-project corroboration through the route', async () => {
-    await seed(P1, FP);
-    await seed(P2, FP);
+  it('is not scoped by the requesting project — the count reflects missions across every project', async () => {
+    await seedMission(P1, 'M-route-global-a');
+    await seedMission(P2, 'M-route-global-b');
+    await seed(P1, FP, { missionId: 'M-route-global-a' });
+    await seed(P2, FP, { missionId: 'M-route-global-b' });
 
-    const res = await GET(buildRequest(P1, FP));
+    const resFromP1 = await GET(buildRequest(P1, FP));
+    const resFromP2 = await GET(buildRequest(P2, FP));
 
-    expect(res.status).toBe(200);
-    const { data } = await res.json();
-    expect(data).toMatchObject({ inProjectHits: 1, crossProject: true, corroborated: true });
+    const { data: dataFromP1 } = await resFromP1.json();
+    const { data: dataFromP2 } = await resFromP2.json();
+    expect(dataFromP1).toEqual({ distinctMissions: 2, corroborated: false });
+    expect(dataFromP2).toEqual(dataFromP1);
   });
 
   it('never leaks any other project\'s row fields — only the aggregate counts and the flag', async () => {
-    // A cross-project row with distinctive title/detail must contribute to the
-    // signal (crossProject:true) without any of its content appearing in the
-    // response body (NFR-4 tenant isolation: counts, not row content).
     const SECRET_TITLE = 'LEAK-CANARY-TITLE-p2';
     const SECRET_DETAIL = 'LEAK-CANARY-DETAIL-p2';
-    await seed(P1, FP);
-    await seed(P2, FP, { title: SECRET_TITLE, detail: SECRET_DETAIL });
+    await seedMission(P1, 'M-leak-a');
+    await seedMission(P2, 'M-leak-b');
+    await seed(P1, FP, { missionId: 'M-leak-a' });
+    await seed(P2, FP, { missionId: 'M-leak-b', title: SECRET_TITLE, detail: SECRET_DETAIL });
 
     const res = await GET(buildRequest(P1, FP));
     expect(res.status).toBe(200);
@@ -182,11 +233,9 @@ describe('GET /api/tuning/corroboration', () => {
     const bodyText = JSON.stringify(await res.clone().json());
     expect(bodyText).not.toContain(SECRET_TITLE);
     expect(bodyText).not.toContain(SECRET_DETAIL);
-    expect(bodyText).not.toContain(P2);
 
     const { data } = await res.json();
-    expect(Object.keys(data).sort()).toEqual(['corroborated', 'crossProject', 'inProjectHits']);
-    expect(data).toMatchObject({ inProjectHits: 1, crossProject: true, corroborated: true });
+    expect(Object.keys(data).sort()).toEqual(['corroborated', 'distinctMissions']);
   });
 
   it.each([

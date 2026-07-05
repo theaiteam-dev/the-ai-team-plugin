@@ -5,58 +5,85 @@ import { prisma } from '@/lib/db';
 import { GET } from '@/app/api/tuning/candidates/route';
 
 /**
- * Integration tests for WI-214: GET /api/tuning/candidates — the tuning walk's
- * ordered list (FR-8).
+ * Integration tests for GET /api/tuning/candidates — the tuning walk's
+ * ordered list (FR-8), updated for the collapsed verb set's durable defer
+ * watermark (reject/demote and the old Fingerprint.status dismiss/resurface
+ * toggle are gone).
  *
- * The route returns recurrence-ranked LIVE fingerprints (same semantics as
- * /api/learnings/rank: >=1 open/recurred learning, hits = full historical row
- * count incl resolved/dismissed, ordered by hits DESC) PLUS previously-dismissed
- * fingerprints that new evidence RESURFACES. A fingerprint whose latest
- * TuningProposal is status='dismissed' is excluded by default (the operator
- * already said "no") UNLESS it resurfaces — and resurfacing happens when it
- * accrued >=3 new RetroLearning rows since dismissal OR gained a cross-project
- * hit (WI-212 getCorroboration). Resurfaced entries carry resurfaced:true and
- * the original dismissalNote so the operator re-decides with memory.
+ * The route returns recurrence-ranked GLOBAL fingerprints (across every
+ * project — tuning improves the plugin itself, a surface shared by every
+ * installation): >=1 open/recurred learning, hits = full historical row
+ * count incl resolved/dismissed, ordered by hits DESC, each row carrying
+ * `distinctMissions`/`corroborated`/`deferredAtMissions`/`actionable`. Every
+ * candidate is always listed — deferring a fingerprint never removes it from
+ * this response, it only flips `actionable` to false until distinctMissions
+ * climbs DEFER_MARGIN past the watermark recorded at defer time.
+ * ?actionable=true restricts the response to `actionable: true` rows only.
  *
- * These run against the real SQLite dev DB (like learnings-rank-api.test.ts) ON
- * PURPOSE: the ACs — recurrence grouping, the dismissal-exclusion join, the
- * "new hits since dismissal" time comparison, and the cross-project resurfacing
- * signal — all execute inside DB queries + the getCorroboration lib. A mocked
- * Prisma client would return whatever rows the test handed it, so deleting the
- * dismissal filter or the resurfacing threshold would not fail a mocked test.
+ * These run against the real SQLite dev DB ON PURPOSE: the ACs — recurrence
+ * grouping and the watermark-vs-distinctMissions comparison — all execute
+ * inside DB queries. A mocked Prisma client would return whatever rows the
+ * test handed it, so deleting the watermark filter or the corroboration
+ * threshold would not fail a mocked test.
  *
- * DISMISSAL CLOCK — why PAST/FUTURE instead of pinning proposal.updatedAt:
- * "new hits since dismissal" = RetroLearning rows with createdAt later than the
- * dismissed proposal's updatedAt. Rather than fight Prisma's @updatedAt (whether
- * an explicitly-supplied updatedAt is honored on create is version-dependent),
- * each dismissed proposal is created live so its updatedAt is ~now (2026). We
- * then bracket it widely: pre-dismissal learnings are dated in the PAST (2020,
- * before the dismissal clock) and post-dismissal "new" learnings in the FUTURE
- * (2030, after it). The count of rows-after-dismissal is therefore deterministic
- * regardless of the exact dismissal instant, as long as it falls in (2020, 2030)
- * — which "now" always does for this suite.
- *
- * The fingerprint -> dismissed-proposal link is the schema's only such edge:
- * RetroLearning.proposalId -> TuningProposal.id. Pre-dismissal rows carry that
- * proposalId; post-dismissal recurrences are unlinked (they arrived after the
- * proposal was already dismissed) and are associated back only by fingerprint.
+ * Every RetroLearning.fingerprint is a real FK to Fingerprint.slug, so every
+ * fingerprint used here is seeded as a Fingerprint row first (never deferred
+ * by default, or deferred at a given watermark where the test needs it).
  */
 
 const PROJECT_ID = 'test-candidates-project';
 const OTHER_PROJECT_ID = 'test-candidates-project-other';
 
-// Bracket the (~now) dismissal clock: PAST precedes it, FUTURE follows it.
-const PAST = new Date('2020-01-01T00:00:00.000Z');
-const FUTURE = new Date('2030-01-01T00:00:00.000Z');
+// Every fingerprint slug used anywhere in this file — Fingerprint is global
+// now (no projectId), so it must be cleaned up by name in beforeEach or it
+// accumulates across repeated `npm test` runs against the real dev DB.
+const TEST_FINGERPRINTS = [
+  'fp-hot',
+  'fp-cold',
+  'fp-live',
+  'fp-corroborated',
+  'fp-deferred',
+  'fp-resurf',
+  'fp-actionable',
+  'fp-not-yet',
+  'fp-still-deferred',
+];
 
-const DISMISSAL_NOTE = 'taste: we allow this';
-
-function buildRequest(projectId: string | null): Request {
+function buildRequest(projectId: string | null, query: Record<string, string> = {}): Request {
+  const url = new URL('http://localhost:3000/api/tuning/candidates');
+  for (const [key, value] of Object.entries(query)) {
+    url.searchParams.set(key, value);
+  }
   const headers: Record<string, string> = {};
   if (projectId !== null) headers['X-Project-ID'] = projectId;
-  return new Request('http://localhost:3000/api/tuning/candidates', {
-    method: 'GET',
-    headers,
+  return new Request(url.toString(), { method: 'GET', headers });
+}
+
+async function seedFingerprint(slug: string, opts: { deferredAtMissions?: number | null } = {}) {
+  return prisma.fingerprint.upsert({
+    where: { slug },
+    update: { deferredAtMissions: opts.deferredAtMissions ?? null },
+    create: {
+      slug,
+      pattern: `pat:${slug}`,
+      severity: 'medium',
+      deferredAtMissions: opts.deferredAtMissions ?? null,
+    },
+  });
+}
+
+async function seedMission(projectId: string, missionId: string) {
+  return prisma.mission.upsert({
+    where: { id: missionId },
+    update: {},
+    create: {
+      id: missionId,
+      name: `Mission ${missionId}`,
+      state: 'running',
+      prdPath: '/prd/test.md',
+      projectId,
+      startedAt: new Date(),
+    },
   });
 }
 
@@ -65,8 +92,7 @@ async function seedLearning(
   fingerprint: string,
   opts: {
     status?: string;
-    proposalId?: number;
-    createdAt?: Date;
+    missionId?: string | null;
     severity?: string;
     pattern?: string;
     targetSurface?: string;
@@ -75,7 +101,7 @@ async function seedLearning(
   return prisma.retroLearning.create({
     data: {
       projectId,
-      missionId: null,
+      missionId: opts.missionId ?? null,
       source: 'stockwell',
       severity: opts.severity ?? 'high',
       attributedAgent: 'ba',
@@ -85,26 +111,6 @@ async function seedLearning(
       title: `title:${fingerprint}`,
       detail: null,
       status: opts.status ?? 'open',
-      ...(opts.proposalId !== undefined ? { proposalId: opts.proposalId } : {}),
-      ...(opts.createdAt ? { createdAt: opts.createdAt } : {}),
-    },
-  });
-}
-
-async function seedDismissedProposal(
-  projectId: string,
-  opts: { dismissalNote?: string; targetSurface?: string } = {}
-) {
-  // updatedAt is intentionally left to default (~now) — see the DISMISSAL CLOCK
-  // note above; PAST rows precede it and FUTURE rows follow it.
-  return prisma.tuningProposal.create({
-    data: {
-      projectId,
-      targetSurface: opts.targetSurface ?? 'agents/ba.md',
-      altitude: 'agent',
-      proposalText: 'proposal text',
-      status: 'dismissed',
-      dismissalNote: opts.dismissalNote ?? DISMISSAL_NOTE,
     },
   });
 }
@@ -117,22 +123,26 @@ beforeEach(async () => {
       create: { id, name: `Candidates Test Project ${id}` },
     });
   }
-  // Learnings first (they FK to proposals), then proposals.
   await prisma.retroLearning.deleteMany({
     where: { projectId: { in: [PROJECT_ID, OTHER_PROJECT_ID] } },
   });
-  await prisma.tuningProposal.deleteMany({
+  await prisma.fingerprint.deleteMany({ where: { slug: { in: TEST_FINGERPRINTS } } });
+  await prisma.mission.deleteMany({
     where: { projectId: { in: [PROJECT_ID, OTHER_PROJECT_ID] } },
   });
 });
 
 describe('GET /api/tuning/candidates', () => {
-  it('ranks live fingerprints by full-history hits DESC and does not mark them resurfaced', async () => {
+  it('ranks live fingerprints globally by full-history hits DESC, carries distinctMissions/corroborated/actionable, and never defers by default', async () => {
+    await seedFingerprint('fp-hot');
+    await seedFingerprint('fp-cold');
     // fp-hot recurred across history: 2 resolved + 1 recurred = 3 hits (full
-    // history weight, incl resolved), qualifies via its recurred row.
-    await seedLearning(PROJECT_ID, 'fp-hot', { status: 'resolved' });
-    await seedLearning(PROJECT_ID, 'fp-hot', { status: 'resolved' });
-    await seedLearning(PROJECT_ID, 'fp-hot', { status: 'recurred' });
+    // history weight, incl resolved), qualifies via its recurred row. Only 1
+    // distinct mission -> not corroborated -> not actionable.
+    await seedMission(PROJECT_ID, 'M-hot');
+    await seedLearning(PROJECT_ID, 'fp-hot', { status: 'resolved', missionId: 'M-hot' });
+    await seedLearning(PROJECT_ID, 'fp-hot', { status: 'resolved', missionId: null });
+    await seedLearning(PROJECT_ID, 'fp-hot', { status: 'recurred', missionId: null });
     // fp-cold: a single open hit.
     await seedLearning(PROJECT_ID, 'fp-cold', { status: 'open' });
 
@@ -141,25 +151,48 @@ describe('GET /api/tuning/candidates', () => {
     expect(res.status).toBe(200);
     const { success, data } = await res.json();
     expect(success).toBe(true);
-    expect(data.map((r: { fingerprint: string }) => r.fingerprint)).toEqual(['fp-hot', 'fp-cold']);
-    expect(data[0]).toMatchObject({ fingerprint: 'fp-hot', hits: 3 });
-    expect(data[1]).toMatchObject({ fingerprint: 'fp-cold', hits: 1 });
-    // Ordinary (never-dismissed) entries are not resurfaced and carry no note.
-    expect(data[0].resurfaced).toBeFalsy();
-    expect(data[0].dismissalNote ?? null).toBeNull();
+
+    // The candidate set is GLOBAL, so the real dev DB may carry unrelated
+    // fingerprints from other tests/usage — assert on OUR two entries and
+    // their relative order rather than the full array.
+    type Row = {
+      fingerprint: string;
+      hits: number;
+      distinctMissions: number;
+      corroborated: boolean;
+      deferredAtMissions: number | null;
+      actionable: boolean;
+    };
+    const fingerprints = data.map((r: Row) => r.fingerprint);
+    const hotIndex = fingerprints.indexOf('fp-hot');
+    const coldIndex = fingerprints.indexOf('fp-cold');
+    expect(hotIndex).toBeGreaterThanOrEqual(0);
+    expect(coldIndex).toBeGreaterThanOrEqual(0);
+    expect(hotIndex).toBeLessThan(coldIndex);
+
+    const hot = data.find((r: Row) => r.fingerprint === 'fp-hot');
+    const cold = data.find((r: Row) => r.fingerprint === 'fp-cold');
+    expect(hot).toMatchObject({
+      hits: 3,
+      distinctMissions: 1,
+      corroborated: false,
+      deferredAtMissions: null,
+      actionable: false,
+    });
+    expect(cold).toMatchObject({ hits: 1, deferredAtMissions: null });
   });
 
-  it('excludes a dismissed fingerprint by default when it has too few new hits and no cross-project hit', async () => {
+  it('marks a never-deferred corroborated fingerprint actionable, and lists it (not excluded) even though it has never been deferred', async () => {
+    await seedFingerprint('fp-live');
     await seedLearning(PROJECT_ID, 'fp-live', { status: 'open' });
 
-    // fp-dismissed still has open learnings (would pass the rank HAVING) but its
-    // latest proposal is dismissed and only 2 new hits accrued since — below the
-    // >=3 resurfacing threshold, with no cross-project corroboration -> excluded.
-    const proposal = await seedDismissedProposal(PROJECT_ID);
-    await seedLearning(PROJECT_ID, 'fp-dismissed', { status: 'open', proposalId: proposal.id, createdAt: PAST });
-    await seedLearning(PROJECT_ID, 'fp-dismissed', { status: 'open', proposalId: proposal.id, createdAt: PAST });
-    await seedLearning(PROJECT_ID, 'fp-dismissed', { status: 'open', createdAt: FUTURE });
-    await seedLearning(PROJECT_ID, 'fp-dismissed', { status: 'open', createdAt: FUTURE });
+    await seedFingerprint('fp-corroborated');
+    await seedMission(PROJECT_ID, 'M-corrob-a');
+    await seedMission(PROJECT_ID, 'M-corrob-b');
+    await seedMission(PROJECT_ID, 'M-corrob-c');
+    await seedLearning(PROJECT_ID, 'fp-corroborated', { status: 'open', missionId: 'M-corrob-a' });
+    await seedLearning(PROJECT_ID, 'fp-corroborated', { status: 'open', missionId: 'M-corrob-b' });
+    await seedLearning(PROJECT_ID, 'fp-corroborated', { status: 'open', missionId: 'M-corrob-c' });
 
     const res = await GET(buildRequest(PROJECT_ID));
 
@@ -167,17 +200,54 @@ describe('GET /api/tuning/candidates', () => {
     const { data } = await res.json();
     const fingerprints = data.map((r: { fingerprint: string }) => r.fingerprint);
     expect(fingerprints).toContain('fp-live');
-    expect(fingerprints).not.toContain('fp-dismissed');
+    expect(fingerprints).toContain('fp-corroborated');
+    const corroborated = data.find((r: { fingerprint: string }) => r.fingerprint === 'fp-corroborated');
+    expect(corroborated).toMatchObject({ corroborated: true, actionable: true, deferredAtMissions: null });
   });
 
-  it('resurfaces a dismissed fingerprint that accrued >=3 new hits, with resurfaced flag, original note, and full-history hits', async () => {
-    const proposal = await seedDismissedProposal(PROJECT_ID, { dismissalNote: DISMISSAL_NOTE });
-    // 2 pre-dismissal rows (linked) + 3 new post-dismissal rows = 5 total hits.
-    await seedLearning(PROJECT_ID, 'fp-resurf', { status: 'resolved', proposalId: proposal.id, createdAt: PAST });
-    await seedLearning(PROJECT_ID, 'fp-resurf', { status: 'resolved', proposalId: proposal.id, createdAt: PAST });
-    await seedLearning(PROJECT_ID, 'fp-resurf', { status: 'open', createdAt: FUTURE });
-    await seedLearning(PROJECT_ID, 'fp-resurf', { status: 'open', createdAt: FUTURE });
-    await seedLearning(PROJECT_ID, 'fp-resurf', { status: 'open', createdAt: FUTURE });
+  it('a deferred fingerprint below watermark+DEFER_MARGIN is listed (never hidden) but marked actionable:false', async () => {
+    // Deferred at distinctMissions=3 (the watermark). Still only 3 distinct
+    // missions now, spanning two DIFFERENT projects — corroborated globally,
+    // but below the watermark+DEFER_MARGIN(2)=5 resurface bar.
+    await seedFingerprint('fp-deferred', { deferredAtMissions: 3 });
+    await seedMission(PROJECT_ID, 'M-def-a');
+    await seedMission(PROJECT_ID, 'M-def-b');
+    await seedMission(OTHER_PROJECT_ID, 'M-def-c');
+    await seedLearning(PROJECT_ID, 'fp-deferred', { status: 'resolved', missionId: 'M-def-a' });
+    await seedLearning(PROJECT_ID, 'fp-deferred', { status: 'open', missionId: 'M-def-b' });
+    await seedLearning(OTHER_PROJECT_ID, 'fp-deferred', { status: 'open', missionId: 'M-def-c' });
+
+    const res = await GET(buildRequest(PROJECT_ID));
+
+    expect(res.status).toBe(200);
+    const { data } = await res.json();
+    const entry = data.find((r: { fingerprint: string }) => r.fingerprint === 'fp-deferred');
+    expect(entry).toBeDefined();
+    expect(entry).toMatchObject({
+      fingerprint: 'fp-deferred',
+      hits: 3,
+      distinctMissions: 3,
+      corroborated: true,
+      deferredAtMissions: 3,
+      actionable: false,
+    });
+  });
+
+  it('a deferred fingerprint becomes actionable again once distinctMissions climbs DEFER_MARGIN past the watermark', async () => {
+    // Deferred at distinctMissions=3; now at 5 (3 + DEFER_MARGIN(2)) -> back
+    // over the resurface bar -> actionable again.
+    await seedFingerprint('fp-resurf', { deferredAtMissions: 3 });
+
+    await seedMission(PROJECT_ID, 'M-resurf-a');
+    await seedMission(PROJECT_ID, 'M-resurf-b');
+    await seedMission(OTHER_PROJECT_ID, 'M-resurf-c');
+    await seedMission(PROJECT_ID, 'M-resurf-d');
+    await seedMission(PROJECT_ID, 'M-resurf-e');
+    await seedLearning(PROJECT_ID, 'fp-resurf', { status: 'resolved', missionId: 'M-resurf-a' });
+    await seedLearning(PROJECT_ID, 'fp-resurf', { status: 'open', missionId: 'M-resurf-b' });
+    await seedLearning(OTHER_PROJECT_ID, 'fp-resurf', { status: 'open', missionId: 'M-resurf-c' });
+    await seedLearning(PROJECT_ID, 'fp-resurf', { status: 'open', missionId: 'M-resurf-d' });
+    await seedLearning(PROJECT_ID, 'fp-resurf', { status: 'open', missionId: 'M-resurf-e' });
 
     const res = await GET(buildRequest(PROJECT_ID));
 
@@ -187,30 +257,49 @@ describe('GET /api/tuning/candidates', () => {
     expect(entry).toBeDefined();
     expect(entry).toMatchObject({
       fingerprint: 'fp-resurf',
-      resurfaced: true,
-      dismissalNote: DISMISSAL_NOTE,
       hits: 5,
+      distinctMissions: 5,
+      corroborated: true,
+      deferredAtMissions: 3,
+      actionable: true,
     });
   });
 
-  it('resurfaces a dismissed fingerprint on a cross-project hit even with fewer than 3 new hits (uses the WI-212 corroboration signal)', async () => {
-    const proposal = await seedDismissedProposal(PROJECT_ID, { dismissalNote: DISMISSAL_NOTE });
-    // Only 2 new in-project hits (below the >=3 threshold): resurfacing here can
-    // ONLY come from the cross-project signal, so this proves getCorroboration
-    // is actually wired in rather than the threshold being re-derived locally.
-    await seedLearning(PROJECT_ID, 'fp-xproj', { status: 'open', proposalId: proposal.id, createdAt: PAST });
-    await seedLearning(PROJECT_ID, 'fp-xproj', { status: 'open', createdAt: FUTURE });
-    await seedLearning(PROJECT_ID, 'fp-xproj', { status: 'open', createdAt: FUTURE });
-    // The same fingerprint under a DIFFERENT project -> crossProject === true.
-    await seedLearning(OTHER_PROJECT_ID, 'fp-xproj', { status: 'open' });
+  it('?actionable=true restricts the response to actionable:true rows only (corroborated AND past any defer watermark)', async () => {
+    await seedFingerprint('fp-actionable');
+    await seedFingerprint('fp-not-yet');
+    // fp-still-deferred: corroborated (3 distinct missions) but deferred at
+    // watermark=3 with no new evidence since -> not actionable.
+    await seedFingerprint('fp-still-deferred', { deferredAtMissions: 3 });
+    await seedMission(PROJECT_ID, 'M-action-a');
+    await seedMission(PROJECT_ID, 'M-action-b');
+    await seedMission(PROJECT_ID, 'M-action-c');
+    await seedLearning(PROJECT_ID, 'fp-actionable', { status: 'open', missionId: 'M-action-a' });
+    await seedLearning(PROJECT_ID, 'fp-actionable', { status: 'open', missionId: 'M-action-b' });
+    await seedLearning(PROJECT_ID, 'fp-actionable', { status: 'open', missionId: 'M-action-c' });
+    await seedLearning(PROJECT_ID, 'fp-not-yet', { status: 'open', missionId: 'M-action-a' });
+    await seedLearning(PROJECT_ID, 'fp-still-deferred', { status: 'open', missionId: 'M-action-a' });
+    await seedLearning(PROJECT_ID, 'fp-still-deferred', { status: 'open', missionId: 'M-action-b' });
+    await seedLearning(PROJECT_ID, 'fp-still-deferred', { status: 'open', missionId: 'M-action-c' });
 
-    const res = await GET(buildRequest(PROJECT_ID));
+    const resAll = await GET(buildRequest(PROJECT_ID));
+    const { data: allData } = await resAll.json();
+    expect(allData.map((r: { fingerprint: string }) => r.fingerprint)).toEqual(
+      expect.arrayContaining(['fp-actionable', 'fp-not-yet', 'fp-still-deferred'])
+    );
 
-    expect(res.status).toBe(200);
-    const { data } = await res.json();
-    const entry = data.find((r: { fingerprint: string }) => r.fingerprint === 'fp-xproj');
-    expect(entry).toBeDefined();
-    expect(entry).toMatchObject({ resurfaced: true, dismissalNote: DISMISSAL_NOTE });
+    const resActionable = await GET(buildRequest(PROJECT_ID, { actionable: 'true' }));
+    expect(resActionable.status).toBe(200);
+    const { data } = await resActionable.json();
+    // The candidate set is GLOBAL, so the real dev DB may carry other
+    // already-actionable fingerprints — assert on OUR three entries rather
+    // than the full array length.
+    type Row = { fingerprint: string; actionable: boolean };
+    const ourFingerprints = data
+      .filter((r: Row) => ['fp-actionable', 'fp-not-yet', 'fp-still-deferred'].includes(r.fingerprint))
+      .map((r: Row) => r.fingerprint);
+    expect(ourFingerprints).toEqual(['fp-actionable']);
+    expect(data.every((r: Row) => r.actionable)).toBe(true);
   });
 
   it.each([
@@ -227,15 +316,16 @@ describe('GET /api/tuning/candidates', () => {
     expect(error.code).toBe('VALIDATION_ERROR');
   });
 
-  it('imports the corroboration threshold from the shared lib rather than re-deriving it', async () => {
-    // WI-214 MUST import getCorroboration from WI-212's lib for cross-project
-    // detection and never re-derive the >=3-OR-cross-project threshold locally
-    // (single-source-of-truth constraint from the item context).
+  it('imports the corroboration threshold and defer margin from the shared lib rather than re-deriving them', async () => {
+    // The route MUST import CORROBORATION_THRESHOLD and DEFER_MARGIN from the
+    // shared lib and never re-derive either locally (single-source-of-truth
+    // constraint).
     const routeSource = readFileSync(
       join(process.cwd(), 'src/app/api/tuning/candidates/route.ts'),
       'utf-8'
     );
     expect(routeSource).toMatch(/from ['"]@\/lib\/corroboration['"]/);
-    expect(routeSource).toMatch(/getCorroboration/);
+    expect(routeSource).toMatch(/CORROBORATION_THRESHOLD/);
+    expect(routeSource).toMatch(/DEFER_MARGIN/);
   });
 });
