@@ -291,7 +291,7 @@ describe('POST /api/learnings', () => {
       expect(data.error.code).toBe('MISSION_NOT_FOUND');
       // Sourced from createMissionNotFoundError (src/lib/errors.ts) rather than
       // an inline object literal — message content is preserved.
-      expect(data.error.message).toBe(`Mission ${missionId} not found`);
+      expect(data.error.message).toBe(`Mission '${missionId}' not found`);
       expect(mockPrisma.retroLearning.create).not.toHaveBeenCalled();
 
       // The ownership lookup must be scoped to the requesting project.

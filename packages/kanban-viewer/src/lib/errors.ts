@@ -352,7 +352,7 @@ export function createProjectNotFoundError(projectId: string): ApiError {
 export function createMissionNotFoundError(missionId: string): ApiError {
   return new ApiError(
     ErrorCodes.MISSION_NOT_FOUND,
-    `Mission ${missionId} not found`,
+    `Mission '${missionId}' not found`,
     { missionId }
   );
 }
