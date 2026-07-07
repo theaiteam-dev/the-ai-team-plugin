@@ -134,6 +134,18 @@ export async function POST(request: Request) {
       }
     }
 
+    // RetroLearning.fingerprint is a required FK to Fingerprint.slug, so the
+    // Fingerprint row must exist before the insert — otherwise a brand-new
+    // fingerprint slug fails the FK and surfaces as a 500 (this is exactly what
+    // broke on a fresh database). Ensure it here; create carries this capture's
+    // pattern/severity, update is a no-op so we never clobber values another
+    // surface (e.g. a merge) may own.
+    await prisma.fingerprint.upsert({
+      where: { slug: data.fingerprint },
+      update: {},
+      create: { slug: data.fingerprint, pattern: data.pattern, severity: data.severity },
+    });
+
     // The findFirst above is a fast-path, not a guarantee: two concurrent POSTs
     // can both pass it before either inserts. The @@unique([projectId, missionId,
     // fingerprint]) index is the real dedupe backstop — on a P2002 collision,

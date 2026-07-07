@@ -37,6 +37,9 @@ const mockPrisma = vi.hoisted(() => ({
     findUnique: vi.fn(),
     create: vi.fn(),
   },
+  fingerprint: {
+    upsert: vi.fn(),
+  },
 }));
 
 vi.mock('@/lib/db', () => ({
@@ -121,6 +124,14 @@ describe('POST /api/learnings', () => {
         title: 'B.A. skips error handling on async calls',
         detail: 'Three rejections traced to unhandled promise rejections.',
       }),
+    });
+
+    // The Fingerprint row (RetroLearning.fingerprint's required FK target) must
+    // be ensured before the insert, or a brand-new slug fails the FK with a 500.
+    expect(mockPrisma.fingerprint.upsert).toHaveBeenCalledWith({
+      where: { slug: 'fp-create' },
+      update: {},
+      create: { slug: 'fp-create', pattern: 'missing-error-handling', severity: 'high' },
     });
   });
 
