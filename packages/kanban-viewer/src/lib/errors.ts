@@ -347,6 +347,17 @@ export function createProjectNotFoundError(projectId: string): ApiError {
 }
 
 /**
+ * Create an error when a mission is not found.
+ */
+export function createMissionNotFoundError(missionId: string): ApiError {
+  return new ApiError(
+    ErrorCodes.MISSION_NOT_FOUND,
+    `Mission ${missionId} not found`,
+    { missionId }
+  );
+}
+
+/**
  * Create an error when a stage is not found.
  */
 export function createStageNotFoundError(stageId: string): ApiError {

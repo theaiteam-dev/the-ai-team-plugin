@@ -289,6 +289,9 @@ describe('POST /api/learnings', () => {
       const data = await res.json();
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('MISSION_NOT_FOUND');
+      // Sourced from createMissionNotFoundError (src/lib/errors.ts) rather than
+      // an inline object literal — message content is preserved.
+      expect(data.error.message).toBe(`Mission ${missionId} not found`);
       expect(mockPrisma.retroLearning.create).not.toHaveBeenCalled();
 
       // The ownership lookup must be scoped to the requesting project.
@@ -356,6 +359,38 @@ describe('POST /api/learnings', () => {
     expect(data.success).toBe(false);
     expect(data.error.code).toBe('VALIDATION_ERROR');
     expect(mockPrisma.retroLearning.create).not.toHaveBeenCalled();
+  });
+
+  it('does not provision a Project row for an invalid body on a never-before-seen project id', async () => {
+    // Project auto-provisioning must happen AFTER body validation — otherwise a
+    // well-formed X-Project-ID with a garbage body still leaves behind a Project
+    // row despite the 400 response.
+    mockPrisma.project.findUnique.mockResolvedValue(null);
+
+    const body = validBody();
+    delete (body as Record<string, unknown>).fingerprint; // trigger required-field 400
+
+    const res = await POST(buildRequest('never-seen-project', body));
+
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.success).toBe(false);
+    expect(mockPrisma.project.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.project.create).not.toHaveBeenCalled();
+  });
+
+  it('does not provision a Project row for a bad-severity body on a never-before-seen project id', async () => {
+    mockPrisma.project.findUnique.mockResolvedValue(null);
+
+    const res = await POST(
+      buildRequest('another-new-project', validBody({ severity: 'not-a-severity' }))
+    );
+
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.success).toBe(false);
+    expect(mockPrisma.project.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.project.create).not.toHaveBeenCalled();
   });
 
   it('auto-creates an unknown-but-valid-format project instead of surfacing an FK 500', async () => {

@@ -53,6 +53,11 @@ export async function GET(request: Request) {
 
     const rows = await prisma.retroLearning.findMany({
       where: { projectId: projectValidation.projectId },
+      // Newest-first so that, per fingerprint, the first row encountered while
+      // grouping below is also the most recent one — making the representative
+      // title/pattern deterministic instead of whatever arbitrary order SQLite
+      // happens to return.
+      orderBy: { createdAt: 'desc' },
       // Project only the columns the grouping/ranking uses so the query never
       // hauls the `detail` text blob (or any other unused column) across the
       // wire — the learnings table is designed to accumulate over many
@@ -73,6 +78,9 @@ export async function GET(request: Request) {
         });
       } else {
         existing.hitCount += 1;
+        // With rows in createdAt-desc order, the first row seen per fingerprint
+        // is already the newest, so this branch is not expected to fire — kept
+        // as a defensive fallback in case that ordering assumption ever breaks.
         if (row.createdAt > existing.mostRecentCreatedAt) {
           existing.mostRecentCreatedAt = row.createdAt;
         }

@@ -284,4 +284,19 @@ describe('POST /api/tuning/proposals', () => {
     expect(success).toBe(false);
     expect(error.code).toBe('VALIDATION_ERROR');
   });
+
+  it('returns 400 (not 500) when the request body is malformed JSON', async () => {
+    const request = new Request('http://localhost:3000/api/tuning/proposals', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Project-ID': PROJECT_ID },
+      body: '{not json',
+    });
+
+    const res = await POST(request);
+
+    expect(res.status).toBe(400);
+    const { success, error } = await res.json();
+    expect(success).toBe(false);
+    expect(error.code).toBe('VALIDATION_ERROR');
+  });
 });

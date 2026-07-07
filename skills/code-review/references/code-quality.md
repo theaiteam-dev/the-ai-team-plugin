@@ -29,7 +29,7 @@ function applyTaxToLineItems(lineItems: LineItem[]): LineItem[] {
 }
 ```
 
-**What to flag:** Variable and function names should communicate intent. Avoid single-letter names outside of trivial loop counters. Extract magic numbers into named constants.
+**What to flag:** Variable and function names should communicate intent. Avoid single-letter names outside trivial loop counters. Extract magic numbers into named constants.
 
 ---
 

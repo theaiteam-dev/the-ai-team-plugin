@@ -45,6 +45,11 @@ const TEST_FINGERPRINTS = [
   'fp-removed-reject',
   'fp-removed-demote',
   'fp-removed-defer',
+  'fp-terminal-shipped',
+  'fp-terminal-dismissed',
+  'fp-bad-altitude',
+  'fp-empty-surface',
+  'fp-malformed-json',
 ];
 
 interface PatchBody {
@@ -119,7 +124,7 @@ async function seedProposal(fingerprints: string[], opts: { altitude?: string; p
 }
 
 /** A proposal whose single fingerprint is corroborated by 3 distinct missions. */
-async function seedCorroboratedProposal(fingerprint: string, missionPrefix: string, opts: { altitude?: string; proposalText?: string } = {}) {
+async function seedCorroboratedProposal(fingerprint: string, missionPrefix: string, opts: { altitude?: string; proposalText?: string; status?: string } = {}) {
   await seedFingerprint(fingerprint);
   for (const suffix of ['a', 'b', 'c']) {
     const missionId = `M-${missionPrefix}-${suffix}`;
@@ -339,5 +344,71 @@ describe('PATCH /api/tuning/proposals/{id}', () => {
     );
     expect(routeSource).toMatch(/from ['"]@\/lib\/corroboration['"]/);
     expect(routeSource).toMatch(/areAllCorroborated/);
+  });
+
+  it.each(['shipped', 'dismissed'])(
+    'accept on a %s (terminal) proposal is blocked with 409 and does not change status',
+    async (status) => {
+      const proposal = await seedCorroboratedProposal(`fp-terminal-${status}`, `terminal-${status}`, { status });
+
+      const res = await callPatch(proposal.id, PROJECT_ID, { verb: 'accept' });
+
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.success).toBe(false);
+      const persisted = await prisma.tuningProposal.findUnique({ where: { id: proposal.id } });
+      expect(persisted?.status).toBe(status);
+    }
+  );
+
+  it('edit on a shipped (terminal) proposal is blocked with 409 and does not change status', async () => {
+    const proposal = await seedCorroboratedProposal('fp-terminal-shipped', 'terminal-edit', { status: 'shipped' });
+
+    const res = await callPatch(proposal.id, PROJECT_ID, { verb: 'edit', proposalText: 'should not apply' });
+
+    expect(res.status).toBe(409);
+    const persisted = await prisma.tuningProposal.findUnique({ where: { id: proposal.id } });
+    expect(persisted?.status).toBe('shipped');
+    expect(persisted?.proposalText).not.toBe('should not apply');
+  });
+
+  it('edit with an invalid altitude is rejected with 400 and does not mutate the proposal', async () => {
+    const proposal = await seedCorroboratedProposal('fp-bad-altitude', 'bad-altitude', { altitude: 'skill-text' });
+
+    const res = await callPatch(proposal.id, PROJECT_ID, { verb: 'edit', altitude: 'nonsense' });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.success).toBe(false);
+    const persisted = await prisma.tuningProposal.findUnique({ where: { id: proposal.id } });
+    expect(persisted?.altitude).toBe('skill-text');
+  });
+
+  it('edit with an empty targetSurface is rejected with 400 and does not mutate the proposal', async () => {
+    const proposal = await seedCorroboratedProposal('fp-empty-surface', 'empty-surface', {
+    });
+
+    const res = await callPatch(proposal.id, PROJECT_ID, { verb: 'edit', targetSurface: '' });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.success).toBe(false);
+    const persisted = await prisma.tuningProposal.findUnique({ where: { id: proposal.id } });
+    expect(persisted?.targetSurface).toBe('skill:defensive-coding');
+  });
+
+  it('returns 400 (not 500) when the request body is malformed JSON', async () => {
+    const proposal = await seedCorroboratedProposal('fp-malformed-json', 'malformed-json');
+
+    const request = new Request(`http://localhost:3000/api/tuning/proposals/${proposal.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'X-Project-ID': PROJECT_ID },
+      body: '{not json',
+    });
+    const res = await PATCH(request, { params: Promise.resolve({ id: String(proposal.id) }) });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.success).toBe(false);
   });
 });

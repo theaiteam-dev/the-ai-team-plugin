@@ -468,19 +468,18 @@ Resume an interrupted mission.
 
 Unblock a stuck work item with optional guidance.
 
-### `/ai-team:tuning [--project-scope]`
+### `/ai-team:tuning`
 
 Walk recurrence-ranked learning proposals from completed missions and apply acceptance verbs. Part of the Mission Learning Loop (Phase 2).
 
 **Mission Learning Loop:** The A(i)-Team learns from its own execution via structured `RetroLearning` records. After each mission, the Debrief stage captures learnings (from telemetry, tests, Stockwell's final review, and PR comments) and ranks them by cross-mission recurrence. The tuning round lets the operator review the ranked backlog, accept or edit proposals for systematic changes (skill updates, prompt refinements, hook enforcement), and optionally run the proposal through `skill-eval` before shipping. Durable dismissals with notes prevent re-litigating taste boundaries, and proposals can resurface on new evidence.
 
-Supported verbs:
+Supported `ateam tuning apply` verbs:
 - **accept**: Ship the proposal as written
-- **edit**: Amend the proposal text before shipping
-- **defer**: Leave it for the next round
+- **edit**: Amend the proposal text (and optionally the target surface/altitude) before shipping
 - **merge**: Collapse a duplicate fingerprint into an existing one
-- **demote**: Real but lower enforcement altitude than proposed (e.g., downgrade from hook to skill text)
-- **reject**: Not a defect (taste/preference); records a durable dismissal note
+
+`defer` is a separate, fingerprint-scoped command (not an `apply` verb): `ateam tuning defer --fingerprint <slug>` records a durable "not now" watermark on the fingerprint's current `distinctMissions` count — the old `demote`/`reject` verbs were collapsed into this single durable defer.
 
 ### Standalone Skills
 
@@ -543,14 +542,12 @@ Configure environment via `.claude/settings.local.json`:
 | `ateam learnings create --source X --severity Y --pattern "..." --title "..."` | Create learning record |
 | `ateam learnings fingerprints --json` | List top-50 recurrence-ranked fingerprints |
 | `ateam learnings rank --json` | Rank learnings by cross-mission hits |
-| `ateam tuning propose --json` | Generate tuning proposals from ranked learnings (cluster by targetSurface) |
-| `ateam tuning candidates --json` | List proposal candidates, excluding dismissed unless new evidence |
-| `ateam tuning apply <proposalId> accept` | Accept proposal as written |
-| `ateam tuning apply <proposalId> edit --proposal-text "..."` | Edit and ship proposal |
-| `ateam tuning apply <proposalId> defer` | Defer to next round |
-| `ateam tuning apply <proposalId> merge --target <targetId>` | Collapse duplicate fingerprints |
-| `ateam tuning apply <proposalId> demote --note "..."` | Downgrade altitude + record dismissal |
-| `ateam tuning apply <proposalId> reject --note "..."` | Reject + record durable dismissal |
+| `ateam tuning propose --fingerprint <slug> --target-surface <s> --altitude <a> --proposal-text "..."` | Create a proposal for corroborated fingerprint(s); succeeds as `status='accepted'` directly |
+| `ateam tuning candidates --json [--actionable]` | List recurrence-ranked fingerprint candidates; `--actionable` filters to corroborated + past any defer watermark |
+| `ateam tuning apply --id <id> --verb accept` | Accept proposal as written |
+| `ateam tuning apply --id <id> --verb edit --proposal-text "..."` | Amend proposal text (and optionally `--altitude`/`--target-surface`) |
+| `ateam tuning apply --id <id> --verb merge --merge-into <targetFingerprint>` | Collapse a duplicate fingerprint into an existing one |
+| `ateam tuning defer --fingerprint <slug>` | Durable "not now" watermark on a fingerprint (separate from `apply`) |
 | `ateam scaling compute [--concurrency N] [--memory N] --json` | Compute adaptive scaling parameters |
 | `ateam deps-check checkDeps --json` | Check dependency readiness |
 | `ateam activity createActivityEntry --agent <name> --message "..." --level info` | Log activity |

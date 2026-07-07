@@ -13,7 +13,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getAndValidateProjectId } from '@/lib/project-utils';
-import { createValidationError } from '@/lib/errors';
+import { createConflictError, createValidationError } from '@/lib/errors';
 import { areAllCorroborated } from '@/lib/corroboration';
 import type { ApiError } from '@/types/api';
 
@@ -23,6 +23,12 @@ type Altitude = (typeof VALID_ALTITUDES)[number];
 function isValidAltitude(value: unknown): value is Altitude {
   return typeof value === 'string' && (VALID_ALTITUDES as readonly string[]).includes(value);
 }
+
+/**
+ * Finalized outcomes that must never be silently reopened by accept/edit.
+ * draft/accepted/eval-running/eval-failed remain editable.
+ */
+const TERMINAL_STATUSES = ['shipped', 'shipped-unverified', 'dismissed'] as const;
 
 interface PatchBody {
   verb?: string;
@@ -112,12 +118,47 @@ export async function PATCH(
 
     const linkedFingerprints = proposal.fingerprints.map((f) => f.slug);
 
-    const body = (await request.json()) as PatchBody;
+    let body: PatchBody;
+    try {
+      body = (await request.json()) as PatchBody;
+    } catch {
+      return NextResponse.json(
+        createValidationError('Request body must be valid JSON').toResponse(),
+        { status: 400 }
+      );
+    }
     const verb = body.verb;
 
     switch (verb) {
       case 'accept':
       case 'edit': {
+        if (TERMINAL_STATUSES.includes(proposal.status as (typeof TERMINAL_STATUSES)[number])) {
+          return NextResponse.json(
+            createConflictError(
+              `Cannot ${verb} proposal ${proposal.id}: status '${proposal.status}' is terminal and cannot be reopened.`
+            ).toResponse(),
+            { status: 409 }
+          );
+        }
+
+        if (verb === 'edit') {
+          if (body.altitude !== undefined && !isValidAltitude(body.altitude)) {
+            return NextResponse.json(
+              createValidationError(`altitude must be one of: ${VALID_ALTITUDES.join(', ')}`).toResponse(),
+              { status: 400 }
+            );
+          }
+          if (
+            body.targetSurface !== undefined &&
+            (typeof body.targetSurface !== 'string' || body.targetSurface.length === 0)
+          ) {
+            return NextResponse.json(
+              createValidationError('targetSurface must be a non-empty string').toResponse(),
+              { status: 400 }
+            );
+          }
+        }
+
         const corroborated = await areAllCorroborated(linkedFingerprints);
         if (!corroborated) {
           const gated: ApiError = {

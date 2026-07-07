@@ -1456,21 +1456,45 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
-  # ── Tuning (Phase 2 — stubs only; fleshed out by WI-212/213/214/215a/215b) ────
+  # ── Tuning (Phase A — global, fingerprint-centric, post-agreement) ────────────
   /api/tuning/proposals:
     parameters:
       - $ref: '#/components/parameters/ProjectId'
 
     post:
       operationId: createTuningProposal
-      summary: Create a TuningProposal (stub)
+      summary: Create a TuningProposal for corroborated fingerprint(s)
       description: |
-        Creates a new TuningProposal row. Stubbed by WI-211; request/response
-        schema is fleshed out by a downstream Phase 2 tuning-api work item.
+        Creates the proposal directly with status='accepted' — the POST
+        itself is the agreement (Phase A: no eager browsing draft). Rejected
+        with 422 NOT_CORROBORATED unless every linked fingerprint has
+        `distinctMissions >= 3` globally.
       tags: [tuning]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fingerprints, targetSurface, altitude, proposalText]
+              properties:
+                fingerprints:
+                  type: array
+                  items:
+                    type: string
+                  minItems: 1
+                  description: Fingerprint slugs this proposal agrees to act on
+                targetSurface:
+                  type: string
+                  example: 'agents/ba.md'
+                altitude:
+                  type: string
+                  enum: [skill-text, agent-prompt, hook]
+                proposalText:
+                  type: string
       responses:
         '201':
-          description: Proposal created
+          description: Proposal created (status='accepted')
           content:
             application/json:
               schema:
@@ -1482,37 +1506,25 @@ paths:
                     enum: [true]
                   data:
                     type: object
+                    required: [id, status, fingerprints]
+                    properties:
+                      id:
+                        type: integer
+                      status:
+                        type: string
+                        enum: [accepted]
+                      fingerprints:
+                        type: array
+                        items:
+                          type: string
         '400':
           $ref: '#/components/responses/BadRequest'
-        '500':
-          $ref: '#/components/responses/ServerError'
-
-    get:
-      operationId: listTuningProposals
-      summary: List TuningProposals (stub)
-      description: |
-        Lists TuningProposal rows for the requesting project. Stubbed by
-        WI-211; filtering/response schema is fleshed out by a downstream
-        Phase 2 tuning-api work item.
-      tags: [tuning]
-      responses:
-        '200':
-          description: Proposal list
+        '422':
+          description: NOT_CORROBORATED — not every linked fingerprint has distinctMissions >= 3
           content:
             application/json:
               schema:
-                type: object
-                required: [success, data]
-                properties:
-                  success:
-                    type: boolean
-                    enum: [true]
-                  data:
-                    type: array
-                    items:
-                      type: object
-        '400':
-          $ref: '#/components/responses/BadRequest'
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -1527,12 +1539,42 @@ paths:
 
     patch:
       operationId: updateTuningProposal
-      summary: Update a TuningProposal's status or metadata (stub)
+      summary: Apply a tuning verb (accept|edit|merge) to an existing proposal
       description: |
-        Patches a TuningProposal row (e.g. status transitions, evalResult,
-        dismissalNote, shippedInCommit). Stubbed by WI-211; request/response
-        schema is fleshed out by a downstream Phase 2 tuning-api work item.
+        `accept`/`edit` promote the proposal to status='accepted', gated by
+        the same corroboration check as create (422 NOT_CORROBORATED unless
+        every linked fingerprint is corroborated); `edit` may also re-target
+        `proposalText`/`targetSurface`/`altitude`. `merge` de-aliases another
+        linked fingerprint into `mergeIntoFingerprint` and is not gated by
+        corroboration, but is rejected with 422 SAME_MISSION_MERGE if a
+        source fingerprint shares a mission with the target. `reject` and
+        `demote` no longer exist as verbs here — they were collapsed into the
+        durable per-fingerprint `POST /api/tuning/fingerprints/{slug}/defer`.
       tags: [tuning]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [verb]
+              properties:
+                verb:
+                  type: string
+                  enum: [accept, edit, merge]
+                proposalText:
+                  type: string
+                  description: Amended proposal text (edit)
+                targetSurface:
+                  type: string
+                  description: Re-targeted surface (edit)
+                altitude:
+                  type: string
+                  enum: [skill-text, agent-prompt, hook]
+                  description: Re-targeted altitude (edit)
+                mergeIntoFingerprint:
+                  type: string
+                  description: Target fingerprint slug to merge into (merge, required for that verb)
       responses:
         '200':
           description: Proposal updated
@@ -1555,6 +1597,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: NOT_CORROBORATED (accept/edit) · SAME_MISSION_MERGE (merge)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -1564,12 +1612,18 @@ paths:
 
     get:
       operationId: getTuningCorroboration
-      summary: Cross-mission corroboration signal for tuning candidates (stub)
+      summary: Cross-mission corroboration signal for a fingerprint
       description: |
-        Returns corroboration data used to rank tuning candidates. Stubbed by
-        WI-211; response schema is fleshed out by a downstream Phase 2
-        tuning-api work item.
+        Global — not scoped to the requesting project. Returns the
+        distinct-mission count backing the `>= 3` corroboration gate.
       tags: [tuning]
+      parameters:
+        - name: fingerprint
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Fingerprint slug to check
       responses:
         '200':
           description: Corroboration data
@@ -1584,8 +1638,18 @@ paths:
                     enum: [true]
                   data:
                     type: object
+                    required: [distinctMissions, corroborated]
+                    properties:
+                      distinctMissions:
+                        type: integer
+                      corroborated:
+                        type: boolean
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: VALIDATION_ERROR — missing X-Project-ID or fingerprint query param
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -1595,12 +1659,21 @@ paths:
 
     get:
       operationId: listTuningCandidates
-      summary: List candidate targetSurfaces eligible for a tuning proposal (stub)
+      summary: Recurrence-ranked global fingerprint candidates for the tuning walk
       description: |
-        Lists RetroLearning-derived candidates eligible for a new
-        TuningProposal. Stubbed by WI-211; response schema is fleshed out by
-        a downstream Phase 2 tuning-api work item.
+        Groups live RetroLearning rows (across every project) by fingerprint,
+        ranked by `hits` descending. Each row carries `distinctMissions`,
+        `corroborated` (`distinctMissions >= 3`), `deferredAtMissions`, and
+        `actionable` (corroborated AND — never deferred OR distinctMissions
+        has climbed DEFER_MARGIN past the watermark).
       tags: [tuning]
+      parameters:
+        - name: actionable
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: "When `true`, restrict the response to `actionable: true` rows only"
       responses:
         '200':
           description: Candidate list
@@ -1617,8 +1690,92 @@ paths:
                     type: array
                     items:
                       type: object
+                      required:
+                        - fingerprint
+                        - pattern
+                        - targetSurface
+                        - severity
+                        - hits
+                        - distinctMissions
+                        - corroborated
+                        - deferredAtMissions
+                        - actionable
+                      properties:
+                        fingerprint:
+                          type: string
+                        pattern:
+                          type: string
+                        targetSurface:
+                          type: string
+                          description: Suggestion carried over from the most recent learning; not agreed until accept/edit
+                        severity:
+                          type: string
+                        hits:
+                          type: integer
+                          description: Full historical row count for this fingerprint
+                        distinctMissions:
+                          type: integer
+                        corroborated:
+                          type: boolean
+                        deferredAtMissions:
+                          type: integer
+                          nullable: true
+                        actionable:
+                          type: boolean
         '400':
           $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/tuning/fingerprints/{slug}/defer:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      operationId: deferTuningFingerprint
+      summary: Durable "not now" watermark for a fingerprint
+      description: |
+        No request body. Sets `Fingerprint.deferredAtMissions` to the
+        fingerprint's current `distinctMissions`. The fingerprint reports
+        `actionable: false` on `GET /api/tuning/candidates` until
+        `distinctMissions` climbs DEFER_MARGIN past that watermark — this
+        replaces the removed `reject`/`demote` verbs.
+      tags: [tuning]
+      responses:
+        '200':
+          description: Fingerprint deferred
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [slug, deferredAtMissions, distinctMissions]
+                    properties:
+                      slug:
+                        type: string
+                      deferredAtMissions:
+                        type: integer
+                      distinctMissions:
+                        type: integer
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: FINGERPRINT_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           $ref: '#/components/responses/ServerError'
 

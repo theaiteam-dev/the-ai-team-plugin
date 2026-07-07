@@ -8,7 +8,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getAndValidateProjectId, ensureProject } from '@/lib/project-utils';
-import { createDatabaseError, createValidationError } from '@/lib/errors';
+import { createDatabaseError, createMissionNotFoundError, createValidationError } from '@/lib/errors';
 import type { ApiError } from '@/types/api';
 
 const REQUIRED_FIELDS = [
@@ -72,7 +72,6 @@ export async function POST(request: Request) {
       return NextResponse.json(errorResponse, { status: 400 });
     }
     const projectId = projectValidation.projectId;
-    await ensureProject(projectId);
 
     const body = (await request.json()) as Partial<LearningCaptureBody> & Record<string, unknown>;
 
@@ -92,6 +91,11 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+
+    // Only provision the Project row once the payload is known-valid — otherwise
+    // a well-formed but invalid request from a never-before-seen project ID would
+    // still leave behind a Project row despite the 400.
+    await ensureProject(projectId);
 
     const missionId = body.missionId === undefined || body.missionId === null ? null : body.missionId;
     const detail = body.detail === undefined || body.detail === null ? null : body.detail;
@@ -119,10 +123,7 @@ export async function POST(request: Request) {
       // one occurred (both resolve to the same 404).
       const mission = await prisma.mission.findFirst({ where: { id: missionId, projectId } });
       if (!mission) {
-        return NextResponse.json(
-          { success: false, error: { code: 'MISSION_NOT_FOUND', message: `Mission ${missionId} not found` } },
-          { status: 404 }
-        );
+        return NextResponse.json(createMissionNotFoundError(missionId).toResponse(), { status: 404 });
       }
 
       const existing = await prisma.retroLearning.findFirst({

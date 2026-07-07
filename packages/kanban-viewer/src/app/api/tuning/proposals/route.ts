@@ -47,7 +47,15 @@ export async function POST(request: Request) {
       return NextResponse.json(errorResponse, { status: 400 });
     }
 
-    const body = (await request.json()) as CreateProposalBody;
+    let body: CreateProposalBody;
+    try {
+      body = (await request.json()) as CreateProposalBody;
+    } catch {
+      return NextResponse.json(
+        createValidationError('Request body must be valid JSON').toResponse(),
+        { status: 400 }
+      );
+    }
 
     const fingerprints = body.fingerprints;
     if (

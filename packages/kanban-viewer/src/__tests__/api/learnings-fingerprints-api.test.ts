@@ -204,6 +204,40 @@ describe('GET /api/learnings/fingerprints', () => {
     expect(fingerprints).not.toContain('fp-0'); // oldest is dropped by the cap
   });
 
+  it("uses the most recently created row's title/pattern as the fingerprint's representative, regardless of insertion order", async () => {
+    const olderRow = row('fp-recency', {
+      title: 'Old title',
+      pattern: 'old-pattern',
+      createdAt: new Date('2020-01-01T00:00:00.000Z'),
+    });
+    const newerRow = row('fp-recency', {
+      title: 'New title',
+      pattern: 'new-pattern',
+      createdAt: new Date('2026-07-01T00:00:00.000Z'),
+    });
+
+    // A real SQLite scan without an ORDER BY clause can surface rows in
+    // arbitrary order. Simulate that faithfully: only return the rows in
+    // createdAt-desc order when the query actually asks for it via `orderBy` —
+    // otherwise hand back the raw insertion order (older row first), which is
+    // what an unordered `findMany` call would risk in production.
+    mockPrisma.retroLearning.findMany.mockImplementation(
+      async (args: { orderBy?: { createdAt?: string } } = {}) => {
+        const rows = [olderRow, newerRow];
+        if (args?.orderBy?.createdAt === 'desc') {
+          return [...rows].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+        }
+        return rows;
+      }
+    );
+
+    const res = await GET(buildRequest('project-a'));
+    const { data } = await res.json();
+
+    const rep = data.find((d: { fingerprint: string }) => d.fingerprint === 'fp-recency');
+    expect(rep).toMatchObject({ title: 'New title', pattern: 'new-pattern' });
+  });
+
   it.each([
     ['missing', null],
     ['an empty string', ''],
