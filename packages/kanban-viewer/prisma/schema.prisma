@@ -23,6 +23,7 @@ model Project {
   hookEvents          HookEvent[]
   tokenUsage          MissionTokenUsage[]
   messageTokenUsage   MessageTokenUsage[]
+  retroLearnings      RetroLearning[]
 }
 
 model Stage {
@@ -139,6 +140,7 @@ model Mission {
   hookEvents          HookEvent[]
   tokenUsage          MissionTokenUsage[]
   messageTokenUsage   MessageTokenUsage[]
+  retroLearnings      RetroLearning[]
 
   // Indexes for common queries
   @@index([archivedAt])
@@ -237,4 +239,78 @@ model MessageTokenUsage {
   @@unique([projectId, messageId])
   @@index([missionId])
   @@index([missionId, agentName])
+}
+
+// Global, cross-project aggregate of a single learning pattern (identified by
+// its dedup slug). Fingerprint is the first-class entity the tuning loop acts
+// on; RetroLearning rows are provenance evidence feeding it. NOT project-scoped
+// — the same pattern recurring across different projects is the same
+// Fingerprint, which is the point (corroboration counts distinct missions
+// globally, not per project).
+model Fingerprint {
+  slug               String   @id                // dedup key, computed in application code — matches RetroLearning.fingerprint
+  pattern            String                      // short pattern slug (aggregated/latest)
+  severity           String                      // 'low' | 'medium' | 'high' | 'critical' (aggregated/latest)
+  deferredAtMissions Int?                         // watermark: distinctMissions at the moment the operator last
+                                                   // deferred this fingerprint. null = not deferred. The candidate
+                                                   // walk hides a corroborated fingerprint from the actionable set
+                                                   // until distinctMissions climbs DEFER_MARGIN above this value
+                                                   // (see @/lib/corroboration) — "not now", not "never".
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  learnings          RetroLearning[]
+  proposals          TuningProposal[]
+}
+
+model RetroLearning {
+  id               Int      @id @default(autoincrement())
+  projectId        String
+  project          Project  @relation(fields: [projectId], references: [id])
+  missionId        String?
+  mission          Mission? @relation(fields: [missionId], references: [id], onDelete: SetNull)
+  source           String                   // 'stockwell' | 'amy' | 'lynch' | etc. — agent that surfaced the learning
+  severity         String                   // 'low' | 'medium' | 'high' | 'critical'
+  attributedAgent  String                   // agent whose behavior the learning is about
+  targetSurface    String                   // file the learning would change, e.g. 'agents/ba.md' — advisory; the
+                                             // agreed surface lives on TuningProposal
+  pattern          String                   // short pattern slug
+  fingerprint      String                   // dedup key, computed in application code
+  fingerprintRef   Fingerprint @relation(fields: [fingerprint], references: [slug])
+  title            String
+  detail           String?
+  status           String   @default("open")
+  origin           String   @default("local") // 'local' | 'federated' | 'verified' — trust provenance seam;
+                                                // unenforced today, exists so a future phase can filter/weight
+                                                // corroboration without a migration
+  createdAt        DateTime @default(now())
+
+  @@index([projectId, status])
+  @@index([fingerprint])
+  @@index([missionId])
+  // Backs the per-mission dedupe in POST /api/learnings. SQLite treats NULLs as
+  // distinct, so null-missionId backfill rows are intentionally unconstrained.
+  @@unique([projectId, missionId, fingerprint])
+}
+
+// The maintainer's AGREEMENT to act on one or more fingerprints. Global — NOT
+// project-scoped. Created ONLY on accept/edit (post-agreement), never eagerly
+// during browsing. A single proposal can cover a cluster of fingerprints
+// (many-to-many), e.g. when several related patterns are addressed by one
+// surface change.
+model TuningProposal {
+  id               Int      @id @default(autoincrement())
+  targetSurface    String                   // file the proposal would change, e.g. 'agents/ba.md' — the AGREED surface
+  altitude         String                   // scope of the change, e.g. 'agent' | 'skill' | 'command'
+  proposalText     String
+  status           String   @default("draft") // 'draft' | 'accepted' | 'eval-running' | 'eval-failed' | 'shipped' | 'shipped-unverified' | 'dismissed'
+  evalResult       String?
+  dismissalNote    String?
+  shippedInCommit  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  fingerprints     Fingerprint[]
+
+  @@index([status])
 }

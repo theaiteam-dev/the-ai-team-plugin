@@ -158,7 +158,15 @@ briefings → ready → testing → implementing → review → probing → done
                                                         │  Documentation  │
                                                         │    (Tawnia)     │
                                                         │   (MANDATORY)   │
-                                                        └─────────────────┘
+                                                        └────────┬────────┘
+                                                                 │
+                                                                 ▼
+                                                        ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐
+                                                        ╎    Debrief      ╎
+                                                        ╎    (Retro)      ╎
+                                                        ╎ detached, best- ╎
+                                                        ╎     effort      ╎
+                                                        └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘
 ```
 
 **Stage transitions (ALL REQUIRED):**
@@ -171,6 +179,7 @@ briefings → ready → testing → implementing → review → probing → done
 7. `final review → post-checks`: Run lint, unit, e2e tests
 8. `post-checks → documentation`: **Tawnia MUST run** (NOT optional)
 9. `documentation → complete`: Tawnia creates final commit, mission complete
+10. `complete → debrief`: retro agent dispatched **detached, non-blocking** — not a gate on completion (see step 10 below)
 
 ## Pipeline Parallelism
 
@@ -366,6 +375,32 @@ WIP limits are **per stage** — each pipeline column independently caps how man
    - Items in `blocked` stage → Needs human intervention
    - Post-checks fail → Fix issues before documentation can run
 
+10. **Debrief (Retro) — detached, best-effort:**
+
+    Immediately after Tawnia's final commit lands (same moment as step 8, not gated on step 9's
+    completion announcement), dispatch the retro agent (`agents/retro.md`) as a **detached,
+    non-blocking** background agent:
+
+    - Reuse whichever background-agent dispatch pattern your active orchestration playbook
+      already uses for spawning pipeline agents — **do not introduce a new dispatch mechanism**.
+      Native teams: `Agent(..., run_in_background: true)`, the same fire-and-forget pattern used
+      to pre-warm pipeline lanes. No `SendMessage` ACK is expected back to `/ai-team:run`, and
+      Hannibal does **not** wait for a DONE message from retro before finishing this command.
+    - The Debrief adds **zero blocking latency** to mission completion. Step 9's completion
+      declaration ("I love it when a plan comes together.") happens on schedule whether or not
+      the Debrief has started, is still running, or has finished.
+    - **A Debrief failure or kill never blocks mission completion or merge.** If the retro agent
+      errors, times out, or is killed mid-run, the mission remains `completed` and any PR/merge
+      proceeds unaffected — Debrief is diagnostic, not a pipeline gate.
+    - **No silent gap:** if the Debrief is skipped (e.g. dispatch itself fails to spawn) or fails,
+      log it to the activity feed so the absence is visible rather than silent:
+      ```bash
+      ateam activity createActivityEntry --agent hannibal --message "Debrief skipped/failed for mission {missionId}: {reason}" --level warn
+      ```
+    - **Manual re-run stays available.** `/ai-team:retro` remains fully documented
+      (`commands/retro.md`) for regenerating or re-running the Debrief independently of a mission
+      run — e.g. if the detached Debrief was killed, skipped, or the user wants to rerun it later.
+
 ## Progress Updates
 
 ```
@@ -391,6 +426,8 @@ WIP limits are **per stage** — each pipeline column independently caps how man
 [Tawnia] Updated README.md
 [Tawnia] COMMITTED a1b2c3d - feat: Mission Name
 [Hannibal] Documentation complete.
+[Hannibal] Dispatching Debrief (retro) detached — not blocking completion.
+[Hannibal] Tip: run /ai-team:sweep for an independent branch review that captures and fixes what the pipeline missed.
 "I love it when a plan comes together."
 ```
 
@@ -419,7 +456,8 @@ Main Claude (as Hannibal)
     ├── subagent → B.A. (implementing stage)
     ├── subagent → Lynch (review stage, final review)
     ├── subagent → Amy (probing stage)
-    └── subagent → Tawnia (documentation, after post-checks pass)
+    ├── subagent → Tawnia (documentation, after post-checks pass)
+    └── subagent → Retro (Debrief, detached/non-blocking, dispatched right after Tawnia's commit)
 ```
 
 This flat structure:

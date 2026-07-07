@@ -8,7 +8,7 @@ services:
     labels:
       dev.orbstack.domains: kanban-viewer.local
     ports:
-      - "3000:3000"
+      - "5566:3000"
     volumes:
       - ./packages/kanban-viewer/prisma/data:/app/prisma/data
     restart: unless-stopped

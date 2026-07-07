@@ -1244,6 +1244,541 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  # ── Learnings ────────────────────────────────────────────────────────────────
+  /api/learnings:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+
+    post:
+      operationId: captureLearning
+      summary: Capture a RetroLearning row (per-mission dedupe)
+      description: |
+        Creates a RetroLearning row scoped to the requesting project, for the
+        retro agent's Debrief and the corpus backfill. Dedupe is app-level and
+        scoped per mission: a second call with the same (missionId, fingerprint)
+        returns the existing row instead of creating a duplicate. A null
+        missionId (backfill of stalled drafts) always inserts a new row.
+      tags: [learnings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, severity, attributedAgent, targetSurface, pattern, fingerprint, title]
+              properties:
+                source:
+                  type: string
+                  description: Agent that surfaced the learning, e.g. 'stockwell', 'amy', 'lynch'
+                severity:
+                  type: string
+                  description: "'low' | 'medium' | 'high' | 'critical'"
+                attributedAgent:
+                  type: string
+                  description: Agent whose behavior the learning is about
+                targetSurface:
+                  type: string
+                  description: File the learning would change, e.g. 'agents/ba.md'
+                pattern:
+                  type: string
+                  description: Short pattern slug
+                fingerprint:
+                  type: string
+                  description: Dedup key, computed in application code
+                title:
+                  type: string
+                detail:
+                  type: string
+                  nullable: true
+                missionId:
+                  type: string
+                  nullable: true
+                  description: Null for backfill of stalled drafts; always inserted, never deduped
+      responses:
+        '201':
+          description: New row created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [id]
+                    properties:
+                      id:
+                        type: integer
+        '200':
+          description: Existing row returned (deduped on missionId + fingerprint)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [id]
+                    properties:
+                      id:
+                        type: integer
+        '400':
+          description: VALIDATION_ERROR — missing required field, or missing/invalid X-Project-ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: |
+            MISSION_NOT_FOUND — missionId is non-null but does not resolve to a
+            mission owned by the requesting project (foreign or nonexistent;
+            both cases return the same response so existence is not leaked).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/learnings/fingerprints:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+
+    get:
+      operationId: listLearningFingerprints
+      summary: Top-50 recency-weighted fingerprints (match-or-create)
+      description: |
+        Returns up to 50 of the project's existing RetroLearning fingerprints,
+        grouped and ranked by recency-weighted hit count, so the retro agent
+        can decide match-or-create instead of minting a duplicate slug. Every
+        status is included — capture never filters on status, so
+        dismissed/resolved fingerprints still surface for matching.
+      tags: [learnings]
+      responses:
+        '200':
+          description: Ranked fingerprint summaries (best-first), empty array if none exist
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: array
+                    maxItems: 50
+                    items:
+                      type: object
+                      required: [fingerprint, pattern, title, hitCount]
+                      properties:
+                        fingerprint:
+                          type: string
+                        pattern:
+                          type: string
+                        title:
+                          type: string
+                          description: Representative title from one of the grouped rows
+                        hitCount:
+                          type: integer
+                          description: Total row count for this fingerprint
+        '400':
+          description: VALIDATION_ERROR — missing or invalid X-Project-ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/learnings/rank:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+
+    get:
+      operationId: rankLearnings
+      summary: Rank learning fingerprints by cross-mission recurrence
+      description: |
+        Returns the project's RetroLearning fingerprints ranked by cross-mission
+        recurrence, surfacing only fingerprints with live demand. Groups rows by
+        fingerprint; excludes groups with no 'open' or 'recurred' row (fully
+        resolved/dismissed fingerprints are dropped); hits counts every row in
+        the group, including resolved/dismissed ones, so a shipped-then-recurred
+        fingerprint re-enters at its full historical count rather than at 1.
+        Ordered by hits DESC.
+      tags: [learnings]
+      responses:
+        '200':
+          description: Ranked fingerprint rows (best-first), empty array if none qualify
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [fingerprint, pattern, targetSurface, severity, hits]
+                      properties:
+                        fingerprint:
+                          type: string
+                        pattern:
+                          type: string
+                          description: Representative pattern slug from the fingerprint's rows
+                        targetSurface:
+                          type: string
+                          description: Representative target surface from the fingerprint's rows
+                        severity:
+                          type: string
+                          description: Representative severity from the fingerprint's rows
+                        hits:
+                          type: integer
+                          description: Total row count for this fingerprint (full history weight)
+        '400':
+          description: VALIDATION_ERROR — missing or invalid X-Project-ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ── Tuning (Phase A — global, fingerprint-centric, post-agreement) ────────────
+  /api/tuning/proposals:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+
+    post:
+      operationId: createTuningProposal
+      summary: Create a TuningProposal for corroborated fingerprint(s)
+      description: |
+        Creates the proposal directly with status='accepted' — the POST
+        itself is the agreement (Phase A: no eager browsing draft). Rejected
+        with 422 NOT_CORROBORATED unless every linked fingerprint has
+        `distinctMissions >= 3` globally.
+      tags: [tuning]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fingerprints, targetSurface, altitude, proposalText]
+              properties:
+                fingerprints:
+                  type: array
+                  items:
+                    type: string
+                  minItems: 1
+                  description: Fingerprint slugs this proposal agrees to act on
+                targetSurface:
+                  type: string
+                  example: 'agents/ba.md'
+                altitude:
+                  type: string
+                  enum: [skill-text, agent-prompt, hook]
+                proposalText:
+                  type: string
+      responses:
+        '201':
+          description: Proposal created (status='accepted')
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [id, status, fingerprints]
+                    properties:
+                      id:
+                        type: integer
+                      status:
+                        type: string
+                        enum: [accepted]
+                      fingerprints:
+                        type: array
+                        items:
+                          type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          description: NOT_CORROBORATED — not every linked fingerprint has distinctMissions >= 3
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/tuning/proposals/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+
+    patch:
+      operationId: updateTuningProposal
+      summary: Apply a tuning verb (accept|edit|merge) to an existing proposal
+      description: |
+        `accept`/`edit` promote the proposal to status='accepted', gated by
+        the same corroboration check as create (422 NOT_CORROBORATED unless
+        every linked fingerprint is corroborated); `edit` may also re-target
+        `proposalText`/`targetSurface`/`altitude`. `merge` de-aliases another
+        linked fingerprint into `mergeIntoFingerprint` and is not gated by
+        corroboration, but is rejected with 422 SAME_MISSION_MERGE if a
+        source fingerprint shares a mission with the target. `reject` and
+        `demote` no longer exist as verbs here — they were collapsed into the
+        durable per-fingerprint `POST /api/tuning/fingerprints/{slug}/defer`.
+      tags: [tuning]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [verb]
+              properties:
+                verb:
+                  type: string
+                  enum: [accept, edit, merge]
+                proposalText:
+                  type: string
+                  description: Amended proposal text (edit)
+                targetSurface:
+                  type: string
+                  description: Re-targeted surface (edit)
+                altitude:
+                  type: string
+                  enum: [skill-text, agent-prompt, hook]
+                  description: Re-targeted altitude (edit)
+                mergeIntoFingerprint:
+                  type: string
+                  description: Target fingerprint slug to merge into (merge, required for that verb)
+      responses:
+        '200':
+          description: Proposal updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: PROPOSAL_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: NOT_CORROBORATED (accept/edit) · SAME_MISSION_MERGE (merge)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/tuning/corroboration:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+
+    get:
+      operationId: getTuningCorroboration
+      summary: Cross-mission corroboration signal for a fingerprint
+      description: |
+        Global — not scoped to the requesting project. Returns the
+        distinct-mission count backing the `>= 3` corroboration gate.
+      tags: [tuning]
+      parameters:
+        - name: fingerprint
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Fingerprint slug to check
+      responses:
+        '200':
+          description: Corroboration data
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [distinctMissions, corroborated]
+                    properties:
+                      distinctMissions:
+                        type: integer
+                      corroborated:
+                        type: boolean
+        '400':
+          description: VALIDATION_ERROR — missing X-Project-ID or fingerprint query param
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/tuning/candidates:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+
+    get:
+      operationId: listTuningCandidates
+      summary: Recurrence-ranked global fingerprint candidates for the tuning walk
+      description: |
+        Groups live RetroLearning rows (across every project) by fingerprint,
+        ranked by `hits` descending. Each row carries `distinctMissions`,
+        `corroborated` (`distinctMissions >= 3`), `deferredAtMissions`, and
+        `actionable` (corroborated AND — never deferred OR distinctMissions
+        has climbed DEFER_MARGIN past the watermark).
+      tags: [tuning]
+      parameters:
+        - name: actionable
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: "When `true`, restrict the response to `actionable: true` rows only"
+      responses:
+        '200':
+          description: Candidate list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - fingerprint
+                        - pattern
+                        - targetSurface
+                        - severity
+                        - hits
+                        - distinctMissions
+                        - corroborated
+                        - deferredAtMissions
+                        - actionable
+                      properties:
+                        fingerprint:
+                          type: string
+                        pattern:
+                          type: string
+                        targetSurface:
+                          type: string
+                          description: Suggestion carried over from the most recent learning; not agreed until accept/edit
+                        severity:
+                          type: string
+                        hits:
+                          type: integer
+                          description: Full historical row count for this fingerprint
+                        distinctMissions:
+                          type: integer
+                        corroborated:
+                          type: boolean
+                        deferredAtMissions:
+                          type: integer
+                          nullable: true
+                        actionable:
+                          type: boolean
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/tuning/fingerprints/{slug}/defer:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      operationId: deferTuningFingerprint
+      summary: Durable "not now" watermark for a fingerprint
+      description: |
+        No request body. Sets `Fingerprint.deferredAtMissions` to the
+        fingerprint's current `distinctMissions`. The fingerprint reports
+        `actionable: false` on `GET /api/tuning/candidates` until
+        `distinctMissions` climbs DEFER_MARGIN past that watermark — this
+        replaces the removed `reject`/`demote` verbs.
+      tags: [tuning]
+      responses:
+        '200':
+          description: Fingerprint deferred
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [slug, deferredAtMissions, distinctMissions]
+                    properties:
+                      slug:
+                        type: string
+                      deferredAtMissions:
+                        type: integer
+                      distinctMissions:
+                        type: integer
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: FINGERPRINT_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
   # ── Missions ─────────────────────────────────────────────────────────────────
   /api/missions:
     get:
@@ -2153,6 +2688,10 @@ tags:
     description: Agent lifecycle (start/stop work)
   - name: missions
     description: Mission lifecycle and token tracking
+  - name: learnings
+    description: RetroLearning capture (structured mission-retro learnings)
+  - name: tuning
+    description: Tuning proposals (Phase 2 Mission Learning Loop)
   - name: activity
     description: Activity log
   - name: deps
