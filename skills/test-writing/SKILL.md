@@ -357,6 +357,32 @@ expect(httpClient.get).toHaveBeenCalledWith('/api/results');
 
 **Exception:** asserting on the *arguments* a mock received, or that it was called *exactly once* when re-entrancy matters (see "Re-entrancy" below), is fine. The ban is on render counts and call-order timing as proxies for correctness.
 
+### 14. Unstubbed Env-Var-Absence Assertions (BANNED)
+
+Tests that assert behavior conditioned on an environment variable being unset, without unsetting/stubbing it. These pass only by accident of the ambient shell, and fail — or worse, leak a real credential into test output — the moment the var happens to be exported for any other reason, including in CI or a developer's shell.
+
+```typescript
+// BAD: Assumes DEVTRACK_API_KEY is unset in the ambient shell
+it('omits X-Api-Key header when no key is configured', async () => {
+  const headers = buildHeaders();
+  expect(headers['X-Api-Key']).toBeUndefined();
+});
+// Passes on a clean runner, fails (or prints a real key into test output)
+// on any shell that happens to export DEVTRACK_API_KEY.
+
+// GOOD: Explicitly stub the var absent for this test
+it('omits X-Api-Key header when no key is configured', async () => {
+  vi.stubEnv('DEVTRACK_API_KEY', undefined);
+  const headers = buildHeaders();
+  expect(headers['X-Api-Key']).toBeUndefined();
+  vi.unstubAllEnvs();
+});
+```
+
+For non-JS runners, unset the var explicitly at the harness level (`env -u DEVTRACK_API_KEY go test ./...`, `monkeypatch.delenv` in pytest) rather than relying on the invoking shell's state.
+
+**Rule:** any test asserting "X happens/doesn't happen when env var Y is unset" must stub or unset Y itself (`vi.stubEnv(key, undefined)` + `vi.unstubAllEnvs()` in `afterEach`, or the runner's native env-scoping) — never rely on the ambient shell being clean. This bug class has recurred independently across separate missions and separate language suites (JS and Go) for the same root cause: the test never controlled the variable it was asserting about.
+
 ---
 
 ## What Makes a Good Test
@@ -402,6 +428,28 @@ it('activates edit mode via keyboard shortcut', async () => {
 ```
 
 If an element must be reachable for an interaction to work (focusable, enabled, visible), assert that precondition — JSDOM and similar test environments are often more permissive than real runtimes.
+
+### Trigger-Wiring Tests (Helper-Exists Is Not Wired)
+
+The same "test the trigger, not just the handler" principle applies outside the UI. Whenever a helper or behavior must fire as a *side effect* of some other call path — bootstrap-on-absence, auto-create-on-missing, retry-after-failure — write a test that drives the call path and asserts the side effect happened. A test that only proves the helper works in isolation does not prove anything calls it.
+
+```go
+// BAD: Only proves the helper works when called directly
+func TestBootstrapManifest(t *testing.T) {
+  bootstrapManifest(tmpDir)
+  assertManifestExists(t, tmpDir) // proves nothing about whether sendEvent calls it
+}
+
+// GOOD: Drives the real call path, asserts the wiring fires
+func TestSendEvent_BootstrapsManifestWhenAbsent(t *testing.T) {
+  os.Remove(manifestPath(tmpDir)) // precondition: no manifest
+  err := sendEvent(tmpDir, sampleEvent)
+  require.NoError(t, err)
+  assertManifestExists(t, tmpDir) // fails if sendEvent forgets to call bootstrapManifest
+}
+```
+
+**Rule:** if an AC describes a helper that must be invoked from a specific call path (not just exist), name the test after the call path and the triggering condition (`TestSendEvent_BootstrapsManifestWhenAbsent`, not `TestBootstrapManifest`), and assert the observable side effect through the real entry point. This catches the "helper built but never called" gap — a real defect class, not a hypothetical: a rejection naming exactly this gap ("helper declared but never wired") on one item was independently avoided on the very next item once the lesson was articulated.
 
 ### Consumer Wiring
 
@@ -533,6 +581,85 @@ After mapping each acceptance criterion 1:1 to a test, scan for AC *combinations
 **How to check:** After your 1:1 reconciliation pass, identify all "trigger" ACs (user actions: click, keypress, form submit) and all "constraint" ACs (guards, validation, disabled states, loading states). For each trigger × constraint pair, ask: "Is there a test that exercises this trigger while the constraint is active?" If not, add one.
 
 This catches the most common review rejection pattern: guards that only protect one interaction path.
+
+---
+
+## Adversarial Input Matrix Testing (Security & Parser Items)
+
+For security-critical or input-parsing work — redaction, sanitization, validators, parsers, anything that must recognize or reject a *family* of hostile input shapes — do not reach for the standard red-green-minimal TDD loop (one failing test, smallest fix that turns it green, repeat). That loop is the wrong tool for this category: each minimal fix generalizes only to the exact shape it was written against, and the next adversarial shape slips through untested. Observed cost on one redaction item: **8 distinct leak shapes across 5 rejection rounds**, because every round fixed exactly the shape that was named and no more — the assignment-key regex gained whitespace tolerance in one round, but its sibling regex never got the same fix. A patch-local fix does not generalize; a matrix-first test set does.
+
+**The fix is procedural: enumerate the input family as a matrix before writing the first test**, and write the whole sweep as your first pass — not one representative case per acceptance criterion.
+
+For a redaction/secret-detection item, matrix dimensions typically include:
+- **Assignment operator:** `=`, `:=` (Go), `: ` (JSON/YAML), Python dict assignment (`os.environ['X'] = "v"`)
+- **Spacing:** no space (`KEY=value`), spaced (`KEY = value`), spaced inside brackets (`config[ "api_key" ] = "v"`)
+- **Quoting:** unquoted, single-quoted, double-quoted, JSON-quoted keys (`{"password": "..."}`)
+- **Value shape:** single word, multi-word quoted (`password="my secret value"`), known-prefix tokens (`sk-live-...`, `ghp_...`, `AKIA...`)
+- **Operator vs. command families:** direct assignment vs. a command that sets the value as a side effect (e.g. `setx`, `set`, `export`) — this may be a legitimately separate, out-of-scope family; call that out explicitly in your summary rather than silently missing it
+
+Other input-parsing domains have their own dimensions (URL encoding: reserved chars × case × double-encoding; shell quoting: `$()`, backticks, `;`, quote-nesting) — the principle transfers even when the specific matrix doesn't.
+
+```typescript
+// BAD: One test per AC, each pinning a single representative shape
+it('redacts password assignment', () => {
+  expect(redact('password=secret123')).not.toContain('secret123');
+});
+// Ships a regex that matches only this one shape. Quoted, spaced, and
+// JSON-key variants all leak in cleartext — discovered only after
+// multiple rejection rounds instead of in the first pass.
+
+// GOOD: Matrix covering the shape family in one sweep
+describe.each([
+  ['unquoted, no space',      'password=secret123'],
+  ['quoted multi-word',       'password="my secret value"'],
+  ['spaced assignment',       'KEY = value'],
+  ['JSON-quoted key',         '{"password": "secret123"}'],
+  ['Go walrus assignment',    'apiKey := "sk-live-abc123"'],
+  ['Python dict assignment',  `os.environ['SECRET_KEY'] = "value"`],
+  ['bracketed key, spaced',   'config[ "api_key" ] = "v"'],
+])('redacts %s', (_label, input) => {
+  it('does not leak the value', () => {
+    expect(redact(input)).not.toMatch(/secret123|my secret value|value|sk-live-abc123/);
+  });
+});
+```
+
+**Rule:** for security- or parser-typed work items, before writing any test, enumerate the adversarial input matrix (operator × spacing × quoting × value-shape, or the equivalent dimensions for the parser at hand) and write the full sweep as the first test pass. A single representative-shape test per AC is under-covered by default for this category of item. If the matrix reveals the family is unbounded (e.g. arbitrary shell command forms that can set an env var), that is itself the finding to report — flag the scope boundary explicitly rather than continuing to patch.
+
+---
+
+## Fixture and Runtime-Assumption Validity
+
+A test fixture that is invalid against the real runtime contract produces a false failure that has nothing to do with the code under test — and burns review time re-diagnosing it as if it were. Two observed cases: a fixture used a UUID constant that was not valid RFC4122, failing zod's `.uuid()` check and producing false 422s unrelated to the code under test; and a test asserted "FK enforcement stays off (SQLite default)" when the actual runtime driver (`@libsql/client`) defaults `PRAGMA foreign_keys=ON` — the assumption was invented, not checked, against the specific adapter in use.
+
+**Rule:** fixture values (UUIDs, IDs, tokens, sample payloads, timestamps) must be valid against the real validators the code under test will run them through — not hand-typed strings that merely look plausible. Generate them the way the runtime would (`crypto.randomUUID()`, the project's ID factory, a real JWT signer for token fixtures) rather than inventing a literal.
+
+Any assumption about a runtime default (DB pragma, env behavior, driver default) must be verified against the actual adapter/runtime in use, never assumed by general reputation — "SQLite defaults FK off" is true for the raw `sqlite3` CLI but not for every driver. If you assert a default in a test, know where you verified it (driver docs, a one-off runtime check).
+
+```typescript
+// BAD: Hand-typed UUID-shaped string, not a valid RFC4122 UUID
+const fixtureUserId = '1234-5678-abcd';
+it('rejects an order for an unknown user', async () => {
+  const result = await createOrder({ userId: fixtureUserId, items: [] });
+  expect(result.status).toBe(404); // fails with 422 instead — zod rejects the malformed UUID first
+});
+
+// GOOD: Real UUID generator, same shape the runtime validator expects
+const fixtureUserId = crypto.randomUUID();
+
+// BAD: Assumed a default without checking the actual driver
+it('allows inserting a child row before its parent (FK off by default)', async () => {
+  await db.execute(`INSERT INTO child (parent_id) VALUES (999)`);
+  // fails: @libsql/client defaults PRAGMA foreign_keys=ON, insert throws
+});
+
+// GOOD: Verify the driver's actual default first, assert what's true
+it('rejects inserting a child row before its parent (FK enforced by default)', async () => {
+  await expect(db.execute(`INSERT INTO child (parent_id) VALUES (999)`)).rejects.toThrow(/FOREIGN KEY/);
+});
+```
+
+This is the same "verify against source-of-truth, don't invent it" discipline this skill applies to production code, applied to test fixtures and runtime assumptions themselves.
 
 ---
 
@@ -774,6 +901,10 @@ For every test file, verify:
 19. Async contracts owned by a unit (rejection preserves state, in-flight guard, retry on transient error) are tested at that unit's own suite, not only end-to-end.
 20. Async submitters have an explicit re-entrancy test asserting the action fires exactly once when triggered multiple times during one in-flight request.
 21. Exposed state/props (`submitting`, `loading`, `disabled`) are verified at the consumer level via observable effects, not just by checking the producer renders.
+22. Security/parser-typed items have an adversarial input matrix (operator × spacing × quoting × value-shape, or the domain equivalent) tested up front — not one representative shape per AC.
+23. Fixture values (UUIDs, IDs, tokens) are generated via the real validator/ID factory, not hand-typed; assumed runtime defaults (FK pragmas, driver behavior) are verified against the actual adapter, not assumed by reputation.
+24. Every test asserting behavior when an env var is absent explicitly stubs/unsets that var (`vi.stubEnv`, `env -u`, `monkeypatch.delenv`) — never relies on the ambient shell.
+25. Every AC describing a helper wired into a call path (bootstrap-on-absence, auto-create-on-missing) has a test that drives the call path and asserts the side effect fires — not just a test that the helper works standalone.
 
 See `references/testing-anti-patterns.md` for extended examples of each banned pattern.
 See `references/testing-good-patterns.md` for positive examples of behavior-focused testing.

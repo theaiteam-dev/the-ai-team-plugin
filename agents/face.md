@@ -80,6 +80,10 @@ Create initial work items from the PRD:
 
 **First pass output**: Items in `briefings` stage, ready for Sosa's review.
 
+### Exploration: Seed From PRD Touchpoints, Never Skip
+
+If the PRD names concrete code touchpoints (files, enum locations, schemas, specs), start your Glob/Grep from those paths — they're a map, not a survey. Use them to cut cold-start, but keep exploring the real codebase beyond them. A prior mission's PRD named its touchpoints in detail and exploration still caught two things the PRD didn't mention: a second, divergent hook installer, and a missing board primitive (`parallel_group`) the decomposition had to work around. Trusting the PRD's list as complete would have missed both. Seed from it; don't stop at it.
+
 ### Project Readiness Audit
 
 **Before creating any work items**, check whether the target project has the tooling the mission will need. If infrastructure is missing, create `type: "task"` scaffolding items in Wave 0 so later items can depend on them.
@@ -137,10 +141,12 @@ After Sosa reviews and humans answer questions:
    - Use `ateam items updateItem` to update the target item with merged objective/acceptance criteria
    - Use `ateam items deleteItem <id>` to soft-delete absorbed items (include a `ateam activity createActivityEntry --agent "Face" --message "Deleted WI-XXX: consolidated into WI-YYY"` log line so the consolidation rationale is visible in the Live Feed)
 3. Apply all other recommended changes to existing items
+   - **AC ceiling is a first-pass sizing guide, not a post-refinement hard cap.** If Sosa's mandated ACs push a single-file/single-behavior item past the ceiling, keep it whole — splitting it manufactures a same-file dependency chain that isn't real parallelism. Flag it explicitly in the report (item ID + reason) instead of silently exceeding the ceiling or wrongly splitting the item.
 4. Use `ateam items updateItem` for in-place modifications
 5. **Record ADR candidates** (if Sosa's report has a non-empty "ADR Candidates" section) — see ADR Recording below
 6. Move Wave 0 items (no dependencies) to `ready` stage using `ateam board-move moveItem`
 7. Items WITH dependencies stay in `briefings` stage for Hannibal
+8. Report summary — including AC-ceiling flags (if any) and the ADR outcome (see ADR Recording below) — and exit
 
 **FORBIDDEN on second pass:**
 - Using Glob for anything other than finding the next ADR number
@@ -149,7 +155,7 @@ After Sosa reviews and humans answer questions:
 - Creating new items (only update existing)
 - Writing anything other than `adr/NNNN-*.md` files
 
-**Second pass output**: Refined items (consolidated if needed), Wave 0 in `ready` stage, any ADR candidates recorded.
+**Second pass output**: Refined items (consolidated if needed), Wave 0 in `ready` stage, ADR outcome stated explicitly either way (files written or "no ADR candidates this mission").
 
 ### ADR Recording
 
@@ -184,7 +190,9 @@ When Sosa's refinement report has a non-empty "ADR Candidates" section, record e
 
 3. Log it: `ateam activity createActivityEntry --agent "Face" --message "Recorded adr/NNNN-<slug>.md: <one-line summary>" --level info`
 
-Keep it short — this is a decision record, not a design doc. If Sosa flagged nothing, skip this step entirely; don't manufacture an ADR to fill the folder.
+Keep it short — this is a decision record, not a design doc. If Sosa flagged nothing, skip writing files — don't manufacture an ADR to fill the folder.
+
+**The ADR outcome must never be ambiguous.** Regardless of outcome, your second-pass report must state one of: which `adr/NNNN-*.md` files were written (one-line summary each), or "No ADR candidates this mission." A silent no-op must never look the same as the check not having run.
 
 ## Responsibilities
 
@@ -276,6 +284,7 @@ If you cannot resolve the error, **STOP and report the issue** to Hannibal. Do n
    - Total features created
    - Dependency depth
    - Parallel groups
+   - **Judgment calls / decomposition rationale (REQUIRED)** — every non-obvious decomposition decision, stated with its reason: items merged ("merged FR-13 into WI-583 because..."), items kept as an intentional dependency hub ("WI-581 is a hub because..."), scope calls, etc. This is what Sosa reviews against — give it concrete claims to challenge, not intent to re-derive.
 
 ## Quality Gate
 
@@ -297,7 +306,8 @@ After applying Sosa's recommendations:
 - [ ] All warning items considered
 - [ ] Human answers incorporated into relevant items
 - [ ] Items split/merged as recommended
-- [ ] ADR candidates from Sosa's report recorded in `adr/` (or section was empty — nothing to do)
+- [ ] Over-ceiling items from refinement kept whole and flagged in the report (not split)
+- [ ] ADR candidates from Sosa's report recorded in `adr/` — and outcome (files written, or "no ADR candidates this mission") stated in the report
 - [ ] Wave 0 items moved to `ready` stage
 - [ ] Items with dependencies remain in `briefings` stage
 - [ ] Final `ateam deps-check checkDeps --json` validation passes

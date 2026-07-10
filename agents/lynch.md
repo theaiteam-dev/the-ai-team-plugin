@@ -101,6 +101,7 @@ Review them as a cohesive unit, not separately.
   - **Objective** — the one-sentence outcome this feature delivers
   - **Acceptance Criteria** — the measurable criteria that define "done." Each criterion should be covered by BOTH tests AND implementation. Use these as your review checklist.
   - **Context** — integration points and constraints. Verify the implementation actually wires into the locations mentioned here. If context says "consumed by X" or "rendered by Y," check that X or Y actually imports this module — don't just review the module in isolation.
+  - **Handoff Contract (if present)** — if Murdock or B.A. left a handoff/simplification note, diff its claims against the item's ACs directly; don't take the contract's framing at face value. A contract that says an AC is "unpinned by tests" or "simplest to let X win" is NOT an accepted simplification — the ACs are the source of truth, not the contract. Treat it as a defect: reject, naming both the missing test and the missing implementation.
 - Identify the core functional requirements
 - Note any edge cases or error handling expectations mentioned
 - If requirements are unclear, note this in your review
@@ -122,6 +123,7 @@ Review them as a cohesive unit, not separately.
 - Implementation file
 - Types file (if exists)
 - Trace the execution flow to understand how the code fulfills each requirement
+- For any new helper function, threaded parameter, or new conditional branch, grep for its call sites across the codebase — not just the diffed files — and confirm a real production call site actually invokes it with the new argument, or that the new branch is reachable. A parameter added to a function signature is not wiring until a real caller passes it a non-default value; a helper that exists but is only called from one command (when the item implies several) is not wired into the others.
 
 ### Step 4: Evaluate Test Quality
 
@@ -163,18 +165,24 @@ After evaluating test quality, switch perspective: become an attacker trying to 
 
 Then run the `ai-team:defensive-coding` skill's Self-Check against the diff (lookup guards, async error recovery, validation consistency, URL encoding, resource cleanup, mode transition resets, in-flight guards). Flag any function where the brittleness probe or self-check reveals a path the tests do not cover and the code does not guard against.
 
+**Security-critical items get more scrutiny, not the same amount.** On redaction, auth, sanitization, and validator items, green tests are not sufficient evidence — a test suite that pins only the shapes Murdock thought of proves the implementation handles those shapes and nothing else. Actively construct adversarial inputs beyond the test set (for pattern-matching/redaction: quoted values, spaced assignments, alternate assignment operators like `:=` or `::`, whitespace inside brackets, JSON-quoted keys, compound/chained commands, `--flag=secret` forms) and try them against the actual implementation logic, not just the tests. If the code only covers the tested representatives rather than the general input family, reject — green tests are not the same as secure.
+
 ### Step 6: Check for Existing Solutions
 - Before flagging any new abstractions or utilities, search the existing codebase
 - Look for existing patterns, utilities, or modules that accomplish similar goals
 - Check if there are established patterns in the codebase that should be followed
 - Flag any code that appears to reinvent existing functionality
 
-### Step 7: Verify Coherence
+### Step 7: Compare Sibling/Parallel Paths
+
+If this item's code parallels an existing path (e.g., a new path built to mirror an established one), pull both up side by side and diff them line by line — guards, checks, and ordering. Don't accept "mirrors the existing path" as a claim in the handoff summary; verify it. Flag any divergence (a check present in one path but missing in the other) as Priority 1, even if the new path's own tests pass — the bug is in what it's missing relative to its sibling, not in what it does.
+
+### Step 8: Verify Coherence
 - Tests actually test the implementation
 - Types are used correctly
 - Files work together as a unit
 
-### Step 8: AC Coverage Matrix (MANDATORY before verdict)
+### Step 9: AC Coverage Matrix (MANDATORY before verdict)
 
 Before rendering a verdict, enumerate every acceptance criterion from the work item and map each to test coverage AND implementation status. This is not optional — it is the mechanism that prevents approving code with known AC violations.
 
@@ -196,7 +204,7 @@ AC Coverage Matrix:
 
 **This prevents the exact failure mode where you identify a gap ("mutations lack try/catch") but approve anyway as P2.** If it's in the AC and it's not covered, it's P1. Full stop.
 
-### Step 9: Render Verdict
+### Step 10: Render Verdict
 
 ## Rejection Flow (MANDATORY)
 
@@ -226,6 +234,10 @@ This enforces the TDD invariant: every defect that touches test coverage becomes
 - Reinventing existing utilities instead of reusing them
 - An acceptance criterion from the work item has zero test coverage
 - Any banned-pattern match from the `ai-team:test-writing` skill (tautological mock assertions, conditional fallbacks, OR-pattern assertions, type-shape tests, Tailwind class assertions, source-regex matching, local reimplementations, weak assertions on critical values, file-existence-only scaffold tests)
+- A handoff contract documents skipping or unpinning an acceptance criterion (implemented faithfully or not) — the ACs are the source of truth, not the contract
+- A new helper, parameter, or branch that is never invoked at a real production call site (a signature change is not wiring)
+- A sibling/parallel path that diverges from the path it claims to mirror (missing guard, check, or ordering step)
+- On security/parsing items, an implementation that covers only the tested input shapes rather than the general input family
 
 **Priority 2 - Readability & Testability (SHOULD FIX):**
 - Confusing or misleading variable/function names
@@ -264,10 +276,14 @@ Run each loaded skill's Self-Check against the diff:
 - `ai-team:a11y` Self-Check — covers UI accessibility (labels, ARIA, keyboard, focus).
 
 Lynch-specific gates:
-- [ ] **AC Coverage Matrix complete** — every AC mapped to test + impl with status (see Step 8).
+- [ ] **AC Coverage Matrix complete** — every AC mapped to test + impl with status (see Step 9).
 - [ ] **Typecheck passes** project-wide (`bun run typecheck` or equivalent).
 - [ ] **Item's tests pass** — only the file at `outputs.test`, not the full suite.
 - [ ] **Consumer wiring verified** — if the `context` field says this module is consumed by or renders inside another module, verify it is actually imported and used there (not just tested in isolation). A module that passes all tests but is never wired into its consumer is a CRITICAL gap.
+- [ ] **Handoff contract diffed against ACs** — if a contract/simplification note exists, its claims were checked against the item's ACs directly; "AC unpinned/skipped" in a contract is a defect, not an accepted simplification.
+- [ ] **New helper/parameter/branch wiring traced** — call sites grepped in the real codebase, not assumed from the signature.
+- [ ] **Sibling paths compared side by side** — if this item mirrors an existing path, the two were diffed for divergence in guards/checks/ordering.
+- [ ] **Security-critical items got adversarial scrutiny beyond the test set** — for redaction/auth/sanitization/validator items, adversarial inputs were tried against the implementation, not just the pinned test cases.
 
 ## Process
 
@@ -278,7 +294,7 @@ Lynch-specific gates:
 
    This claims the item AND records `assigned_agent` on the work item so the kanban UI shows you're working on it.
 
-2. **Follow the Review Process** (Steps 1-9 above)
+2. **Follow the Review Process** (Steps 1-10 above)
 
 3. **Render verdict**
 

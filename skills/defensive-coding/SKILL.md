@@ -336,6 +336,123 @@ When your code fails a compiler check, linter rule, or strict config flag, fix y
 
 ---
 
+## 12. Guard Consistency Across Sibling Operations
+
+When a codebase has multiple call sites doing the same kind of operation (multiple `create` calls, multiple write paths, parallel API routes performing the same write, multiple regexes matching the same category of value), a guard applied to one MUST be applied to all of them. A guard on one of N equivalent paths is not a guard — it's a fail-open hole with the illusion of coverage.
+
+```
+// BAD: only one of two sibling creates is wrapped
+async function createProject(data):
+  return db.project.create(data)          // unwrapped — a unique-constraint violation crashes the request
+
+async function createOrganization(data):
+  try:
+    return db.organization.create(data)
+  catch PrismaError as e:
+    return handlePrismaError(e)           // wrapped — but its sibling above isn't
+
+// GOOD: the same guard wraps every sibling of the same operation
+async function createProject(data):
+  try:
+    return db.project.create(data)
+  catch PrismaError as e:
+    return handlePrismaError(e)
+
+async function createOrganization(data):
+  try:
+    return db.organization.create(data)
+  catch PrismaError as e:
+    return handlePrismaError(e)
+```
+
+Before marking work complete: whenever you add or rely on a guard (error wrapper, transaction, validation rule, boundary/integrity check), `grep` for other call sites of the same operation (other `.create(`, other route handlers doing the same write, other regexes matching the same class of input) and confirm the same guard applies to each. This also applies to bug fixes: if you tighten a regex or validation rule to close a leak, check every sibling regex/rule that matches the same category of input — a fix that generalizes to one sibling and not the other is a patch, not a fix.
+
+---
+
+## 13. Fail Closed, Never Fail Open
+
+Mandatory gates and guards must default to rejecting when their input is empty, missing, or ambiguous — never to silently passing. An empty allowlist, a `null` result, or an early-exit branch is not "nothing to check" — treat it as "the check could not run" and fail closed.
+
+```
+// BAD: empty allowlist is silently treated as "no restriction"
+function checkOwnedPaths(changedFiles, ownedPaths):
+  if ownedPaths is empty:
+    return null                     // no violation reported — gate silently disabled
+  for file in changedFiles:
+    if file not in ownedPaths:
+      return Violation(file)
+  return null
+
+// GOOD: empty/missing input is itself a failure to gate, not a pass
+function checkOwnedPaths(changedFiles, ownedPaths):
+  if ownedPaths is empty:
+    throw ConfigError("ownedPaths must not be empty — cannot evaluate containment")
+  for file in changedFiles:
+    if file not in ownedPaths:
+      return Violation(file)
+  return null
+
+// BAD: a mandatory security gate is skipped because an earlier check failed first
+function validate(output):
+  if not outputSchemaValid(output):
+    return { ok: false, reason: "schema" }   // returns early — containment check never runs
+  if not containmentCheckPasses(output):
+    return { ok: false, reason: "containment" }
+  return { ok: true }
+
+// GOOD: order checks so the mandatory containment/security check always runs,
+// or run both and report both — never let one skip the other
+function validate(output):
+  schemaResult = outputSchemaValid(output)
+  containmentResult = containmentCheckPasses(output)   // always evaluated
+  if not containmentResult:
+    return { ok: false, reason: "containment" }
+  if not schemaResult:
+    return { ok: false, reason: "schema" }
+  return { ok: true }
+```
+
+If you're not sure whether a branch is "legitimately nothing to check" or "ambiguous input the gate should reject," treat it as the latter.
+
+---
+
+## 14. Atomic Get-or-Create Under Concurrency
+
+A "find existing, else create" pattern (`findFirst` then `create`) is not atomic. Under concurrent identical requests, both can pass the `findFirst` check before either `create` lands, producing a duplicate row (TOCTOU race) — or, if the field IS unique, the losing request throws an unhandled constraint error instead of returning the existing row.
+
+```
+// BAD: no transaction, no unique constraint — races double-insert or crash
+async function getOrCreateProject(name):
+  existing = await db.project.findFirst({ where: { name } })
+  if existing:
+    return existing
+  return await db.project.create({ data: { name } })   // two concurrent calls both miss the findFirst, both create
+
+// GOOD: back the lookup field with a unique constraint and handle the
+// constraint violation as the "someone else won the race" case
+async function getOrCreateProject(name):
+  try:
+    return await db.project.create({ data: { name } })   // name is UNIQUE in the schema
+  catch PrismaError as e:
+    if e.code == "P2002":                                 // unique constraint violation
+      return await db.project.findFirst({ where: { name } })
+    throw e
+
+// ALSO GOOD: wrap find-then-create in a transaction if the database/ORM
+// supports serializable transactions for this pattern
+async function getOrCreateProject(name):
+  return await db.$transaction(async (tx) => {
+    existing = await tx.project.findFirst({ where: { name } })
+    if existing:
+      return existing
+    return await tx.project.create({ data: { name } })
+  })
+```
+
+Never assume single-threaded execution. Any get-or-create must either be inside a transaction or rely on a DB-level unique constraint with the resulting constraint-violation error (e.g. Prisma's `P2002`) handled gracefully — not left to crash the request.
+
+---
+
 ## Self-Check Before Submitting
 
 For every function or module you write, verify:
@@ -353,3 +470,6 @@ For every function or module you write, verify:
 11. Every type, interface, and utility is imported from its canonical location — no local redefinitions.
 12. Every AC that names a specific module/component is satisfied by a real import — no inline reimplementations.
 13. No strict flags, linter rules, or safety checks were disabled or weakened to make the code compile — fix the code, not the config.
+14. A guard, wrapper, or validation rule added to one call site is applied to every sibling call site of the same operation.
+15. Mandatory gates fail closed on empty, missing, or ambiguous input — no early-exit branch implicitly counts as a pass.
+16. Any find-then-write "get-or-create" is atomic — inside a transaction, or backed by a DB unique constraint with the conflict error handled.

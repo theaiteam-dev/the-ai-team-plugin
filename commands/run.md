@@ -171,6 +171,11 @@ briefings → ready → testing → implementing → review → probing → done
 
 **Stage transitions (ALL REQUIRED):**
 1. `ready → testing`: Murdock writes tests (and types if specified)
+
+   **Exception — NO_TEST_NEEDED items:** items with an empty `outputs.test`
+   (e.g. deletion/cleanup tasks) have nothing for Murdock to do. Enter these
+   directly at `implementing` (`ready → implementing`, skipping `testing`)
+   and dispatch B.A. — don't burn a Murdock slot on a no-op.
 2. `testing → implementing`: B.A. implements to pass tests
 3. `implementing → review`: Lynch reviews ALL outputs together
 4. `review → probing`: Lynch approves → **Amy MUST investigate** (NOT optional)
@@ -466,6 +471,13 @@ This flat structure:
 - Avoids nested subagent memory overhead
 
 The dispatch mode (legacy Task/TaskOutput vs. native Agent/SendMessage) is determined by the orchestration playbook loaded in step 3.
+
+**Native teams messaging address:** in native teams mode, the main session
+(Hannibal) is addressable as `team-lead`, not `hannibal`. Worker agents'
+FYI/ALERT messages must target `team-lead` — a message addressed to
+`hannibal` will not reach the orchestrating session. If you see any dispatch
+prompt or playbook step reference `hannibal` as a message target, treat it
+as a bug and use `team-lead` instead.
 
 ## CLI Commands Used
 

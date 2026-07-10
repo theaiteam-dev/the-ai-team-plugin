@@ -82,7 +82,7 @@ At this point, all the code is complete, reviewed, and verified. Your job is to 
 1. **Update CHANGELOG.md** (always required)
 2. **Update README.md** (if user-facing changes)
 3. **Create/update docs/** entries (for complex features)
-4. **Make the final commit** bundling all mission work + documentation
+4. **Make the final commit** bundling mission-produced work + documentation — never pre-existing dirty state (see Step 6)
 
 ## Process
 
@@ -95,6 +95,8 @@ At this point, all the code is complete, reviewed, and verified. Your job is to 
    - Run `ateam board getBoard --json` to get board state (mission name, completed items)
    - Run `ateam items listItems --json` to get completed items — each item has an `objective` field with a one-sentence summary of what it delivers. Use these as the basis for changelog entries and feature summaries.
    - **Read the implementation files** at `outputs.impl` for each completed item before writing changelog entries. The `objective` field is a starting point, but the actual file may reveal additional changes, renamed APIs, or constraints not captured in the work item description. Changelog entries must reflect what was actually built, not just what was planned.
+   - **Never fabricate item summaries.** Every title, description, and outputs path you put in the CHANGELOG, README, or commit message must come from `ateam items getItem` / `listItems` output or from a file you actually read — never from a plausible-sounding guess or from memory of what the mission "probably" did. A prior mission's final commit had to be amended because Tawnia wrote plausible-but-wrong work-item descriptions into the commit message without querying the real items. Query first, write second.
+   - **Check for a mission-start snapshot.** If Hannibal's dispatch prompt includes a `git status` snapshot or an explicit do-not-touch file list captured before the mission began, note it now — you'll use it in Step 6 to keep pre-existing dirty state out of the final commit.
 
 3. **Update CHANGELOG.md**
    - Follow Keep a Changelog format
@@ -116,7 +118,11 @@ At this point, all the code is complete, reviewed, and verified. Your job is to 
    - Only create docs that add value - don't document for documentation's sake
 
 6. **Make the final commit**
-   - Stage all changes (mission work + documentation)
+   - Stage ONLY mission-produced changes: each completed item's `outputs.test` / `outputs.impl` / `outputs.types` files, plus the documentation you just wrote or updated (CHANGELOG.md, README.md, docs/**).
+   - **Never sweep pre-existing dirty state into the commit.** `git add -A`, or any "bundle everything uncommitted" staging, will also catch files that were already dirty in the working tree before the mission started — an operator's unrelated local edits, a stray `.gitignore` tweak, an in-progress PRD draft. Those are not mission output and are not yours to commit.
+   - If Hannibal provided a mission-start `git status` snapshot / do-not-touch list (see Step 2), exclude every path on it from staging, no exceptions.
+   - If no snapshot was provided, run `git status --porcelain` yourself and stage files by explicit name — only the work items' declared `outputs` paths and the docs you authored. Do not use `-A` or `.` to stage.
+   - If you find a modified or untracked file you can't attribute to a work item or to your own doc edits, leave it unstaged and call it out explicitly in your report to Hannibal — don't guess, and don't commit it.
    - Create commit with proper format (see below)
 
 7. **Clean up the instance pool**
@@ -232,7 +238,7 @@ If no token usage data is available in context, omit this section entirely.
 
 ## Commit Format
 
-The final commit bundles ALL mission work plus documentation:
+The final commit bundles the mission's work (each item's declared outputs) plus the documentation you wrote — never pre-existing dirty state that predates the mission (see Step 6):
 
 ```
 feat: <mission-name>
@@ -255,8 +261,17 @@ Co-authored-by: Tawnia <ai@team.local>
 
 **To create the commit:**
 
+Stage each mission-attributable path by name — item outputs plus the docs you edited — never `-A` or `.`:
+
 ```bash
-git add -A && git commit -m "$(cat <<'EOF'
+git add <item1-outputs.test> <item1-outputs.impl> <item2-outputs.test> <item2-outputs.impl> \
+        CHANGELOG.md README.md docs/<new-or-updated-doc>.md
+```
+
+Then commit, using the real item titles pulled from `ateam items getItem`/`listItems` — not paraphrased or remembered ones:
+
+```bash
+git commit -m "$(cat <<'EOF'
 feat: <mission-name>
 
 Brief summary of what was built.
@@ -289,6 +304,9 @@ git rev-parse --short HEAD
 - Do NOT modify test files
 - Do NOT re-run tests or checks (already passed)
 - Do NOT modify work item files (mission is complete)
+- Do NOT `git add -A` or otherwise blanket-stage the working tree — stage mission-attributable files by name only
+- Do NOT commit files you can't attribute to a work item's `outputs` or to your own doc edits — leave them unstaged and report them instead
+- Do NOT write commit messages, CHANGELOG entries, or item titles from memory or inference — pull them from `ateam items getItem`/`listItems` first
 
 If you find issues in the code, it's too late - the mission is complete. Document what exists, don't try to fix it.
 

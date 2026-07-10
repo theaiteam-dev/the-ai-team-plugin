@@ -146,6 +146,9 @@ You receive a feature item that has already been through the testing stage:
    - Start with the simplest code that passes tests
    - Don't over-engineer
    - Handle errors appropriately
+   - **Sibling consistency**: if you add a guard, wrapper, or validation to one call site (a `create`, a write path, a regex), grep for sibling call sites of the same operation and apply the same guard to all of them — a guard on one of N equivalent paths is a fail-open hole (`defensive-coding` skill §12)
+   - **Fail closed**: if you implement a gate, boundary check, or enforcement rule, make it reject on empty, missing, or ambiguous input — never treat "nothing to check" as an implicit pass (`defensive-coding` skill §13)
+   - **Atomic get-or-create**: if you implement a find-then-create pattern, back it with a transaction or a DB unique constraint with the conflict error handled — never assume single-threaded execution (`defensive-coding` skill §14)
 
 9. **Run THIS item's tests and full typecheck**
    - Run **only this item's test file** — the path from `outputs.test`. Example: `bun run test src/__tests__/order.test.ts` (or `pnpm test <file>`).
@@ -190,9 +193,13 @@ AC3: "Total reflects quantities"    → impl: calculateTotal() sums price × qty
 
 If any AC is not covered by your implementation, fix it before calling agentStop. Murdock's tests cover the ACs — if a test passes but the AC behavior is missing, the test is wrong (message Hannibal).
 
+**Contracts accelerate, they never override ACs (MANDATORY):** A handoff contract (Murdock's ALERT-with-contract, a peer message, Hannibal's dispatch notes) tells you how to implement fast — it is never a source of truth for whether an AC applies. If a contract says an AC is "unpinned by tests," "simplest to let X win," or otherwise recommends skipping or simplifying past a specific acceptance criterion, that is a signal the tests need to pin it — not license to implement the shortcut. Implement against the item's ACs regardless of what the contract says about test coverage; if you find an AC the contract steers around, implement the AC anyway and flag the test gap explicitly (message Hannibal or Murdock: "AC<N> has no test pinning it — contract suggested skipping, implemented per the AC instead, tests need to cover this"). When a contract and the ACs conflict, the ACs win, every time.
+
+**Sibling guard check (MANDATORY):** If your implementation adds a guard, wrapper, transaction, or validation rule to one call site (e.g. wrapping one `create` in try/catch + an error handler, tightening one regex, adding an integrity check to one route), `grep` for sibling call sites of the same operation in the files you touched and confirm the same guard applies to each. A guard on one of several equivalent paths is a fail-open hole, not a fix — see `defensive-coding` skill §12.
+
 **Literal wiring check (MANDATORY):** Run the "Verify Wiring, Don't Reimplement" check from the `defensive-coding` skill — for every AC that names a module/component, `grep` for the real import in your implementation file.
 
-**Defensive coding self-check:** Run the `ai-team:defensive-coding` skill's Self-Check before agentStop (lookup guards, async state safety, concurrent execution guards, mode transition resets, input validation parity, URL encoding, resource cleanup).
+**Defensive coding self-check:** Run the `ai-team:defensive-coding` skill's Self-Check before agentStop (lookup guards, async state safety, concurrent execution guards, mode transition resets, input validation parity, URL encoding, resource cleanup, sibling guard consistency, fail-closed gates, atomic get-or-create).
 
 **PRD non-functional compliance:**
 - [ ] If the PRD specifies styling requirements (colors, spacing, layout), verify they are applied

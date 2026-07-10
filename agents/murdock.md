@@ -73,7 +73,7 @@ Skills are NOT preloaded. **Before responding to any work, invoke `Skill` for ev
 
 ```
 Skill("ai-team:pool-handoff")        # claim/release pool slot, next-agent handoff
-Skill("ai-team:test-writing")        # banned anti-patterns, mandatory checks (apply to every test file)
+Skill("ai-team:test-writing")        # banned anti-patterns, mandatory checks, adversarial input matrices, fixture validity (apply to every test file)
 Skill("ai-team:tdd-workflow")        # test scope by work-item type, red-green-refactor
 Skill("ai-team:a11y")                # accessibility tests for UI work
 Skill("ai-team:teams-messaging")     # START/ACK/REJECTED/FYI/ALERT formats
@@ -123,6 +123,8 @@ This claims the item AND records `assigned_agent` on the work item so the kanban
 **Integration test requirement:** If the work item's `context` field references two or more source files (e.g., "integrates with `src/services/product.ts`, called from `src/controllers/order.ts`"), include at least one minimally-mocked integration test that exercises the connection between those modules — not just each module in isolation. Mock only the outermost I/O (database, network); keep the real module wiring intact. If the work item has no `context` field or the context does not mention integration points, this requirement does not apply.
 
 **Module spy tests for integration/wiring items (MANDATORY):** If the work item wires multiple components into a parent (ACs say "imports and renders X from WI-NNN"), use module spies to verify real components are rendered — not just text matching. See the `test-writing` skill's "Integration Item Wiring Tests" section. Do NOT `vi.mock()` any component being wired — render them for real, mock only external boundaries (API, network).
+
+**Adversarial matrix for security/parser items (MANDATORY — overrides the standard TDD loop):** If the work item is security-critical or does input parsing/sanitization (redaction, secret detection, validators, parsers — anything that must recognize or reject a *family* of hostile input shapes), do NOT follow Step 4/5's normal one-test-per-AC, red-green loop as your only pass. That loop is the wrong tool for this category: each minimal fix generalizes only to the shape it was written against, and the next adversarial shape slips through. Before writing any test, enumerate the whole input family as a matrix (operator × spacing × quoting × value-shape, or the equivalent dimensions for the parser at hand) per the `test-writing` skill's "Adversarial Input Matrix Testing" section, and write the full sweep as your first pass. A single representative-shape test per AC is under-covered for this category and is the most common source of multi-round Lynch/Amy rejections on security items. If the enumeration reveals the input family is unbounded, say so explicitly in your summary rather than shipping a partial sweep — that is a design-scope finding, not a testing gap.
 
 ### Step 2.5: Rework Mode (only if rejectionCount > 0)
 
@@ -223,6 +225,9 @@ Before marking work complete, verify:
 - [ ] **Every async handler has a concurrent-execution test** (trigger fires twice, operation executes once)
 - [ ] **Multi-trigger ACs have tests for every trigger** (not just the easiest path)
 - [ ] **Consumer wiring tested** if context references cross-module integration
+- [ ] **AC wiring is tested at the trigger, not the helper** — if an AC describes a helper that must fire from a call path (bootstrap-on-absence, auto-create-on-missing), the test drives the call path and asserts the side effect, not just that the helper works standalone (see `test-writing` skill's "Trigger-Wiring Tests" section)
+- [ ] **Fixture values are valid against the real runtime contract** — UUIDs, IDs, tokens are generated the way the runtime would, not hand-typed; assumed runtime defaults (DB pragmas, driver behavior) are verified against the actual adapter, not assumed (see `test-writing` skill's "Fixture and Runtime-Assumption Validity" section)
+- [ ] **Tests asserting env-var absence explicitly stub/unset that var** (`vi.stubEnv`, `env -u`) — never rely on the ambient shell being clean
 
 ### AC Reconciliation (MANDATORY before agentStop)
 
@@ -235,6 +240,8 @@ AC3: "Total reflects quantities"    → test: "should calculate total"          
 ```
 
 If any AC has no test, write one before calling agentStop. This is the #1 cause of Lynch rejections.
+
+**Optional/override ACs still need a test of the override path (MANDATORY).** An AC phrased as "X honored when given," "Y overrides the default," or "Z is optional" is NOT satisfied by testing only the default/absent case — write a test that supplies the override and asserts it takes effect. An AC left unpinned this way can be silently dropped in implementation (the simplest correct-looking code just lets the default win) and survive review with 100% happy-path coverage, because nothing ever exercised the non-default path.
 
 **"Only/never" qualifier check (MANDATORY):** After the 1:1 mapping, scan each AC for exclusionary language ("only," "never," "exclusively," "must not"). Each match requires both a positive and negative test — see the `test-writing` skill's "Only/Never Qualifier Tests" section. This is the #1 cause of Amy rejections.
 

@@ -3,6 +3,8 @@
 > **You are in NATIVE TEAMS mode.** Spawn teammates with `Agent` (passing `name`), and coordinate with `SendMessage`.
 >
 > **API CHANGE (Claude Code ≥ 2.1.178):** `TeamCreate` and `TeamDelete` **no longer exist**. The team is **implicit** — every session with `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` has exactly one team, created automatically; cleanup is automatic on session exit. **Do NOT call `TeamCreate`/`TeamDelete`, and do NOT treat their absence as a reason to fall back to legacy mode.** Native teams is available whenever `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`; spawn teammates directly with `Agent`.
+>
+> **Orchestrator address is `team-lead`, not `hannibal`.** Hannibal is the persona running this playbook in the main session, but in native teams mode the main session's `SendMessage` address is `team-lead`. `hannibal` is not a registered teammate name — `SendMessage(to: "hannibal", ...)` silently bounces (no error surfaced; the message just never arrives). Every FYI / ALERT / DONE a teammate sends back to the orchestrator, and every READY signal sent during pre-warming, MUST target `to: "team-lead"`. This applies everywhere in this playbook and in every dispatched agent's prompt template.
 
 This playbook EXTENDS the base native teams orchestration with **stage concurrency**: up to N items can be processed within the same stage simultaneously, each by its own agent instance. N is determined by `ateam scaling compute` (dep graph width × memory budget). When N=1, behaviour is identical to the base playbook (single instance per agent type, no suffixes).
 
@@ -106,6 +108,7 @@ After getting the result:
 - If N == 1 → single-instance mode (names: murdock, ba, lynch, amy — no suffix)
 - If N > 1  → stage concurrency mode (names: murdock-1..N, ba-1..N, etc.) — up to N items processed per stage simultaneously
 - Persist the scaling rationale via: `PATCH /api/missions/{missionId}` with `{scalingRationale: result.data}`
+- **Surface the binding constraint to the operator now**, before any dispatch: log an activity entry naming `bindingConstraint` and the numbers behind it, e.g. `ateam activity createActivityEntry --agent hannibal --message 'N=1: memory-bound (memoryBudgetCeiling=1), not dependency-bound (depGraphMaxPerStage=4) — a wide Wave 0 will still serialize' --level info`. `scaling compute` can return N=1 on a wide, dependency-clean wave purely because memory is the tighter ceiling — if the operator isn't told *why* N=1, they'll assume the planning-side parallelism (independent items, clean dep graph) should have paid off and won't know to add memory instead of waiting on the dep graph.
 
 > **Single-instance fallback:** When N=1, all instance names are the base names (`murdock`, `ba`, `lynch`, `amy`). `agentStart`/`agentStop` pass these exact names. The instance pool still tracks state, but there is only one entry per agent type.
 
@@ -221,8 +224,8 @@ function spawn_lane(lane_number):
                            Environment: export ATEAM_MISSION_ID='{missionId}'
                            Your FIRST action on startup:
                              1. Run: export ATEAM_MISSION_ID='{missionId}'
-                             2. Send Hannibal a ready signal:
-                                SendMessage(to: 'hannibal', message: 'READY: {instance.name}', summary: 'READY {instance.name}')
+                             2. Send the orchestrator a ready signal (address: team-lead, NOT hannibal):
+                                SendMessage(to: 'team-lead', message: 'READY: {instance.name}', summary: 'READY {instance.name}')
                            Then await work item assignments via SendMessage.
                            When receiving work, use exactly '--agent \"{instance.name}\"' in all
                            ateam agents-start and ateam agents-stop commands.
@@ -390,6 +393,17 @@ If mission state is `precheck_failure`:
   - Display blockers to operator
   - Re-run precheck; if passed continue, if failed exit
 
+**Don't duplicate Face's dependency validation at mission start.** Face already
+runs `deps-check` in its pass-1 wrap-up (per its own prompt) and confirms the
+dependency graph is valid before the mission is created. Every `deps-check`
+call in this playbook (the Concurrency Detection fallback, Phase 2's
+catch-all, the inline checks after each completion message) exists to compute
+*which items are ready right now* for dispatch — none of them are a second
+graph-validation pass. Do not add a standalone "re-verify the graph"
+`deps-check` step at mission start. Still confirm board state with `ateam
+board getBoard --json` (items landed where Face said they would), but trust
+Face's validation rather than re-running it as an independent check.
+
 **Key change from single-instance mode:** Pipeline handoffs (murdock -> ba -> lynch -> amy) are peer-to-peer via the file-based pool directory. Hannibal receives only FYI (success) or ALERT (no idle instance) messages. Hannibal's active role is limited to:
 - Phase 2: Unlocking dependency gates
 - Phase 3: Filling the pipeline from ready (dispatching to Murdock instances)
@@ -504,9 +518,28 @@ LOOP CONTINUOUSLY:
     # ═══════════════════════════════════════════════════════════
     # PHASE 3: FILL PIPELINE FROM READY (per-column WIP limits)
     # ═══════════════════════════════════════════════════════════
-    # Hannibal dispatches to Murdock instances directly (entry point to pipeline).
+    # Hannibal dispatches to Murdock instances directly (entry point to pipeline)
+    # for test-carrying items. NO_TEST_NEEDED items (empty outputs.test) skip
+    # Murdock entirely — see "NO_TEST_NEEDED Items" below.
     # Subsequent handoffs are peer-to-peer via pool directory.
     while ready stage not empty:
+        item_id = peek next item from ready stage    # do not pop yet — routing depends on outputs.test
+        item    = Bash("ateam items renderItem --id {item_id}")
+
+        if item.outputs.test is empty:
+            # NO_TEST_NEEDED (e.g. pure deletion/config task) — Murdock has nothing
+            # to test. Route ready → implementing directly so B.A. can run in
+            # parallel with test-carrying items even at N=1, instead of burning
+            # the only Murdock slot on a no-op.
+            claimed = claimInstance("ba")
+            if claimed is null:
+                break  # no idle B.A. right now — leave item in ready, retry next cycle
+            pop item_id from ready stage
+            Bash("ateam board-move moveItem --itemId {item_id} --toStage implementing")
+            dispatch(claimed, item_id)   # dispatch() notes: no test file — implement straight from the ACs
+            active_instances[item_id] = claimed
+            continue
+
         claimed = claimInstance("murdock")
         if claimed is null:
             # Advance cursor past any lanes already in failed_lanes
@@ -519,7 +552,7 @@ LOOP CONTINUOUSLY:
             if claimed is null:
                 break  # truly at capacity (all spawnable lanes busy or failed)
 
-        item_id = pick next item from ready stage
+        pop item_id from ready stage
         # NOTE: Hannibal does NOT call agentStart here — the dispatched agent
         # owns agentStart (and the .idle → .busy mv) as its first action.
         dispatch(claimed, item_id)
@@ -636,6 +669,59 @@ function dispatch_with_timeout(instance, item_id):
 **Do NOT check tmux pane liveness as a proxy for agent health.** A pane can exist with a dead process inside it. Message-based signals (READY, ACK, FYI, `teammate_idle`) are the only reliable health indicators.
 
 ## Agent Dispatch Workflows
+
+### NO_TEST_NEEDED Items — Enter at `implementing`, Not `testing`
+
+An item with empty `outputs.test` (a pure deletion, config, or scaffolding task
+with nothing behavioral to pin) has no work for Murdock. Routing it through
+`testing` anyway burns a Murdock slot on a no-op and, at N=1, needlessly
+serializes it behind whatever Murdock is already doing.
+
+**Rule:** before claiming a Murdock instance in Phase 3, check the candidate
+item's `outputs.test`. If it's empty, skip Murdock — claim a B.A. instance
+instead, `board-move` the item straight from `ready` to `implementing`, and
+dispatch B.A. This lets NO_TEST_NEEDED items run in parallel with test-carrying
+items even when `N=1` (Murdock works one item, B.A. works the other, at once).
+
+```text
+claimed = claimInstance("ba")
+Bash("ateam board-move moveItem --itemId {itemId} --toStage implementing")
+ateam agents-start agentStart --itemId {itemId} --agent {claimed}
+```
+
+Dispatch B.A. with an explicit note that there is no test file — implement
+directly from the item's acceptance criteria, then verify manually (build/run,
+not `go test`/`npm test` against a nonexistent suite). B.A.'s handoff to Lynch
+proceeds exactly as normal from there.
+
+### Security-Critical and Parsing Items: Standing Instructions
+
+When dispatching an item whose scope is security-critical or input-parsing
+(redaction, sanitization, credential handling, custom parsers, anything that
+classifies or transforms untrusted input), add two things to the dispatch:
+
+1. **A review-focus hint naming likely adversarial shapes** — e.g. "extra
+   scrutiny on pattern escapes: compound commands, quoted values,
+   `--flag=secret` forms, spaced `KEY = value` assignments, JSON-quoted keys."
+   Give this to Murdock (test coverage), B.A. (implementation), and Lynch
+   (review) — a hint that names the actual shapes reviewers should try beats a
+   generic "be careful with security" instruction.
+2. **A standing instruction to report when the approach can't close, not just
+   when a shape fails.** Tell Murdock/B.A. (and Lynch, on rejection): if fixing
+   one adversarial shape keeps revealing another — the enumeration of leak
+   shapes keeps growing round over round instead of converging — stop
+   patching shape-by-shape and raise an explicit design signal instead:
+   *"this approach cannot close — the input family is unbounded,"* naming the
+   durable alternative (e.g. switch from shape-enumeration regex to
+   value-shape/entropy-based detection). TDD's usual red-green-minimal
+   instinct is the wrong instinct here: a minimal per-shape patch only ever
+   closes the one case that failed, not the class of cases it belongs to.
+
+This is what actually surfaces the decisive design call in practice: asking
+"tell me if the approach can't close" is what gets an agent to name the
+durable fix instead of grinding through one more regex tweak. When the
+orchestrator ratifies that kind of design call mid-mission, record it per
+"Run-Phase ADR Capture" below.
 
 ### Dispatching Murdock (testing stage)
 
@@ -968,16 +1054,16 @@ if [ -n "$CLAIMED_NEXT" ]; then
         message: "START: WI-005 - {one-line summary}\nRun: ateam items renderItem --id WI-005",
         summary: "START WI-005"
     )
-    # Wait up to 20s for ACK, then notify Hannibal
+    # Wait up to 20s for ACK, then notify the orchestrator (address: team-lead, NOT hannibal)
     SendMessage(
-        to: "hannibal",
+        to: "team-lead",
         message: "FYI: WI-005 → ${CLAIMED_NEXT} (${MY_INSTANCE_NAME})",
         summary: "FYI WI-005 → ${CLAIMED_NEXT}"
     )
 elif [ -n "$POOL_ALERT" ]; then
-    # NO IDLE INSTANCE: Alert Hannibal to queue
+    # NO IDLE INSTANCE: Alert the orchestrator to queue (address: team-lead, NOT hannibal)
     SendMessage(
-        to: "hannibal",
+        to: "team-lead",
         message: "ALERT: WI-005 - ${POOL_ALERT} (${MY_INSTANCE_NAME})",
         summary: "ALERT WI-005"
     )
@@ -1004,10 +1090,36 @@ ateam agents-start agentStart --itemId "WI-005" --agent "${MY_INSTANCE_NAME}"
 
 ### When All Instances of the Next Type Are Busy
 
-1. The completing agent sends an ALERT to Hannibal (see claiming flow above).
-2. Hannibal adds the item to `pending_alerts` (with timestamp).
-3. On every Phase 1b cycle, Hannibal checks whether an idle instance is now available via `claimInstance()` and dispatches queued items.
+1. The completing agent sends an ALERT to the orchestrator (`team-lead` — see claiming flow above).
+2. `team-lead` adds the item to `pending_alerts` (with timestamp).
+3. On every Phase 1b cycle, `team-lead` checks whether an idle instance is now available via `claimInstance()` and dispatches queued items.
 4. The item is **not dropped** — it stays in `pending_alerts` until dispatched.
+
+**Required ALERT/handoff contract format.** Queue latency (waiting in
+`pending_alerts` for an idle instance) is dead time unless the ALERT itself
+does useful work. When an agent ALERTs because there's no idle downstream
+instance, it must not send a bare "no capacity" ping — it must include a
+complete implementation contract so the eventual receiver can start cold with
+**zero re-derivation**. A queued item is redispatched later, possibly by a
+different instance than the one that would have received it immediately, so
+the contract has to be self-contained. Required fields:
+
+- **Exact signatures** — function/struct/type signatures the receiver will
+  implement or call against, not prose descriptions of them.
+- **The ordered resolution chain** — the concrete numbered steps to close the
+  item, in order (not "fix the bug," but "1. do X, 2. call Y, 3. verify Z").
+- **Helpers to reuse** — name the existing functions/utilities that already
+  do part of the job, so the receiver doesn't reinvent them.
+- **What NOT to touch** — files or functions that are out of scope, already
+  correct, or owned by another in-flight item.
+- **TDD/red state** — which tests currently fail and why, so the receiver
+  knows the target state without re-running the suite cold.
+- **The verify command** — the exact command that proves the fix (test file,
+  build/vet, or manual repro), not "make sure it works."
+
+This is the ALERT format for every pipeline agent (Murdock → B.A., B.A. →
+Lynch, Lynch → Amy), not just Murdock. Forward the contract verbatim into the
+eventual dispatch — don't summarize it away.
 
 ### Pool File Cleanup
 
@@ -1083,7 +1195,7 @@ T=30s   MURDOCK-1 finishes WI-001:
         RESULT=$(agentStop --json --advance)            # CLI: release murdock-1, claim ba-1
         claimedNext = "ba-1"                            # from JSON response
         SendMessage(to: "ba-1", "START: WI-001...")     # direct peer handoff
-        SendMessage(to: "hannibal", "FYI: WI-001 → ba-1 (murdock-1)")
+        SendMessage(to: "team-lead", "FYI: WI-001 → ba-1 (murdock-1)")
 
         HANNIBAL receives FYI:
         active_instances[001] = "ba-1"
@@ -1096,19 +1208,19 @@ T=40s   MURDOCK-2 finishes WI-002:
         RESULT=$(agentStop --json --advance)            # CLI: release murdock-2, claim ba-2
         claimedNext = "ba-2"
         SendMessage(to: "ba-2", "START: WI-002...")
-        SendMessage(to: "hannibal", "FYI: WI-002 → ba-2 (murdock-2)")
+        SendMessage(to: "team-lead", "FYI: WI-002 → ba-2 (murdock-2)")
 
 T=60s   BA-1 finishes WI-001:
         RESULT=$(agentStop --json --advance)            # CLI: release ba-1, claim lynch-1
         claimedNext = "lynch-1"
         SendMessage(to: "lynch-1", "START: WI-001...")
-        SendMessage(to: "hannibal", "FYI: WI-001 → lynch-1 (ba-1)")
+        SendMessage(to: "team-lead", "FYI: WI-001 → lynch-1 (ba-1)")
 
 T=65s   MURDOCK-1 finishes WI-003:
         RESULT=$(agentStop --json --advance)            # CLI: release murdock-1, claim ba-1 (just freed at T=60s)
         claimedNext = "ba-1"
         SendMessage(to: "ba-1", "START: WI-003...")
-        SendMessage(to: "hannibal", "FYI: WI-003 → ba-1 (murdock-1)")
+        SendMessage(to: "team-lead", "FYI: WI-003 → ba-1 (murdock-1)")
 
         ... pipeline continues — all handoffs are peer-to-peer via CLI ...
         ... Hannibal only processes FYI messages and fills from ready ...
@@ -1120,6 +1232,38 @@ T=65s   MURDOCK-1 finishes WI-003:
 3. `agentStop --json` handles pool mv atomically — agents never manually touch pool files after startup
 4. Hannibal's loop is lightweight: process FYI messages (update tracking), drain alerts, fill from ready
 5. Instance names propagate through agentStart/agentStop (murdock-1, ba-2, etc.)
+
+## Run-Phase ADR Capture
+
+The ADR pathway (Sosa flags "ADR Candidates" in her refinement report; Face
+writes `adr/NNNN-*.md` on her second pass) only exists in the **plan** phase.
+But the **run** phase is where the most precedent-setting decisions actually
+get made: scope-boundary ratifications, durable-fix strategy choices, and
+out-of-scope declarations the orchestrator makes in the moment to keep the
+pipeline moving. If nothing captures them, they live only in `work_log` and
+activity entries — easy for the retro to miss and easy for a future mission
+to re-litigate.
+
+**Trigger:** whenever, mid-mission, the orchestrator ratifies a decision that
+sets precedent beyond the single item it's attached to — a scope boundary
+("command forms are out of item scope, only operator-delimited assignments +
+headers are in scope"), a durable-fix strategy chosen over a stopgap ("switch
+to value-shape detection, not another shape-regex patch" — see "Security-
+Critical and Parsing Items" above), or an explicit out-of-scope declaration
+that a future item will need to know about.
+
+**Action:** when the trigger fires, do one of:
+- Note it in an activity entry tagged for the retro (`ateam activity
+  createActivityEntry --agent hannibal --message 'ADR CANDIDATE: <decision>
+  — <why it's precedent-setting>' --level info`) so it survives even if
+  nobody writes the file, or
+- Write `adr/NNNN-*.md` in the target repo directly, matching the format
+  Face uses on her second pass, if the decision is significant enough to
+  warrant a standing record before the mission ends.
+
+Do this at the moment of ratification, not retroactively — the reasoning is
+freshest right after the decision, and a decision left uncaptured tends to
+stay uncaptured once the pipeline moves on to the next item.
 
 ## Team Shutdown
 
