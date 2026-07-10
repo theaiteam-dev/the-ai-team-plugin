@@ -5,9 +5,12 @@
  * This module provides functions to build and send hook event payloads
  * to the A(i)-Team API for observability.
  *
- * Claude Code sends hook context via STDIN as JSON, not as env vars.
- * The only env vars available are: ATEAM_API_URL, ATEAM_PROJECT_ID,
- * CLAUDE_PLUGIN_ROOT, CLAUDE_PROJECT_DIR.
+ * Claude Code sends hook context via STDIN as JSON, not as env vars. The hook
+ * process inherits the launching shell's environment, so anything exported
+ * there is on process.env: ATEAM_API_URL, ATEAM_PROJECT_ID, CLAUDE_PLUGIN_ROOT,
+ * CLAUDE_PROJECT_DIR, and — when the API is behind Cloudflare Access — the
+ * ACCESS_CLIENT_ID / ACCESS_CLIENT_SECRET service-token creds (see
+ * apiEventHeaders below).
  */
 
 import { readFileSync, writeFileSync, unlinkSync, mkdirSync, appendFileSync } from 'fs';
@@ -17,6 +20,38 @@ import { join } from 'path';
 import { resolveAgent } from './resolve-agent.js';
 
 const AGENT_MAP_DIR = join(tmpdir(), 'ateam-agent-map');
+
+/**
+ * Build the headers for a POST to /api/hooks/events.
+ *
+ * When the API is fronted by Cloudflare Access (the hosted kanban viewer), the
+ * CF-Access service-token headers are REQUIRED — without them CF rejects the
+ * request before it reaches the app and the telemetry event is silently
+ * dropped. That is exactly what emptied HookEvent / activity / token-usage /
+ * tool-histogram / skill-usage for CF-gated missions and left the retro running
+ * degraded. The creds are read from the same env vars the ateam CLI uses
+ * (packages/ateam-cli/internal/client/client.go), so the observer hooks reach
+ * the same gated deployments the CLI already does.
+ *
+ * Shared by observer.js (sendObserverEvent) and send-denied-event.js so the two
+ * sibling POST paths can never drift out of sync.
+ *
+ * @param {string} projectId
+ * @returns {Record<string, string>}
+ */
+export function apiEventHeaders(projectId) {
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Project-ID': projectId,
+  };
+  const accessId = process.env.ACCESS_CLIENT_ID;
+  const accessSecret = process.env.ACCESS_CLIENT_SECRET;
+  if (accessId && accessSecret) {
+    headers['CF-Access-Client-Id'] = accessId;
+    headers['CF-Access-Client-Secret'] = accessSecret;
+  }
+  return headers;
+}
 
 /**
  * Path for the best-effort observer failure log (FIX 3). One JSON object per
@@ -312,10 +347,7 @@ async function sendObserverEvent(payload) {
   try {
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Project-ID': projectId,
-      },
+      headers: apiEventHeaders(projectId),
       body: JSON.stringify(payload),
     });
 

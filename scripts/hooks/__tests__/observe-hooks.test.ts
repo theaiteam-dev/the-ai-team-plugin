@@ -533,6 +533,14 @@ describe('Observer Hook - API Communication', () => {
 
   beforeEach(() => {
     mockFetch.mockReset();
+    // Hermetic env: clear the CF-Access service-token creds so these header
+    // assertions are deterministic on any machine. A real dev shell exports
+    // ACCESS_CLIENT_ID/SECRET, which apiEventHeaders() would (correctly) attach
+    // — but relying on ambient env would both flake the exact-header checks and
+    // leak the real token into test output. Tests that want CF-Access set it
+    // explicitly.
+    delete process.env.ACCESS_CLIENT_ID;
+    delete process.env.ACCESS_CLIENT_SECRET;
   });
 
   afterEach(() => {
