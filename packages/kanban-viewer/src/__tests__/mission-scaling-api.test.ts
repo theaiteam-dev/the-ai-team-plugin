@@ -23,7 +23,8 @@ const mockPrisma = vi.hoisted(() => ({
     count: vi.fn(),
   },
   missionItem: { findMany: vi.fn() },
-  item: { updateMany: vi.fn() },
+  item: { updateMany: vi.fn(), findMany: vi.fn() },
+  stage: { findUnique: vi.fn() },
   project: {
     findUnique: vi.fn(),
     create: vi.fn(),
@@ -244,5 +245,67 @@ describe('GET /api/missions/:id — parsed scalingRationale in single mission', 
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.data.scalingRationale).toEqual(SCALING_RATIONALE);
+  });
+});
+
+describe('POST /api/scaling/compute — persist to active mission', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Compute inputs: no items → depGraphMax defaults to 1; a testing stage WIP.
+    mockPrisma.item.findMany.mockResolvedValue([]);
+    mockPrisma.stage.findUnique.mockResolvedValue({ id: 'testing', wipLimit: 3 });
+  });
+
+  it('persists the rationale to the active mission when persist=true', async () => {
+    mockPrisma.mission.findFirst.mockResolvedValue({ id: 'M-20260401-001' });
+    mockPrisma.mission.update.mockResolvedValue(baseMission());
+
+    const { POST } = await import('@/app/api/scaling/compute/route');
+    const response = await POST(
+      makeRequest('POST', 'http://localhost:3000/api/scaling/compute', { persist: true })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.persisted).toBe(true);
+    expect(body.missionId).toBe('M-20260401-001');
+    expect(mockPrisma.mission.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'M-20260401-001' },
+        data: { scalingRationale: expect.any(String) },
+      })
+    );
+    // What is saved is exactly the rationale returned to the caller (the "how").
+    const saved = mockPrisma.mission.update.mock.calls[0][0].data.scalingRationale;
+    expect(JSON.parse(saved)).toEqual(body.data);
+  });
+
+  it('reports persisted=false and writes nothing when no active mission exists', async () => {
+    mockPrisma.mission.findFirst.mockResolvedValue(null);
+
+    const { POST } = await import('@/app/api/scaling/compute/route');
+    const response = await POST(
+      makeRequest('POST', 'http://localhost:3000/api/scaling/compute', { persist: true })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.persisted).toBe(false);
+    expect(body.missionId).toBeNull();
+    expect(mockPrisma.mission.update).not.toHaveBeenCalled();
+  });
+
+  it('does not touch the mission when persist is omitted (what-if compute)', async () => {
+    mockPrisma.mission.findFirst.mockResolvedValue({ id: 'M-should-not-be-read' });
+
+    const { POST } = await import('@/app/api/scaling/compute/route');
+    const response = await POST(
+      makeRequest('POST', 'http://localhost:3000/api/scaling/compute', {})
+    );
+    const body = await response.json();
+
+    expect(body.persisted).toBe(false);
+    expect(mockPrisma.mission.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.mission.update).not.toHaveBeenCalled();
   });
 });

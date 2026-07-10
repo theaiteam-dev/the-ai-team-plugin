@@ -13,6 +13,7 @@ import (
 var (
 	scalingComputeCmd_concurrency int
 	scalingComputeCmd_memory      int
+	scalingComputeCmd_persist     bool
 )
 
 var scalingComputeCmd = &cobra.Command{
@@ -46,6 +47,9 @@ var scalingComputeCmd = &cobra.Command{
 		if memorySet {
 			bodyMap["availableMemoryMB"] = memoryValue
 		}
+		if scalingComputeCmd_persist {
+			bodyMap["persist"] = true
+		}
 
 		resp, err := c.Do("POST", "/api/scaling/compute", pathParams, queryParams, bodyMap)
 		if err != nil {
@@ -68,4 +72,5 @@ func init() {
 	scalingCmd.AddCommand(scalingComputeCmd)
 	scalingComputeCmd.Flags().IntVar(&scalingComputeCmd_concurrency, "concurrency", 0, "Override adaptive scaling with a fixed instance count (must be >= 1)")
 	scalingComputeCmd.Flags().IntVar(&scalingComputeCmd_memory, "memory", 0, "Available memory in MB (auto-detected if not set)")
+	scalingComputeCmd.Flags().BoolVar(&scalingComputeCmd_persist, "persist", false, "Persist the computed rationale (N + binding constraint) to the active mission server-side")
 }

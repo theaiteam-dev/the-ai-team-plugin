@@ -61,10 +61,12 @@ Hannibal runs precheck by executing commands and forwarding results to the API �
 At the very start of the mission (before team creation), determine the instance count using a single CLI command:
 
 ```bash
-# One command computes everything: dep graph analysis + memory budget + adaptive scaling
-result=$(ateam scaling compute --json)
+# One command computes everything AND persists the rationale to the active
+# mission (dep graph analysis + memory budget + adaptive scaling). --persist
+# saves "how we got N" server-side — no raw curl/PATCH (which zero-trust rejects).
+result=$(ateam scaling compute --persist --json)
 
-# Result contains the full ScalingRationale:
+# Result contains the full ScalingRationale plus persistence metadata:
 # {
 #   "success": true,
 #   "data": {
@@ -73,7 +75,9 @@ result=$(ateam scaling compute --json)
 #     "memoryBudgetCeiling": 12,
 #     "bindingConstraint": "dep_graph",
 #     "concurrencyOverride": null
-#   }
+#   },
+#   "persisted": true,             ← rationale written to the mission
+#   "missionId": "M-..."           ← which mission it was saved to
 # }
 
 N = result.data.instanceCount
@@ -107,7 +111,7 @@ if N < 1: N = 1
 After getting the result:
 - If N == 1 → single-instance mode (names: murdock, ba, lynch, amy — no suffix)
 - If N > 1  → stage concurrency mode (names: murdock-1..N, ba-1..N, etc.) — up to N items processed per stage simultaneously
-- Persist the scaling rationale via: `PATCH /api/missions/{missionId}` with `{scalingRationale: result.data}`
+- The scaling rationale is already persisted to the mission by the `--persist` flag above (confirm `result.persisted == true`). **Never** shell a raw `curl PATCH /api/missions/{id}` for this — zero-trust (Cloudflare Access / Authentik) rejects requests that don't carry the CLI's auth headers, so the rationale would silently go unsaved.
 - **Surface the binding constraint to the operator now**, before any dispatch: log an activity entry naming `bindingConstraint` and the numbers behind it, e.g. `ateam activity createActivityEntry --agent hannibal --message 'N=1: memory-bound (memoryBudgetCeiling=1), not dependency-bound (depGraphMaxPerStage=4) — a wide Wave 0 will still serialize' --level info`. `scaling compute` can return N=1 on a wide, dependency-clean wave purely because memory is the tighter ceiling — if the operator isn't told *why* N=1, they'll assume the planning-side parallelism (independent items, clean dep graph) should have paid off and won't know to add memory instead of waiting on the dep graph.
 
 > **Single-instance fallback:** When N=1, all instance names are the base names (`murdock`, `ba`, `lynch`, `amy`). `agentStart`/`agentStop` pass these exact names. The instance pool still tracks state, but there is only one entry per agent type.
