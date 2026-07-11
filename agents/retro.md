@@ -52,11 +52,10 @@ ateam items listItems --json
 # Activity feed
 ateam activity listActivity --json
 
-# Token usage (POST triggers aggregation, then GET returns cached result)
-curl -s -X POST "${ATEAM_API_URL:-http://localhost:3000}/api/missions/{missionId}/token-usage" \
-  -H "X-Project-ID: $ATEAM_PROJECT_ID" | cat
-curl -s "${ATEAM_API_URL:-http://localhost:3000}/api/missions/{missionId}/token-usage" \
-  -H "X-Project-ID: $ATEAM_PROJECT_ID" | cat
+# Token usage — aggregateTokenUsage triggers aggregation AND returns the result
+# in one call. Use the CLI, not raw curl (curl carries no auth and is rejected
+# by zero-trust: Cloudflare Access / Authentik).
+ateam missions aggregateTokenUsage {missionId} --json
 
 # Tool-call histogram per agent
 ateam missions getToolHistogram {missionId} --json

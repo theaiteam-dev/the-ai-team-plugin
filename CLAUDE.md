@@ -265,7 +265,7 @@ Usage: `ateam <resource> <command> [flags]`
 | Tool histogram | `ateam missions getToolHistogram <missionId> --json` |
 | Skill usage | `ateam missions getSkillUsage <missionId> --json` |
 | Health report | `ateam missions-health getHealthReport [--json]` |
-| Compute scaling | `ateam scaling compute [--concurrency N] [--memory N] --json` |
+| Compute scaling | `ateam scaling compute [--concurrency N] [--memory N] [--persist] --json` |
 | Check deps | `ateam deps-check checkDeps --json` |
 | Log activity | `ateam activity createActivityEntry --agent <name> --message "..." --level info` |
 | List activity | `ateam activity listActivity --json` |

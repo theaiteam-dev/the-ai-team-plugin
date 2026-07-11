@@ -91,11 +91,11 @@ Every valid altitude (`skill-text` | `agent-prompt` | `hook`) is a **system-rule
 You were dispatched with a corroborated fingerprint (or fingerprints) already, but re-confirm before spending the write — corroboration is global and can shift between the walk listing candidates and you calling `propose`. A proposal is not always one fingerprint: `--fingerprint` is repeatable on `propose`, so bundling more than one genuinely-related fingerprint into a single proposal is supported, but the API gates on **every** linked fingerprint individually, with no partial credit. Check each one:
 
 ```bash
-# Global distinct-mission count for ONE fingerprint (no dedicated ateam CLI
-# wrapper for this endpoint — call it directly). Repeat for every fingerprint
-# you intend to link to the proposal.
-curl -s "${ATEAM_API_URL:-http://localhost:3000}/api/tuning/corroboration?fingerprint={fingerprint}" \
-  -H "X-Project-ID: $ATEAM_PROJECT_ID" | cat
+# Global distinct-mission count for ONE fingerprint. Repeat for every
+# fingerprint you intend to link to the proposal. Use the CLI, never raw curl
+# (curl carries no auth and is rejected by zero-trust: Cloudflare Access /
+# Authentik).
+ateam tuning corroboration --fingerprint {fingerprint} --json
 ```
 
 Response shape is `{ distinctMissions: number, corroborated: boolean }` — `corroborated` is `distinctMissions >= 3` (`CORROBORATION_THRESHOLD`, global — COUNT(DISTINCT missionId) across every project's `RetroLearning` rows for that fingerprint, missionId not null). Trust the `corroborated` field, don't recompute it yourself. The proposal only clears bar 2 when **every** linked fingerprint is corroborated — `POST /api/tuning/proposals` enforces this server-side (`areAllCorroborated`) regardless of what you calculated, and a partial check gives you false confidence: you'll either miss a real gap or get an unexplained 422 on `propose`.

@@ -89,15 +89,15 @@ Extract `wip_limits` from the response. Display current limits to the user:
   probing:       {N}
 ```
 
-**If `--wip N` was provided**, update each pipeline stage's WIP limit to N via the API.
-The pipeline stages to update are: `testing`, `implementing`, `review`, `probing`.
+**If `--wip N` was provided**, update each pipeline stage's WIP limit to N with the
+`ateam` CLI. The pipeline stages to update are: `testing`, `implementing`, `review`,
+`probing`. Use the CLI verb — never a raw `curl`, which carries no auth headers and is
+rejected by zero-trust (Cloudflare Access / Authentik):
 
-For each stage, call:
 ```bash
-curl -s -X PATCH "${ATEAM_API_URL:-http://localhost:3000}/api/stages/{stageId}" \
-  -H "Content-Type: application/json" \
-  -H "X-Project-ID: ${ATEAM_PROJECT_ID}" \
-  -d '{"wipLimit": N}'
+for stage in testing implementing review probing; do
+  ateam stages updateStage "$stage" --wipLimit N
+done
 ```
 
 After updating, display the new limits:

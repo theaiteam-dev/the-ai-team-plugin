@@ -218,8 +218,9 @@ Agents use `ateam` via `Bash` for all API operations. Here is the complete mappi
 | Final mission review (read) | `ateam missions-final-review getFinalReview --json` |
 | Final mission review (write) | `ateam missions-final-review writeFinalReview [flags]` |
 | Archive mission | `ateam missions-archive archiveMission --json` |
-| Compute scaling plan | `ateam scaling compute --json` |
-| Update stage config | `ateam stages updateStage --stage <stage> [flags]` |
+| Compute scaling plan | `ateam scaling compute [--persist] --json` (`--persist` saves the rationale to the active mission) |
+| Update stage WIP limit | `ateam stages updateStage <stage> --wipLimit N` |
+| Fingerprint corroboration | `ateam tuning corroboration --fingerprint <slug> --json` |
 | Check dep readiness | `ateam deps-check checkDeps --json` |
 | Log activity message | `ateam activity createActivityEntry --agent <name> --message "..." --level info` |
 | View activity log | `ateam activity listActivity --json` |
