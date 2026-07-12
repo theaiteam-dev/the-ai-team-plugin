@@ -112,6 +112,8 @@ Review them as a cohesive unit, not separately.
 
 **This step comes before reading any source files.** Running tests first establishes ground truth — if tests pass, the code works. Do not predict test outcomes from reading code; that leads to false rejections based on stale reads or incorrect assumptions.
 
+**NO_TEST_NEEDED items reviewed differently:** if the item has an empty `outputs.test` AND `NO_TEST_NEEDED` in its description (non-code task: docs, static config, deletions — see the `work-breakdown` skill), it legitimately skipped the `testing` stage. There is no test file: skip the test run here, skip Step 4 (test quality), and do NOT reject for "AC has zero test coverage" — instead review the change itself against each AC (still fill the AC Coverage Matrix, mapping each AC to the implementation only). **But validate the flag first:** if the changed file is imported by source code, is config loaded at runtime, or otherwise has runtime impact, the NO_TEST_NEEDED flag is wrong — reject with `--return-to testing`, and state in your message that `outputs.test` must be populated (via `ateam items updateItem`) so Murdock can pin the behavior before B.A. reworks.
+
 - Run `bun run typecheck` (or project equivalent like `pnpm typecheck`, `tsc --noEmit`) **project-wide** — **reject immediately on type errors**. Typecheck catches cross-item type breakage (e.g., a stub wired into App.tsx that breaks when the real component lands with required props) and is safe to run project-wide.
 - Run **only this item's test file** (the path from `outputs.test`) — e.g. `bun run test src/__tests__/order.test.ts`. **Reject immediately on test failures** with specific failing test names. Do not debug.
 - **Do NOT run the full test suite.** In pipeline-parallel mode, sibling items are often in TDD-red state (Murdock wrote their tests, B.A. hasn't implemented them yet). A full-suite run will surface those as failures and mislead you into rejecting this item for a pre-existing red test you don't own. Stockwell runs the full suite at mission end — that's the cross-item integration gate, not this step.
@@ -232,7 +234,7 @@ This enforces the TDD invariant: every defect that touches test coverage becomes
 - Security vulnerabilities
 - Failing tests
 - Reinventing existing utilities instead of reusing them
-- An acceptance criterion from the work item has zero test coverage
+- An acceptance criterion from the work item has zero test coverage (does not apply to validated NO_TEST_NEEDED items — see Step 2)
 - Any banned-pattern match from the `ai-team:test-writing` skill (tautological mock assertions, conditional fallbacks, OR-pattern assertions, type-shape tests, Tailwind class assertions, source-regex matching, local reimplementations, weak assertions on critical values, file-existence-only scaffold tests)
 - A handoff contract documents skipping or unpinning an acceptance criterion (implemented faithfully or not) — the ACs are the source of truth, not the contract
 - A new helper, parameter, or branch that is never invoked at a real production call site (a signature change is not wiring)
@@ -278,7 +280,7 @@ Run each loaded skill's Self-Check against the diff:
 Lynch-specific gates:
 - [ ] **AC Coverage Matrix complete** — every AC mapped to test + impl with status (see Step 9).
 - [ ] **Typecheck passes** project-wide (`bun run typecheck` or equivalent).
-- [ ] **Item's tests pass** — only the file at `outputs.test`, not the full suite.
+- [ ] **Item's tests pass** — only the file at `outputs.test`, not the full suite. (NO_TEST_NEEDED items: N/A — the flag itself was validated instead; see Step 2.)
 - [ ] **Consumer wiring verified** — if the `context` field says this module is consumed by or renders inside another module, verify it is actually imported and used there (not just tested in isolation). A module that passes all tests but is never wired into its consumer is a CRITICAL gap.
 - [ ] **Handoff contract diffed against ACs** — if a contract/simplification note exists, its claims were checked against the item's ACs directly; "AC unpinned/skipped" in a contract is a defect, not an accepted simplification.
 - [ ] **New helper/parameter/branch wiring traced** — call sites grepped in the real codebase, not assumed from the signature.
@@ -346,7 +348,7 @@ Required fixes:
 - Nitpicks
 - Minor readability concerns
 
-**Reject for test quality if (all Priority 1 — blocking):** any banned-pattern match from the `ai-team:test-writing` skill, OR an AC has zero test coverage, OR test file exercises no real production code.
+**Reject for test quality if (all Priority 1 — blocking):** any banned-pattern match from the `ai-team:test-writing` skill, OR an AC has zero test coverage, OR test file exercises no real production code. (Validated NO_TEST_NEEDED items are exempt from this gate — see Step 2.)
 
 **Remember:** Move fast. If it works and meets the spec, approve it.
 

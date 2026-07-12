@@ -158,6 +158,17 @@ LOOP CONTINUOUSLY:
     # board-move rejects moves when the target column is full.
     while ready stage not empty:
         pick ONE item from ready stage
+        item = Bash("ateam items getItem --id {item_id} --json")
+
+        if item.outputs.test is empty:
+            # NO_TEST_NEEDED (non-code task — see work-breakdown skill): nothing
+            # for Murdock. Skip testing; dispatch B.A. straight from ready.
+            result = Bash("ateam board-move moveItem --itemId {item_id} --toStage implementing --agent B.A.")
+            if result is WIP error: continue  # implementing column full — try next item
+            new_task = dispatch B.A. in background  # note in prompt: no test file, implement from ACs
+            active_tasks[item_id] = new_task.id
+            continue
+
         result = Bash("ateam board-move moveItem --itemId {item_id} --toStage testing --agent Murdock")
         if result is WIP error: break  # testing column is full
         new_task = dispatch Murdock in background

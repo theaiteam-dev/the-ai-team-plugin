@@ -95,8 +95,9 @@ Extract `wip_limits` from the response. Display current limits to the user:
 rejected by zero-trust (Cloudflare Access / Authentik):
 
 ```bash
+WIP=<N from --wip>   # substitute the actual number before running
 for stage in testing implementing review probing; do
-  ateam stages updateStage "$stage" --wipLimit N
+  ateam stages updateStage "$stage" --wipLimit "$WIP"
 done
 ```
 

@@ -528,7 +528,9 @@ LOOP CONTINUOUSLY:
     # Subsequent handoffs are peer-to-peer via pool directory.
     while ready stage not empty:
         item_id = peek next item from ready stage    # do not pop yet — routing depends on outputs.test
-        item    = Bash("ateam items renderItem --id {item_id}")
+        # getItem --json, not renderItem: renderItem emits human-formatted text;
+        # this routing decision needs a structured field read.
+        item    = Bash("ateam items getItem --id {item_id} --json")
 
         if item.outputs.test is empty:
             # NO_TEST_NEEDED (e.g. pure deletion/config task) — Murdock has nothing
@@ -692,7 +694,9 @@ with nothing behavioral to pin) has no work for Murdock. Routing it through
 serializes it behind whatever Murdock is already doing.
 
 **Rule:** before claiming a Murdock instance in Phase 3, check the candidate
-item's `outputs.test`. If it's empty, skip Murdock — claim a B.A. instance
+item's `outputs.test` (read it with `ateam items getItem --id {itemId} --json` —
+`renderItem` is human-formatted text, not a structured read). If it's empty,
+skip Murdock — claim a B.A. instance
 instead, `board-move` the item straight from `ready` to `implementing`, and
 dispatch B.A. This lets NO_TEST_NEEDED items run in parallel with test-carrying
 items even when `N=1` (Murdock works one item, B.A. works the other, at once).

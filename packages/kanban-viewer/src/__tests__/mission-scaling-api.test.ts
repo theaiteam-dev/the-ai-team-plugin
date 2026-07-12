@@ -327,8 +327,43 @@ describe('POST /api/scaling/compute — persist to active mission', () => {
           archivedAt: null,
           state: { notIn: ['completed', 'failed', 'archived'] },
         }),
+        orderBy: { createdAt: 'desc' },
       })
     );
+    expect(body.persisted).toBe(false);
+    expect(mockPrisma.mission.update).not.toHaveBeenCalled();
+  });
+
+  it('returns the computed rationale with persisted=false when the persist write fails', async () => {
+    // A transient write failure (e.g. SQLite "database is locked") must not
+    // turn a successful compute into a 500 — the caller still needs N.
+    mockPrisma.mission.findFirst.mockResolvedValue({ id: 'M-20260401-001' });
+    mockPrisma.mission.update.mockRejectedValue(new Error('database is locked'));
+
+    const { POST } = await import('@/app/api/scaling/compute/route');
+    const response = await POST(
+      makeRequest('POST', 'http://localhost:3000/api/scaling/compute', { persist: true })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.data.instanceCount).toBeGreaterThanOrEqual(1);
+    expect(body.persisted).toBe(false);
+    expect(body.missionId).toBeNull();
+  });
+
+  it('returns the computed rationale with persisted=false when the active-mission lookup fails', async () => {
+    mockPrisma.mission.findFirst.mockRejectedValue(new Error('database is locked'));
+
+    const { POST } = await import('@/app/api/scaling/compute/route');
+    const response = await POST(
+      makeRequest('POST', 'http://localhost:3000/api/scaling/compute', { persist: true })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
     expect(body.persisted).toBe(false);
     expect(mockPrisma.mission.update).not.toHaveBeenCalled();
   });

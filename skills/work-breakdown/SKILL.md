@@ -400,8 +400,8 @@ ateam items createItem \
   --objective "Developers can find API documentation for /orders and /refunds in the README" \
   --acceptance "README contains usage examples for GET /api/orders and POST /api/refunds" \
   --context "Endpoints were added in WI-003 and WI-005. Follow the existing API docs format." \
-  --outputTest "" \
-  --outputImpl "README.md" \
+  --outputs.test "" \
+  --outputs.impl "README.md" \
   --priority low
 ```
 

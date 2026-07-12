@@ -99,6 +99,8 @@ You receive a feature item that has already been through the testing stage:
 - `outputs.types` - Types file if it exists (read this!)
 - `outputs.impl` - This is what YOU create
 
+**Exception — NO_TEST_NEEDED items:** an item with an empty `outputs.test` AND `NO_TEST_NEEDED` in its description (non-code work: docs, static config, deletions — see the `work-breakdown` skill) skipped the `testing` stage entirely; no test file exists and Murdock was never dispatched. Implement directly from the acceptance criteria: skip Step 3 and the test-run half of Step 9, but still run the project-wide typecheck if the project has one, and verify the change against each AC by inspecting the result (render the doc, load the config, confirm the deletion). If `outputs.test` is empty but the description is NOT flagged NO_TEST_NEEDED — or the file you're changing is imported by source code or loaded at runtime — that's a routing error, not permission to skip tests: stop and ALERT Hannibal.
+
 ## Process
 
 1. **Start work (claim the item)**
@@ -151,7 +153,7 @@ You receive a feature item that has already been through the testing stage:
    - **Atomic get-or-create**: if you implement a find-then-create pattern, back it with a transaction or a DB unique constraint with the conflict error handled — never assume single-threaded execution (`defensive-coding` skill §14)
 
 9. **Run THIS item's tests and full typecheck**
-   - Run **only this item's test file** — the path from `outputs.test`. Example: `bun run test src/__tests__/order.test.ts` (or `pnpm test <file>`).
+   - Run **only this item's test file** — the path from `outputs.test`. Example: `bun run test src/__tests__/order.test.ts` (or `pnpm test <file>`). (NO_TEST_NEEDED items have no test file — skip the test run, keep the typecheck.)
    - **Do NOT run the full test suite.** In pipeline-parallel mode, sibling items are often in TDD-red state (Murdock wrote their tests, B.A. hasn't implemented yet). A full-suite run will fail on those and mislead you into thinking your change broke them. Stockwell runs the full suite at mission end — that's the gate for cross-item integration.
    - Run `bun run typecheck` (or `pnpm typecheck` / `tsc --noEmit`) **project-wide** — typecheck doesn't have the sibling-red problem and catches cross-item type breakage.
    - No skipped tests, no "it.only" left behind
@@ -176,7 +178,7 @@ The `ai-team:code-patterns` skill is the authoritative reference for SOLID, DRY,
 ### Before Calling ateam agents-stop agentStop
 
 You MUST verify before marking work complete:
-1. Run **only this item's test file** (e.g. `bun run test <outputs.test path>`) — all tests in that file must pass. Do NOT run the full project suite; sibling items may be in TDD-red and their failures are not yours to fix. Stockwell runs the full suite at mission end.
+1. Run **only this item's test file** (e.g. `bun run test <outputs.test path>`) — all tests in that file must pass. Do NOT run the full project suite; sibling items may be in TDD-red and their failures are not yours to fix. Stockwell runs the full suite at mission end. (NO_TEST_NEEDED items: no test file exists — verify each AC by inspecting the actual change instead.)
 2. Run `pnpm typecheck` (if available) **project-wide** — **no type errors**
 3. **AC reconciliation** (see below)
 4. If any of the above fail, **keep working** — do NOT call `ateam agents-stop agentStop` with failing tests or uncovered ACs

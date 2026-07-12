@@ -94,25 +94,34 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     let persisted = false;
     let missionId: string | null = null;
     if (body.persist === true) {
-      // "Active" must match POST /api/missions: not archived AND not in a
-      // terminal state. A completed/failed-but-not-yet-archived mission must NOT
-      // receive a fresh scalingRationale (that would report persisted:true
-      // against a finished mission).
-      const activeMission = await prisma.mission.findFirst({
-        where: {
-          projectId,
-          archivedAt: null,
-          state: { notIn: ['completed', 'failed', 'archived'] },
-        },
-        select: { id: true },
-      });
-      if (activeMission) {
-        await prisma.mission.update({
-          where: { id: activeMission.id },
-          data: { scalingRationale: JSON.stringify(rationale) },
+      // Persist failures are non-fatal for the same reason a missing mission is:
+      // the compute already succeeded, and the caller needs N even if the write
+      // hits a transient SQLite lock. Return the rationale with persisted:false
+      // rather than a 500.
+      try {
+        // "Active" must match POST /api/missions: not archived AND not in a
+        // terminal state. A completed/failed-but-not-yet-archived mission must NOT
+        // receive a fresh scalingRationale (that would report persisted:true
+        // against a finished mission).
+        const activeMission = await prisma.mission.findFirst({
+          where: {
+            projectId,
+            archivedAt: null,
+            state: { notIn: ['completed', 'failed', 'archived'] },
+          },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true },
         });
-        persisted = true;
-        missionId = activeMission.id;
+        if (activeMission) {
+          await prisma.mission.update({
+            where: { id: activeMission.id },
+            data: { scalingRationale: JSON.stringify(rationale) },
+          });
+          persisted = true;
+          missionId = activeMission.id;
+        }
+      } catch (persistError) {
+        console.error('POST /api/scaling/compute persist failed (non-fatal):', persistError);
       }
     }
 
