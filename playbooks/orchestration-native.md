@@ -236,7 +236,9 @@ function spawn_lane(lane_number):
                            IMPORTANT: Always pass --json to agentStop. The CLI handles pool
                            management and returns claimedNext in the response. If claimedNext
                            is set, send START to that instance. If poolAlert is set, send
-                           ALERT to Hannibal. See your agent prompt for the exact sequence."
+                           ALERT to team-lead (the orchestrator's address — never
+                           'hannibal', which silently bounces). See your agent
+                           prompt for the exact sequence."
         )
 
     # Wait for READY messages from all 4 agents in this lane before continuing.
@@ -526,11 +528,19 @@ LOOP CONTINUOUSLY:
     # for test-carrying items. NO_TEST_NEEDED items (empty outputs.test) skip
     # Murdock entirely — see "NO_TEST_NEEDED Items" below.
     # Subsequent handoffs are peer-to-peer via pool directory.
-    while ready stage not empty:
-        item_id = peek next item from ready stage    # do not pop yet — routing depends on outputs.test
+    # Scan ready in order WITHOUT head-of-line blocking: an item whose routed
+    # agent type has no capacity is skipped (left in ready for the next cycle)
+    # and the scan continues — a NO_TEST_NEEDED item starved of B.A. capacity
+    # must never block test-carrying items from an idle Murdock lane, or vice versa.
+    ba_at_capacity      = false
+    murdock_at_capacity = false
+    for item_id in ready stage items (in order):     # iterate a snapshot; pop an item only when its claim succeeds
+        if ba_at_capacity AND murdock_at_capacity:
+            break  # neither agent type has capacity — nothing left to route this cycle
+
         # getItem --json, not renderItem: renderItem emits human-formatted text;
         # this routing decision needs a structured field read.
-        item    = Bash("ateam items getItem --id {item_id} --json")
+        item = Bash("ateam items getItem --id {item_id} --json")
 
         if item.outputs.test is empty:
             # NO_TEST_NEEDED (e.g. pure deletion/config task) — Murdock has nothing
@@ -541,6 +551,8 @@ LOOP CONTINUOUSLY:
             # If no B.A. is idle, try to grow a lane (spawn_lane adds a B.A.
             # instance too) before giving up — mirroring the Murdock path below —
             # so a no-test item isn't stalled while lanes below N remain unspawned.
+            if ba_at_capacity:
+                continue  # leave in ready; keep scanning for Murdock-routable items
             claimed = claimInstance("ba")
             if claimed is null:
                 while next_lane_to_spawn <= N AND next_lane_to_spawn in failed_lanes:
@@ -549,13 +561,16 @@ LOOP CONTINUOUSLY:
                     spawn_lane(next_lane_to_spawn)     # may add to failed_lanes
                     claimed = claimInstance("ba")
                 if claimed is null:
-                    break  # truly at B.A. capacity — leave item in ready, retry next cycle
+                    ba_at_capacity = true
+                    continue  # leave THIS item in ready (retry next cycle); later items may still route to Murdock
             pop item_id from ready stage
             Bash("ateam board-move moveItem --itemId {item_id} --toStage implementing")
             dispatch(claimed, item_id)   # dispatch() notes: no test file — implement straight from the ACs
             active_instances[item_id] = claimed
             continue
 
+        if murdock_at_capacity:
+            continue  # leave in ready; keep scanning for B.A.-routable (NO_TEST_NEEDED) items
         claimed = claimInstance("murdock")
         if claimed is null:
             # Advance cursor past any lanes already in failed_lanes
@@ -566,7 +581,8 @@ LOOP CONTINUOUSLY:
                 spawn_lane(next_lane_to_spawn)        # may add to failed_lanes
                 claimed = claimInstance("murdock")
             if claimed is null:
-                break  # truly at capacity (all spawnable lanes busy or failed)
+                murdock_at_capacity = true
+                continue  # leave in ready (retry next cycle); later items may be NO_TEST_NEEDED
 
         pop item_id from ready stage
         # NOTE: Hannibal does NOT call agentStart here — the dispatched agent
@@ -769,7 +785,7 @@ Agent(
 
   STOP after creating these files. Do NOT create {outputs.impl}.
 
-  When done, follow the pool-handoff skill: run `ateam agents-stop agentStop --json --itemId {itemId} --agent \"murdock-2\" --outcome completed --summary \"...\"`, parse claimedNext from the response, and send START to the claimed B.A. instance (or ALERT to Hannibal if poolAlert is set)."
+  When done, follow the pool-handoff skill: run `ateam agents-stop agentStop --json --itemId {itemId} --agent \"murdock-2\" --outcome completed --summary \"...\"`, parse claimedNext from the response, and send START to the claimed B.A. instance (or ALERT to team-lead if poolAlert is set)."
 )
 ```
 
@@ -809,7 +825,7 @@ Agent(
   Test file is at: {outputs.test}
   Create the implementation at: {outputs.impl}
 
-  When done, follow the pool-handoff skill: run `ateam agents-stop agentStop --json --itemId {itemId} --agent \"ba-1\" --outcome completed --summary \"...\"`, parse claimedNext from the response, and send START to the claimed Lynch instance (or ALERT to Hannibal if poolAlert is set).
+  When done, follow the pool-handoff skill: run `ateam agents-stop agentStop --json --itemId {itemId} --agent \"ba-1\" --outcome completed --summary \"...\"`, parse claimedNext from the response, and send START to the claimed Lynch instance (or ALERT to team-lead if poolAlert is set).
 
   Self-rejection alternative (rare — only for genuine test bugs): if a test is broken (won't compile, throws on valid input, asserts impossible behavior), self-reject with `--outcome rejected --return-to testing --advance=false --summary \"TEST BUG: ...\"`, then SendMessage REJECTED to a Murdock instance. See `agents/ba.md` 'When the Test Is Wrong' for trigger criteria. This is NOT for impl-side bugs or test designs you disagree with."
 )
@@ -846,7 +862,7 @@ Agent(
   - Implementation: {outputs.impl}
   - Types (if exists): {outputs.types}
 
-  When done, follow the pool-handoff skill: run `ateam agents-stop agentStop --json --itemId {itemId} --agent \"lynch-1\" --outcome completed --summary \"...\"`, parse claimedNext from the response, and send START to the claimed Amy instance (or ALERT to Hannibal if poolAlert is set). For REJECTED, use --outcome rejected --return-to testing/implementing --advance=false, then send REJECTED to the responsible agent."
+  When done, follow the pool-handoff skill: run `ateam agents-stop agentStop --json --itemId {itemId} --agent \"lynch-1\" --outcome completed --summary \"...\"`, parse claimedNext from the response, and send START to the claimed Amy instance (or ALERT to team-lead if poolAlert is set). For REJECTED, use --outcome rejected --return-to testing/implementing --advance=false, then send REJECTED to the responsible agent."
 )
 ```
 
@@ -978,7 +994,7 @@ With CLI-automated pool handoffs, Hannibal receives **FYI** (successful handoff)
 When `claimInstance("murdock")` returns null (no `.idle` files), stop filling. Items stay in `ready` until a Murdock instance recreates its `.idle` file after completing work.
 
 **For pipeline agents (peer handoffs):**
-When `ls ${POOL_DIR}/${NEXT_TYPE}-*.idle` returns no files, the completing agent sends an ALERT to Hannibal. Hannibal queues the item in `pending_alerts` and dispatches when an instance becomes available (Phase 1b).
+When `ls ${POOL_DIR}/${NEXT_TYPE}-*.idle` returns no files, the completing agent sends an ALERT to the orchestrator (address: `team-lead`). Hannibal queues the item in `pending_alerts` and dispatches when an instance becomes available (Phase 1b).
 
 The board-move WIP limit provides a second safety net — `ateam board-move` will return a WIP error if the target column is already full, regardless of instance availability.
 

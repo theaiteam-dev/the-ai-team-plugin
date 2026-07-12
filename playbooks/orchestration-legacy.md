@@ -156,21 +156,34 @@ LOOP CONTINUOUSLY:
     # ═══════════════════════════════════════════════════════════
     # No global WIP throttle — each column enforces its own limit.
     # board-move rejects moves when the target column is full.
-    while ready stage not empty:
-        pick ONE item from ready stage
+    # Scan ready in order WITHOUT head-of-line blocking: skip items whose target
+    # column is full and keep scanning — a full testing column must not block a
+    # NO_TEST_NEEDED item from a free implementing slot, or vice versa.
+    testing_full      = false
+    implementing_full = false
+    for item_id in ready stage items (in order):   # iterate a snapshot; an item stays in ready until its move succeeds
+        if testing_full AND implementing_full:
+            break  # both target columns full — nothing left to route this cycle
+
         item = Bash("ateam items getItem --id {item_id} --json")
 
         if item.outputs.test is empty:
             # NO_TEST_NEEDED (non-code task — see work-breakdown skill): nothing
             # for Murdock. Skip testing; dispatch B.A. straight from ready.
+            if implementing_full: continue
             result = Bash("ateam board-move moveItem --itemId {item_id} --toStage implementing --agent B.A.")
-            if result is WIP error: continue  # implementing column full — try next item
+            if result is WIP error:
+                implementing_full = true
+                continue  # leave THIS item in ready; keep scanning for testing-routable items
             new_task = dispatch B.A. in background  # note in prompt: no test file, implement from ACs
             active_tasks[item_id] = new_task.id
             continue
 
+        if testing_full: continue
         result = Bash("ateam board-move moveItem --itemId {item_id} --toStage testing --agent Murdock")
-        if result is WIP error: break  # testing column is full
+        if result is WIP error:
+            testing_full = true
+            continue  # leave in ready; later items may be NO_TEST_NEEDED
         new_task = dispatch Murdock in background
         active_tasks[item_id] = new_task.id
 
