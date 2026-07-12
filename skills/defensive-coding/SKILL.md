@@ -340,7 +340,7 @@ When your code fails a compiler check, linter rule, or strict config flag, fix y
 
 When a codebase has multiple call sites doing the same kind of operation (multiple `create` calls, multiple write paths, parallel API routes performing the same write, multiple regexes matching the same category of value), a guard applied to one MUST be applied to all of them. A guard on one of N equivalent paths is not a guard — it's a fail-open hole with the illusion of coverage.
 
-```
+```text
 // BAD: only one of two sibling creates is wrapped
 async function createProject(data):
   return db.project.create(data)          // unwrapped — a unique-constraint violation crashes the request
@@ -373,7 +373,7 @@ Before marking work complete: whenever you add or rely on a guard (error wrapper
 
 Mandatory gates and guards must default to rejecting when their input is empty, missing, or ambiguous — never to silently passing. An empty allowlist, a `null` result, or an early-exit branch is not "nothing to check" — treat it as "the check could not run" and fail closed.
 
-```
+```text
 // BAD: empty allowlist is silently treated as "no restriction"
 function checkOwnedPaths(changedFiles, ownedPaths):
   if ownedPaths is empty:
@@ -420,7 +420,7 @@ If you're not sure whether a branch is "legitimately nothing to check" or "ambig
 
 A "find existing, else create" pattern (`findFirst` then `create`) is not atomic. Under concurrent identical requests, both can pass the `findFirst` check before either `create` lands, producing a duplicate row (TOCTOU race) — or, if the field IS unique, the losing request throws an unhandled constraint error instead of returning the existing row.
 
-```
+```text
 // BAD: no transaction, no unique constraint — races double-insert or crash
 async function getOrCreateProject(name):
   existing = await db.project.findFirst({ where: { name } })
@@ -438,18 +438,22 @@ async function getOrCreateProject(name):
       return await db.project.findFirst({ where: { name } })
     throw e
 
-// ALSO GOOD: wrap find-then-create in a transaction if the database/ORM
-// supports serializable transactions for this pattern
+// ALSO GOOD (but heavier): a transaction ONLY closes the race at SERIALIZABLE
+// isolation, and serializable transactions can abort with a serialization
+// failure that you MUST retry. A default-isolation (read-committed) transaction
+// does NOT prevent the phantom — both txns can still miss the row and insert.
 async function getOrCreateProject(name):
-  return await db.$transaction(async (tx) => {
-    existing = await tx.project.findFirst({ where: { name } })
-    if existing:
-      return existing
-    return await tx.project.create({ data: { name } })
-  })
+  return await retryOnSerializationFailure(() =>
+    db.$transaction(async (tx) => {
+      existing = await tx.project.findFirst({ where: { name } })
+      if existing:
+        return existing
+      return await tx.project.create({ data: { name } })
+    }, { isolationLevel: "Serializable" })
+  )
 ```
 
-Never assume single-threaded execution. Any get-or-create must either be inside a transaction or rely on a DB-level unique constraint with the resulting constraint-violation error (e.g. Prisma's `P2002`) handled gracefully — not left to crash the request.
+Never assume single-threaded execution. Prefer the unique-constraint strategy (first GOOD): a DB-level unique constraint with the constraint-violation error (e.g. Prisma's `P2002`) handled gracefully. A transaction alone is **not** sufficient — it only closes the race at `Serializable` isolation and requires retrying serialization failures. A default-isolation transaction around find-then-create still races.
 
 ---
 

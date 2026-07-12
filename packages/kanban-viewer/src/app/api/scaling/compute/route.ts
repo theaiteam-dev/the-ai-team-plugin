@@ -94,8 +94,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     let persisted = false;
     let missionId: string | null = null;
     if (body.persist === true) {
+      // "Active" must match POST /api/missions: not archived AND not in a
+      // terminal state. A completed/failed-but-not-yet-archived mission must NOT
+      // receive a fresh scalingRationale (that would report persisted:true
+      // against a finished mission).
       const activeMission = await prisma.mission.findFirst({
-        where: { projectId, archivedAt: null },
+        where: {
+          projectId,
+          archivedAt: null,
+          state: { notIn: ['completed', 'failed', 'archived'] },
+        },
         select: { id: true },
       });
       if (activeMission) {

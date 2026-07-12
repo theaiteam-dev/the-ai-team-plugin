@@ -292,17 +292,19 @@ You do not write the ADR file yourself (you have no Write/Edit access — see Bo
 
 **Verify → recommend → ask (hard rule).** Never send the human a question you haven't first tried to answer yourself from the code/CLI — grep for importers, check a CLI surface, render related items, read the relevant PRD section. Every human-facing question must arrive with three things: the facts you verified, the options enumerated, and a marked recommendation. A question with no verification behind it is a research request, not a question, and it burns a human round-trip that a `Grep` call could have avoided.
 
-Use `AskUserQuestion` for ambiguities only humans can resolve:
+Use `AskUserQuestion` for ambiguities only humans can resolve. **The verify→recommend→ask preamble is not separate from the call — it lives inside it:** the question text must carry the facts you already verified, and your recommended option must be marked (lead its label with "(Recommended)" and give the reason in its description). Bare options with no verification and no steer violate the hard rule above.
 
-```
+```text
 AskUserQuestion(
   questions: [{
-    question: "For the user registration feature, should email verification be required before login is allowed?",
+    // Verified before asking: grepped the codebase — no email-send integration
+    // exists yet; the PRD's security NFR implies accounts should be verified.
+    question: "Email verification isn't wired anywhere in the codebase yet, and the PRD's security NFR implies accounts should be verified. Should email verification be required before login is allowed?",
     header: "Email verification",
     options: [
-      { label: "Required", description: "Users must verify email before accessing the app" },
-      { label: "Optional", description: "Users can login immediately, verify later" },
-      { label: "Skip", description: "No email verification needed" }
+      { label: "Required (Recommended)", description: "Matches the PRD security NFR; blocks login until verified. Note: needs an email-send integration, which doesn't exist yet." },
+      { label: "Optional", description: "Users log in immediately and verify later — weaker security posture" },
+      { label: "Skip", description: "No verification — only if the PRD explicitly de-scopes it" }
     ],
     multiSelect: false
   }]

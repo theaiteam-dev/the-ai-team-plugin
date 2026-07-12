@@ -399,7 +399,7 @@ If mission state is `precheck_failure`:
 
 **Don't duplicate Face's dependency validation at mission start.** Face already
 runs `deps-check` in its pass-1 wrap-up (per its own prompt) and confirms the
-dependency graph is valid before the mission is created. Every `deps-check`
+dependency graph is valid during planning — after the mission is created but before the run dispatches any work. Every `deps-check`
 call in this playbook (the Concurrency Detection fallback, Phase 2's
 catch-all, the inline checks after each completion message) exists to compute
 *which items are ready right now* for dispatch — none of them are a second
@@ -535,9 +535,19 @@ LOOP CONTINUOUSLY:
             # to test. Route ready → implementing directly so B.A. can run in
             # parallel with test-carrying items even at N=1, instead of burning
             # the only Murdock slot on a no-op.
+            # Capacity for a NO_TEST_NEEDED item is B.A. capacity, not Murdock's.
+            # If no B.A. is idle, try to grow a lane (spawn_lane adds a B.A.
+            # instance too) before giving up — mirroring the Murdock path below —
+            # so a no-test item isn't stalled while lanes below N remain unspawned.
             claimed = claimInstance("ba")
             if claimed is null:
-                break  # no idle B.A. right now — leave item in ready, retry next cycle
+                while next_lane_to_spawn <= N AND next_lane_to_spawn in failed_lanes:
+                    next_lane_to_spawn += 1
+                if next_lane_to_spawn <= N:
+                    spawn_lane(next_lane_to_spawn)     # may add to failed_lanes
+                    claimed = claimInstance("ba")
+                if claimed is null:
+                    break  # truly at B.A. capacity — leave item in ready, retry next cycle
             pop item_id from ready stage
             Bash("ateam board-move moveItem --itemId {item_id} --toStage implementing")
             dispatch(claimed, item_id)   # dispatch() notes: no test file — implement straight from the ACs

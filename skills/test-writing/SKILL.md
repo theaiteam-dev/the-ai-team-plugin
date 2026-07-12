@@ -370,12 +370,17 @@ it('omits X-Api-Key header when no key is configured', async () => {
 // Passes on a clean runner, fails (or prints a real key into test output)
 // on any shell that happens to export DEVTRACK_API_KEY.
 
-// GOOD: Explicitly stub the var absent for this test
+// GOOD: Explicitly stub the var absent for this test, and clean up in afterEach
+// so a FAILING assertion can't skip cleanup and leak the stub into later tests
+// (inline `vi.unstubAllEnvs()` at the end of the body never runs if expect throws).
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 it('omits X-Api-Key header when no key is configured', async () => {
   vi.stubEnv('DEVTRACK_API_KEY', undefined);
   const headers = buildHeaders();
   expect(headers['X-Api-Key']).toBeUndefined();
-  vi.unstubAllEnvs();
 });
 ```
 

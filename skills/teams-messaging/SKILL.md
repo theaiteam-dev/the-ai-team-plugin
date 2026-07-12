@@ -125,12 +125,12 @@ After sending a START message to the next agent:
      summary: "Handoff complete for {itemId}"
    })
    ```
-3. **On timeout (no ACK after 20s)** — send ALERT to Hannibal:
+3. **On timeout (no ACK after 20s)** — send ALERT to the orchestrator (`team-lead`), and **include the full handoff contract you sent in START** so it can cold-redispatch the work without reconstructing it (a bare "timeout" ALERT leaves the receiver unable to redispatch):
    ```javascript
    SendMessage({
      to: "team-lead",
-     message: "ALERT: {itemId} - No ACK from {next_agent} after 20 seconds. Manual dispatch may be needed.",
-     summary: "Handoff timeout for {itemId}"
+     message: "ALERT: {itemId} - No ACK from {next_agent} after 20 seconds. Manual dispatch may be needed. Full handoff contract for cold redispatch follows:\n\n{the exact contract from your START message: signatures, resolution chain, helpers to reuse, what NOT to touch, red/TDD state, verify command}",
+     summary: "Handoff timeout for {itemId} (contract attached)"
    })
    ```
 
@@ -141,7 +141,7 @@ After sending a START message to the next agent:
 ### Murdock → B.A.
 
 After `ateam agents-stop agentStop --advance`:
-1. Send `START` to `ba` — include location of test file and a summary of what to implement
+1. Send `START` to `ba` — carry the **full handoff contract** (see [Handoff Contracts](#handoff-contracts-start-and-alert)): exact signatures, the resolution chain, helpers to reuse, what NOT to touch, the current red/TDD state, and the verify command — not just the test-file location and a one-line summary.
 2. Wait for `ACK` from `ba` (20s timeout)
 3. Send `FYI` or `ALERT` to `team-lead`
 
@@ -153,7 +153,7 @@ SendMessage({ to: "murdock", message: "ACK: {itemId}", summary: "ACK {itemId}" }
 ### B.A. → Lynch
 
 After `ateam agents-stop agentStop --advance`:
-1. Send `START` to `lynch` — include locations of impl file and test file, and a summary of what was implemented
+1. Send `START` to `lynch` — carry the **full handoff contract** (see [Handoff Contracts](#handoff-contracts-start-and-alert)): impl and test file locations, the exact behavior/signatures implemented, what NOT to touch, any deviations from the incoming contract, and the verify command — not just file locations and a summary.
 2. Wait for `ACK` from `lynch` (20s timeout)
 3. Send `FYI` or `ALERT` to `team-lead`
 
@@ -165,7 +165,7 @@ SendMessage({ to: "ba", message: "ACK: {itemId}", summary: "ACK {itemId}" })
 ### Lynch → Amy (APPROVED path)
 
 After `ateam agents-stop agentStop --advance` (approved):
-1. Send `START` to `amy` — include a summary of what was reviewed and any areas to probe
+1. Send `START` to `amy` — carry the full probe context so Amy starts cold (the same completeness the [Handoff Contracts](#handoff-contracts-start-and-alert) rule requires, adapted to a review→probe handoff): what was reviewed, exactly what changed and where, the specific attack surfaces / areas to probe, and the build/verify/repro command — not just a one-line summary.
 2. Wait for `ACK` from `amy` (20s timeout)
 3. Send `FYI` or `ALERT` to `team-lead`
 

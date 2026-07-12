@@ -155,7 +155,7 @@ After Sosa reviews and humans answer questions:
 - Creating new items (only update existing)
 - Writing anything other than `adr/NNNN-*.md` files
 
-**Second pass output**: Refined items (consolidated if needed), Wave 0 in `ready` stage, ADR outcome stated explicitly either way (files written or "no ADR candidates this mission").
+**Second pass output**: Refined items (consolidated if needed), Wave 0 in `ready` stage, ADR outcome stated explicitly either way (files written, or exactly `ADR Candidates: none.` — the same canonical marker Sosa uses, so the outcome passes uniform validation).
 
 ### ADR Recording
 
@@ -192,7 +192,7 @@ When Sosa's refinement report has a non-empty "ADR Candidates" section, record e
 
 Keep it short — this is a decision record, not a design doc. If Sosa flagged nothing, skip writing files — don't manufacture an ADR to fill the folder.
 
-**The ADR outcome must never be ambiguous.** Regardless of outcome, your second-pass report must state one of: which `adr/NNNN-*.md` files were written (one-line summary each), or "No ADR candidates this mission." A silent no-op must never look the same as the check not having run.
+**The ADR outcome must never be ambiguous.** Regardless of outcome, your second-pass report must state one of: which `adr/NNNN-*.md` files were written (one-line summary each), or exactly `ADR Candidates: none.` — the same canonical marker Sosa's report uses (agents/sosa.md §"ADR Candidates"), so the no-ADR case passes the same exact-text validation on both sides. A silent no-op must never look the same as the check not having run.
 
 ## Responsibilities
 

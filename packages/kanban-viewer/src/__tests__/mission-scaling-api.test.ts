@@ -308,4 +308,28 @@ describe('POST /api/scaling/compute — persist to active mission', () => {
     expect(mockPrisma.mission.findFirst).not.toHaveBeenCalled();
     expect(mockPrisma.mission.update).not.toHaveBeenCalled();
   });
+
+  it('scopes the active-mission lookup to a non-terminal state, not just archivedAt', async () => {
+    // A completed/failed-but-not-archived mission must NOT be treated as active
+    // and must not receive a fresh rationale. The route excludes terminal states
+    // in the query; assert the where-clause matches POST /api/missions.
+    mockPrisma.mission.findFirst.mockResolvedValue(null);
+
+    const { POST } = await import('@/app/api/scaling/compute/route');
+    const response = await POST(
+      makeRequest('POST', 'http://localhost:3000/api/scaling/compute', { persist: true })
+    );
+    const body = await response.json();
+
+    expect(mockPrisma.mission.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          archivedAt: null,
+          state: { notIn: ['completed', 'failed', 'archived'] },
+        }),
+      })
+    );
+    expect(body.persisted).toBe(false);
+    expect(mockPrisma.mission.update).not.toHaveBeenCalled();
+  });
 });

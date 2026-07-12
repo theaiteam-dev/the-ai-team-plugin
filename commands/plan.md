@@ -245,7 +245,7 @@ AC-count ceiling it designed against). The strict "MCP tools only, no
 exploration" guardrails below exist only to compensate for a *fresh* agent's
 amnesia — they become unnecessary once the same agent handles both passes.
 
-```
+```text
 SendMessage(
   to: <face_pass1_agent_id>,   # the still-live agent from step 3
   message: "**THIS IS THE SECOND PASS.** Apply Sosa's refinements below.

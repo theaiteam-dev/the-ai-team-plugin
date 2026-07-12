@@ -98,8 +98,8 @@ Sandboxing can fail, or you can discover an effect you didn't anticipate. When t
 
 1. **Contain** — stop immediately; don't run further commands that could compound it.
 2. **Assess blast radius** — what actually changed? Which file(s)? Is it reversible? (`git status`, `git diff`, or check the actual path the command wrote to.)
-3. **Revert cleanly** — undo it (`git checkout -- <file>`, restore from backup, etc.).
-4. **Prove the revert** — show the diff is zero / the state is restored. Don't just assert it's fixed.
+3. **Revert cleanly — restore only what YOU changed.** Do NOT blanket `git checkout -- <file>` as a reflex: if the file had unrelated pre-existing edits (the operator's local work), that erases them too — the exact state this protocol exists to protect. Prefer a targeted undo: revert only the specific hunk/change your probe introduced (or restore from a pre-command backup you took), leaving any pre-existing modifications intact. Only use whole-file `git checkout` when you have confirmed (step 2) the file had no other uncommitted changes.
+4. **Prove the revert** — show that the remaining diff is exactly what was there *before* your probe (not a blanket "zero diff" assumption, which would also mean you'd wiped pre-existing work). Don't just assert it's fixed.
 5. **Disclose proactively, with specifics** — tell Hannibal (and put it in your report) unprompted: what command you ran, exactly what it touched, how you fixed it, and proof it's fixed. Don't wait to be asked.
 
 This is not optional and not embarrassing — it's the expected, correct outcome when a live-fire probe surfaces a real side effect. Silence or a vague summary is the failure mode, not the incident itself.
