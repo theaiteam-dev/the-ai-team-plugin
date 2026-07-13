@@ -89,15 +89,16 @@ Extract `wip_limits` from the response. Display current limits to the user:
   probing:       {N}
 ```
 
-**If `--wip N` was provided**, update each pipeline stage's WIP limit to N via the API.
-The pipeline stages to update are: `testing`, `implementing`, `review`, `probing`.
+**If `--wip N` was provided**, update each pipeline stage's WIP limit to N with the
+`ateam` CLI. The pipeline stages to update are: `testing`, `implementing`, `review`,
+`probing`. Use the CLI verb — never a raw `curl`, which carries no auth headers and is
+rejected by zero-trust (Cloudflare Access / Authentik):
 
-For each stage, call:
 ```bash
-curl -s -X PATCH "${ATEAM_API_URL:-http://localhost:3000}/api/stages/{stageId}" \
-  -H "Content-Type: application/json" \
-  -H "X-Project-ID: ${ATEAM_PROJECT_ID}" \
-  -d '{"wipLimit": N}'
+WIP=<N from --wip>   # substitute the actual number before running
+for stage in testing implementing review probing; do
+  ateam stages updateStage "$stage" --wipLimit "$WIP"
+done
 ```
 
 After updating, display the new limits:
@@ -171,6 +172,11 @@ briefings → ready → testing → implementing → review → probing → done
 
 **Stage transitions (ALL REQUIRED):**
 1. `ready → testing`: Murdock writes tests (and types if specified)
+
+   **Exception — NO_TEST_NEEDED items:** items with an empty `outputs.test`
+   (e.g. deletion/cleanup tasks) have nothing for Murdock to do. Enter these
+   directly at `implementing` (`ready → implementing`, skipping `testing`)
+   and dispatch B.A. — don't burn a Murdock slot on a no-op.
 2. `testing → implementing`: B.A. implements to pass tests
 3. `implementing → review`: Lynch reviews ALL outputs together
 4. `review → probing`: Lynch approves → **Amy MUST investigate** (NOT optional)
@@ -466,6 +472,13 @@ This flat structure:
 - Avoids nested subagent memory overhead
 
 The dispatch mode (legacy Task/TaskOutput vs. native Agent/SendMessage) is determined by the orchestration playbook loaded in step 3.
+
+**Native teams messaging address:** in native teams mode, the main session
+(Hannibal) is addressable as `team-lead`, not `hannibal`. Worker agents'
+FYI/ALERT messages must target `team-lead` — a message addressed to
+`hannibal` will not reach the orchestrating session. If you see any dispatch
+prompt or playbook step reference `hannibal` as a message target, treat it
+as a bug and use `team-lead` instead.
 
 ## CLI Commands Used
 

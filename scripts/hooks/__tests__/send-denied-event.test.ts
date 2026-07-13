@@ -61,6 +61,32 @@ describe('sendDeniedEvent()', () => {
     expect(init.headers['X-Project-ID']).toBe('test-project');
   });
 
+  // CF-Access: the hosted kanban viewer is behind Cloudflare Access, so the
+  // service-token headers are required or the event is silently dropped. These
+  // stub the creds explicitly (never rely on the ambient shell, which on a real
+  // machine DOES export them) so the assertions are deterministic either way.
+  it('adds CF-Access service-token headers when ACCESS_CLIENT_ID/SECRET are set', async () => {
+    process.env.ACCESS_CLIENT_ID = 'cf-client-id.access';
+    process.env.ACCESS_CLIENT_SECRET = 'cf-client-secret';
+
+    await sendDeniedEvent({ agentName: 'ba', toolName: 'Edit', reason: 'BLOCKED' });
+
+    const [, init] = mockFetch.mock.calls[0];
+    expect(init.headers['CF-Access-Client-Id']).toBe('cf-client-id.access');
+    expect(init.headers['CF-Access-Client-Secret']).toBe('cf-client-secret');
+  });
+
+  it('omits CF-Access headers when creds are absent (never sends undefined)', async () => {
+    delete process.env.ACCESS_CLIENT_ID;
+    delete process.env.ACCESS_CLIENT_SECRET;
+
+    await sendDeniedEvent({ agentName: 'ba', toolName: 'Edit', reason: 'BLOCKED' });
+
+    const [, init] = mockFetch.mock.calls[0];
+    expect(init.headers).not.toHaveProperty('CF-Access-Client-Id');
+    expect(init.headers).not.toHaveProperty('CF-Access-Client-Secret');
+  });
+
   // -------------------------------------------------------------------------
   // 3. Fire-and-forget — does NOT throw on network failure
   // -------------------------------------------------------------------------

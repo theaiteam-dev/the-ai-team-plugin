@@ -21,6 +21,11 @@ import { computeAdaptiveScaling } from '@ai-team/shared';
  * Body (all optional):
  * - availableMemoryMB: number — override auto-detected free memory
  * - concurrencyOverride: number — bypass adaptive math with fixed N
+ * - persist: boolean — when true, write the computed rationale (the N AND the
+ *   binding constraint that produced it) to the project's active mission, so
+ *   "how we got this number" is saved server-side. This replaces the old
+ *   raw `curl PATCH /api/missions/{id}` playbook step, which is rejected behind
+ *   zero-trust (only the ateam CLI carries the auth headers).
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
@@ -34,7 +39,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
     const projectId = projectValidation.projectId;
 
-    let body: { availableMemoryMB?: number; concurrencyOverride?: number } = {};
+    let body: { availableMemoryMB?: number; concurrencyOverride?: number; persist?: boolean } = {};
     try {
       const parsed = await request.json();
       if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -82,9 +87,49 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       concurrencyOverride: body.concurrencyOverride,
     });
 
+    // Persist the rationale to the active mission when requested, so the
+    // derivation (N + binding constraint + the inputs behind it) is saved
+    // without a raw PATCH. No active mission is not an error — the caller may be
+    // running a what-if before a mission exists — so we report persisted:false.
+    let persisted = false;
+    let missionId: string | null = null;
+    if (body.persist === true) {
+      // Persist failures are non-fatal for the same reason a missing mission is:
+      // the compute already succeeded, and the caller needs N even if the write
+      // hits a transient SQLite lock. Return the rationale with persisted:false
+      // rather than a 500.
+      try {
+        // "Active" must match POST /api/missions: not archived AND not in a
+        // terminal state. A completed/failed-but-not-yet-archived mission must NOT
+        // receive a fresh scalingRationale (that would report persisted:true
+        // against a finished mission).
+        const activeMission = await prisma.mission.findFirst({
+          where: {
+            projectId,
+            archivedAt: null,
+            state: { notIn: ['completed', 'failed', 'archived'] },
+          },
+          orderBy: { startedAt: 'desc' },
+          select: { id: true },
+        });
+        if (activeMission) {
+          await prisma.mission.update({
+            where: { id: activeMission.id },
+            data: { scalingRationale: JSON.stringify(rationale) },
+          });
+          persisted = true;
+          missionId = activeMission.id;
+        }
+      } catch (persistError) {
+        console.error('POST /api/scaling/compute persist failed (non-fatal):', persistError);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       data: rationale,
+      persisted,
+      missionId,
     });
   } catch (error) {
     console.error('POST /api/scaling/compute error:', error);

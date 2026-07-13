@@ -96,7 +96,7 @@ acceptance:                                  # Measurable criteria (JSON array i
   - "POST /api/orders with empty items array returns 400"
 context: "Integrates with existing ProductService (src/services/product.ts). Called from checkout page via useCreateOrder hook."
 outputs:
-  test: "src/__tests__/feature.test.ts"    # REQUIRED
+  test: "src/__tests__/feature.test.ts"    # REQUIRED — empty "" only on NO_TEST_NEEDED task items (see work-breakdown skill)
   impl: "src/services/feature.ts"          # REQUIRED
   types: "src/types/feature.ts"            # Optional
 dependencies: []
@@ -151,6 +151,8 @@ The `outputs` field is critical - without it, Murdock and B.A. don't know where 
 ### TDD Workflow (MANDATORY STAGES - NO EXCEPTIONS)
 
 Every feature MUST flow through ALL stages. Skipping stages is NOT permitted.
+
+**Sole carve-out — NO_TEST_NEEDED task items:** non-code `type: "task"` items flagged per the `work-breakdown` skill (empty `outputs.test` + `NO_TEST_NEEDED` on its own line in the description — docs, static config, deletions) skip ONLY the `testing` stage: they enter the pipeline at `implementing` (`ready → implementing`, a legal transition in the matrix) and Lynch, Amy, and everything downstream still run. Anything with runtime impact never qualifies — when in doubt, it gets tests.
 
 **Per-Feature Pipeline (each item, in order):**
 1. **Murdock** writes tests first (defines acceptance criteria)
@@ -265,7 +267,7 @@ Usage: `ateam <resource> <command> [flags]`
 | Tool histogram | `ateam missions getToolHistogram <missionId> --json` |
 | Skill usage | `ateam missions getSkillUsage <missionId> --json` |
 | Health report | `ateam missions-health getHealthReport [--json]` |
-| Compute scaling | `ateam scaling compute [--concurrency N] [--memory N] --json` |
+| Compute scaling | `ateam scaling compute [--concurrency N] [--memory N] [--persist] --json` |
 | Check deps | `ateam deps-check checkDeps --json` |
 | Log activity | `ateam activity createActivityEntry --agent <name> --message "..." --level info` |
 | List activity | `ateam activity listActivity --json` |

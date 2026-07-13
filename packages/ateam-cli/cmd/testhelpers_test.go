@@ -21,6 +21,11 @@ func resetScalingComputeFlagsForTest() {
 		f.Changed = false
 		f.Value.Set("0")
 	}
+	scalingComputeCmd_persist = false
+	if f := scalingComputeCmd.Flags().Lookup("persist"); f != nil {
+		f.Changed = false
+		f.Value.Set("false")
+	}
 }
 
 // resetMissionsCreateMissionFlagsForTest clears both the module variables and

@@ -37,8 +37,11 @@ Initialize a mission from a PRD file with two-pass refinement.
          │
          ▼
 ┌─────────────────────────────────────┐
-│ 3. ateam deps-check checkDeps       │
-│    Validate dependency graph        │
+│ 3. Verify board state               │
+│    Face already ran deps-check in   │
+│    its pass-1 wrap-up — don't       │
+│    re-run it, just confirm the      │
+│    board matches Face's report      │
 └─────────────────────────────────────┘
          │
          ▼ (skip if --skip-refinement)
@@ -52,7 +55,9 @@ Initialize a mission from a PRD file with two-pass refinement.
          │
          ▼ (skip if --skip-refinement)
 ┌─────────────────────────────────────┐
-│ 5. Face (opus) - SECOND PASS        │
+│ 5. Face (SAME agent) - SECOND PASS  │
+│    • SendMessage to the still-live  │
+│      pass-1 agent (no fresh spawn)  │
 │    • Apply Sosa's recommendations   │
 │    • Update items via ateam CLI     │
 │    • Move Wave 0 → ready stage      │
@@ -163,16 +168,31 @@ Agent(
 )
 ```
 
-### 4. Validate dependencies
+**Seed exploration, don't skip it.** If the PRD names concrete code touchpoints
+(specific files, modules, schemas, prior "Resolved Decisions" sections), include
+that list at the top of Face's prompt so it can jump straight to those locations
+instead of a cold serial exploration. This cuts the cold-start time significantly
+on PRDs that already know their touchpoints. Keep exploration itself mandatory,
+though — it's what catches things the PRD doesn't mention (dead code paths,
+divergent/duplicate implementations, missing platform primitives). Seeding
+accelerates convergence; it does not replace verification.
 
-Run `ateam deps-check checkDeps --json`.
+### 4. Verify board state
 
-Check for:
-- Circular dependencies
-- Missing references
-- Orphaned items
+Face's pass-1 prompt already ends its wrap-up by running
+`ateam deps-check checkDeps` and reporting the result (valid graph, ready
+items, blocked items — see `face.md`). Don't re-run the same check from the
+orchestrator; it's the identical API call against the same board state.
+Instead, confirm the board matches what Face reported:
 
-If validation fails, report errors and stop.
+```bash
+ateam board getBoard --json
+```
+
+Check that item count, waves, and the ready/blocked split line up with
+Face's summary. If Face's own deps-check reported failures (circular
+dependencies, missing references, orphaned items), report errors and stop —
+do not proceed to Sosa.
 
 ### 5. Invoke Sosa (skip with --skip-refinement)
 
@@ -203,7 +223,57 @@ Sosa will:
 - Use `AskUserQuestion` to get human clarification
 - Produce a detailed refinement report
 
+**Preliminary vs. final reports.** Sosa may send a preliminary report (human
+questions still pending) before a sharper final report lands. Do not dispatch
+Face pass 2 off the preliminary and then hand-reconcile deltas yourself — ad
+hoc reconciliation by the orchestrator is where instructions get lost. Default
+protocol:
+- Wait for Sosa's final report, then dispatch Face pass 2 once, off that
+  report.
+- Overlap is only safe if Sosa explicitly marks the preliminary
+  "safe to dispatch — final will only add precision." If Sosa hasn't said
+  that, wait for final.
+
 ### 6. Invoke Face - Second Pass (skip with --skip-refinement)
+
+**Default: reuse the pass-1 agent.** Keep the pass-1 Face agent (spawned in
+step 3) alive rather than tearing it down. Resume it here via `SendMessage`
+instead of spawning a fresh subagent. The pass-1 agent already knows every
+item, AC, and dependency it wrote — pass 2 completes faster, needs no
+re-exploration, and can self-flag issues rooted in pass-1 context (e.g., an
+AC-count ceiling it designed against). The strict "MCP tools only, no
+exploration" guardrails below exist only to compensate for a *fresh* agent's
+amnesia — they become unnecessary once the same agent handles both passes.
+
+```text
+SendMessage(
+  to: <face_pass1_agent_id>,   # the still-live agent from step 3
+  message: "**THIS IS THE SECOND PASS.** Apply Sosa's refinements below.
+
+  You already know every item, AC, and dependency you created in pass 1 —
+  no need to re-explore the codebase or re-read items via the CLI unless
+  something looks stale.
+
+  Here is Sosa's refinement report:
+
+  {sosa_report}
+
+  For each item needing changes:
+  1. Use ateam items updateItem to modify the item
+  2. Apply the specific recommendations
+
+  After all updates:
+  1. Run ateam deps-check checkDeps --json to get the readyItems list
+  2. Move items with NO dependencies to ready stage using ateam board-move moveItem
+  3. Leave items WITH dependencies in briefings stage
+
+  Report what was updated and moved."
+)
+```
+
+**Fallback: fresh agent.** If the pass-1 agent is no longer available (e.g.,
+its session ended), spawn a new Face subagent instead and keep the
+anti-exploration guardrails, since a fresh agent genuinely has no context:
 
 ```
 Agent(
@@ -299,4 +369,4 @@ With skip refinement:
 |-------|------|---------------|-------|---------|
 | Face | First | clean-code-architect | opus | Decompose PRD into items |
 | Sosa | - | requirements-critic | opus | Review and challenge items |
-| Face | Second | clean-code-architect | opus | Refine and move to ready |
+| Face | Second | clean-code-architect | opus | Refine and move to ready — same live agent as pass 1 via `SendMessage` (default); fresh spawn only if the pass-1 agent is unavailable |

@@ -59,6 +59,43 @@ func TestScalingComputeSendsConcurrencyOverride(t *testing.T) {
 	}
 }
 
+// TestScalingComputeSendsPersistWhenFlagSet verifies --persist forwards persist:true,
+// so the rationale is saved server-side (no raw PATCH behind zero-trust).
+func TestScalingComputeSendsPersistWhenFlagSet(t *testing.T) {
+	var capturedBody map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody = captureBody(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(scalingComputeSuccessResponse())
+	}))
+	defer srv.Close()
+
+	if _, err := executeScalingCompute(t, srv.URL, "--persist"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := capturedBody["persist"]; got != true {
+		t.Errorf("expected persist=true, got %v", got)
+	}
+}
+
+// TestScalingComputeOmitsPersistWhenUnset verifies absent --persist → absent field.
+func TestScalingComputeOmitsPersistWhenUnset(t *testing.T) {
+	var capturedBody map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody = captureBody(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(scalingComputeSuccessResponse())
+	}))
+	defer srv.Close()
+
+	if _, err := executeScalingCompute(t, srv.URL); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := capturedBody["persist"]; ok {
+		t.Errorf("expected persist to be omitted when flag unset, got %v", capturedBody["persist"])
+	}
+}
+
 // TestScalingComputeOmitsConcurrencyWhenUnset verifies absent flag → absent field.
 func TestScalingComputeOmitsConcurrencyWhenUnset(t *testing.T) {
 	var capturedBody map[string]interface{}

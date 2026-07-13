@@ -11,6 +11,7 @@
  */
 
 import { randomUUID } from 'crypto';
+import { apiEventHeaders } from './observer.js';
 
 /**
  * POSTs a denied event to the API. Fire-and-forget: does not throw on failure.
@@ -39,10 +40,7 @@ export async function sendDeniedEvent({ agentName, toolName, reason }) {
   try {
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Project-ID': projectId,
-      },
+      headers: apiEventHeaders(projectId),
       body: JSON.stringify(payload),
     });
 

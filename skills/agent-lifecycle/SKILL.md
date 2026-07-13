@@ -128,10 +128,10 @@ When you call `agentStop` with `--advance=true` (the default) and the target sta
 When you see `wipExceeded: true`:
 
 1. Do NOT call `agentStop` again — your work is already logged and your claim is released.
-2. Send an ALERT to Hannibal so he can re-dispatch when capacity opens:
+2. Send an ALERT to the orchestrator (address `team-lead` in native teams mode — Hannibal is the persona, `team-lead` is the SendMessage address) so it can re-dispatch when capacity opens:
    ```javascript
    SendMessage({
-     to: "hannibal",
+     to: "team-lead",
      message: "ALERT: WI-007 - WIP_LIMIT_EXCEEDED on <blockedStage>. Work logged, item released, needs re-dispatch.",
      summary: "WIP limit exceeded for WI-007"
    })

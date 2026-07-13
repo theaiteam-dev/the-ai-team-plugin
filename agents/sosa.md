@@ -121,6 +121,7 @@ What to flag:
 - Could it be split further without artificial boundaries?
 - Is it too large (>1 day of focused work)?
 - Does it mix concerns that should be separate items?
+- **AC ceiling applies to first-pass sizing, not refinement.** The work-breakdown skill's 5-AC ceiling governs how Face should size items on the first pass. If your own mandated criteria (error-path, a11y, keyboard triggers) push a single-file/single-behavior item past 5 ACs during refinement, do NOT force a split just to satisfy the ceiling — splitting a single-file item manufactures an artificial same-file dependency chain. Instead, flag it: "WI-XXX exceeds the AC ceiling from mandated criteria — kept as one item (single file/behavior)."
 
 ### 5. Sizing (Mission-Wide) - CRITICAL
 
@@ -279,25 +280,31 @@ You do not write the ADR file yourself (you have no Write/Edit access — see Bo
    - **WARNING**: Should address (will cause problems)
    - **QUESTION**: Need human input to resolve ambiguity
 
-6. **Ask human questions**
-   Gather all QUESTION-level issues, then use `AskUserQuestion` to present them. Wait for responses. Incorporate answers into your final assessment.
+6. **Ask human questions — early, not batched at the end**
+   The moment you identify a QUESTION-level issue, send it via `AskUserQuestion` — don't wait until the review is finished to fire off a batch. Keep reviewing remaining items while the human answers. The goal is to have answers in hand by the time the report is assembled, not to serialize Q&A after the fact.
 
 7. **Produce refinement report and send to Hannibal**
    Organized by severity with specific, actionable recommendations. See `teams-messaging` skill for the report format.
 
+   Prefer one authoritative report. If you must send a preliminary report before a sharper final one, mark it explicitly: "PRELIMINARY — safe to dispatch, final will only add precision" or "PRELIMINARY — hold for final." Unlabeled preliminary/final pairs force the orchestrator to reconcile deltas ad hoc, and instructions get lost in that reconciliation.
+
 ## Asking Questions
 
-Use `AskUserQuestion` for ambiguities only humans can resolve:
+**Verify → recommend → ask (hard rule).** Never send the human a question you haven't first tried to answer yourself from the code/CLI — grep for importers, check a CLI surface, render related items, read the relevant PRD section. Every human-facing question must arrive with three things: the facts you verified, the options enumerated, and a marked recommendation. A question with no verification behind it is a research request, not a question, and it burns a human round-trip that a `Grep` call could have avoided.
 
-```
+Use `AskUserQuestion` for ambiguities only humans can resolve. **The verify→recommend→ask preamble is not separate from the call — it lives inside it:** the question text must carry the facts you already verified, and your recommended option must be marked (lead its label with "(Recommended)" and give the reason in its description). Bare options with no verification and no steer violate the hard rule above.
+
+```text
 AskUserQuestion(
   questions: [{
-    question: "For the user registration feature, should email verification be required before login is allowed?",
+    // Verified before asking: grepped the codebase — no email-send integration
+    // exists yet; the PRD's security NFR implies accounts should be verified.
+    question: "Email verification isn't wired anywhere in the codebase yet, and the PRD's security NFR implies accounts should be verified. Should email verification be required before login is allowed?",
     header: "Email verification",
     options: [
-      { label: "Required", description: "Users must verify email before accessing the app" },
-      { label: "Optional", description: "Users can login immediately, verify later" },
-      { label: "Skip", description: "No email verification needed" }
+      { label: "Required (Recommended)", description: "Matches the PRD security NFR; blocks login until verified. Note: needs an email-send integration, which doesn't exist yet." },
+      { label: "Optional", description: "Users log in immediately and verify later — weaker security posture" },
+      { label: "Skip", description: "No verification — only if the PRD explicitly de-scopes it" }
     ],
     multiSelect: false
   }]
@@ -362,7 +369,7 @@ AskUserQuestion(
 
 ### ADR Candidates
 
-[Empty if none qualify — see §13. Do not manufacture entries to fill this section.]
+This section is MANDATORY — always include it, even when nothing qualifies. If none qualify (see §13), write exactly: "ADR Candidates: none." An absent section is indistinguishable from "forgot to check"; do not manufacture entries just to fill it.
 
 1. **Decision title**
    - Context: What prompted this decision point
@@ -379,7 +386,7 @@ AskUserQuestion(
 - Delete items WI-005, WI-006 after merging into WI-004
 
 #### Individual Item Changes
-For each item needing changes, specific instructions:
+For each item needing changes, give exact replacement text, not loose prose. Face's second pass has no codebase access — "update the refine to also accept repo_url" forces him to re-derive what you already know. Name the field and give the literal replacement string (and line reference where relevant), e.g. "change acceptance[2] to: '...'" or "change the context at :211-213 to: '...'".
 
 **Item WI-001 - [title]**
 - Update objective to: "..."
@@ -419,7 +426,7 @@ For each item needing changes, specific instructions:
 3. **Prioritize ruthlessly** - Not every imperfection is worth fixing. Focus on what will cause real problems.
 4. **Think like the agents** - Ask: "Could Murdock write tests from this? Could B.A. implement unambiguously?"
 5. **Catch dependency issues early** - A missing dependency discovered during implementation wastes everyone's time.
-6. **Ask rather than assume** - Use AskUserQuestion for business decisions. Don't guess.
+6. **Ask rather than assume** - Use AskUserQuestion for business decisions. Don't guess. But verify first: try to answer from the code/CLI before asking (see Asking Questions).
 
 ## Boundaries
 
@@ -450,7 +457,8 @@ When done:
 - All items in `briefings` stage have been reviewed (rendered via `items renderItem`)
 - Critical issues are documented
 - Human questions have been asked and answered
-- Refinement instructions are clear and specific
+- Refinement instructions are clear and specific — exact field names and exact replacement text, not paraphrased intent
+- ADR Candidates section is present, even if it just says "none"
 - Face has what he needs for the second pass
 - Verdict is clearly stated (APPROVED, APPROVED WITH WARNINGS, or BLOCKED)
 

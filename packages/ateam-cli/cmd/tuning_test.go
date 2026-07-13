@@ -110,7 +110,7 @@ func TestTuningParentRegistersSubcommands(t *testing.T) {
 	if tuning == nil {
 		t.Fatal("expected a `tuning` command registered under root")
 	}
-	for _, name := range []string{"candidates", "propose", "apply", "defer"} {
+	for _, name := range []string{"candidates", "propose", "apply", "defer", "corroboration"} {
 		if findTuningSubcommand(tuning, name) == nil {
 			t.Errorf("expected `tuning %s` subcommand to be registered", name)
 		}
@@ -441,5 +441,44 @@ func TestTuningDeferRequiresFingerprintFlag(t *testing.T) {
 	}
 	if cap.called {
 		t.Error("expected the API to NOT be called when a required flag is missing")
+	}
+}
+
+// TestTuningCorroborationPerformsGetWithFingerprintQuery verifies
+// `tuning corroboration --fingerprint X` issues GET /api/tuning/corroboration
+// with the fingerprint query param (replacing the old raw curl).
+func TestTuningCorroborationPerformsGetWithFingerprintQuery(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/tuning/corroboration" {
+			t.Errorf("expected path /api/tuning/corroboration, got %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("fingerprint"); got != "fp-defensive" {
+			t.Errorf("expected fingerprint=fp-defensive, got %q (raw: %q)", got, r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"distinctMissions":3,"corroborated":true}`))
+	}))
+	defer srv.Close()
+
+	out, err := runTuning(t, srv.URL, "tuning", "corroboration", "--fingerprint", "fp-defensive", "--json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "corroborated") {
+		t.Errorf("expected output to contain corroborated field, got: %s", out)
+	}
+}
+
+// TestTuningCorroborationRequiresFingerprintFlag verifies --fingerprint is required.
+func TestTuningCorroborationRequiresFingerprintFlag(t *testing.T) {
+	srv, _ := newTuningTestServer(t, `{}`)
+	defer srv.Close()
+
+	_, err := runTuning(t, srv.URL, "tuning", "corroboration", "--json")
+	if err == nil {
+		t.Fatal("expected an error when --fingerprint is omitted, got nil")
 	}
 }
