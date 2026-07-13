@@ -327,7 +327,7 @@ describe('POST /api/scaling/compute — persist to active mission', () => {
           archivedAt: null,
           state: { notIn: ['completed', 'failed', 'archived'] },
         }),
-        orderBy: { createdAt: 'desc' },
+        orderBy: { startedAt: 'desc' },
       })
     );
     expect(body.persisted).toBe(false);

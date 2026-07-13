@@ -109,7 +109,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             archivedAt: null,
             state: { notIn: ['completed', 'failed', 'archived'] },
           },
-          orderBy: { createdAt: 'desc' },
+          orderBy: { startedAt: 'desc' },
           select: { id: true },
         });
         if (activeMission) {
