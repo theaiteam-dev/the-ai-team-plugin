@@ -207,11 +207,13 @@ After `ateam agents-stop agentStop --outcome rejected --return-to testing --adva
 
 ```javascript
 SendMessage({
-  to: "murdock-N",  // exact instance from claimedNext in agentStop response
+  to: "murdock-N",  // the Murdock instance that handed you this item (from its START)
   message: "REJECTED: {itemId} - TEST BUG at {file:line}. {one-sentence reason}. Test change needed: {what Murdock must change}. Impl status: {complete|partial}.",
   summary: "REJECTED {itemId} (TEST BUG)"
 })
 ```
+
+> **Backward/rejection routing is by instance name, not agentId.** Forward handoffs now address the next agent by `claimedNextAgentId` (which the pool auto-claim surfaces), but rejection is a backward hop the pool does not auto-claim, so no agentId is returned. Addressing a peer by name may not deliver in headless (`claude -p`) mode — see the `claimedNextAgentId` follow-up for extending agentId-addressed routing to the rejection path.
 
 ```javascript
 SendMessage({

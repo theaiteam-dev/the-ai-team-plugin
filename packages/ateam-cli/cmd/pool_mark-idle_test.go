@@ -105,6 +105,47 @@ func TestPoolMarkIdleRequiresInstanceArg(t *testing.T) {
 	}
 }
 
+func TestPoolMarkIdleWritesAgentIDContent(t *testing.T) {
+	_, poolDir := withTempPoolRoot(t, "mark-idle-agentid")
+	if err := os.MkdirAll(poolDir, 0755); err != nil {
+		t.Fatalf("mkdir pool: %v", err)
+	}
+
+	out, err := runPoolCmd(t, "pool", "mark-idle", "ba-1", "--agent-id", "a729de7264069a126")
+	if err != nil {
+		t.Fatalf("mark-idle --agent-id failed: %v\noutput: %s", err, out)
+	}
+
+	idleFile := filepath.Join(poolDir, "ba-1.idle")
+	content, readErr := os.ReadFile(idleFile)
+	if readErr != nil {
+		t.Fatalf("reading idle marker: %v", readErr)
+	}
+	if string(content) != "a729de7264069a126" {
+		t.Errorf("expected marker content to be the agentId, got %q", string(content))
+	}
+}
+
+func TestPoolMarkIdleWithoutAgentIDIsEmpty(t *testing.T) {
+	_, poolDir := withTempPoolRoot(t, "mark-idle-noagentid")
+	if err := os.MkdirAll(poolDir, 0755); err != nil {
+		t.Fatalf("mkdir pool: %v", err)
+	}
+
+	// No --agent-id: marker must be empty, preserving legacy name-only handoff.
+	if out, err := runPoolCmd(t, "pool", "mark-idle", "ba-1"); err != nil {
+		t.Fatalf("mark-idle failed: %v\noutput: %s", err, out)
+	}
+
+	content, readErr := os.ReadFile(filepath.Join(poolDir, "ba-1.idle"))
+	if readErr != nil {
+		t.Fatalf("reading idle marker: %v", readErr)
+	}
+	if len(content) != 0 {
+		t.Errorf("expected empty marker when --agent-id omitted, got %q", string(content))
+	}
+}
+
 func TestPoolMarkIdleJSONOutput(t *testing.T) {
 	_, poolDir := withTempPoolRoot(t, "mark-idle-json")
 	if err := os.MkdirAll(poolDir, 0755); err != nil {

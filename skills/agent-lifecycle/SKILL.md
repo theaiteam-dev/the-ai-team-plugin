@@ -69,8 +69,9 @@ ateam agents-stop agentStop \
 | `--return-to` | Conditional | **Required** when `--outcome rejected`. Stage to send the item back to. Valid values: `ready \| testing \| implementing \| review \| probing`. |
 
 > **Always pass `--json` on the root `ateam` command** (e.g. `ateam --json agents-stop agentStop ...`). The JSON response includes two fields the handoff flow depends on:
-> - `data.claimedNext` — instance name (e.g. `ba-2`) that the CLI automatically claimed from the pool for the next pipeline stage. Send a `START` message directly to this instance.
-> - `data.poolAlert` — non-empty string when no idle next-stage instance was available. Send an `ALERT` to Hannibal so he can queue the handoff.
+> - `data.claimedNext` — instance name (e.g. `ba-2`) that the CLI automatically claimed from the pool for the next pipeline stage.
+> - `data.claimedNextAgentId` — that instance's harness agentId. **Address the `START` to this**, not the instance name: friendly names do not route between teammates in native teams / headless (`claude -p`) mode (the message is silently dropped), while the agentId always delivers. Fall back to `claimedNext` only when `claimedNextAgentId` is empty.
+> - `data.poolAlert` — non-empty string when no idle next-stage instance was available. Send an `ALERT` to the orchestrator (`team-lead`) so it can queue the handoff.
 > - `data.wipExceeded` — `true` if the target stage hit its WIP limit. Work was logged but the item did NOT advance.
 >
 > Without `--json`, these fields are printed in a human table and cannot be parsed reliably.

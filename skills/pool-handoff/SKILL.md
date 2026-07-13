@@ -59,7 +59,7 @@ When you finish work, call `agentStop` normally. The CLI automatically:
 1. POSTs completion to the API (advances the item)
 2. `mv`s your `.busy` → `.idle` (releases your slot)
 3. Atomically claims an idle instance of the next agent type
-4. Returns `claimedNext` in the response
+4. Returns `claimedNext` (the instance name) **and `claimedNextAgentId` (its harness agentId)** in the response
 
 ```bash
 # ATEAM_MISSION_ID must be set for pool management to work.
@@ -74,24 +74,27 @@ RESULT=$(ateam agents-stop agentStop \
   --json)
 
 CLAIMED_NEXT=$(echo "$RESULT" | jq -r '.data.claimedNext // ""')
+CLAIMED_NEXT_AGENT_ID=$(echo "$RESULT" | jq -r '.data.claimedNextAgentId // ""')
 POOL_ALERT=$(echo "$RESULT" | jq -r '.data.poolAlert // ""')
 ```
 
-**If `claimedNext` is set** — send START directly to that instance:
+**If `claimedNext` is set** — send START directly to that instance. **Address it by `claimedNextAgentId`, not the instance name.** A friendly instance name (e.g. `ba-2`) does not route between teammates in native teams / headless (`claude -p`) mode — the message is silently dropped — whereas the harness agentId always delivers (and wakes the idle instance to receive it). Fall back to the name only when `claimedNextAgentId` is empty (a pool marked idle without `--agent-id`):
 ```javascript
-SendMessage({ type: "message", recipient: CLAIMED_NEXT, content: "START: {itemId} - {summary}", summary: "START {itemId}" })
-// Wait up to 20s for ACK, then send FYI to Hannibal
-SendMessage({ type: "message", recipient: "hannibal", content: "FYI: {itemId} - handed off to {CLAIMED_NEXT}.", summary: "FYI {itemId}" })
+// Prefer the agentId; fall back to the instance name only if it's absent.
+const recipient = CLAIMED_NEXT_AGENT_ID || CLAIMED_NEXT
+SendMessage({ type: "message", recipient, content: "START: {itemId} - {summary}", summary: "START {itemId}" })
+// Wait up to 20s for ACK, then send FYI to the orchestrator
+SendMessage({ type: "message", recipient: "team-lead", content: "FYI: {itemId} - handed off to {CLAIMED_NEXT}.", summary: "FYI {itemId}" })
 ```
 
-**If `poolAlert` is set** (no idle next-agent instance) — send ALERT to Hannibal:
+**If `poolAlert` is set** (no idle next-agent instance) — send ALERT to the orchestrator:
 ```javascript
-SendMessage({ type: "message", recipient: "hannibal", content: "ALERT: {itemId} - {poolAlert}. Manual dispatch needed.", summary: "ALERT {itemId}" })
+SendMessage({ type: "message", recipient: "team-lead", content: "ALERT: {itemId} - {poolAlert}. Manual dispatch needed.", summary: "ALERT {itemId}" })
 ```
 
-**Amy (last in pipeline)** — `claimedNext` will always be empty. Just send FYI to Hannibal:
+**Amy (last in pipeline)** — `claimedNext` will always be empty. Just send FYI to the orchestrator:
 ```javascript
-SendMessage({ type: "message", recipient: "hannibal", content: "FYI: {itemId} - probing complete. VERIFIED.", summary: "FYI {itemId}" })
+SendMessage({ type: "message", recipient: "team-lead", content: "FYI: {itemId} - probing complete. VERIFIED.", summary: "FYI {itemId}" })
 ```
 
 ---

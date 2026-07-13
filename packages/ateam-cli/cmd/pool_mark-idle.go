@@ -9,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var poolMarkIdleCmd_agentID string
+
 var poolMarkIdleCmd = &cobra.Command{
 	Use:   "mark-idle <instance>",
 	Short: "Create a .idle marker for an instance after pre-warming",
@@ -18,6 +20,16 @@ Used by Hannibal after a lane's agents have all sent READY, to make their
 pool slots claimable. This is the post-pre-warming side of the pool
 lifecycle (paired with 'pool init' at mission start).
 
+Pass --agent-id <id> to record the instance's harness agentId as the marker
+file's content. The completing agent's agentStop reads it back and returns it
+as 'claimedNextAgentId' so the START handoff can address the next teammate by
+agentId — friendly instance names (murdock-1, ba-2) do NOT resolve between
+teammates in headless (-p) mode, so a name-addressed handoff is silently
+dropped. Omitting --agent-id leaves the marker empty (falls back to
+name-addressed handoff, the pre-existing behavior). Only the orchestrator,
+which holds each agentId from the Agent spawn return, can supply it — an agent
+cannot discover its own agentId.
+
 Errors and refuses to act when:
   - <instance>.busy already exists (would mask a live in-flight slot — use
     'pool release' if the agent is genuinely dead)
@@ -26,7 +38,7 @@ Errors and refuses to act when:
   - The pool dir does not exist (caller forgot 'pool init')
 
 In --json mode the output shape is:
-  { "instance": "murdock-1", "state": "idle", "path": "/tmp/.ateam-pool/M-.../murdock-1.idle" }`,
+  { "instance": "murdock-1", "state": "idle", "agentId": "abc123", "path": "/tmp/.ateam-pool/M-.../murdock-1.idle" }`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		instance := args[0]
@@ -57,17 +69,20 @@ In --json mode the output shape is:
 			return fmt.Errorf("stat %s: %w", idleFile, err)
 		}
 
-		f, err := os.Create(idleFile)
-		if err != nil {
+		// The marker file's CONTENT is the instance's harness agentId (possibly
+		// empty). agentStop.claimIdleInstance reads it back on handoff so the
+		// completing agent addresses its START by agentId rather than by the
+		// friendly instance name, which does not route between teammates headless.
+		if err := os.WriteFile(idleFile, []byte(poolMarkIdleCmd_agentID), 0644); err != nil {
 			return fmt.Errorf("create idle marker %s: %w", idleFile, err)
 		}
-		_ = f.Close()
 
 		jsonMode, _ := cmd.Root().PersistentFlags().GetBool("json")
 		if jsonMode {
 			out := map[string]interface{}{
 				"instance": instance,
 				"state":    "idle",
+				"agentId":  poolMarkIdleCmd_agentID,
 				"path":     idleFile,
 			}
 			b, err := json.MarshalIndent(out, "", "  ")
@@ -84,5 +99,6 @@ In --json mode the output shape is:
 }
 
 func init() {
+	poolMarkIdleCmd.Flags().StringVar(&poolMarkIdleCmd_agentID, "agent-id", "", "Harness agentId to record as the marker's content, for agentId-addressed handoff")
 	poolCmd.AddCommand(poolMarkIdleCmd)
 }

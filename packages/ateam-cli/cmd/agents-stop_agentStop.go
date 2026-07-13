@@ -40,14 +40,21 @@ func agentType(name string) string {
 }
 
 // claimIdleInstance atomically claims an idle instance of agentType from poolDir.
-// Returns the claimed instance name (e.g. "ba-2") or "" if none available.
-func claimIdleInstance(poolDir, agentType string) string {
+// Returns the claimed instance name (e.g. "ba-2") and its recorded agentId (the
+// marker file's content, "" when the orchestrator marked it idle without
+// --agent-id). Both are "" when no instance is available.
+//
+// The agentId lets the completing agent address its START handoff by agentId
+// instead of the friendly instance name; peer name-addressing does not route
+// between teammates in headless (-p) mode (silently dropped), so the agentId is
+// what makes the pipeline handoff deliver.
+func claimIdleInstance(poolDir, agentType string) (instance, agentID string) {
 	// Guard: /tmp is cleared on reboot, so if a mission spans a restart the
 	// pool directory may have vanished. Surface the failure loudly rather than
 	// silently returning "" (which looks like "no idle instances").
 	if _, err := os.Stat(poolDir); os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "POOL_WARN: pool directory %s does not exist — was it cleared? Mission may need to be reinitialized with 'ateam scaling compute'.\n", poolDir)
-		return ""
+		return "", ""
 	}
 	// Match both "ba.idle" (N=1) and "ba-1.idle", "ba-2.idle" (N>1)
 	patterns := []string{
@@ -67,11 +74,18 @@ func claimIdleInstance(poolDir, agentType string) string {
 		base := strings.TrimSuffix(filepath.Base(idleFile), ".idle")
 		busyFile := filepath.Join(poolDir, base+".busy")
 		if err := os.Rename(idleFile, busyFile); err == nil {
-			return base // won the race
+			// Won the race. The marker content (recorded at mark-idle) is the
+			// instance's agentId; rename preserved it. A read failure is
+			// non-fatal — fall back to name-only handoff.
+			id := ""
+			if content, readErr := os.ReadFile(busyFile); readErr == nil {
+				id = strings.TrimSpace(string(content))
+			}
+			return base, id // won the race
 		}
 		// Lost the race (ENOENT) — try next candidate
 	}
-	return ""
+	return "", ""
 }
 
 // poolSelfRelease releases the agent's .busy file back to .idle.
@@ -98,35 +112,39 @@ func poolSelfRelease(agentName string) {
 }
 
 // handlePoolManagement performs optional next-agent claim after self-release.
-// Returns (claimedNext, poolAlert) where poolAlert is non-empty when no idle
-// next-agent instance was available.
+// Returns (claimedNext, claimedNextAgentID, poolAlert). claimedNextAgentID is the
+// next instance's harness agentId (empty when it was marked idle without
+// --agent-id) — the completing agent addresses its START handoff to this so the
+// message routes headless. poolAlert is non-empty when no idle next-agent
+// instance was available.
 // NOTE: Self-release is handled separately by poolSelfRelease (called via defer).
-func handlePoolManagement(agentName, outcome string, advance bool) (claimedNext, poolAlert string) {
+func handlePoolManagement(agentName, outcome string, advance bool) (claimedNext, claimedNextAgentID, poolAlert string) {
 	missionID := os.Getenv("ATEAM_MISSION_ID")
 	if missionID == "" {
 		fmt.Fprintln(os.Stderr, "WARNING: ATEAM_MISSION_ID not set — pool management skipped (no claimedNext will be returned)")
-		return "", ""
+		return "", "", ""
 	}
 
 	poolDir := filepath.Join("/tmp/.ateam-pool", filepath.Base(missionID))
 
 	// Only claim next when advancing forward through the pipeline on success
 	if !advance || outcome == "rejected" || outcome == "blocked" {
-		return "", ""
+		return "", "", ""
 	}
 	nextType, ok := pipelineNext[agentType(agentName)]
 	if !ok {
-		return "", "" // amy or unknown — no successor
+		return "", "", "" // amy or unknown — no successor
 	}
-	claimed := claimIdleInstance(poolDir, nextType)
+	claimed, claimedID := claimIdleInstance(poolDir, nextType)
 	if claimed == "" {
-		return "", fmt.Sprintf("no idle %s instance available", nextType)
+		return "", "", fmt.Sprintf("no idle %s instance available", nextType)
 	}
-	return claimed, ""
+	return claimed, claimedID, ""
 }
 
-// injectPoolResult merges claimedNext / poolAlert into the API response JSON.
-func injectPoolResult(resp []byte, claimedNext, poolAlert string) []byte {
+// injectPoolResult merges claimedNext / claimedNextAgentId / poolAlert into the
+// API response JSON.
+func injectPoolResult(resp []byte, claimedNext, claimedNextAgentID, poolAlert string) []byte {
 	if claimedNext == "" && poolAlert == "" {
 		return resp
 	}
@@ -141,6 +159,9 @@ func injectPoolResult(resp []byte, claimedNext, poolAlert string) []byte {
 	}
 	if claimedNext != "" {
 		data["claimedNext"] = claimedNext
+	}
+	if claimedNextAgentID != "" {
+		data["claimedNextAgentId"] = claimedNextAgentID
 	}
 	if poolAlert != "" {
 		data["poolAlert"] = poolAlert
@@ -245,14 +266,14 @@ var agentsStopAgentStopCmd = &cobra.Command{
 
 		// Pool management: next-agent claim only (self-release handled by defer)
 		// Skip next-agent claim when WIP exceeded — item didn't advance, no handoff needed
-		var claimedNext, poolAlert string
+		var claimedNext, claimedNextAgentID, poolAlert string
 		if !wipExceeded {
-			claimedNext, poolAlert = handlePoolManagement(
+			claimedNext, claimedNextAgentID, poolAlert = handlePoolManagement(
 				agentName,
 				outcome,
 				advance,
 			)
-			resp = injectPoolResult(resp, claimedNext, poolAlert)
+			resp = injectPoolResult(resp, claimedNext, claimedNextAgentID, poolAlert)
 		}
 
 		jsonMode, _ := cmd.Root().PersistentFlags().GetBool("json")

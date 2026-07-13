@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -135,6 +137,70 @@ func TestAgentStopAdvanceFalseSendsFalse(t *testing.T) {
 	}
 	if advance != false {
 		t.Errorf("expected advance=false, got %v", advance)
+	}
+}
+
+// TestHandlePoolManagementReturnsNextAgentID verifies the forward handoff: a
+// completing Murdock claims the downstream B.A. instance from the pool and gets
+// back both the instance name AND its recorded agentId, so the START handoff can
+// be addressed by agentId (name-addressing does not route between teammates in
+// headless -p mode).
+func TestHandlePoolManagementReturnsNextAgentID(t *testing.T) {
+	_, poolDir := withTempPoolRoot(t, "handlepool-agentid")
+	if err := os.MkdirAll(poolDir, 0755); err != nil {
+		t.Fatalf("mkdir pool: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(poolDir, "ba-1.idle"), []byte("a729de7264069a126"), 0644); err != nil {
+		t.Fatalf("writing idle marker: %v", err)
+	}
+
+	next, nextID, alert := handlePoolManagement("Murdock", "completed", true)
+	if next != "ba-1" {
+		t.Errorf("expected claimedNext=ba-1, got %q", next)
+	}
+	if nextID != "a729de7264069a126" {
+		t.Errorf("expected claimedNextAgentId to be read from the marker, got %q", nextID)
+	}
+	if alert != "" {
+		t.Errorf("expected no poolAlert when an idle instance exists, got %q", alert)
+	}
+}
+
+// TestInjectPoolResultAddsClaimedNextAgentID verifies claimedNextAgentId is merged
+// into the response data alongside claimedNext.
+func TestInjectPoolResultAddsClaimedNextAgentID(t *testing.T) {
+	resp := []byte(`{"success":true,"data":{"itemId":"WI-001"}}`)
+	out := injectPoolResult(resp, "ba-1", "a729de7264069a126", "")
+
+	var parsed struct {
+		Data struct {
+			ClaimedNext        string `json:"claimedNext"`
+			ClaimedNextAgentID string `json:"claimedNextAgentId"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	}
+	if parsed.Data.ClaimedNext != "ba-1" {
+		t.Errorf("expected claimedNext=ba-1, got %q", parsed.Data.ClaimedNext)
+	}
+	if parsed.Data.ClaimedNextAgentID != "a729de7264069a126" {
+		t.Errorf("expected claimedNextAgentId to surface, got %q", parsed.Data.ClaimedNextAgentID)
+	}
+}
+
+// TestInjectPoolResultOmitsAgentIDWhenEmpty verifies backward compatibility: with
+// no agentId (marker was empty / --agent-id omitted), the key is absent and the
+// name-only claimedNext is still present — identical to pre-change behavior.
+func TestInjectPoolResultOmitsAgentIDWhenEmpty(t *testing.T) {
+	resp := []byte(`{"success":true,"data":{"itemId":"WI-001"}}`)
+	out := injectPoolResult(resp, "ba-1", "", "")
+
+	if strings.Contains(string(out), "claimedNextAgentId") {
+		t.Errorf("expected no claimedNextAgentId key when agentId is empty, got %s", out)
+	}
+	if !strings.Contains(string(out), `"claimedNext":"ba-1"`) {
+		t.Errorf("expected claimedNext still present, got %s", out)
 	}
 }
 
