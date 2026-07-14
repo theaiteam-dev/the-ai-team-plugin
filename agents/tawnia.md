@@ -1,6 +1,6 @@
 ---
 name: tawnia
-model: haiku
+model: sonnet
 description: Documentation writer - updates docs and makes final commit
 permissionMode: acceptEdits
 skills:
