@@ -457,3 +457,88 @@ describe('observe-subagent.js — per-message token-usage emission on SubagentSt
     expect(subStops).toHaveLength(1);
   });
 });
+
+// ============ auth + attribution contracts (CF-Access headers, skip-when-unattributed) ============
+
+describe('token-usage POST auth + attribution', () => {
+  it('carries CF-Access headers on the token-usage POST when creds are present (the v1.9.0 fix missed this call site)', async () => {
+    const transcriptPath = writeTranscript([
+      assistantLine({ id: 'm1', sessionId: 'sess_cf', model: 'claude-opus-4-8', input: 100, output: 50, cacheCreate: 0, cacheRead: 0 }),
+    ]);
+
+    const { exitCode } = await runHook(
+      STOP_HOOK,
+      { hook_event_name: 'Stop', session_id: 'sess_cf', transcript_path: transcriptPath },
+      ['murdock'],
+      { ACCESS_CLIENT_ID: 'cf-id-123', ACCESS_CLIENT_SECRET: 'cf-secret-456' }
+    );
+    await drain();
+    expect(exitCode).toBe(0);
+
+    const tu = requestsTo('/api/hooks/token-usage');
+    expect(tu).toHaveLength(1);
+    expect(tu[0].headers['cf-access-client-id']).toBe('cf-id-123');
+    expect(tu[0].headers['cf-access-client-secret']).toBe('cf-secret-456');
+    // The events POST must carry them too — both paths share apiEventHeaders.
+    const ev = requestsTo('/api/hooks/events');
+    expect(ev.length).toBeGreaterThan(0);
+    expect(ev[0].headers['cf-access-client-id']).toBe('cf-id-123');
+  });
+
+  it('omits CF-Access headers when creds are absent', async () => {
+    const transcriptPath = writeTranscript([
+      assistantLine({ id: 'm1', sessionId: 'sess_nocf', model: 'claude-opus-4-8', input: 100, output: 50, cacheCreate: 0, cacheRead: 0 }),
+    ]);
+
+    // Empty strings override any ambient creds from the test runner's env.
+    const { exitCode } = await runHook(
+      STOP_HOOK,
+      { hook_event_name: 'Stop', session_id: 'sess_nocf', transcript_path: transcriptPath },
+      ['murdock'],
+      { ACCESS_CLIENT_ID: '', ACCESS_CLIENT_SECRET: '' }
+    );
+    await drain();
+    expect(exitCode).toBe(0);
+
+    const tu = requestsTo('/api/hooks/token-usage');
+    expect(tu).toHaveLength(1);
+    expect(tu[0].headers['cf-access-client-id']).toBeUndefined();
+  });
+
+  it('skips ALL observer POSTs when ATEAM_PROJECT_ID is unset (no default-project spam)', async () => {
+    const transcriptPath = writeTranscript([
+      assistantLine({ id: 'm1', sessionId: 'sess_noproj', model: 'claude-opus-4-8', input: 100, output: 50, cacheCreate: 0, cacheRead: 0 }),
+    ]);
+
+    const { exitCode } = await runHook(
+      STOP_HOOK,
+      { hook_event_name: 'Stop', session_id: 'sess_noproj', transcript_path: transcriptPath },
+      ['murdock'],
+      { ATEAM_PROJECT_ID: '' }
+    );
+    await drain();
+    expect(exitCode).toBe(0);
+
+    expect(requestsTo('/api/hooks/token-usage')).toHaveLength(0);
+    expect(requestsTo('/api/hooks/events')).toHaveLength(0);
+  });
+
+  it('subagent-stop token-usage POST also carries CF-Access headers (sibling call site)', async () => {
+    const transcriptPath = writeTranscript([
+      assistantLine({ id: 'm1', sessionId: 'sess_sub_cf', model: 'claude-sonnet-4-6', input: 100, output: 50, cacheCreate: 0, cacheRead: 0 }),
+    ]);
+
+    const { exitCode } = await runHook(
+      SUBAGENT_HOOK,
+      { hook_event_name: 'SubagentStop', session_id: 'sess_sub_cf', agent_type: 'murdock', agent_transcript_path: transcriptPath },
+      [],
+      { ACCESS_CLIENT_ID: 'cf-id-123', ACCESS_CLIENT_SECRET: 'cf-secret-456' }
+    );
+    await drain();
+    expect(exitCode).toBe(0);
+
+    const tu = requestsTo('/api/hooks/token-usage');
+    expect(tu).toHaveLength(1);
+    expect(tu[0].headers['cf-access-client-id']).toBe('cf-id-123');
+  });
+});

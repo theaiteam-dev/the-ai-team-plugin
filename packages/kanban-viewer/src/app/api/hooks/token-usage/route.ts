@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { createValidationError } from '@/lib/errors';
 import { getAndValidateProjectId, ensureProject } from '@/lib/project-utils';
+import { findAttributableMissionId } from '@/lib/mission-attach';
 import type { ApiError } from '@/types/api';
 
 interface TokenUsageRecord {
@@ -118,16 +119,13 @@ export async function POST(
       }
     }
 
-    // Attribute to the project's current (non-archived) mission at write time.
+    // Attribute to the project's attributable mission at write time (active, or
+    // completed/failed within the grace window — see lib/mission-attach.ts).
     // This is "current mission when the hook fired", NOT timestamp-accurate
     // attribution — a hook firing just after a mission flips could land on the
     // newer mission. Acceptable for telemetry. Note `update` intentionally does
     // not re-stamp missionId: a message keeps the mission it was first seen under.
-    const currentMission = await prisma.mission.findFirst({
-      where: { projectId, archivedAt: null },
-      orderBy: { startedAt: 'desc' },
-    });
-    const missionId = currentMission?.id ?? null;
+    const missionId = await findAttributableMissionId(projectId);
 
     // Batch all upserts into a single transaction — atomic (no partial writes on
     // a mid-batch DB error) and one round trip instead of N sequential awaits.

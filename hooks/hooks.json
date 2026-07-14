@@ -140,6 +140,16 @@
         ]
       }
     ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/observer-preflight.js"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

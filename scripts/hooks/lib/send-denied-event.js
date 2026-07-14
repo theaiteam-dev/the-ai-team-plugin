@@ -21,7 +21,13 @@ import { apiEventHeaders } from './observer.js';
  */
 export async function sendDeniedEvent({ agentName, toolName, reason }) {
   const apiUrl = process.env.ATEAM_API_URL || 'http://localhost:3000';
-  const projectId = process.env.ATEAM_PROJECT_ID || 'default';
+  const projectId = process.env.ATEAM_PROJECT_ID;
+
+  // Unattributable session (no ATEAM_PROJECT_ID) → skip, matching
+  // sendObserverEvent. Posting as project 'default' is noise.
+  if (!projectId) {
+    return;
+  }
 
   // Strip trailing slash from API URL to avoid double slashes
   const cleanUrl = apiUrl.replace(/\/+$/, '');

@@ -604,7 +604,11 @@ describe('Observer Hook - API Communication', () => {
     );
   });
 
-  it('should use default project ID when not provided', async () => {
+  it('skips the POST entirely when ATEAM_PROJECT_ID is unset (no default-project spam)', async () => {
+    // Contract change: an unattributable session must not post at all. The old
+    // `|| 'default'` fallback meant every Claude session on a machine with the
+    // plugin spammed prod with project='default' events, which also camouflaged
+    // real attribution failures.
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({ success: true }),
@@ -619,16 +623,10 @@ describe('Observer Hook - API Communication', () => {
     };
 
     const payload = buildObserverPayload(hookInput, 'Murdock');
-    await sendObserverEvent(payload!);
+    const result = await sendObserverEvent(payload!);
 
-    expect(mockFetch).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          'X-Project-ID': 'default',
-        }),
-      })
-    );
+    expect(result).toBe(false);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('should handle trailing slash in ATEAM_API_URL without creating double slashes', async () => {

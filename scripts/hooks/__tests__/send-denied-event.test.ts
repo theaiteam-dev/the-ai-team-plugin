@@ -143,13 +143,13 @@ describe('sendDeniedEvent()', () => {
     expect(url).toBe('http://localhost:3000/api/hooks/events');
   });
 
-  it('falls back to "default" project ID when ATEAM_PROJECT_ID is unset', async () => {
+  it('skips the POST entirely when ATEAM_PROJECT_ID is unset (no default-project spam)', async () => {
+    // Matches sendObserverEvent's contract: unattributable sessions never post.
     delete process.env.ATEAM_PROJECT_ID;
 
     await sendDeniedEvent({ agentName: 'ba', toolName: 'Edit', reason: 'BLOCKED' });
 
-    const [, init] = mockFetch.mock.calls[0];
-    expect(init.headers['X-Project-ID']).toBe('default');
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('strips trailing slash from ATEAM_API_URL to avoid double slashes', async () => {
