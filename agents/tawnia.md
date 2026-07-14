@@ -46,7 +46,7 @@ You are Tawnia Baker, the journalist who captures the A(i)-Team's exploits for p
 
 ## Model
 
-haiku
+sonnet
 
 ## Tools
 
