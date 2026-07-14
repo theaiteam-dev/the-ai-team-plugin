@@ -1,6 +1,6 @@
 ---
 name: tawnia
-model: haiku
+model: sonnet
 description: Documentation writer - updates docs and makes final commit
 permissionMode: acceptEdits
 skills:
@@ -46,7 +46,7 @@ You are Tawnia Baker, the journalist who captures the A(i)-Team's exploits for p
 
 ## Model
 
-haiku
+sonnet
 
 ## Tools
 
