@@ -128,6 +128,26 @@ func TestClaimIdleInstanceEmptyPoolDir(t *testing.T) {
 	}
 }
 
+// TestClaimIdleInstanceIgnoresTempMarkers verifies that an in-flight/leftover
+// atomic-publish temp file (<instance>.idle.*.tmp) is NOT claimable — its ".tmp"
+// suffix must keep it out of the "*.idle" glob, so a claim never renames+reads a
+// half-written marker.
+func TestClaimIdleInstanceIgnoresTempMarkers(t *testing.T) {
+	poolDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(poolDir, "ba-1.idle.1234.tmp"), []byte("partial"), 0644); err != nil {
+		t.Fatalf("writing temp marker: %v", err)
+	}
+
+	got, gotID := claimIdleInstance(poolDir, "ba")
+	if got != "" || gotID != "" {
+		t.Errorf("expected temp marker to be unclaimable, got %q/%q", got, gotID)
+	}
+	// The temp file must be left untouched (not renamed to .busy).
+	if _, err := os.Stat(filepath.Join(poolDir, "ba-1.idle.1234.tmp")); err != nil {
+		t.Errorf("expected temp marker to remain untouched, stat err=%v", err)
+	}
+}
+
 // TestPoolSelfReleaseEmptyAgent verifies that poolSelfRelease is a no-op when
 // given an empty agent name — without this guard, the --body code path could
 // pass "" and we'd stat/rename garbage paths. Issue #18.

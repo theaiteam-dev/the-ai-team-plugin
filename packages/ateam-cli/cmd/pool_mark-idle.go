@@ -73,8 +73,31 @@ In --json mode the output shape is:
 		// empty). agentStop.claimIdleInstance reads it back on handoff so the
 		// completing agent addresses its START by agentId rather than by the
 		// friendly instance name, which does not route between teammates headless.
-		if err := os.WriteFile(idleFile, []byte(poolMarkIdleCmd_agentID), 0644); err != nil {
-			return fmt.Errorf("create idle marker %s: %w", idleFile, err)
+		//
+		// Publish it ATOMICALLY: write the id to a uniquely-named temp file in the
+		// same directory, then rename it into place. A direct os.WriteFile would
+		// make <instance>.idle visible after open+truncate but before the id bytes
+		// land, so a concurrent claimIdleInstance could rename+read a partial or
+		// empty id instead of the full one. Rename within a directory is atomic, so
+		// .idle only ever appears complete. The temp's ".tmp" suffix keeps it out of
+		// the claimer's "*.idle" glob. Mirrors the atomicity discipline in pool_claim.go.
+		tmp, err := os.CreateTemp(poolDir, instance+".idle.*.tmp")
+		if err != nil {
+			return fmt.Errorf("create idle marker temp for %s: %w", instance, err)
+		}
+		tmpName := tmp.Name()
+		if _, err := tmp.WriteString(poolMarkIdleCmd_agentID); err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmpName)
+			return fmt.Errorf("write idle marker temp %s: %w", tmpName, err)
+		}
+		if err := tmp.Close(); err != nil {
+			_ = os.Remove(tmpName)
+			return fmt.Errorf("close idle marker temp %s: %w", tmpName, err)
+		}
+		if err := os.Rename(tmpName, idleFile); err != nil {
+			_ = os.Remove(tmpName)
+			return fmt.Errorf("publish idle marker %s: %w", idleFile, err)
 		}
 
 		jsonMode, _ := cmd.Root().PersistentFlags().GetBool("json")

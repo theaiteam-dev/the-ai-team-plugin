@@ -70,7 +70,9 @@ Teammate `solo` ran `env | grep -E '^(CLAUDE|AGENT|TASK|TEAM)'` and found only s
 - The plugin's pool layer (`ateam pool …`, `${POOL_DIR}/${TYPE}-*.idle`, `claimedNext` from `agentStop`) is the registry that would supply cross-peer identity. **The open question is whether that layer threads harness `agentId`s or only friendly instance names** (`ba-1`, `lynch-1`). If the latter, native handoffs stall silently headless.
 - This is the **same failure class** as the stale-`hannibal`-address bug fixed in PR #46 (message accepted, silently never delivered). That the plugin already had one such bug reinforces that peer routing is the fragile surface to verify headless.
 
-## Proposed fix: agentId in the pool marker (lead-written at mark-idle)
+## Fix (implemented in this PR): agentId in the pool marker (lead-written at mark-idle)
+
+> Implemented on `feat/pool-agentid-handoff`. The steps below describe the change as shipped; the "pre-change context" above (empty markers, name-addressed `claimedNext`) is what it replaced.
 
 **Confirmed against the code** (`packages/ateam-cli/cmd/`): the pool is a filesystem dir `/tmp/.ateam-pool/$ATEAM_MISSION_ID/` of **empty marker files** named `<instance>.idle|.busy` (`pool_mark-idle.go:60` does `os.Create`+`Close`, no content). The handoff in `agents-stop_agentStop.go` computes `claimedNext` from the marker **filename** (`claimIdleInstance` returns `base`, line 67-74) → `data.claimedNext = "ba-2"` (`injectPoolResult`, line 143) → the teams-messaging skill sends `SendMessage(to: "ba-2")` (skill line 210). Friendly-name address → silent drop headless (Probe B). Per Probe D the agentId **cannot be self-written** by the agent; the **lead writes it**, which fits because Hannibal already runs `ateam pool mark-idle <instance>` after each agent's READY (playbook lines 259/354/1210) and already holds each agentId from the `Agent` spawn return at that exact moment.
 
@@ -83,13 +85,13 @@ The change threads one string through the seam that already exists — the atomi
 
 Low-risk properties: `rename` preserves marker content, so the agentId rides through `.idle`↔`.busy` claim/release for the instance's life; Probe C showed the agentId is stable across stop/resume, so it's registered once and valid forever (lazy respawn re-runs `mark-idle`, re-capturing the new id); and if `--agent-id` is omitted the marker is empty and the handoff falls back to the friendly name — identical to today's behavior. Needs no further probe to trust: the lead demonstrably holds every agentId (spike) and agentId-addressed delivery works (Probe C).
 
-## Next steps (verify with the real plugin, once tokens reset)
+## Next steps
 
-1. **Trace the current pool/messaging identity.** Confirm what `claimedNext` and the pool `.idle` registry carry today (agentId vs name) and what a peer handoff currently passes to `SendMessage(to: …)` — i.e. how big the change in the "Proposed fix" section actually is.
-2. **Implement the agentId registry** (steps 1–4 above) if handoffs are name-addressed.
-3. **Run one instrumented 2-item mission headless** (`claude -p` + `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`) and confirm Murdock→B.A.→Lynch→Amy handoffs actually land (board advances through every stage), not just that the mission starts.
+Done in this PR: traced the pool/messaging identity (handoffs were name-addressed) and implemented the agentId registry (the four steps above).
 
-This spike removes the "does teams mode even work headless" unknown (it does), identifies the exact defect (name-addressed peer sends drop silently), and specifies a concrete fix (lead-written agentId registry). The remaining work is implementation + one end-to-end confirmation.
+**Remaining — end-to-end validation:** run one instrumented 2-item mission headless (`claude -p` + `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`) and confirm the Murdock→B.A.→Lynch→Amy handoffs actually land — the board advances through every stage, not just that the mission starts. Pending the token reset. (Backward/rejection routing still addresses peers by name — a separate follow-up, since the pool does not auto-claim on reject and so surfaces no agentId.)
+
+This spike removed the "does teams mode even work headless" unknown (it does), identified the exact defect (name-addressed peer sends drop silently), and shipped the fix (lead-written agentId registry). The only remaining work is the one end-to-end confirmation.
 
 ## Reproduction
 

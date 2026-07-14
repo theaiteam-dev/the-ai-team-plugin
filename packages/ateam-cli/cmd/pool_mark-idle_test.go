@@ -126,6 +126,31 @@ func TestPoolMarkIdleWritesAgentIDContent(t *testing.T) {
 	}
 }
 
+func TestPoolMarkIdleLeavesNoTempResidue(t *testing.T) {
+	_, poolDir := withTempPoolRoot(t, "mark-idle-notmp")
+	if err := os.MkdirAll(poolDir, 0755); err != nil {
+		t.Fatalf("mkdir pool: %v", err)
+	}
+
+	if out, err := runPoolCmd(t, "pool", "mark-idle", "ba-1", "--agent-id", "a729de7264069a126"); err != nil {
+		t.Fatalf("mark-idle failed: %v\noutput: %s", err, out)
+	}
+
+	// Atomic publish (temp + rename) must leave exactly the .idle marker behind —
+	// no ".tmp" residue that could accumulate or confuse tooling.
+	entries, err := os.ReadDir(poolDir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if len(names) != 1 || names[0] != "ba-1.idle" {
+		t.Errorf("expected only ba-1.idle after atomic publish, got %v", names)
+	}
+}
+
 func TestPoolMarkIdleWithoutAgentIDIsEmpty(t *testing.T) {
 	_, poolDir := withTempPoolRoot(t, "mark-idle-noagentid")
 	if err := os.MkdirAll(poolDir, 0755); err != nil {
