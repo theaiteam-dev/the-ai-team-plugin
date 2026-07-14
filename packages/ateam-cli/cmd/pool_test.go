@@ -23,14 +23,14 @@ func TestClaimIdleInstanceMissingPoolDir(t *testing.T) {
 	})
 
 	missing := filepath.Join(t.TempDir(), "does-not-exist")
-	got := claimIdleInstance(missing, "murdock")
+	got, gotID := claimIdleInstance(missing, "murdock")
 	w.Close()
 	buf := make([]byte, 4096)
 	n, _ := r.Read(buf)
 	stderr := string(buf[:n])
 
-	if got != "" {
-		t.Errorf("expected empty string when pool dir is missing, got %q", got)
+	if got != "" || gotID != "" {
+		t.Errorf("expected empty instance and agentId when pool dir is missing, got %q/%q", got, gotID)
 	}
 	if !containsAll(stderr, []string{"POOL_WARN", missing, "does not exist"}) {
 		t.Errorf("expected POOL_WARN with path and explanation in stderr, got: %s", stderr)
@@ -39,6 +39,8 @@ func TestClaimIdleInstanceMissingPoolDir(t *testing.T) {
 
 // TestClaimIdleInstanceHappyPath verifies that with a pool dir containing an
 // idle file, claimIdleInstance renames it to .busy and returns the instance name.
+// An empty marker (no --agent-id was passed at mark-idle) yields an empty agentId,
+// preserving the pre-existing name-only handoff behavior.
 func TestClaimIdleInstanceHappyPath(t *testing.T) {
 	poolDir := t.TempDir()
 	idleFile := filepath.Join(poolDir, "murdock-1.idle")
@@ -46,9 +48,12 @@ func TestClaimIdleInstanceHappyPath(t *testing.T) {
 		t.Fatalf("writing idle file: %v", err)
 	}
 
-	got := claimIdleInstance(poolDir, "murdock")
+	got, gotID := claimIdleInstance(poolDir, "murdock")
 	if got != "murdock-1" {
 		t.Errorf("expected claim of 'murdock-1', got %q", got)
+	}
+	if gotID != "" {
+		t.Errorf("expected empty agentId for an empty marker, got %q", gotID)
 	}
 
 	// .idle must have been renamed to .busy
@@ -58,6 +63,38 @@ func TestClaimIdleInstanceHappyPath(t *testing.T) {
 	busyFile := filepath.Join(poolDir, "murdock-1.busy")
 	if _, err := os.Stat(busyFile); err != nil {
 		t.Errorf("expected %s to exist, stat err=%v", busyFile, err)
+	}
+}
+
+// TestClaimIdleInstanceReturnsAgentID verifies that when the idle marker holds an
+// agentId (written by 'pool mark-idle --agent-id'), claimIdleInstance reads it
+// back and returns it alongside the instance name — the mechanism that lets the
+// completing agent address its START handoff by agentId (name-addressing does not
+// route between teammates in headless -p mode).
+func TestClaimIdleInstanceReturnsAgentID(t *testing.T) {
+	poolDir := t.TempDir()
+	idleFile := filepath.Join(poolDir, "ba-2.idle")
+	// Trailing newline to confirm the reader trims whitespace.
+	if err := os.WriteFile(idleFile, []byte("a729de7264069a126\n"), 0644); err != nil {
+		t.Fatalf("writing idle file: %v", err)
+	}
+
+	got, gotID := claimIdleInstance(poolDir, "ba")
+	if got != "ba-2" {
+		t.Errorf("expected claim of 'ba-2', got %q", got)
+	}
+	if gotID != "a729de7264069a126" {
+		t.Errorf("expected agentId 'a729de7264069a126' read from the marker, got %q", gotID)
+	}
+
+	// The agentId must survive the .idle → .busy rename (content is preserved).
+	busyFile := filepath.Join(poolDir, "ba-2.busy")
+	content, err := os.ReadFile(busyFile)
+	if err != nil {
+		t.Fatalf("reading busy file: %v", err)
+	}
+	if got := string(content); got != "a729de7264069a126\n" {
+		t.Errorf("expected .busy to retain the agentId content, got %q", got)
 	}
 }
 
@@ -77,17 +114,37 @@ func TestClaimIdleInstanceEmptyPoolDir(t *testing.T) {
 		os.Stderr = origStderr
 	})
 
-	got := claimIdleInstance(poolDir, "murdock")
+	got, gotID := claimIdleInstance(poolDir, "murdock")
 	w.Close()
 	buf := make([]byte, 4096)
 	n, _ := r.Read(buf)
 	stderr := string(buf[:n])
 
-	if got != "" {
-		t.Errorf("expected empty claim for empty pool dir, got %q", got)
+	if got != "" || gotID != "" {
+		t.Errorf("expected empty claim for empty pool dir, got %q/%q", got, gotID)
 	}
 	if stderr != "" {
 		t.Errorf("expected no stderr output, got: %s", stderr)
+	}
+}
+
+// TestClaimIdleInstanceIgnoresTempMarkers verifies that an in-flight/leftover
+// atomic-publish temp file (<instance>.idle.*.tmp) is NOT claimable — its ".tmp"
+// suffix must keep it out of the "*.idle" glob, so a claim never renames+reads a
+// half-written marker.
+func TestClaimIdleInstanceIgnoresTempMarkers(t *testing.T) {
+	poolDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(poolDir, "ba-1.idle.1234.tmp"), []byte("partial"), 0644); err != nil {
+		t.Fatalf("writing temp marker: %v", err)
+	}
+
+	got, gotID := claimIdleInstance(poolDir, "ba")
+	if got != "" || gotID != "" {
+		t.Errorf("expected temp marker to be unclaimable, got %q/%q", got, gotID)
+	}
+	// The temp file must be left untouched (not renamed to .busy).
+	if _, err := os.Stat(filepath.Join(poolDir, "ba-1.idle.1234.tmp")); err != nil {
+		t.Errorf("expected temp marker to remain untouched, stat err=%v", err)
 	}
 }
 

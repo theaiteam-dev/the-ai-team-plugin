@@ -35,6 +35,13 @@ func resetPersistentFlags(t *testing.T) {
 		_ = f.Value.Set(f.DefValue)
 		f.Changed = false
 	})
+	// Local flags on pool subcommands (e.g. mark-idle's --agent-id) are bound to
+	// package vars and retain their value between Execute() calls, so reset them
+	// too — otherwise a prior --agent-id bleeds into the next test.
+	poolMarkIdleCmd.Flags().VisitAll(func(f *flag.Flag) {
+		_ = f.Value.Set(f.DefValue)
+		f.Changed = false
+	})
 }
 
 // withTempPoolRoot redirects /tmp/.ateam-pool/<missionId> to a per-test temp

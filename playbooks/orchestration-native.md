@@ -219,7 +219,12 @@ function spawn_lane(lane_number):
     Bash("ateam activity createActivityEntry --agent hannibal --message 'Spawning lane {lane_number} (lazy pre-warm triggered by capacity demand)' --level info")
 
     for instance in lane_instances:
-        Agent(
+        # CAPTURE THE agentId from the Agent spawn return value. This is the ONLY
+        # place it is available — a spawned agent cannot discover its own agentId,
+        # and it is needed so peer handoffs address the START by agentId (friendly
+        # instance names do not route between teammates; the message is silently
+        # dropped). Store it on the instance for the mark-idle step below.
+        instance.agent_id = Agent(
             name:         instance.name,
             subagent_type: agentTypeToSubagent(instance.agentType),
             run_in_background: true,
@@ -234,10 +239,12 @@ function spawn_lane(lane_number):
                            When receiving work, use exactly '--agent \"{instance.name}\"' in all
                            ateam agents-start and ateam agents-stop commands.
                            IMPORTANT: Always pass --json to agentStop. The CLI handles pool
-                           management and returns claimedNext in the response. If claimedNext
-                           is set, send START to that instance. If poolAlert is set, send
-                           ALERT to team-lead (the orchestrator's address — never
-                           'hannibal', which silently bounces). See your agent
+                           management and returns claimedNext (the next instance name) plus
+                           claimedNextAgentId (its agentId) in the response. If they are set,
+                           send START addressed to claimedNextAgentId — NOT the instance name,
+                           which does not route between teammates and is silently dropped. If
+                           poolAlert is set, send ALERT to team-lead (the orchestrator's
+                           address — never 'hannibal', which silently bounces). See your agent
                            prompt for the exact sequence."
         )
 
@@ -254,9 +261,12 @@ function spawn_lane(lane_number):
         next_lane_to_spawn = lane_number + 1
         return
 
-    # Create .idle files for this lane now that agents are confirmed alive
+    # Create .idle files for this lane now that agents are confirmed alive.
+    # Pass --agent-id so the marker records each instance's agentId; the pool then
+    # surfaces it as claimedNextAgentId on handoff, and peer STARTs address the
+    # agentId (which routes) instead of the instance name (which is dropped).
     for instance in lane_instances:
-        Bash("ateam pool mark-idle {instance.name}")
+        Bash("ateam pool mark-idle {instance.name} --agent-id {instance.agent_id}")
 
     next_lane_to_spawn = lane_number + 1
 
@@ -351,7 +361,7 @@ return len(ready)
 spawn_lane(1)
 # → Agent spawn for murdock-1, ba-1, lynch-1, amy-1
 # → receive READY from all 4
-# → ateam pool mark-idle murdock-1 (then ba-1, lynch-1, amy-1)
+# → ateam pool mark-idle murdock-1 --agent-id <murdock-1 agentId> (then ba-1, lynch-1, amy-1)
 # → next_lane_to_spawn = 2
 
 # Wave 1 has 1 item (scaffold) — Phase 3 dispatches WI-001 to murdock-1
@@ -1207,10 +1217,10 @@ T=0s    HANNIBAL:
         ateam pool init                              # creates /tmp/.ateam-pool/M1/
 
         Pre-warm lane 1: spawn murdock-1, ba-1, lynch-1, amy-1
-        Wait for READY from all 4 → ateam pool mark-idle murdock-1 (etc. for ba-1, lynch-1, amy-1)
+        Wait for READY from all 4 → ateam pool mark-idle murdock-1 --agent-id <its agentId> (etc. for ba-1, lynch-1, amy-1)
 
         Pre-warm lane 2: spawn murdock-2, ba-2, lynch-2, amy-2
-        Wait for READY from all 4 → ateam pool mark-idle murdock-2 (etc. for ba-2, lynch-2, amy-2)
+        Wait for READY from all 4 → ateam pool mark-idle murdock-2 --agent-id <its agentId> (etc. for ba-2, lynch-2, amy-2)
 
         deps-check → readyItems: [001, 002, 003]
         board-move 001 → ready, board-move 002 → ready, board-move 003 → ready
@@ -1349,7 +1359,7 @@ Native teams are ephemeral — they don't survive session restarts. On resume:
 
 6. **Read board state and re-spawn at current stages, marking idle only on confirmed READY:**
 
-   Mirror normal startup: re-spawn the lane (`Agent` calls), wait for READY (use the same `wait_for_lane_ready(lane_number)` helper from "Lazy Lane Pre-Warming" above), and only then issue `ateam pool mark-idle <instance>` for each agent that actually sent READY. If a respawned agent fails to send READY within the 60s timeout, mark the lane failed (do NOT create its `.idle` file) and surface ALERT.
+   Mirror normal startup: re-spawn the lane (`Agent` calls, capturing each returned agentId), wait for READY (use the same `wait_for_lane_ready(lane_number)` helper from "Lazy Lane Pre-Warming" above), and only then issue `ateam pool mark-idle <instance> --agent-id <its agentId>` for each agent that actually sent READY. Passing the freshly-captured agentId is essential on respawn: a respawned agent gets a NEW agentId, so a stale one would misroute handoffs. If a respawned agent fails to send READY within the 60s timeout, mark the lane failed (do NOT create its `.idle` file) and surface ALERT.
    ```
    board = Bash("ateam board getBoard --json")
    active_instances = {}
