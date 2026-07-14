@@ -30,7 +30,11 @@ const DEFAULT_ATTACH_GRACE_MINUTES = 60;
 export function getMissionAttachGraceMinutes(): number {
   const raw = process.env.ATEAM_MISSION_ATTACH_GRACE_MINUTES;
   if (raw === undefined || raw === '') return DEFAULT_ATTACH_GRACE_MINUTES;
-  const parsed = Number(raw);
+  // Strict decimal digits only: Number() would also accept exponential forms
+  // ('1e3') and padded whitespace, which read as typos more than intent.
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return DEFAULT_ATTACH_GRACE_MINUTES;
+  const parsed = Number(trimmed);
   if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_ATTACH_GRACE_MINUTES;
   return parsed;
 }
@@ -40,21 +44,33 @@ export function getMissionAttachGraceMinutes(): number {
  * attach to, or null when nothing is attributable.
  */
 export async function findAttributableMissionId(projectId: string): Promise<string | null> {
-  const mission = await prisma.mission.findFirst({
+  // Prefer a still-ACTIVE mission outright, even if a newer terminal mission
+  // exists. Taking only the newest-by-startedAt row would return null for an
+  // active mission's events whenever a later-started mission had already
+  // finished and aged out of the grace window.
+  const active = await prisma.mission.findFirst({
+    where: {
+      projectId,
+      archivedAt: null,
+      state: { notIn: ['completed', 'failed'] },
+    },
+    orderBy: { startedAt: 'desc' },
+    select: { id: true },
+  });
+  if (active) return active.id;
+
+  const terminal = await prisma.mission.findFirst({
     where: { projectId, archivedAt: null },
     orderBy: { startedAt: 'desc' },
-    select: { id: true, state: true, completedAt: true, startedAt: true },
+    select: { id: true, completedAt: true, startedAt: true },
   });
-  if (!mission) return null;
-
-  const terminal = mission.state === 'completed' || mission.state === 'failed';
-  if (!terminal) return mission.id;
+  if (!terminal) return null;
 
   // Terminal but unarchived: attach only within the grace window. Some failure
   // paths never stamp completedAt — anchor on startedAt then, so a fresh
   // failure still receives its trailing events while an old one can't absorb
   // later sessions indefinitely.
-  const anchor = mission.completedAt ?? mission.startedAt;
+  const anchor = terminal.completedAt ?? terminal.startedAt;
   const graceMs = getMissionAttachGraceMinutes() * 60_000;
-  return Date.now() - anchor.getTime() <= graceMs ? mission.id : null;
+  return Date.now() - anchor.getTime() <= graceMs ? terminal.id : null;
 }

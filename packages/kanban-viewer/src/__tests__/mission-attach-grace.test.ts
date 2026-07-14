@@ -18,13 +18,17 @@ describe('getMissionAttachGraceMinutes', () => {
     expect(getMissionAttachGraceMinutes()).toBe(60);
   });
 
-  it('uses a valid positive integer override', () => {
+  it('uses a valid positive integer override (whitespace tolerated)', () => {
     process.env.ATEAM_MISSION_ATTACH_GRACE_MINUTES = '180';
+    expect(getMissionAttachGraceMinutes()).toBe(180);
+    process.env.ATEAM_MISSION_ATTACH_GRACE_MINUTES = ' 180 ';
     expect(getMissionAttachGraceMinutes()).toBe(180);
   });
 
-  it('falls back to the default for non-integer, zero, and negative values', () => {
-    for (const bad of ['abc', '1.5', '0', '-5', 'NaN']) {
+  it('falls back to the default for non-integer, zero, negative, and exponential values', () => {
+    // '1e3' is strict-rejected: Number() would accept it as 1000, but an
+    // exponential grace window reads as a typo more than intent.
+    for (const bad of ['abc', '1.5', '0', '-5', 'NaN', '1e3', 'Infinity']) {
       process.env.ATEAM_MISSION_ATTACH_GRACE_MINUTES = bad;
       expect(getMissionAttachGraceMinutes()).toBe(60);
     }

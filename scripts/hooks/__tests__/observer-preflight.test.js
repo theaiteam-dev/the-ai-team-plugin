@@ -12,9 +12,10 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFile } from 'child_process';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, realpathSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { createHash } from 'crypto';
 import { createServer } from 'http';
 
 const SCRIPT = join(import.meta.dirname, '..', 'observer-preflight.js');
@@ -57,7 +58,10 @@ function runPreflight({ args = [], stdin = null, env = {}, cwd = process.cwd() }
     const child = execFile(
       'node',
       [SCRIPT, ...args],
-      { env: { ...process.env, ...env }, cwd, encoding: 'utf8', timeout: 10000 },
+      // CLAUDE_CODE_SESSION_ID is cleared by default so tests are hermetic
+      // regardless of whether the runner itself is a Claude Code session;
+      // session-identity tests set it explicitly.
+      { env: { ...process.env, CLAUDE_CODE_SESSION_ID: '', ...env }, cwd, encoding: 'utf8', timeout: 10000 },
       (error, stdout) => resolve({ exitCode: error?.code ?? 0, stdout: stdout ?? '' })
     );
     if (stdin !== null) child.stdin.write(JSON.stringify(stdin));
@@ -65,18 +69,44 @@ function runPreflight({ args = [], stdin = null, env = {}, cwd = process.cwd() }
   });
 }
 
+/** Mirror of the script's status-file keying (sha256 of realpath'd cwd). */
+function statusPathFor(cwd) {
+  let canonical = cwd;
+  try { canonical = realpathSync(cwd); } catch { /* keep raw */ }
+  const key = createHash('sha256').update(canonical).digest('hex').slice(0, 16);
+  return join(tmpdir(), 'ateam-observer-preflight', `${key}.json`);
+}
+
+/**
+ * Run hook mode, then --check. The status write is deliberately best-effort
+ * (never blocks a session), so under full-suite parallel load a transient
+ * EMFILE-class failure can swallow it — the script's ACCEPTED failure mode,
+ * not a bug. Retry the pair once when --check reports a missing file so the
+ * happy-path contract stays pinned without load flakiness; a genuine keying
+ * or write bug still fails both attempts.
+ */
+async function hookThenCheck({ cwd, hookStdin, hookEnv, checkEnv = {} }) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const hook = await runPreflight({ stdin: hookStdin, env: hookEnv, cwd });
+    const check = await runPreflight({ args: ['--check'], cwd, env: checkEnv });
+    if (!check.stdout.includes('No preflight status file') || attempt === 1) {
+      return { hook, check };
+    }
+  }
+}
+
 describe('observer-preflight.js hook mode (SessionStart)', () => {
   it('stays silent and exits 0 for a non-mission session (no ATEAM_PROJECT_ID), but still records status', async () => {
     const cwd = freshCwd();
-    const { exitCode, stdout } = await runPreflight({
-      stdin: { hook_event_name: 'SessionStart', cwd },
-      env: { ATEAM_PROJECT_ID: '', ATEAM_MISSION_ID: '' },
+    const { hook, check } = await hookThenCheck({
+      cwd,
+      hookStdin: { hook_event_name: 'SessionStart', cwd },
+      hookEnv: { ATEAM_PROJECT_ID: '', ATEAM_MISSION_ID: '' },
     });
-    expect(exitCode).toBe(0);
-    expect(stdout).toBe(''); // unrelated sessions must not get context noise
+    expect(hook.exitCode).toBe(0);
+    expect(hook.stdout).toBe(''); // unrelated sessions must not get context noise
 
     // --check from the same cwd finds the file and reports the broken env.
-    const check = await runPreflight({ args: ['--check'], cwd });
     expect(check.exitCode).toBe(1);
     expect(check.stdout).toContain('OBSERVER PREFLIGHT: FAIL');
     expect(check.stdout).toContain('ATEAM_PROJECT_ID');
@@ -84,19 +114,19 @@ describe('observer-preflight.js hook mode (SessionStart)', () => {
 
   it('records a passing status (probe OK) for a healthy env, and --check passes', async () => {
     const cwd = freshCwd();
-    const { exitCode, stdout } = await runPreflight({
-      stdin: { hook_event_name: 'SessionStart', cwd },
-      env: {
+    const { hook, check } = await hookThenCheck({
+      cwd,
+      hookStdin: { hook_event_name: 'SessionStart', cwd },
+      hookEnv: {
         ATEAM_PROJECT_ID: 'preflight-test',
         ATEAM_API_URL: `http://127.0.0.1:${mockPort}`,
         ACCESS_CLIENT_ID: '',
         ACCESS_CLIENT_SECRET: '',
       },
     });
-    expect(exitCode).toBe(0);
-    expect(stdout).toBe(''); // healthy → no warning
+    expect(hook.exitCode).toBe(0);
+    expect(hook.stdout).toBe(''); // healthy → no warning
 
-    const check = await runPreflight({ args: ['--check'], cwd });
     expect(check.exitCode).toBe(0);
     expect(check.stdout).toContain('OBSERVER PREFLIGHT: PASS');
     expect(check.stdout).toContain('project=preflight-test');
@@ -104,9 +134,10 @@ describe('observer-preflight.js hook mode (SessionStart)', () => {
 
   it('warns loudly (context output) when the env is mission-shaped but creds are missing for a remote API', async () => {
     const cwd = freshCwd();
-    const { exitCode, stdout } = await runPreflight({
-      stdin: { hook_event_name: 'SessionStart', cwd },
-      env: {
+    const { hook, check } = await hookThenCheck({
+      cwd,
+      hookStdin: { hook_event_name: 'SessionStart', cwd },
+      hookEnv: {
         ATEAM_PROJECT_ID: 'preflight-test',
         // Remote-looking but unroutable (TEST-NET-1): no external DNS, the
         // probe's own 2s AbortSignal bounds it. Hermetic and deterministic.
@@ -115,14 +146,13 @@ describe('observer-preflight.js hook mode (SessionStart)', () => {
         ACCESS_CLIENT_SECRET: '',
       },
     });
-    expect(exitCode).toBe(0); // never blocks the session
-    expect(stdout).toContain('OBSERVER TELEMETRY DEGRADED');
-    expect(stdout).toContain('ACCESS_CLIENT_ID');
+    expect(hook.exitCode).toBe(0); // never blocks the session
+    expect(hook.stdout).toContain('OBSERVER TELEMETRY DEGRADED');
+    expect(hook.stdout).toContain('ACCESS_CLIENT_ID');
 
-    const check = await runPreflight({ args: ['--check'], cwd });
     expect(check.exitCode).toBe(1);
     expect(check.stdout).toContain('OBSERVER PREFLIGHT: FAIL');
-  }, 15000);
+  }, 20000);
 });
 
 describe('observer-preflight.js --check mode', () => {
@@ -132,5 +162,81 @@ describe('observer-preflight.js --check mode', () => {
     expect(exitCode).toBe(1);
     expect(stdout).toContain('OBSERVER PREFLIGHT: FAIL');
     expect(stdout).toContain('did not run');
+  });
+
+  it('fails with a distinct message when the status file exists but is corrupt JSON', async () => {
+    const cwd = freshCwd();
+    mkdirSync(join(tmpdir(), 'ateam-observer-preflight'), { recursive: true });
+    writeFileSync(statusPathFor(cwd), '{ not json !!!');
+
+    const { exitCode, stdout } = await runPreflight({ args: ['--check'], cwd });
+    expect(exitCode).toBe(1);
+    expect(stdout).toContain('OBSERVER PREFLIGHT: FAIL');
+    expect(stdout).toContain('corrupt');
+    expect(stdout).not.toContain('did not run');
+  });
+
+  it('fails when the status file was written by a DIFFERENT session (stale-PASS prevention)', async () => {
+    // The core false-negative from review: session A (hooks on) writes PASS
+    // status; session B (hooks off) never refreshes it. --check in session B
+    // must FAIL, not read A's stale PASS.
+    const cwd = freshCwd();
+    const { hook, check } = await hookThenCheck({
+      cwd,
+      hookStdin: { hook_event_name: 'SessionStart', cwd, session_id: 'sess-A' },
+      hookEnv: {
+        ATEAM_PROJECT_ID: 'preflight-test',
+        ATEAM_API_URL: `http://127.0.0.1:${mockPort}`,
+        ACCESS_CLIENT_ID: '',
+        ACCESS_CLIENT_SECRET: '',
+      },
+      checkEnv: { CLAUDE_CODE_SESSION_ID: 'sess-B' },
+    });
+    expect(hook.exitCode).toBe(0);
+    expect(check.exitCode).toBe(1);
+    expect(check.stdout).toContain('OBSERVER PREFLIGHT: FAIL');
+    expect(check.stdout).toContain('DIFFERENT session');
+  });
+
+  it('passes with session=verified when the status was written by THIS session', async () => {
+    const cwd = freshCwd();
+    const { hook, check } = await hookThenCheck({
+      cwd,
+      hookStdin: { hook_event_name: 'SessionStart', cwd, session_id: 'sess-same' },
+      hookEnv: {
+        ATEAM_PROJECT_ID: 'preflight-test',
+        ATEAM_API_URL: `http://127.0.0.1:${mockPort}`,
+        ACCESS_CLIENT_ID: '',
+        ACCESS_CLIENT_SECRET: '',
+      },
+      checkEnv: { CLAUDE_CODE_SESSION_ID: 'sess-same' },
+    });
+    expect(hook.exitCode).toBe(0);
+    expect(check.exitCode).toBe(0);
+    expect(check.stdout).toContain('OBSERVER PREFLIGHT: PASS');
+    expect(check.stdout).toContain('session=verified');
+  });
+
+  it('fails via the age gate when session identity is unavailable and the status is old', async () => {
+    const cwd = freshCwd();
+    mkdirSync(join(tmpdir(), 'ateam-observer-preflight'), { recursive: true });
+    // A healthy-looking status from 13h ago, with no sessionId to compare.
+    writeFileSync(statusPathFor(cwd), JSON.stringify({
+      timestamp: new Date(Date.now() - 13 * 3600_000).toISOString(),
+      cwd,
+      sessionId: null,
+      apiUrl: 'http://localhost:3000',
+      local: true,
+      projectIdPresent: true,
+      projectId: 'preflight-test',
+      missionIdPresent: false,
+      credsPresent: false,
+      probe: { attempted: true, ok: true, status: 200, error: null },
+    }));
+
+    const { exitCode, stdout } = await runPreflight({ args: ['--check'], cwd });
+    expect(exitCode).toBe(1);
+    expect(stdout).toContain('OBSERVER PREFLIGHT: FAIL');
+    expect(stdout).toContain('earlier session');
   });
 });

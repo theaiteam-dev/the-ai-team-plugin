@@ -29,7 +29,7 @@
  *    else will be observed either.
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, realpathSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { createHash } from 'crypto';
@@ -37,14 +37,44 @@ import { apiEventHeaders } from './lib/observer.js';
 
 const STATUS_DIR = join(tmpdir(), 'ateam-observer-preflight');
 
-/** Status file path for a working directory (stable key both modes can derive). */
+/**
+ * Without a session id to compare (older harness, env not propagated), --check
+ * falls back to an age gate: a status older than this is treated as "not
+ * written by this session".
+ */
+const MAX_STATUS_AGE_MS = 12 * 3600_000;
+
+/**
+ * Status file path for a working directory (stable key both modes can derive).
+ * Canonicalize symlinks first: hook mode keys on the harness-supplied cwd
+ * (logical path) while --check keys on process.cwd() (symlink-resolved) — on
+ * e.g. macOS /var → /private/var they'd hash differently and --check would
+ * falsely report "hooks not firing".
+ */
 function statusPathFor(cwd) {
-  const key = createHash('sha256').update(cwd || 'unknown').digest('hex').slice(0, 16);
+  let canonical = cwd || 'unknown';
+  try {
+    canonical = realpathSync(canonical);
+  } catch {
+    // Path doesn't resolve (deleted dir, permission) — hash the raw string;
+    // both modes will at least fail the same way.
+  }
+  const key = createHash('sha256').update(canonical).digest('hex').slice(0, 16);
   return join(STATUS_DIR, `${key}.json`);
 }
 
+/**
+ * Host-based locality check. Parses the URL rather than pattern-matching the
+ * string — a substring regex classifies `http://evil.com//localhost:9` as
+ * local. Unparseable URLs are treated as remote (fail closed: creds required).
+ */
 function isLocalApi(apiUrl) {
-  return /\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:|\/|$)/.test(apiUrl);
+  try {
+    const host = new URL(apiUrl).hostname;
+    return host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::1' || host === '[::1]';
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -86,12 +116,19 @@ function missionShaped(status) {
 }
 
 async function hookMode() {
-  // SessionStart sends hook context JSON on stdin; cwd is the reliable key.
+  // SessionStart sends hook context JSON on stdin; cwd is the reliable key and
+  // session_id lets --check verify the status was written by THIS session.
   let cwd = process.cwd();
+  let sessionId = null;
   try {
-    const raw = readFileSync(0, 'utf8');
-    const input = JSON.parse(raw);
-    if (input.cwd) cwd = input.cwd;
+    // Guard: never block on an interactive TTY (manual invocation without
+    // piped stdin) — the harness always pipes and closes stdin for real hooks.
+    if (!process.stdin.isTTY) {
+      const raw = readFileSync(0, 'utf8');
+      const input = JSON.parse(raw);
+      if (input.cwd) cwd = input.cwd;
+      if (input.session_id) sessionId = input.session_id;
+    }
   } catch {
     // No/invalid stdin (e.g. manual invocation) — fall back to process.cwd().
   }
@@ -101,6 +138,7 @@ async function hookMode() {
   const status = {
     timestamp: new Date().toISOString(),
     cwd,
+    sessionId,
     apiUrl,
     local: isLocalApi(apiUrl),
     projectIdPresent: Boolean(projectId),
@@ -132,8 +170,11 @@ async function hookMode() {
   try {
     mkdirSync(STATUS_DIR, { recursive: true });
     writeFileSync(statusPathFor(cwd), JSON.stringify(status, null, 2));
-  } catch {
-    // Best-effort — never block session start over a tmp write.
+  } catch (error) {
+    // Best-effort — never block session start over a tmp write. But do leave a
+    // trace on stderr (invisible to the session, visible in hook debugging):
+    // a missing status file later makes --check report "hooks not firing".
+    process.stderr.write(`[observer-preflight] failed to record status: ${error?.message ?? error}\n`);
   }
 
   // Loud only where it matters: a mission-shaped env that is broken.
@@ -151,9 +192,10 @@ async function hookMode() {
 function checkMode() {
   const cwd = process.cwd();
   const path = statusPathFor(cwd);
-  let status;
+
+  let raw;
   try {
-    status = JSON.parse(readFileSync(path, 'utf8'));
+    raw = readFileSync(path, 'utf8');
   } catch {
     process.stdout.write(
       'OBSERVER PREFLIGHT: FAIL\n' +
@@ -164,8 +206,46 @@ function checkMode() {
     process.exit(1);
   }
 
+  let status;
+  try {
+    status = JSON.parse(raw);
+  } catch {
+    process.stdout.write(
+      'OBSERVER PREFLIGHT: FAIL\n' +
+      `Preflight status file exists but is corrupt (unparseable JSON): ${path}.\n` +
+      'Cannot verify the hook environment — treat telemetry as unverified. Delete the file and start a new session to regenerate it.\n'
+    );
+    process.exit(1);
+  }
+
+  // Verify the status was written by THIS session — a stale file from an
+  // earlier session would otherwise report PASS while the current session's
+  // hooks aren't firing at all (the exact silent black-hole this preflight
+  // exists to catch). Primary: compare the harness session id (present in the
+  // Bash env) against the id stamped at SessionStart. Fallback when either
+  // side lacks an id: an age gate.
+  const currentSessionId = process.env.CLAUDE_CODE_SESSION_ID || '';
+  const ageMs = Date.now() - Date.parse(status.timestamp);
+  const ageMinutes = Math.round(ageMs / 60000);
+  if (currentSessionId && status.sessionId) {
+    if (currentSessionId !== status.sessionId) {
+      process.stdout.write(
+        'OBSERVER PREFLIGHT: FAIL\n' +
+        `The status file was written by a DIFFERENT session (${status.sessionId}, ${ageMinutes} min ago), not this one (${currentSessionId}).\n` +
+        'The SessionStart observer hook did not fire in the current session — plugin hooks are not firing here, so NO observer telemetry will be recorded.\n'
+      );
+      process.exit(1);
+    }
+  } else if (!(Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= MAX_STATUS_AGE_MS)) {
+    process.stdout.write(
+      'OBSERVER PREFLIGHT: FAIL\n' +
+      `Status file is ${Number.isFinite(ageMinutes) ? `${ageMinutes} min old` : 'undatable'} and session identity cannot be verified ` +
+      '(no session id available to compare) — it was likely written by an earlier session, and the current session\'s hooks may not be firing.\n'
+    );
+    process.exit(1);
+  }
+
   const { ok, problems } = evaluate(status);
-  const ageMinutes = Math.round((Date.now() - Date.parse(status.timestamp)) / 60000);
   if (!ok) {
     process.stdout.write(
       'OBSERVER PREFLIGHT: FAIL\n' +
@@ -177,7 +257,8 @@ function checkMode() {
   process.stdout.write(
     'OBSERVER PREFLIGHT: PASS\n' +
     `project=${status.projectId} api=${status.apiUrl} creds=${status.credsPresent ? 'present' : 'n/a (local api)'} ` +
-    `probe=${status.probe.attempted ? `HTTP ${status.probe.status}` : 'skipped'} recorded=${ageMinutes} min ago\n`
+    `probe=${status.probe.attempted ? `HTTP ${status.probe.status}` : 'skipped'} recorded=${ageMinutes} min ago` +
+    `${currentSessionId && status.sessionId ? ' session=verified' : ' session=unverified (age-gated)'}\n`
   );
   process.exit(0);
 }

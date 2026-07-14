@@ -521,6 +521,37 @@ describe('POST /api/hooks/events', () => {
         await cleanup(missionId);
       }
     });
+
+    it('prefers a still-active mission over a newer, grace-expired terminal one', async () => {
+      // An older active mission must receive events even when a later-started
+      // mission has already completed and aged out — newest-by-startedAt alone
+      // would resolve to null here.
+      const terminalId = 'M-test-grace-terminal-newer';
+      const activeId = 'M-test-grace-active-older';
+      await createCompletedMission(terminalId, new Date(Date.now() - 2 * 3600_000)); // expired
+      await prisma.mission.upsert({
+        where: { id: activeId },
+        update: { state: 'running', archivedAt: null },
+        create: {
+          id: activeId,
+          name: 'Older Active Mission',
+          state: 'running',
+          prdPath: '/prd/test.md',
+          projectId,
+          startedAt: new Date(Date.now() - 24 * 3600_000), // older than the terminal one
+          archivedAt: null,
+        },
+      });
+      try {
+        const { response, data } = await postEvent();
+        expect(response.status).toBe(201);
+        expect(data.data.missionId).toBe(activeId);
+      } finally {
+        await prisma.hookEvent.deleteMany({ where: { projectId } });
+        await prisma.mission.delete({ where: { id: activeId } }).catch(() => {});
+        await cleanup(terminalId);
+      }
+    });
   });
 
   it('should reject batches over 100 events limit', async () => {
