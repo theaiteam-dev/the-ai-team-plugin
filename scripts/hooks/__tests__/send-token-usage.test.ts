@@ -77,6 +77,17 @@ describe('sendTokenUsage', () => {
     );
   });
 
+  it('omits CF-Access headers when creds are absent', async () => {
+    // beforeEach deletes the creds — pin that the headers are truly absent,
+    // not attached with blank values.
+    expect(await sendTokenUsage([RECORD])).toBe(true);
+
+    const [, options] = mockFetch.mock.calls[0];
+    expect(options.headers).not.toHaveProperty('CF-Access-Client-Id');
+    expect(options.headers).not.toHaveProperty('CF-Access-Client-Secret');
+    expect(options.headers['X-Project-ID']).toBe('test-project');
+  });
+
   it('returns false (never throws) on a non-ok response', async () => {
     mockFetch.mockResolvedValue({ ok: false, status: 302, text: async () => 'redirect' });
     expect(await sendTokenUsage([RECORD])).toBe(false);

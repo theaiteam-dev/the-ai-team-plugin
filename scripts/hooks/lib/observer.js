@@ -355,11 +355,17 @@ async function sendObserverEvent(payload) {
   const cleanUrl = apiUrl.replace(/\/+$/, '');
   const url = `${cleanUrl}/api/hooks/events`;
 
+  // Bounded like sendTokenUsage: a dead or blackholed endpoint that accepts
+  // the connection but never responds would otherwise stall the hook until
+  // the harness hook timeout. Telemetry must fail fast, never stall agents.
+  const timeoutMs = Number(process.env.ATEAM_OBSERVER_TIMEOUT_MS) || 5000;
+
   try {
     const response = await fetch(url, {
       method: 'POST',
       headers: apiEventHeaders(projectId),
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     if (!response.ok) {

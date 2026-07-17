@@ -62,10 +62,27 @@ function runPreflight({ args = [], stdin = null, env = {}, cwd = process.cwd() }
       // regardless of whether the runner itself is a Claude Code session;
       // session-identity tests set it explicitly.
       { env: { ...process.env, CLAUDE_CODE_SESSION_ID: '', ...env }, cwd, encoding: 'utf8', timeout: 10000 },
-      (error, stdout) => resolve({ exitCode: error?.code ?? 0, stdout: stdout ?? '' })
+      (error, stdout) => {
+        // A timeout-killed process reports error.killed/error.signal with NO
+        // numeric code — `error?.code ?? 0` would masquerade a hung preflight
+        // as exit 0 and silently pass assertions. Surface it distinctly.
+        if (error && (error.killed || error.signal)) {
+          return resolve({ exitCode: `killed:${error.signal ?? 'timeout'}`, stdout: stdout ?? '' });
+        }
+        // Spawn failures carry a string code (e.g. 'ENOENT') — never 0.
+        const exitCode = error ? (typeof error.code === 'number' ? error.code : 1) : 0;
+        resolve({ exitCode, stdout: stdout ?? '' });
+      }
     );
-    if (stdin !== null) child.stdin.write(JSON.stringify(stdin));
-    child.stdin.end();
+    // A fast-exiting child (--check never reads stdin) can close the pipe
+    // before we write — the resulting async EPIPE is an UNCAUGHT exception
+    // that crashes whatever unrelated test is running in this worker. Swallow
+    // stream errors; the exit code is the contract under test, not the pipe.
+    child.stdin.on('error', () => {});
+    try {
+      if (stdin !== null) child.stdin.write(JSON.stringify(stdin));
+      child.stdin.end();
+    } catch { /* child already gone — benign */ }
   });
 }
 
