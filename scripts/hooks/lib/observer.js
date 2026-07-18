@@ -39,6 +39,21 @@ const AGENT_MAP_DIR = join(tmpdir(), 'ateam-agent-map');
  * @param {string} projectId
  * @returns {Record<string, string>}
  */
+/**
+ * Resolve a timeout override from the named env var, accepting only positive
+ * finite integers (milliseconds). Anything else — negative, fractional,
+ * Infinity, non-numeric — falls back to the 5000ms default: AbortSignal.timeout
+ * THROWS on invalid delays, and inside a fire-and-forget try/catch that throw
+ * would silently kill every telemetry POST rather than surface the typo.
+ *
+ * @param {string} envVar
+ * @returns {number} timeout in milliseconds
+ */
+function envTimeoutMs(envVar) {
+  const parsed = Number(process.env[envVar]);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 5000;
+}
+
 export function apiEventHeaders(projectId) {
   const headers = {
     'Content-Type': 'application/json',
@@ -358,7 +373,7 @@ async function sendObserverEvent(payload) {
   // Bounded like sendTokenUsage: a dead or blackholed endpoint that accepts
   // the connection but never responds would otherwise stall the hook until
   // the harness hook timeout. Telemetry must fail fast, never stall agents.
-  const timeoutMs = Number(process.env.ATEAM_OBSERVER_TIMEOUT_MS) || 5000;
+  const timeoutMs = envTimeoutMs('ATEAM_OBSERVER_TIMEOUT_MS');
 
   try {
     const response = await fetch(url, {
@@ -425,7 +440,7 @@ async function sendTokenUsage(records) {
   const url = `${apiUrl}/api/hooks/token-usage`;
   // Bounded: if the endpoint accepts the connection but never responds, an
   // unbounded fetch would hang the Stop/SubagentStop hook indefinitely.
-  const timeoutMs = Number(process.env.ATEAM_TOKEN_USAGE_TIMEOUT_MS) || 5000;
+  const timeoutMs = envTimeoutMs('ATEAM_TOKEN_USAGE_TIMEOUT_MS');
   try {
     const response = await fetch(url, {
       method: 'POST',

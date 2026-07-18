@@ -97,4 +97,19 @@ describe('sendTokenUsage', () => {
     mockFetch.mockRejectedValue(new Error('ECONNREFUSED'));
     expect(await sendTokenUsage([RECORD])).toBe(false);
   });
+
+  it('falls back to the default timeout for invalid ATEAM_TOKEN_USAGE_TIMEOUT_MS values', async () => {
+    // AbortSignal.timeout THROWS on negative/fractional/infinite delays; if a
+    // bad env value reached it, the fire-and-forget catch would silently kill
+    // every POST. The validator must fall back so the POST still succeeds.
+    for (const bad of ['-100', '1.5', 'Infinity', 'abc', '0']) {
+      mockFetch.mockClear();
+      process.env.ATEAM_TOKEN_USAGE_TIMEOUT_MS = bad;
+      expect(await sendTokenUsage([RECORD])).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [, options] = mockFetch.mock.calls[0];
+      expect(options.signal).toBeInstanceOf(AbortSignal);
+    }
+    delete process.env.ATEAM_TOKEN_USAGE_TIMEOUT_MS;
+  });
 });
