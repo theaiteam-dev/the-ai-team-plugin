@@ -226,6 +226,26 @@ WIP limits are **per stage** — each pipeline column independently caps how man
    First, check the current mission state. If it is already `precheck_failure`, skip re-planning
    and proceed directly to re-running the checks below.
 
+   **Telemetry preflight (before the project checks):** verify observer telemetry will actually
+   land, using the status the SessionStart hook recorded from the real hook environment:
+
+   ```bash
+   node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/observer-preflight.js --check
+   ```
+
+   This catches the silent black-hole where the `ateam` CLI works (Bash shells source the user
+   profile) but hook processes lack `ATEAM_PROJECT_ID` / CF-Access creds (they inherit only the
+   harness env) — a mission then completes green with ZERO hook/token/cost telemetry. On FAIL:
+   do NOT abort the mission — log it loudly and tell the operator, then continue:
+
+   ```bash
+   ateam activity createActivityEntry --agent hannibal --level warn \
+     --message "OBSERVER PREFLIGHT FAILED: mission will run but hook/token telemetry will not land. <first FAIL reason>"
+   ```
+
+   Also surface the failure in your status output so the operator sees it at mission start, not
+   after 5 hours of untracked burn.
+
    Read `ateam.config.json` to get the list of check names (`config.precheck`) and their commands
    (`config.checks`). Run each check via Bash, capturing stdout, stderr, and exit code.
    Then call `ateam missions-precheck missionPrecheck` with the computed result:

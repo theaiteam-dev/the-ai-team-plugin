@@ -39,6 +39,21 @@ const AGENT_MAP_DIR = join(tmpdir(), 'ateam-agent-map');
  * @param {string} projectId
  * @returns {Record<string, string>}
  */
+/**
+ * Resolve a timeout override from the named env var, accepting only positive
+ * finite integers (milliseconds). Anything else — negative, fractional,
+ * Infinity, non-numeric — falls back to the 5000ms default: AbortSignal.timeout
+ * THROWS on invalid delays, and inside a fire-and-forget try/catch that throw
+ * would silently kill every telemetry POST rather than surface the typo.
+ *
+ * @param {string} envVar
+ * @returns {number} timeout in milliseconds
+ */
+function envTimeoutMs(envVar) {
+  const parsed = Number(process.env[envVar]);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 5000;
+}
+
 export function apiEventHeaders(projectId) {
   const headers = {
     'Content-Type': 'application/json',
@@ -338,17 +353,34 @@ function buildObserverPayload(hookInput, agentNameArg, options = {}) {
  */
 async function sendObserverEvent(payload) {
   const apiUrl = process.env.ATEAM_API_URL || 'http://localhost:3000';
-  const projectId = process.env.ATEAM_PROJECT_ID || 'default';
+  const projectId = process.env.ATEAM_PROJECT_ID;
+
+  // No ATEAM_PROJECT_ID → this is not an attributable A(i)-Team session; skip
+  // the POST entirely. The old `|| 'default'` fallback meant every Claude
+  // session on a machine with the plugin (essay writing, unrelated repos)
+  // spammed prod with events tagged project='default'/agent='hannibal' —
+  // noise that also camouflaged real attribution failures. Telemetry that
+  // can't be attributed is not worth storing. Loudness for mission sessions
+  // is provided by observer-preflight.js, not by posting garbage.
+  if (!projectId) {
+    return false;
+  }
 
   // Strip trailing slash from API URL to avoid double slashes
   const cleanUrl = apiUrl.replace(/\/+$/, '');
   const url = `${cleanUrl}/api/hooks/events`;
+
+  // Bounded like sendTokenUsage: a dead or blackholed endpoint that accepts
+  // the connection but never responds would otherwise stall the hook until
+  // the harness hook timeout. Telemetry must fail fast, never stall agents.
+  const timeoutMs = envTimeoutMs('ATEAM_OBSERVER_TIMEOUT_MS');
 
   try {
     const response = await fetch(url, {
       method: 'POST',
       headers: apiEventHeaders(projectId),
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     if (!response.ok) {
@@ -381,10 +413,60 @@ async function sendObserverEvent(payload) {
   }
 }
 
+/**
+ * POSTs per-message token-usage records to /api/hooks/token-usage.
+ *
+ * Centralized here (like apiEventHeaders) so the two callers — observe-stop.js
+ * and observe-subagent.js — can never drift on headers again: the v1.9.0
+ * CF-Access fix patched sendObserverEvent but MISSED the two inline token-usage
+ * fetches, which kept posting with bare Content-Type/X-Project-ID headers.
+ * Behind Cloudflare Access every one of those POSTs got a 302 and was silently
+ * swallowed, leaving MessageTokenUsage (and therefore MissionTokenUsage) empty
+ * in prod. All observer POSTs go through apiEventHeaders — no exceptions.
+ *
+ * Fire-and-forget and bounded: never throws, never blocks the hook beyond the
+ * timeout. Skips entirely (like sendObserverEvent) when ATEAM_PROJECT_ID is
+ * unset — unattributable token rows are noise.
+ *
+ * @param {Array<Object>} records - Enriched per-message usage records
+ * @returns {Promise<boolean>} True when the POST succeeded, false otherwise
+ */
+async function sendTokenUsage(records) {
+  const projectId = process.env.ATEAM_PROJECT_ID;
+  if (!projectId || !Array.isArray(records) || records.length === 0) {
+    return false;
+  }
+  const apiUrl = (process.env.ATEAM_API_URL || 'http://localhost:3000').replace(/\/+$/, '');
+  const url = `${apiUrl}/api/hooks/token-usage`;
+  // Bounded: if the endpoint accepts the connection but never responds, an
+  // unbounded fetch would hang the Stop/SubagentStop hook indefinitely.
+  const timeoutMs = envTimeoutMs('ATEAM_TOKEN_USAGE_TIMEOUT_MS');
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: apiEventHeaders(projectId),
+      body: JSON.stringify(records),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      process.stderr.write(`[observer] POST ${url} → ${response.status}: ${text}\n`);
+      logObserverFailure({ url, status: response.status, error: text || null });
+      return false;
+    }
+    return true;
+  } catch (error) {
+    process.stderr.write(`[observer] POST ${url} failed: ${error?.message ?? error}\n`);
+    logObserverFailure({ url, status: null, error: String(error?.message ?? error) });
+    return false;
+  }
+}
+
 export {
   readHookInput,
   buildObserverPayload,
   sendObserverEvent,
+  sendTokenUsage,
   registerAgent,
   unregisterAgent,
   lookupAgent,

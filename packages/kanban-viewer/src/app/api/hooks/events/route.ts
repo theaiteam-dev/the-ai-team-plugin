@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { createValidationError } from '@/lib/errors';
 import { getAndValidateProjectId, ensureProject } from '@/lib/project-utils';
+import { findAttributableMissionId } from '@/lib/mission-attach';
 import type { ApiError } from '@/types/api';
 
 /** Valid hook event types. */
@@ -214,18 +215,12 @@ export async function POST(
       }
     }
 
-    // Find current mission for this project.
-    // A mission is "current" until archived (archivedAt set), matching
-    // /api/missions/current behavior. No state filter — completed/failed
-    // missions that haven't been archived yet should still receive events.
-    const currentMission = await prisma.mission.findFirst({
-      where: {
-        projectId,
-        archivedAt: null,
-      },
-      orderBy: { startedAt: 'desc' },
-    });
-    const missionId = currentMission?.id ?? null;
+    // Resolve the attributable mission for this project. Active missions
+    // always receive events; completed/failed-but-unarchived missions only
+    // within a bounded grace window (post-mission trailing work), so a
+    // finished mission can't absorb unrelated later sessions indefinitely.
+    // See lib/mission-attach.ts.
+    const missionId = await findAttributableMissionId(projectId);
 
     // Process events with deduplication
     let created = 0;

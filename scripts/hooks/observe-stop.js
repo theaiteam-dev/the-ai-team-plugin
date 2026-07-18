@@ -9,7 +9,7 @@
  * Agent name is passed as CLI arg (process.argv[2]) from frontmatter hooks.
  */
 
-import { readHookInput, buildObserverPayload, sendObserverEvent, readLastAssistantMessageId } from './lib/observer.js';
+import { readHookInput, buildObserverPayload, sendObserverEvent, sendTokenUsage, readLastAssistantMessageId } from './lib/observer.js';
 import { parseTranscriptUsage, parseAdvanceFlagUsage, parseAgentStopItemId, dominantModel } from './lib/parse-transcript.js';
 
 const hookInput = readHookInput();
@@ -44,8 +44,6 @@ if (payload) {
 
     if (perMessageRecords.length > 0) {
       // POST per-message records to /api/hooks/token-usage (fire-and-forget).
-      const apiUrl = (process.env.ATEAM_API_URL || 'http://localhost:3000').replace(/\/+$/, '');
-      const projectId = process.env.ATEAM_PROJECT_ID || 'default';
       const timestamp = new Date().toISOString();
       // Attribute per-message rows with the SAME resolved identity as the
       // legacy events/histogram path (payload.agentName), not the raw CLI arg.
@@ -59,17 +57,11 @@ if (payload) {
         agentName: payload.agentName,
         timestamp,
       }));
-      // Bounded: this is a best-effort fetch awaited in Promise.all below. If the
-      // endpoint accepts the connection but never responds, an unbounded fetch
-      // would hang the Stop hook indefinitely. Abort after a short timeout so
-      // token attribution can never block the agent.
-      const tokenUsageTimeoutMs = Number(process.env.ATEAM_TOKEN_USAGE_TIMEOUT_MS) || 5000;
-      tokenUsagePromise = fetch(`${apiUrl}/api/hooks/token-usage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Project-ID': projectId },
-        body: JSON.stringify(enrichedRecords),
-        signal: AbortSignal.timeout(tokenUsageTimeoutMs),
-      }).catch(() => {});
+      // Centralized in lib/observer.js so this POST can never again drift from
+      // the events path on headers (the v1.9.0 CF-Access fix missed this call
+      // site and prod token telemetry silently 302'd for a month). Bounded and
+      // fire-and-forget inside sendTokenUsage.
+      tokenUsagePromise = sendTokenUsage(enrichedRecords).catch(() => {});
 
       // Sum array back to scalars for the legacy /api/hooks/events stop payload.
       const tokenSum = perMessageRecords.reduce(
