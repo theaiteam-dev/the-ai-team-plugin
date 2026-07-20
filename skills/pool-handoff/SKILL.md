@@ -87,6 +87,15 @@ SendMessage({ type: "message", recipient, content: "START: {itemId} - {summary}"
 SendMessage({ type: "message", recipient: "team-lead", content: "FYI: {itemId} - handed off to {CLAIMED_NEXT}.", summary: "FYI {itemId}" })
 ```
 
+**When you RECEIVE a START and need to ACK back:** the sender's instance name is in the START signature, but a name-addressed ACK silently drops headless. Resolve the sender's agentId from its pool marker (read-only) and ACK to that:
+```bash
+SENDER_ID=$(cat /tmp/.ateam-pool/$ATEAM_MISSION_ID/<senderInstance>.idle 2>/dev/null \
+         || cat /tmp/.ateam-pool/$ATEAM_MISSION_ID/<senderInstance>.busy 2>/dev/null)
+# ACK to $SENDER_ID; fall back to the instance name only if the marker is empty.
+```
+
+**Headless note:** in `claude -p` sessions the orchestrator's address is `main`, not `team-lead` — if a `team-lead` send errors as an invalid address, resend to `main` and keep using it.
+
 **If `poolAlert` is set** (no idle next-agent instance) — send ALERT to the orchestrator:
 ```javascript
 SendMessage({ type: "message", recipient: "team-lead", content: "ALERT: {itemId} - {poolAlert}. Manual dispatch needed.", summary: "ALERT {itemId}" })

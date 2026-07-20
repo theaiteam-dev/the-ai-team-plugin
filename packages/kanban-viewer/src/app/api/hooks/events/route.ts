@@ -21,6 +21,14 @@ const VALID_EVENT_TYPES = [
   'stop',
   'teammate_idle',
   'task_completed',
+  // Handoff latency instrumentation: emitted by observe-pre-tool-use.js (on
+  // agents-start) and observe-stop.js (on agentStop). The itemId used to pair
+  // a handoff-stop with the next agent's handoff-start rides in `payload`.
+  // These were emitted since the latency instrumentation shipped but were
+  // rejected here (400) until added — headless probe M-20260719-002 surfaced
+  // the gap via the observer failure log.
+  'handoff-start',
+  'handoff-stop',
 ] as const;
 
 type HookEventType = (typeof VALID_EVENT_TYPES)[number];

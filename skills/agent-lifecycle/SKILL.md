@@ -129,7 +129,7 @@ When you call `agentStop` with `--advance=true` (the default) and the target sta
 When you see `wipExceeded: true`:
 
 1. Do NOT call `agentStop` again — your work is already logged and your claim is released.
-2. Send an ALERT to the orchestrator (address `team-lead` in native teams mode — Hannibal is the persona, `team-lead` is the SendMessage address) so it can re-dispatch when capacity opens:
+2. Send an ALERT to the orchestrator (address `team-lead` in native teams mode — Hannibal is the persona, `team-lead` is the SendMessage address; in headless `claude -p` sessions `team-lead` errors as invalid — use the literal `main` instead) so it can re-dispatch when capacity opens:
    ```javascript
    SendMessage({
      to: "team-lead",
