@@ -435,6 +435,25 @@ describe('POST /api/hooks/events', () => {
     await prisma.mission.delete({ where: { id: missionId } });
   });
 
+  it('returns 400 (not 500) when status is missing', async () => {
+    // status is NOT NULL in the schema; without runtime validation a missing
+    // field used to surface as a 500 DATABASE_ERROR from the prisma create.
+    const request = new NextRequest('http://localhost:3000/api/hooks/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Project-ID': 'test-project' },
+      body: JSON.stringify({
+        eventType: 'pre_tool_use',
+        agentName: 'murdock',
+        summary: 'missing status field',
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    const response = await POST(request);
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error.message).toContain('status');
+  });
+
   it('accepts handoff-start/handoff-stop events (latency instrumentation shape)', async () => {
     // These were emitted by the observer since the latency instrumentation
     // shipped but 400'd on the eventType enum — every event dropped in prod.

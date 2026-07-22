@@ -165,6 +165,15 @@ export async function POST(
         );
       }
 
+      // status is NOT NULL in the Prisma schema — without this check a payload
+      // missing it surfaces as a 500 DATABASE_ERROR instead of a 400.
+      if (!event.status || typeof event.status !== 'string') {
+        return NextResponse.json(
+          createValidationError('status is required and must be a string').toResponse(),
+          { status: 400 }
+        );
+      }
+
       if (!event.summary || typeof event.summary !== 'string') {
         return NextResponse.json(
           createValidationError('summary is required and must be a string').toResponse(),
