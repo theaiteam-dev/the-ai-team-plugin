@@ -8,6 +8,23 @@ description: Native teams messaging protocol for pipeline agents. Consult this s
 Reference for the native teams messaging protocol used by all pipeline agents when `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`.
 
 > **Orchestrator address: use `team-lead`, not `hannibal`.** Hannibal is the orchestrator's persona/role name — the name used in prose, in the playbook, and in your own reasoning. But its `SendMessage` **address** in native teams mode is `team-lead`. Every FYI, ALERT, BLOCKED, or DONE message aimed at the orchestrator MUST use `to: "team-lead"`. This was a real, observed reliability bug: messages sent `to: "hannibal"` silently bounce — no error, no ACK, nothing — and the pipeline only survived because idle-notification summaries happened to leak the payloads elsewhere. A dropped FYI/ALERT is invisible message loss; the mandatory heartbeat does not catch it because nothing looks stalled. When in doubt, address the orchestrator as `team-lead`.
+>
+> **Headless exception:** in a print-mode session (`claude -p`), `team-lead` is NOT valid — the orchestrator's address is the literal **`main`**, and a send to `team-lead` errors with "not a valid address". Rule: try `team-lead` first; on an invalid-address error, resend to `main` and use `main` for all orchestrator-bound messages from then on.
+
+## Peer Addressing: Resolve agentIds From the Pool
+
+Friendly instance names (`murdock`, `ba-2`) do NOT route between teammates in headless mode — a name-addressed peer message is silently dropped. Forward handoffs get the next agent's id from `claimedNextAgentId` (agentStop response). For **backward** peer messages (ACK, REJECTED, TEST BUG) there is no auto-claim, so resolve the target's agentId from its pool marker — the marker's *content* is the agentId the orchestrator registered at `mark-idle --agent-id`:
+
+```bash
+# Resolve <instance>'s agentId (marker may be .idle or .busy depending on state):
+PEER_ID=$(cat /tmp/.ateam-pool/$ATEAM_MISSION_ID/<instance>.idle 2>/dev/null \
+       || cat /tmp/.ateam-pool/$ATEAM_MISSION_ID/<instance>.busy 2>/dev/null)
+# Address the message to $PEER_ID; fall back to the instance name ONLY if empty
+# (empty marker = pool was populated without --agent-id, i.e. interactive mode
+# where names route fine).
+```
+
+This is a read-only `cat` — it does not violate the "never touch pool files directly" rule, which is about mutation (`mv`/`touch`/`rm`).
 
 ## Core Principle
 
@@ -31,11 +48,12 @@ SendMessage({
 
 ### ACK (receiver → sender)
 
-When you receive a `START: {itemId}` message, immediately reply with ACK before beginning work.
+When you receive a `START: {itemId}` message, immediately reply with ACK before beginning work. Address it to the **sender's agentId resolved from its pool marker** (see "Peer Addressing" above) — the sender's instance name appears in the START signature, but a name-addressed ACK silently drops in headless mode and the sender burns its 20s timeout.
 
 ```javascript
+// SENDER_ID = cat pool marker for the sender's instance (fallback: instance name)
 SendMessage({
-  to: "{sender_agent}",
+  to: "{SENDER_ID}",
   message: "ACK: {itemId}",
   summary: "ACK {itemId}"
 })
@@ -207,13 +225,13 @@ After `ateam agents-stop agentStop --outcome rejected --return-to testing --adva
 
 ```javascript
 SendMessage({
-  to: "murdock-N",  // the Murdock instance that handed you this item (from its START)
+  to: "{MURDOCK_ID}",  // agentId resolved from murdock-N's pool marker (see "Peer Addressing"); fallback: instance name
   message: "REJECTED: {itemId} - TEST BUG at {file:line}. {one-sentence reason}. Test change needed: {what Murdock must change}. Impl status: {complete|partial}.",
   summary: "REJECTED {itemId} (TEST BUG)"
 })
 ```
 
-> **Backward/rejection routing is by instance name, not agentId.** Forward handoffs now address the next agent by `claimedNextAgentId` (which the pool auto-claim surfaces), but rejection is a backward hop the pool does not auto-claim, so no agentId is returned. Addressing a peer by name may not deliver in headless (`claude -p`) mode — see the `claimedNextAgentId` follow-up for extending agentId-addressed routing to the rejection path.
+> **Backward/rejection routing: resolve the target's agentId from its pool marker** (see "Peer Addressing" above). Rejection is a backward hop the pool does not auto-claim, so no `claimedNextAgentId` is returned — but the marker content gives you the same id the forward path uses. Name-addressed backward messages silently drop in headless (`claude -p`) mode; either way rejections are also fire-and-forget (the returned item is picked up from the board), so a dropped rejection message degrades context, not correctness.
 
 ```javascript
 SendMessage({

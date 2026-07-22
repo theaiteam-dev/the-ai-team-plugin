@@ -90,11 +90,17 @@ if (payload) {
 
     const { itemId } = parseAgentStopItemId(transcriptPath);
     if (itemId) {
+      const nowMs = Date.now();
+      // Route-conformant shape — see observe-pre-tool-use.js handoff-start.
       handoffStopPromise = sendObserverEvent({
         eventType: 'handoff-stop',
         agentName,
+        status: 'completed',
+        summary: `handoff-stop: ${itemId}`,
+        payload: JSON.stringify({ itemId, timestampMs: nowMs }),
+        timestamp: new Date(nowMs).toISOString(),
         itemId,
-        timestampMs: Date.now(),
+        timestampMs: nowMs,
       }).catch(() => {});
     }
   }

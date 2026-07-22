@@ -48,11 +48,20 @@ if (command.includes('agents-start') && command.includes('--itemId')) {
   if (match) {
     const itemId = match[1];
     const resolvedAgent = agentName || hookInput.agent_type || 'hannibal';
+    const nowMs = Date.now();
+    // Route-conformant shape: /api/hooks/events requires status/summary/ISO
+    // timestamp and persists only known top-level columns — itemId and the
+    // ms-precision pairing timestamp ride in `payload`. (The bare
+    // {itemId, timestampMs} form was silently 400-rejected for months.)
     sendObserverEvent({
       eventType: 'handoff-start',
       agentName: resolvedAgent,
+      status: 'started',
+      summary: `handoff-start: ${itemId}`,
+      payload: JSON.stringify({ itemId, timestampMs: nowMs }),
+      timestamp: new Date(nowMs).toISOString(),
       itemId,
-      timestampMs: Date.now(),
+      timestampMs: nowMs,
     }).catch(() => {});
   }
 }

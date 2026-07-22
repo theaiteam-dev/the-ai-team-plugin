@@ -5,6 +5,23 @@
 > **API CHANGE (Claude Code ≥ 2.1.178):** `TeamCreate` and `TeamDelete` **no longer exist**. The team is **implicit** — every session with `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` has exactly one team, created automatically; cleanup is automatic on session exit. **Do NOT call `TeamCreate`/`TeamDelete`, and do NOT treat their absence as a reason to fall back to legacy mode.** Native teams is available whenever `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`; spawn teammates directly with `Agent`.
 >
 > **Orchestrator address is `team-lead`, not `hannibal`.** Hannibal is the persona running this playbook in the main session, but in native teams mode the main session's `SendMessage` address is `team-lead`. `hannibal` is not a registered teammate name — `SendMessage(to: "hannibal", ...)` silently bounces (no error surfaced; the message just never arrives). Every FYI / ALERT / DONE a teammate sends back to the orchestrator, and every READY signal sent during pre-warming, MUST target `to: "team-lead"`. This applies everywhere in this playbook and in every dispatched agent's prompt template.
+>
+> **HEADLESS EXCEPTION: in a print-mode session (`claude -p`), `team-lead` is NOT a valid address — the orchestrator's address is the literal `main`.** Headless spawns take a different messaging path (task model) where `SendMessage` accepts only teammate names or `main`; a send to `team-lead` errors with "not a valid address". The self-healing rule for every teammate prompt: **send orchestrator-bound messages to `team-lead`; if that errors as an invalid address, resend to `main` and use `main` from then on.** Hannibal: if teammates' READYs don't arrive, proactively message each teammate instructing them to use `main` (observed working recovery, mission M-20260719-002).
+
+## Headless (Print-Mode) Operation — read this if invoked via `claude -p`
+
+Two print-mode behaviors are fatal if unknown (both hit mission M-20260719-002):
+
+1. **NEVER end a turn without a tool call while any teammate is working.** In print mode, a turn that produces only text is the session's FINAL answer — the harness terminates, killing every running teammate mid-work and stranding the mission (items stay claimed, pool slots stay busy). "Waiting for Amy's verdict" as a text-only turn IS mission death. While work is in flight, always hold the turn with an active tool call — a bounded poll is the standard pattern:
+   ```text
+   # Hold pattern while awaiting teammate notifications (repeat as needed):
+   Bash("sleep 30")          # teammate messages/notifications arrive between tool calls
+   Bash("ateam items listItems --json")   # re-check board state; act on any change
+   ```
+   Only produce a final text-only turn when the mission is fully complete (Tawnia committed, pool destroyed) or genuinely blocked awaiting a human.
+2. **Recovery from a terminated session:** re-run `/ai-team:run` for the same mission. The resume flow re-spawns agents, releases stale pool claims (`ateam pool release <instance>` for dead agents still marked `.busy`), and re-dispatches in-flight items. Validated end-to-end.
+
+Headless spawn returns use task-model agentIds (17-hex). Interactive teams-mode spawns return mailbox-style ids (`<name>@session-<id>`). **Never assume an id format** — capture whatever the `Agent` return provides and pass it to `mark-idle --agent-id` verbatim.
 
 This playbook EXTENDS the base native teams orchestration with **stage concurrency**: up to N items can be processed within the same stage simultaneously, each by its own agent instance. N is determined by `ateam scaling compute` (dep graph width × memory budget). When N=1, behaviour is identical to the base playbook (single instance per agent type, no suffixes).
 
@@ -235,6 +252,9 @@ function spawn_lane(lane_number):
                              1. Run: export ATEAM_MISSION_ID='{missionId}'
                              2. Send the orchestrator a ready signal (address: team-lead, NOT hannibal):
                                 SendMessage(to: 'team-lead', message: 'READY: {instance.name}', summary: 'READY {instance.name}')
+                                If 'team-lead' errors as an invalid address (headless/print
+                                sessions), resend to 'main' and use 'main' for ALL
+                                orchestrator-bound messages from then on.
                            Then await work item assignments via SendMessage.
                            When receiving work, use exactly '--agent \"{instance.name}\"' in all
                            ateam agents-start and ateam agents-stop commands.
@@ -244,8 +264,9 @@ function spawn_lane(lane_number):
                            send START addressed to claimedNextAgentId — NOT the instance name,
                            which does not route between teammates and is silently dropped. If
                            poolAlert is set, send ALERT to team-lead (the orchestrator's
-                           address — never 'hannibal', which silently bounces). See your agent
-                           prompt for the exact sequence."
+                           address — never 'hannibal', which silently bounces; if team-lead
+                           errors as invalid, use 'main'). See your agent prompt for the exact
+                           sequence."
         )
 
     # Wait for READY messages from all 4 agents in this lane before continuing.

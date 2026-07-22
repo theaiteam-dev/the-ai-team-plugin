@@ -112,6 +112,13 @@ describe('observe-stop — handoff-stop event', () => {
       expect(handoffStop, 'expected a handoff-stop event to be emitted').toBeTruthy();
       expect(handoffStop.itemId).toBe('WI-001');
       expect(handoffStop.agentName).toBe('Murdock');
+      // Route-conformance: /api/hooks/events 400s without status/summary/ISO
+      // timestamp, and only persists payload — so itemId must ride there too.
+      // (The bare shape was silently rejected in prod for months.)
+      expect(handoffStop.status).toBe('completed');
+      expect(handoffStop.summary).toBe('handoff-stop: WI-001');
+      expect(new Date(handoffStop.timestamp).getTime()).not.toBeNaN();
+      expect(JSON.parse(handoffStop.payload)).toMatchObject({ itemId: 'WI-001' });
     } finally {
       try { unlinkSync(transcriptPath); } catch { /* ignore */ }
     }
@@ -150,6 +157,11 @@ describe('observe-pre-tool-use — handoff-start event', () => {
     const handoffStart = capturedEvents.find((e) => e.eventType === 'handoff-start');
     expect(handoffStart, 'expected a handoff-start event to be emitted').toBeTruthy();
     expect(handoffStart.itemId).toBe('WI-003');
+    // Route-conformance (see handoff-stop test above).
+    expect(handoffStart.status).toBe('started');
+    expect(handoffStart.summary).toBe('handoff-start: WI-003');
+    expect(new Date(handoffStart.timestamp).getTime()).not.toBeNaN();
+    expect(JSON.parse(handoffStart.payload)).toMatchObject({ itemId: 'WI-003' });
   });
 
   it('does not emit handoff-start for non-agentStart tool calls', async () => {
