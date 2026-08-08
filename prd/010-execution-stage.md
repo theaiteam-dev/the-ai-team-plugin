@@ -1,9 +1,9 @@
 # PRD: Execution Stage — Frankie, the Project QA Contract, and the Road to Auto-Merge
 
-**Version:** 0.3.0
-**Status:** Proposed (all open questions resolved 2026-08-07/08 — see §7 Decision Log)
+**Version:** 0.4.0
+**Status:** Proposed — **Phase 1 audition PASSED** (all open questions resolved 2026-08-07/08 — see §7 Decision Log)
 **Author:** Josh / Claude
-**Date:** 2026-08-07 (amended 2026-08-08: FlowSpec named as spec substrate)
+**Date:** 2026-08-07 (amended 2026-08-08: FlowSpec substrate; audition results + thin-contract principle)
 **Issue:** theaiteam-dev/the-ai-team-plugin#51
 **Repo:** `The-Ai-team` plugin (+ consumer repo configs)
 
@@ -135,6 +135,19 @@ mission includes user-facing work and the contract's `qa` block is missing
 or stale, create a Wave-0 scaffolding item to establish it — exactly like
 the existing missing-test-runner behavior.
 
+**The thin-contract principle (decision, 2026-08-08).** The contract is
+*commands and pointers* — "run these commands to check our stuff" — never
+an inventory of repo knowledge. No service lists, no env-var catalogs, no
+architecture summaries: anything an agent can discover by reading the repo
+(`.env.example`, the code) stays in the repo, because config-side copies
+drift and a confidently-wrong contract is worse than a thin one. The
+corollary that makes this work: **the dev environment must be
+self-contained** — every external boundary (email service, payments,
+third-party API) gets a repo-local stand-in (stub/sandbox mode) so the
+contract's commands can exercise the full path in a fresh checkout. A dev
+env that can't walk its own DoD is a product gap, fixed with a work item
+in the repo — not with orchestration config.
+
 ### 2.2 Face: drivable criteria + DoD rollup
 
 - **Format rule:** user-facing (`feature`) items get acceptance criteria
@@ -151,9 +164,15 @@ the existing missing-test-runner behavior.
 
 ### 2.3 Sosa: one new rejection standard
 
-- Reject any user-facing work item whose acceptance criteria cannot be
-  driven from the project contract's entry point (not user-visible, no
-  reachable path, missing QA recipe).
+- **The rule (sharpened 2026-08-08): every DoD statement must be
+  verifiable by running the contract's commands in a fresh checkout.**
+  If a statement can't be — not user-visible, no reachable path, missing
+  QA recipe, or it crosses an external boundary the dev env can't answer
+  (the audition's Dittofeed case) — that's a rejection/open question
+  *before build*. Sosa discovers such gaps by reading the repo during
+  refinement, not by config lookup (per the thin-contract principle);
+  the fix is a Wave-0 work item (e.g. a dev stub), so the boundary is
+  walkable before Frankie ever reaches it.
 - The DoD rollup rides the existing refinement report through the human
   gate. Josh answers open questions and blesses/edits the DoD in the same
   sitting — no new interruption point.
@@ -179,11 +198,24 @@ items complete, before Tawnia's final commit**:
   stale fix branches.
 - **On green:** write the evidence bundle and graduated specs (§2.5);
   both ride Tawnia's final commit.
+- **On environment failure:** if a walk fails for environment reasons
+  (unreachable service, missing key/seed), Frankie bounces it as a
+  **dev-env gap** — the dev environment is part of the product. He never
+  fakes a green, never marks the statement failed-as-code-bug, and never
+  graduates a spec that would sit red for environmental reasons. (This
+  exact behavior was exercised in the audition — see §4.)
 - **Mindset split vs Amy:** Amy stays the investigator — break it,
   distrust it, probe beyond the checklist, per-item as today. Frankie
   verifies the *promise* — walk the list, document what a normal user
   sees, whole-mission. Different jobs, different outputs (bug reports vs
   an evidence bundle).
+
+**The agent profile is already written and field-tested:** the standalone
+audition profile (see `prd/010-frankie-profile.md` in this branch) is the
+source text for the plugin's agent definition — port it, don't re-invent
+it. Its hard-rules block (evidence or it didn't happen; never fix code;
+never edit `specs/`; never weaken a check; blocked walk = honest flag +
+stop) survived contact with a real blocked-path situation unmodified.
 
 **Evidence bundle** (committed under `.qa-evidence/<mission>/`,
 compressed — target ~5–10MB per mission):
@@ -295,13 +327,30 @@ with criteria instead of a drift.
 
 ## 4. Rollout
 
-- **Phase 1 (pilot): joshowens.dev.** First assignment: the PR #41
-  QA click-through (scorecard/fix-list flow) as a standalone Frankie walk
-  — closes the top merge-queue item and proves the evidence bundle.
-  **The audition's checklist gets written AS joshowens.dev's first
-  `specs/*.flow.yaml` files** — dogfooding FlowSpec and the execution
-  stage in one move; `flowspec init` on the repo is step zero. Then the
-  next real mission runs the full in-mission loop.
+- **Phase 1 (pilot): joshowens.dev — ✅ RAN 2026-08-08, PASSED.** The
+  PR #41 audition executed as planned, as a standalone subagent (no
+  plugin changes): 8-statement DoD walked with agent-browser, **8/8
+  pass**; evidence bundle (14 screenshots + report.md, 4.3MB) and a
+  3/3-green FlowSpec suite (`scorecard-renders`, `fix-list-renders`,
+  `scorecard-submit-success`) committed on the branch — the first
+  born-with-evidence PR (joshowens.dev #41, commits 652143d + cf6b62e).
+  The audition also exercised the failure path for real: dev env lacked
+  a Dittofeed target, Frankie flagged it honestly (verified success
+  rendering via a genuine 200 from the endpoint's honeypot branch,
+  declined to graduate a would-be-red spec), the gap was fixed as a
+  *repo* fix (`scripts/dittofeed-stub.ts` dev stand-in, prod key stays
+  in Vercel-only), and a second pass verified the submit path end-to-end
+  down to the event payloads. Next: the first full in-mission loop on a
+  real joshowens.dev mission.
+
+  **Audition learnings for the implementation mission:** `flowspec run`
+  must be invoked via bun (node fails on the TS entrypoint); CI running
+  the graduated suite needs the dev server *and* any dev stubs started;
+  agent-browser's bundled Playwright may need its headless-shell build
+  installed on first run; agent-browser click auto-scrolls targets under
+  fixed navs (position mid-viewport before clicking custom controls);
+  Astro `trailingSlash: 'always'` 404s slash-less URLs including API
+  POSTs.
 - **Phase 2:** print-farm (where the integration-miss pain lives), then
   arcanelayer.com store and Autocut. Conduit + flows already have
   fixture-based execution; they adopt the contract fields and tier only.
@@ -316,6 +365,12 @@ with criteria instead of a drift.
 - CI-hosted evidence viewers, artifact plumbing, external storage — the
   mission commit carries the evidence; revisit only if repo size actually
   hurts.
+- Tawnia PR-walkthrough (a diff↔PRD traceability map in the PR body, for
+  Nitpick/subagents/Josh — with PRD+ADRs in-branch it's nearly
+  mechanical, and it doubles as a scope-creep detector). Promising,
+  discussed 2026-08-08, but its own follow-up; one guardrail noted now:
+  the map is derived context — reviewers must treat the diff, not the
+  summary, as source of truth.
 
 ## 6. Success Metrics
 
@@ -348,3 +403,15 @@ with criteria instead of a drift.
    `specs/`; immutability is the trust guarantee that makes auto-merge
    defensible. `cli` + `conduit` surface adapters filed as FlowSpec
    roadmap issues; web runs today via agent-browser.
+8. **Thin contract; self-contained dev env** (2026-08-08) — Josh
+   rejected a `qa.services` inventory: the contract stays "run these
+   commands to check our stuff"; repo knowledge stays in the repo
+   (config copies drift). External boundaries get repo-local stubs so
+   the full DoD is walkable in a fresh checkout; Sosa's gate is
+   "verifiable via the contract's commands," discovered by reading the
+   repo. Prod credentials never enter dev.
+9. **Audition passed; profile is the source text** (2026-08-08) — the
+   standalone Frankie profile ran the PR #41 walk: 8/8, honest handling
+   of a blocked path, evidence + 3 graduated specs in the PR. The
+   plugin's agent definition ports the proven profile
+   (`prd/010-frankie-profile.md`) rather than re-deriving it.
