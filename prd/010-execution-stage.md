@@ -95,7 +95,7 @@ Setup already detects/asks for `checks` and `devServer`. Add:
 
 ```jsonc
 {
-  "surfaces": ["web"],           // web | fixture-flow | golden-pair | hardware | cli
+  "surfaces": ["web"],           // web | api | fixture-flow | golden-pair | hardware | cli
   "qa": {
     "seed": "bun run seed:test", // command that produces known test data
     "account": {                  // the QA login
@@ -233,12 +233,14 @@ Mechanics:
   long-term picture is the true high-velocity CI/CD shape — enough
   accumulated, protected checks that green means mergeable without a
   human.
-- **Surface adapters:** FlowSpec runs web today (agent-browser). `cli`
-  and `conduit` adapters are filed as FlowSpec roadmap issues — same
-  `steps`/`expect` grammar, per-surface verbs (CLI: `run`/`exit_code`/
-  `stdout_contains`; Conduit: `seed`/`run_flow`/output-card assertions).
-  Until an adapter exists, those surfaces keep their native fixture
-  checks.
+- **Surface adapters:** FlowSpec runs web today (agent-browser). `cli`,
+  `conduit`, and `api` adapters are filed as FlowSpec roadmap issues
+  (queso/FlowSpec#6/#7/#8) — same `steps`/`expect` grammar, per-surface
+  verbs (CLI: `run`/`exit_code`/`stdout_contains`; Conduit: `seed`/
+  `run_flow`/output-card assertions; API: `request`/`capture` chains
+  with `status`/`json`/`latency_under` — where agents most quietly
+  weaken tests). Until an adapter exists, those surfaces keep their
+  native fixture checks.
 
 ### 2.6 Review tiers + the promotion ladder
 
