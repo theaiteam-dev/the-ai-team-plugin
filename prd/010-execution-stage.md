@@ -1,9 +1,9 @@
 # PRD: Execution Stage — Frankie, the Project QA Contract, and the Road to Auto-Merge
 
-**Version:** 0.2.0
+**Version:** 0.3.0
 **Status:** Proposed (all open questions resolved 2026-08-07/08 — see §7 Decision Log)
 **Author:** Josh / Claude
-**Date:** 2026-08-07 (amended 2026-08-08)
+**Date:** 2026-08-07 (amended 2026-08-08: FlowSpec named as spec substrate)
 **Issue:** theaiteam-dev/the-ai-team-plugin#51
 **Repo:** `The-Ai-team` plugin (+ consumer repo configs)
 
@@ -27,10 +27,19 @@ evidence** — checklist, screenshots, compressed video — committed in the
 mission's final commit. Frankie also writes permanent specs (critical path
 + escapes) that run in CI forever after.
 
+**The spec substrate is [FlowSpec](https://github.com/queso/FlowSpec)**
+(Josh's own tool: immutable YAML user-flow specs, accessibility-first
+labels, agent-browser runner, PreToolUse hook that blocks agents from
+editing `specs/`). DoD statements are drafted *as* flow files, Frankie
+runs them, and passing ones graduate into hook-protected `specs/` — so
+build agents structurally cannot "fix the test" instead of the bug.
+
 **North star: unattended auto-merge.** Review tiers start risk-proportional
 (hands-on → evidence-only) and each repo *earns* promotion toward
-auto-merge as Frankie's accumulated CI specs deepen and the scoreboard —
-**bugs found at Josh's gate, per week** — goes to zero and stays there.
+auto-merge as Frankie's accumulated FlowSpec CI suite deepens and the
+scoreboard — **bugs found at Josh's gate, per week** — goes to zero and
+stays there. Immutable specs are what make "green" trustworthy enough to
+merge unattended.
 
 ---
 
@@ -94,7 +103,7 @@ Setup already detects/asks for `checks` and `devServer`. Add:
       "credential_env": "ATEAM_QA_PASSWORD"
     },
     "entry_url": "/",            // the user's front door
-    "drive": "playwright",       // per-project tooling for Frankie's walk
+    "drive": "flowspec",         // spec runner; surface adapter per repo
     "notes": "checkout runs in test mode; use card 4242..."
   },
   "testing_level": "critical-path",  // smoke | critical-path | full-dod
@@ -112,9 +121,10 @@ Setup already detects/asks for `checks` and `devServer`. Add:
   approved pairs. `hardware` (print-farm's printer side) →
   hands-on-only; no agent drives a printer.
 - `qa.drive` — **tooling is a per-project decision, not a plugin-wide
-  standard.** The contract names the driver (playwright, agent-browser,
-  fixture runner, golden-pair diff); Frankie adapts. Nothing is decided
-  ahead of time globally.
+  standard.** Default: `flowspec` with the surface's adapter (web via
+  agent-browser today; `cli` and `conduit` adapters on the FlowSpec
+  roadmap — queso/FlowSpec issues). A repo can declare a different
+  driver (golden-pair diff, custom fixture runner); Frankie adapts.
 - `testing_level` — how much of the DoD Frankie graduates into permanent
   CI specs each mission (see §2.5). This is the dial that deepens CI over
   time and powers tier promotion.
@@ -187,20 +197,48 @@ compressed — target ~5–10MB per mission):
 
 ### 2.5 Spec graduation → CI (the road to auto-merge)
 
-- **Frankie writes the permanent specs himself, in-mission**, while he's
+**The graduated-spec format is FlowSpec** (queso/FlowSpec): immutable
+YAML user flows, accessibility-first labels, run via `flowspec run` in
+CI or interactively by an agent. Why it's the substrate and not
+free-form Playwright:
+
+- **Immutability = the trust guarantee.** FlowSpec's PreToolUse hook
+  blocks agents from editing `specs/` — so B.A. structurally *cannot*
+  "fix" a failing spec instead of the bug. Without this, every graduated
+  spec is one agent-rationalization away from worthless. This is the
+  property that makes the auto-merge tier defensible.
+- **DoD ↔ flow file is ~1:1.** "Submitting a bad email shows the error
+  state" is literally `fill/click/expect: visible`. Face's DoD
+  statements get DRAFTED as flow files at planning time; Josh blessing
+  the DoD = blessing executable specs; Frankie's walk = running them.
+- **The label-driven grammar enforces Face's format rule mechanically** —
+  only user-visible language is expressible; code-shaped criteria don't
+  compile.
+
+Mechanics:
+
+- **Frankie writes/commits the flow files himself, in-mission**, while
   holding the steps — no handoff, no follow-up items that go stale.
-  Murdock reviews them in his existing lane.
+  Murdock reviews them in his existing lane. They land in `specs/` under
+  the protection hook, in the same PR as the feature they protect.
 - **Scope per the contract's `testing_level`:** at `critical-path`
   (default), the DoD's user-journey spine graduates every mission; at
   `full-dod`, every statement does; at `smoke`, only the entry-path.
   **Plus, at every level: every escape** — any bug that reaches Josh
-  after a green walk becomes a permanent spec the same week. Monotonic
+  after a green walk becomes a permanent flow the same week. Monotonic
   tightening; a bug class, once found, can only ever be found once.
-- **Graduated specs run in the repo's CI pipeline from then on.** This is
-  the compounding asset: each mission deepens CI, and CI depth is what
-  makes higher velocity safe. The long-term picture is the true
-  high-velocity CI/CD shape — enough accumulated, trustworthy checks
-  that green means mergeable without a human.
+- **`flowspec run specs/` joins the repo's CI pipeline from then on.**
+  This is the compounding asset: each mission deepens the immutable
+  suite, and suite depth is what makes higher velocity safe. The
+  long-term picture is the true high-velocity CI/CD shape — enough
+  accumulated, protected checks that green means mergeable without a
+  human.
+- **Surface adapters:** FlowSpec runs web today (agent-browser). `cli`
+  and `conduit` adapters are filed as FlowSpec roadmap issues — same
+  `steps`/`expect` grammar, per-surface verbs (CLI: `run`/`exit_code`/
+  `stdout_contains`; Conduit: `seed`/`run_flow`/output-card assertions).
+  Until an adapter exists, those surfaces keep their native fixture
+  checks.
 
 ### 2.6 Review tiers + the promotion ladder
 
@@ -257,8 +295,11 @@ with criteria instead of a drift.
 
 - **Phase 1 (pilot): joshowens.dev.** First assignment: the PR #41
   QA click-through (scorecard/fix-list flow) as a standalone Frankie walk
-  — closes the top merge-queue item and proves the evidence bundle. Then
-  the next real mission runs the full in-mission loop.
+  — closes the top merge-queue item and proves the evidence bundle.
+  **The audition's checklist gets written AS joshowens.dev's first
+  `specs/*.flow.yaml` files** — dogfooding FlowSpec and the execution
+  stage in one move; `flowspec init` on the repo is step zero. Then the
+  next real mission runs the full in-mission loop.
 - **Phase 2:** print-farm (where the integration-miss pain lives), then
   arcanelayer.com store and Autocut. Conduit + flows already have
   fixture-based execution; they adopt the contract fields and tier only.
@@ -300,3 +341,8 @@ with criteria instead of a drift.
    joshowens.dev, print-farm web; evidence-only: Autocut, conduit/flows)
    with an explicit earned ladder to **auto-merge** — the long-term
    target — powered by accumulated Frankie CI specs + a zero scoreboard.
+7. **Spec substrate: FlowSpec** (queso/FlowSpec, 2026-08-08) — DoD
+   statements drafted as flow files; graduation = hook-protected
+   `specs/`; immutability is the trust guarantee that makes auto-merge
+   defensible. `cli` + `conduit` surface adapters filed as FlowSpec
+   roadmap issues; web runs today via agent-browser.
