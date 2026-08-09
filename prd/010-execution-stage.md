@@ -1,9 +1,9 @@
 # PRD: Execution Stage — Frankie, the Project QA Contract, and the Road to Auto-Merge
 
-**Version:** 0.4.0
+**Version:** 0.5.0
 **Status:** Proposed — **Phase 1 audition PASSED** (all open questions resolved 2026-08-07/08 — see §7 Decision Log)
 **Author:** Josh / Claude
-**Date:** 2026-08-07 (amended 2026-08-08: FlowSpec substrate; audition results + thin-contract principle)
+**Date:** 2026-08-07 (amended 2026-08-09: contract split by ownership/drift-risk — policy authored, pointers detected-and-confirmed, repo knowledge stays in the repo)
 **Issue:** theaiteam-dev/the-ai-team-plugin#51
 **Repo:** `The-Ai-team` plugin (+ consumer repo configs)
 
@@ -91,35 +91,55 @@ evidence rides the mission's own commit.
 
 ### 2.1 Project execution contract (`ateam.config.json` extensions)
 
-Setup already detects/asks for `checks` and `devServer`. Add:
+Setup already detects/asks for `checks` and `devServer`. The execution
+contract extends that — but the guiding rule is **the config points and
+decides; it never describes.** Sort every candidate field by one question,
+the same test the thin-contract principle uses: *could an agent discover
+this by reading the repo?* The answer splits the fields into three kinds,
+and only two of them belong in config:
+
+| Kind | Belongs in | Fields | Why |
+|------|-----------|--------|-----|
+| **Policy decisions** | Config (authored) | `review_tier`, `testing_level`, `evidence`, `qa.drive` | Not facts about the repo — choices about how the pipeline behaves on it. Nowhere else to live; can't drift (no source of truth to disagree with). |
+| **Thin pointers** | Config (detected + confirmed) | `qa.seed`, `qa.account.credential_env`, `surfaces` | A command, a secret's env-var name, how the repo is driven. Un-discoverable or ambiguous, but tiny — a pointer, not a description. |
+| **Repo knowledge** | The repo itself | test-mode quirks, entry path, seed data details, "use card 4242…" | Describes how the app works. Drifts the moment the code changes. Stays in the seed script's own comments, `.env.example`, or a co-located QA doc — never copied into orchestration config. |
+
+The resulting config is small. A typical web repo, after setup's
+detection, declares little more than its policy choices and a seed pointer:
 
 ```jsonc
 {
-  "surfaces": ["web"],           // web | api | fixture-flow | golden-pair | hardware | cli
+  "surfaces": ["web"],                  // [pointer] web | api | fixture-flow | golden-pair | hardware | cli
   "qa": {
-    "seed": "bun run seed:test", // command that produces known test data
-    "account": {                  // the QA login
-      "user": "qa@example.test",
-      "credential_env": "ATEAM_QA_PASSWORD"
-    },
-    "entry_url": "/",            // the user's front door
-    "drive": "flowspec",         // spec runner; surface adapter per repo
-    "notes": "checkout runs in test mode; use card 4242..."
+    "seed": "bun run seed:test",        // [pointer] the command that produces known test data
+    "account": { "credential_env": "ATEAM_QA_PASSWORD" },  // [pointer] env-var name only; username lives in .env.example
+    "drive": "flowspec"                 // [policy]  spec runner; surface adapter per repo
   },
-  "testing_level": "critical-path",  // smoke | critical-path | full-dod
-  "evidence": {
-    "prd_work": "video+screenshots",  // artifact for PRD-related user-facing work
-    "default": "screenshots"
-  },
-  "review_tier": "hands-on"           // hands-on | evidence-only | auto
+  "testing_level": "critical-path",     // [policy]  smoke | critical-path | full-dod
+  "evidence": { "prd_work": "video+screenshots", "default": "screenshots" },  // [policy]
+  "review_tier": "hands-on"             // [policy]  hands-on | evidence-only | auto
 }
 ```
+
+`[pointer]` fields are detected by setup and confirmed by Josh; `[policy]`
+fields are the genuine decisions he authors. Nothing here *describes* the
+app.
+
+Everything that was repo knowledge is **gone from the config**: no
+`qa.notes` free-prose (the exact thing decision #8 warns against — it
+describes checkout behavior and rots when checkout changes), and no
+authored `qa.entry_url` (it defaults to `/` and is detected from routing
+otherwise). Test-mode quirks and seed-data specifics live next to the code
+they describe, where they're versioned with it.
+
+**Field notes:**
 
 - `surfaces` — how this repo is driven. `web` → browser drive.
   `fixture-flow` (conduit, flows) → fixture cards; their execution stage
   already exists. `golden-pair` (Autocut) → compare output against
   approved pairs. `hardware` (print-farm's printer side) →
-  hands-on-only; no agent drives a printer.
+  hands-on-only; no agent drives a printer. Detected from the repo
+  (framework, entrypoints), confirmed by Josh — not authored cold.
 - `qa.drive` — **tooling is a per-project decision, not a plugin-wide
   standard.** Default: `flowspec` with the surface's adapter (web via
   agent-browser today; `cli` and `conduit` adapters on the FlowSpec
@@ -129,6 +149,16 @@ Setup already detects/asks for `checks` and `devServer`. Add:
   CI specs each mission (see §2.5). This is the dial that deepens CI over
   time and powers tier promotion.
 - `review_tier` — Josh's step when the mission's PR arrives (see §2.6).
+
+**Discover-and-ratify, don't author.** The thin-pointer fields aren't
+hand-written from a blank file. Setup and Face's Readiness Audit read the
+repo — `package.json` scripts, framework config, `.env.example`, the CLI
+entrypoint — *propose* values (`surfaces: ["web"]`, the likely test-seed
+command, `entry_url: "/"`), and Josh confirms. The config file becomes a
+cache of ratified detections plus a few genuine policy decisions, not a
+form to fill out. (This is the same *ratify, don't author* move the async
+intake & triage PRD is built on — the two designs share the principle:
+authoring intent is expensive, correcting a proposed default is cheap.)
 
 **Face's Project Readiness Audit** (existing) gains one check: if the
 mission includes user-facing work and the contract's `qa` block is missing
@@ -147,6 +177,15 @@ third-party API) gets a repo-local stand-in (stub/sandbox mode) so the
 contract's commands can exercise the full path in a fresh checkout. A dev
 env that can't walk its own DoD is a product gap, fixed with a work item
 in the repo — not with orchestration config.
+
+The contract splits by ownership and drift-risk (§2.1): **policy decisions
+are authored in config** (they have nowhere else to live and cannot drift);
+**thin pointers are detected and confirmed, not hand-written** (setup/Face
+propose them from the repo, Josh ratifies); **repo knowledge never enters
+config at all** (it stays beside the code that defines it). The failure
+mode this closes is a config field that *describes* the app — like a
+free-prose `qa.notes` — which is a confidently-wrong contract waiting to
+happen the next time the code moves and the note doesn't.
 
 ### 2.2 Face: drivable criteria + DoD rollup
 
@@ -186,8 +225,9 @@ A new agent, distinct from Amy, running **once per mission after all work
 items complete, before Tawnia's final commit**:
 
 - **Input:** the PRD's DoD + the project execution contract.
-- **Job:** start from the user's front door (`qa.entry_url`, logged in
-  via the QA recipe) and walk every DoD statement as a first-time user,
+- **Job:** start from the user's front door (the detected entry path,
+  default `/`, logged in via the QA recipe) and walk every DoD statement
+  as a first-time user,
   using the contract's declared driver. Per-item green is irrelevant; the
   question is *can a user actually reach and complete each promised
   behavior*. This is the runtime enforcement of "a component without a
@@ -415,3 +455,16 @@ with criteria instead of a drift.
    of a blocked path, evidence + 3 graduated specs in the PR. The
    plugin's agent definition ports the proven profile
    (`prd/010-frankie-profile.md`) rather than re-deriving it.
+10. **Contract split by ownership/drift-risk** (2026-08-09) — the v0.4
+    config example fattened the `qa` block with repo knowledge (`qa.notes`
+    free-prose, an authored `entry_url`), quietly violating decision #8.
+    Resolved by sorting every field with one test — *could an agent
+    discover this by reading the repo?* — into three kinds (§2.1): **policy
+    decisions** authored in config (`review_tier`, `testing_level`,
+    `evidence`, `qa.drive` — nowhere else to live, can't drift); **thin
+    pointers** detected by setup/Face and confirmed by Josh, not
+    hand-written (`qa.seed`, `credential_env`, `surfaces`); **repo
+    knowledge** kept in the repo entirely (test-mode quirks, seed details,
+    entry path). `qa.notes` deleted; `entry_url` defaults to `/`. The
+    config becomes a cache of ratified detections plus a few decisions —
+    the same *ratify-don't-author* principle as the async intake PRD.
