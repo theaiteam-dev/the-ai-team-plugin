@@ -84,6 +84,11 @@ Use the template structure from `references/prd-template.md`. Include only the s
 - **Implementation-free** — Describe what, not how (no architecture, no code)
 - **Strategy-level Solution Approach** — If included, keep Solution Approach at a level a product manager would understand. No code, no schemas, no class names.
 
+**Always open with two top-matter sections, in every tier:**
+
+- **Executive Summary** — 2–4 sentences (scaled to tier) directly under the header: what this delivers, for whom, why now. Draft it last but place it first; it is the section the user reviews to confirm you captured their intent.
+- **Definition of Done** — a checklist of user-visible, observable outcomes, placed directly under the Executive Summary. **Scaffold it blank** (empty checkboxes) unless the user is writing a standalone PRD no mission will decompose — in the A(i)-Team flow, Face fills this rollup during planning and the human blesses it at the refinement gate, so an authored list here would just be overwritten. Never phrase items as implementation steps; every item must be confirmable by using the product.
+
 The PRD header should use the feature name only — no PRD number. Include YAML frontmatter with `missionId` set to `~` (null) — Hannibal will populate it when the mission starts:
 
 ```markdown
@@ -103,6 +108,8 @@ Consult `references/prd-template.md` for the document structure.
 
 After writing the first draft, review it against this checklist:
 
+- Is there an Executive Summary at the top that captures what/who/why in a few sentences?
+- Is there a Definition of Done section directly under it — blank scaffold (pipeline PRD) or filled with observable, user-visible outcomes (standalone PRD)?
 - Does every requirement have a clear "why"?
 - Are success metrics specific and measurable?
 - Is scope clearly bounded (in/out)?
