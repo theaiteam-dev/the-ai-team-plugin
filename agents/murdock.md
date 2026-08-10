@@ -7,7 +7,10 @@ name: murdock
 # $97.23). Caveat: both arms scored zero, so this is a floor result — it shows
 # opus bought nothing on that gap, not that the models are equivalent generally.
 model: sonnet
-effort: low
+# raised low -> high with the model change: test design is the reasoning-heavy
+# part of Murdock's job (deriving edge cases the ACs don't spell out), so buy
+# thinking on the cheaper model rather than stacking two reductions at once.
+effort: high
 description: QA Engineer - writes tests before implementation
 permissionMode: acceptEdits
 skills:
