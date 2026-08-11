@@ -196,18 +196,37 @@ describe('Observer Hooks Configuration', () => {
       });
     });
 
-    it('working agents should retain enforce-completion-log.js hook', () => {
-      const workingAgents = ['murdock.md', 'ba.md', 'lynch.md', 'amy.md', 'tawnia.md'];
+    // Every working agent must block its own stop until agentStop has been
+    // called — but the four pipeline agents enforce a strict superset. In
+    // 1f143ce their Stop hook was deliberately swapped from
+    // enforce-completion-log.js to enforce-handoff.js, which requires BOTH
+    // agentStop AND the peer-to-peer handoff message. Asserting the old hook
+    // on them would demand redundant enforcement of a condition
+    // enforce-handoff.js already covers.
+    it('pipeline agents should retain enforce-handoff.js hook', () => {
+      const pipelineAgents = ['murdock.md', 'ba.md', 'lynch.md', 'amy.md'];
 
-      workingAgents.forEach(agentFile => {
+      pipelineAgents.forEach(agentFile => {
         const frontmatter = extractFrontmatter(join(AGENTS_DIR, agentFile));
         const section = extractHookSection(frontmatter!, 'Stop');
 
         expect(
-          sectionContainsScript(section, 'enforce-completion-log.js'),
-          `${agentFile} should have enforce-completion-log.js`
+          sectionContainsScript(section, 'enforce-handoff.js'),
+          `${agentFile} should have enforce-handoff.js`
         ).toBe(true);
       });
+    });
+
+    // Tawnia is terminal — she makes the final commit and hands off to nobody —
+    // so she keeps plain completion-log enforcement.
+    it('tawnia.md should retain enforce-completion-log.js hook', () => {
+      const frontmatter = extractFrontmatter(join(AGENTS_DIR, 'tawnia.md'));
+      const section = extractHookSection(frontmatter!, 'Stop');
+
+      expect(
+        sectionContainsScript(section, 'enforce-completion-log.js'),
+        'tawnia.md should have enforce-completion-log.js'
+      ).toBe(true);
     });
 
     it('amy.md should retain block-amy-test-writes.js hook', () => {
