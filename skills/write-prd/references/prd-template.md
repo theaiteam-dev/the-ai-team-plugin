@@ -12,6 +12,8 @@ Use this structure when creating new PRDs. Scale the depth to the size of the fe
 
 A bug fix PRD with 11 sections is wasted effort. A new product area with only 3 sections is under-specified. Match the template to the work.
 
+**Two sections appear in every tier**, regardless of depth: the **Executive Summary** and the **Definition of Done**. They sit as top-matter above the numbered sections (they are not sections 1–11) because they are what a stakeholder actually reads first. Scale their length to the tier — a couple of sentences for Quick, a short paragraph and a fuller checklist for Deep — but never omit them.
+
 ---
 
 ```markdown
@@ -22,6 +24,20 @@ missionId: ~
 # Feature Name
 
 **Author:** [name]  **Date:** [date]  **Status:** Draft
+
+## Executive Summary
+
+Two to four sentences a stakeholder can skim without reading the rest: what this delivers, for whom, and why now. Write it *last* — it distills the document — but place it *first*, because it is the section most people read and the one the author reviews for intent. Scale to tier: 2–3 sentences for Quick, a short paragraph for Standard/Deep. No implementation detail; this is the "what and why," compressed.
+
+## Definition of Done
+
+The user-visible outcomes that must be true for this work to count as done — written as observable statements ("submitting a bad email shows the error state"), not implementation checkboxes ("validation handler returns 400"). This is the intent check: a reader should be able to confirm each item by using the product, not by reading the code.
+
+Leave this **blank** when the A(i)-Team pipeline will own it — Face rolls the per-item acceptance criteria up into this section during planning, and the human blesses it at the existing refinement gate. Fill it in yourself for a standalone PRD that no mission will decompose.
+
+- [ ]
+- [ ]
+- [ ]
 
 ## 1. Context & Background
 

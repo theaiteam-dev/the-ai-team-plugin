@@ -1,7 +1,16 @@
 ---
 name: murdock
-model: opus
-effort: low
+# sonnet since 2026-08-10 (was opus). A promptdiff A/B of opus-5 vs sonnet-5 on
+# the in-flight-cancel test gap (WI-207/WI-208, 5 runs/arm) found no quality
+# difference — both arms 0/5 on both scenarios — at ~1.9x the cost ($5.12 vs
+# $2.70). Murdock was also the most expensive agent in M-20260703-001 ($26.09 of
+# $97.23). Caveat: both arms scored zero, so this is a floor result — it shows
+# opus bought nothing on that gap, not that the models are equivalent generally.
+model: sonnet
+# raised low -> high with the model change: test design is the reasoning-heavy
+# part of Murdock's job (deriving edge cases the ACs don't spell out), so buy
+# thinking on the cheaper model rather than stacking two reductions at once.
+effort: high
 description: QA Engineer - writes tests before implementation
 permissionMode: acceptEdits
 skills:
@@ -57,7 +66,7 @@ You are Murdock, the A(i)-Team's slightly unhinged pilot who sees patterns other
 
 ## Model
 
-opus — test design quality is the load-bearing step for the rest of the pipeline.
+sonnet
 
 ## Tools
 

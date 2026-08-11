@@ -583,7 +583,7 @@ After mapping each acceptance criterion 1:1 to a test, scan for AC *combinations
 
 **Example:** AC-A says "submits via Enter key" and AC-B says "submit disabled during in-flight request." Each has a test individually. But the *combination* — "Enter key blocked during in-flight" — is a distinct scenario that neither test covers alone. If you have tests for A and B individually but not A×B, add the combined test.
 
-**How to check:** After your 1:1 reconciliation pass, identify all "trigger" ACs (user actions: click, keypress, form submit) and all "constraint" ACs (guards, validation, disabled states, loading states). For each trigger × constraint pair, ask: "Is there a test that exercises this trigger while the constraint is active?" If not, add one.
+**How to check:** After your 1:1 reconciliation pass, identify all "trigger" ACs (user actions: click, keypress, form submit, and cancel/dismiss/abort) and all "constraint" ACs (guards, validation, disabled states, loading states). For each trigger × constraint pair, ask: "Is there a test that exercises this trigger while the constraint is active?" If not, add one.
 
 This catches the most common review rejection pattern: guards that only protect one interaction path.
 
@@ -841,6 +841,32 @@ it('drops repeated submits while a request is in flight', async () => {
   expect(onSubmit).toHaveBeenCalledTimes(1);
 });
 ```
+
+**Repeating the action is only half of it — also test the OPPOSING action during the same in-flight window.** A guard that drops repeat submits does nothing about the user who *cancels* mid-flight. Whenever an async action can be started, ask what else the UI still lets the user do before it settles — cancel, Escape, dismiss, abort, close the dialog, navigate away — and test that path too. The failure is silent and specific: the abandoned action's promise still settles and applies its result, re-applying work the user believed they had discarded (or discarding work they believed they had kept).
+
+Test it by holding the promise unresolved, performing the opposing action, and only THEN settling it:
+
+```typescript
+// GOOD: cancelling during an in-flight save must not reapply the result
+it('does not reapply the edit when Cancel is clicked while the save is in flight', async () => {
+  let resolveSave!: (t: Todo) => void;
+  // mockImplementation, not mockReturnValue: each call gets its own promise.
+  vi.mocked(updateTodo).mockImplementation(
+    () => new Promise((resolve) => { resolveSave = resolve; }),
+  );
+  render(<TodoItem todo={todo} onChanged={onChanged} {...rest} />);
+  await user.click(screen.getByRole('button', { name: /edit/i }));
+  await user.type(screen.getByRole('textbox'), 'Abandoned edit');
+  await user.keyboard('{Enter}');                                  // save now in flight
+  // Prove the save actually started, or the assertion below passes vacuously.
+  await waitFor(() => expect(updateTodo).toHaveBeenCalledTimes(1));
+  await user.click(screen.getByRole('button', { name: /cancel/i })); // opposing action
+  resolveSave({ ...todo, title: 'Abandoned edit' });               // settles AFTER the cancel
+  await waitFor(() => expect(onChanged).not.toHaveBeenCalled());
+});
+```
+
+**Each opposing control is its own test.** The guard usually lives on one control — a Cancel button — while the sibling paths (the Escape key, an explicit abort, the close affordance, unmounting) stay unprotected. Cover each separately. And when a component gains a *second* async action later (a delete alongside an edit), the opposing-action test does not carry over: apply the same pair to the new action rather than assuming the existing guard generalizes.
 
 ### Verify exposed props/state are actually consumed
 
