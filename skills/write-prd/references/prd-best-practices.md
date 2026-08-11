@@ -306,8 +306,8 @@ Captures constraints and dependencies that affect product decisions without pres
 
 Before finalizing a PRD, verify:
 
-- [ ] An Executive Summary at the top captures what, for whom, and why now in 2–4 sentences
-- [ ] A Definition of Done section sits directly under it — blank when a mission will roll it up, or filled with observable, user-visible outcomes for a standalone PRD
+- [ ] The document opens with an unnumbered `## Executive Summary` (that exact heading, not `## 1. Executive Summary`), ahead of every numbered section, capturing what, for whom, and why now in 2–4 sentences
+- [ ] An unnumbered `## Definition of Done` (that exact heading) sits immediately below it and still ahead of `## 1.` — blank when a mission will roll it up, or filled with observable, user-visible outcomes for a standalone PRD
 - [ ] Problem statement names a user and a measurable impact
 - [ ] Context & Background ties to a business goal and explains "why now"
 - [ ] Every success metric has a current baseline and a target

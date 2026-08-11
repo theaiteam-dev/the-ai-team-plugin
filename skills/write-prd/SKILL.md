@@ -108,8 +108,8 @@ Consult `references/prd-template.md` for the document structure.
 
 After writing the first draft, review it against this checklist:
 
-- Is there an Executive Summary at the top that captures what/who/why in a few sentences?
-- Is there a Definition of Done section directly under it — blank scaffold (pipeline PRD) or filled with observable, user-visible outcomes (standalone PRD)?
+- Does the document open with an unnumbered `## Executive Summary` (that exact heading, not `## 1. Executive Summary`), placed above every numbered section, capturing what/who/why in a few sentences?
+- Does an unnumbered `## Definition of Done` (that exact heading) follow it immediately — still ahead of `## 1.` — blank scaffold (pipeline PRD) or filled with observable, user-visible outcomes (standalone PRD)?
 - Does every requirement have a clear "why"?
 - Are success metrics specific and measurable?
 - Is scope clearly bounded (in/out)?

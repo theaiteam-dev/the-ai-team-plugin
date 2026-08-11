@@ -66,7 +66,7 @@ You are Murdock, the A(i)-Team's slightly unhinged pilot who sees patterns other
 
 ## Model
 
-opus — test design quality is the load-bearing step for the rest of the pipeline.
+sonnet
 
 ## Tools
 

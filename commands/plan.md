@@ -268,7 +268,9 @@ SendMessage(
   1. Run ateam deps-check checkDeps --json to get the readyItems list
   2. Move items with NO dependencies to ready stage using ateam board-move moveItem
   3. Leave items WITH dependencies in briefings stage
-  4. Record ADRs: if Sosa's report has a non-empty 'ADR Candidates' section,
+  4. Record ADRs: if Sosa's 'ADR Candidates' section is anything other than
+     exactly 'ADR Candidates: none.' (the section is ALWAYS present, so its
+     mere existence is not the signal — the sentinel is),
      write each as adr/NNNN-*.md in the target repo per your ADR Recording
      procedure (Glob for the next number, Write the file). State the ADR
      outcome explicitly — files written, or exactly 'ADR Candidates: none.'
@@ -292,10 +294,12 @@ Agent(
   - DO NOT use Grep or Search tools, and DO NOT explore any codebase or
     directories to refine items — all information you need for that is in
     Sosa's report below
-  - The ONLY permitted file access is ADR recording: if Sosa's report has a
-    non-empty 'ADR Candidates' section, you MAY Glob('adr/*.md') to find the
-    next number and Write the adr/NNNN-*.md files (per your ADR Recording
-    procedure). This is the single carve-out to the no-Glob/no-Write rule.
+  - The ONLY permitted file access is ADR recording: if Sosa's 'ADR Candidates'
+    section is anything other than exactly 'ADR Candidates: none.' (the section
+    is ALWAYS present, so its mere existence is not the signal — the sentinel
+    is), you MAY Glob('adr/*.md') to find the next number and Write the
+    adr/NNNN-*.md files (per your ADR Recording procedure). This is the single
+    carve-out to the no-Glob/no-Write rule.
 
   Here is Sosa's refinement report:
 
@@ -309,7 +313,9 @@ Agent(
   1. Run ateam deps-check checkDeps --json to get the readyItems list
   2. Move items with NO dependencies to ready stage using ateam board-move moveItem
   3. Leave items WITH dependencies in briefings stage
-  4. Record ADRs: if Sosa's report has a non-empty 'ADR Candidates' section,
+  4. Record ADRs: if Sosa's 'ADR Candidates' section is anything other than
+     exactly 'ADR Candidates: none.' (the section is ALWAYS present, so its
+     mere existence is not the signal — the sentinel is),
      write each as adr/NNNN-*.md per your ADR Recording procedure (the Glob/
      Write carve-out above). State the ADR outcome explicitly — files
      written, or exactly 'ADR Candidates: none.'
