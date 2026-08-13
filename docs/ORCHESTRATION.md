@@ -183,6 +183,8 @@ Stockwell's Final Mission Review is stored in the database on the Mission row (`
 
 Stockwell writes the review as its last step before post-checks run; Tawnia reads it when drafting release notes and the final commit message.
 
+**Frankie's evidence, by contrast, is filesystem-based** — his walk runs BEFORE Stockwell (once all items reach `done`), and his evidence bundle (`.qa-evidence/<mission>/report.md`) and any graduated `specs/` files land in the repo itself rather than the database, so Stockwell's diff review already includes them and Tawnia commits them alongside the feature work.
+
 ## Plugin Commands
 
 ### Mission Commands
@@ -220,7 +222,8 @@ Model selection is defined in each agent's frontmatter (`agents/*.md`) — do NO
 In native teams mode each of the four pipeline roles is spawned as **N parallel instances** (`murdock-1`..`murdock-N`, `ba-1`..`ba-N`, etc.), sized by `ateam scaling compute`. The `name:` passed to `Task` is the instance name (e.g. `murdock-2`), and agents pass the same instance name to `agentStart` / `agentStop` so pool slot accounting stays consistent. When N=1 the base names (`murdock`, `ba`, `lynch`, `amy`) are used.
 
 **Mission Completion (MANDATORY):**
-- Stockwell: `subagent_type: "ai-team:stockwell"` → Final Mission Review (PRD+diff scoped), persisted via `missions-final-review writeFinalReview`
+- Frankie: `subagent_type: "ai-team:frankie"` → mission-tail QA walk against the running app, once all items reach `done` and BEFORE Stockwell. A fresh, non-pre-warmed agent; a failure halts the tail and surfaces to the operator (manual reopening — no automated bounce). Any rework restarts the tail at Frankie, who re-walks the FULL Definition of Done.
+- Stockwell: `subagent_type: "ai-team:stockwell"` → Final Mission Review (PRD+diff scoped), persisted via `missions-final-review writeFinalReview`. Runs only after Frankie's walk succeeds; a Stockwell rejection restarts the tail at Frankie once the named items are back in `done`.
 - Tawnia: `subagent_type: "ai-team:tawnia"` → after post-checks pass
 
 ## Background Agent Permissions
@@ -301,35 +304,14 @@ The `/ai-team:setup` command **auto-detects** project settings and creates `atea
 ### Auto-Detection Sources
 
 1. **CLAUDE.md** - Scans for: package manager mentions, test/lint commands, dev server URLs, Docker commands
-2. **package.json** - Checks `scripts` for: `test`, `test:unit`, `test:e2e`, `lint`, `dev`, `start`
+2. **package.json** - Checks `scripts` for: `test`, `test:unit`, `test:e2e`, `lint`, `dev`, `start`, and a seed-shaped script for `qa.seed`
 3. **Lock files** - Detects package manager: `package-lock.json` → npm, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, `bun.lockb` → bun
+4. **`.env.example`** - Scans for a QA/test credential env-var name (never its value) for `qa.account.credential_env`
+5. **Framework config / entrypoints** - Detects drivable `surfaces` (web framework config, CLI entrypoints)
 
 ### Config File Format
 
-```json
-{
-  "packageManager": "npm",
-  "checks": {
-    "lint": "npm run lint",
-    "unit": "npm test",
-    "e2e": "npm run test:e2e"
-  },
-  "precheck": ["lint", "unit"],
-  "postcheck": ["lint", "unit", "e2e"],
-  "devServer": {
-    "url": "http://localhost:3000",
-    "start": "npm run dev",
-    "restart": "docker compose restart",
-    "managed": false
-  }
-}
-```
-
-**Dev server** (`devServer`):
-- `url`: Where Amy should point the browser for testing
-- `start`: Command to start the server (for user reference)
-- `restart`: Command to restart the server (e.g., to pick up code changes)
-- `managed`: If false, user manages server; Amy checks if running but doesn't start/restart it
+See `commands/setup.md` (Step 6) for the canonical `ateam.config.json` template and full field reference — including the execution-contract fields (`surfaces`, `qa`, `testing_level`, `evidence`, `review_tier`), `ateamCliVersion`, and `pricing`. This file doesn't duplicate the template — see `adr/0006-ateam-config-schema-deferred.md` for why a second copy is exactly how these fields have drifted before (this section itself was one of the four divergent copies that ADR closed).
 
 **Pre-mission checks** (`ateam missions-precheck missionPrecheck`):
 - Run before `/ai-team:run` starts execution

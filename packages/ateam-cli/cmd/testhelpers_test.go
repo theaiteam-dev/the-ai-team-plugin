@@ -86,3 +86,19 @@ func resetAgentsStopAgentStopFlagsForTest() {
 		f.Value.Set("true")
 	}
 }
+
+// resetAgentsStartAgentStartFlagsForTest clears module variables and cobra
+// flag Changed() status for the `agents-start agentStart` subcommand.
+func resetAgentsStartAgentStartFlagsForTest() {
+	agentsStartAgentStartCmdBody = ""
+	agentsStartAgentStartCmdBodyFile = ""
+	agentsStartAgentStartCmd_agent = ""
+	agentsStartAgentStartCmd_itemId = ""
+	flags := agentsStartAgentStartCmd.Flags()
+	for _, name := range []string{"body", "body-file", "agent", "itemId"} {
+		if f := flags.Lookup(name); f != nil {
+			f.Changed = false
+			f.Value.Set("")
+		}
+	}
+}

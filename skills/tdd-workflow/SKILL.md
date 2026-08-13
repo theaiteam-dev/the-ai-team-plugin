@@ -83,6 +83,8 @@ The pipeline enforces the TDD contract:
 - Lynch verifies tests + implementation as a cohesive unit
 - Amy probes for bugs that tests missed
 
+This chain repeats per work item. Once EVERY item reaches `done`, the mission continues with a separate, mission-level tail: Frankie walks the full Definition of Done against the running app and produces an evidence bundle, then Stockwell performs the Final Mission Review (including Frankie's evidence), then post-checks run, then Tawnia documents and commits. A Stockwell rejection restarts the mission tail at Frankie, not at post-checks.
+
 ## Benefits of TDD in A(i)-Team
 
 ### 1. Clear Acceptance Criteria

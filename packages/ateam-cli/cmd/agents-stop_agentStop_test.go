@@ -140,6 +140,48 @@ func TestAgentStopAdvanceFalseSendsFalse(t *testing.T) {
 	}
 }
 
+// TestAgentStopAcceptsFrankie verifies the client-side validate.Enum allowed-list
+// includes Frankie: the request must actually reach the mock server rather than
+// being rejected locally before any HTTP call (WI-774 AC6).
+func TestAgentStopAcceptsFrankie(t *testing.T) {
+	requestReceived := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestReceived = true
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(successResponse())
+	}))
+	defer srv.Close()
+
+	_, err := executeAgentStop(t, srv.URL, "--agent", "Frankie")
+	if err != nil {
+		t.Fatalf("unexpected error validating --agent Frankie: %v", err)
+	}
+	if !requestReceived {
+		t.Error("expected the mock server to receive the request, but client-side validation blocked it before the HTTP call")
+	}
+}
+
+// TestAgentStopRejectsUnknownAgent verifies an unrecognised --agent value is still
+// rejected by the client-side validate.Enum check, and never reaches the server
+// (WI-774 AC6's negative counterpart).
+func TestAgentStopRejectsUnknownAgent(t *testing.T) {
+	requestReceived := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestReceived = true
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(successResponse())
+	}))
+	defer srv.Close()
+
+	_, err := executeAgentStop(t, srv.URL, "--agent", "NotAnAgent")
+	if err == nil {
+		t.Fatal("expected an error for --agent NotAnAgent, got nil")
+	}
+	if requestReceived {
+		t.Error("expected client-side validation to reject before any HTTP call, but the mock server received a request")
+	}
+}
+
 // TestHandlePoolManagementReturnsNextAgentID verifies the forward handoff: a
 // completing Murdock claims the downstream B.A. instance from the pool and gets
 // back both the instance name AND its recorded agentId, so the START handoff can

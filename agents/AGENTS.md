@@ -1,6 +1,6 @@
 # Agent Prompts
 
-Defines behavior contracts for 8 A(i)-Team agents. Each `.md` file is a prompt loaded at dispatch time — not code, but the instructions that shape agent behavior. Does NOT contain implementation logic (that's in the `ateam` CLI binary).
+Defines behavior contracts for 12 A(i)-Team agents. Each `.md` file is a prompt loaded at dispatch time — not code, but the instructions that shape agent behavior. Does NOT contain implementation logic (that's in the `ateam` CLI binary).
 
 ## Frontmatter Contract
 
@@ -53,6 +53,7 @@ Skills live in `skills/<name>/SKILL.md`. The available skills are:
 | **Lynch** | Review verdicts | Any code | Same as Murdock + `block-lynch-writes`, `block-lynch-browser` |
 | **Stockwell** | Final review verdicts | Any code | Same as Lynch (per-feature) |
 | **Amy** | Debug scripts only | Production code, tests | Same as Murdock + `track-browser-usage`, `enforce-browser-verification` |
+| **Frankie** | Evidence bundle (`.qa-evidence/`), NEW `specs/` files | Implementation, tests, existing `specs/` files | Same as Murdock + `block-frankie-writes` |
 | **Tawnia** | Docs (CHANGELOG, README) | `src/**`, tests | Same as Murdock |
 
 **Hooks enforce these boundaries at runtime.** Agents physically cannot violate them.
@@ -68,7 +69,7 @@ Scripts in `scripts/hooks/` run at lifecycle points. Exit code 0 = allow, non-ze
 
 These fire on every tool invocation and always exit 0 (never block). The agent name is passed as a CLI argument so the API can attribute activity to the right agent.
 
-**Working agents** (Murdock, B.A., Lynch, Amy, Tawnia) all share enforcement hooks in addition to the observers:
+**Working agents** (Murdock, B.A., Lynch, Amy, Frankie, Stockwell, Tawnia) all share enforcement hooks in addition to the observers:
 - `PreToolUse(Bash)` → `block-raw-echo-log.js` — forces `ateam activity createActivityEntry` instead of raw echo
 - `Stop` → `enforce-completion-log.js` — blocks exit until `ateam agents-stop agentStop` is called
 
@@ -85,6 +86,9 @@ These fire on every tool invocation and always exit 0 (never block). The agent n
 - `PreToolUse(mcp__plugin_playwright)` → `track-browser-usage.js` — tracks Playwright tool usage without blocking; used for telemetry to verify Amy actually performed browser verification
 - `PreToolUse(Skill)` → `track-browser-usage.js` — same tracking when Amy invokes browser via a Skill
 - `Stop` → `enforce-browser-verification.js` — blocks Amy from completing without evidence of browser verification for UI features (checks work log for browser activity before allowing exit)
+
+**Frankie** has an additional hook:
+- `PreToolUse(Write|Edit)` → `block-frankie-writes.js` — blocks writes to implementation, tests, or existing `specs/` files; only his evidence bundle (`.qa-evidence/`) and NEW spec files are allowed. A mission-level agent (not per-feature) — runs once, after all items reach `done` and before Stockwell's Final Mission Review. He reports failures to Hannibal rather than bouncing items automatically — `done` is terminal, so reopening a failed item is a manual operator action, not something the hook or Frankie does.
 
 ## Dual-Registration Pattern
 
@@ -108,7 +112,7 @@ Hook scripts share utilities in `scripts/hooks/lib/`:
 **`resolve-agent.js`** — canonical agent identification:
 - `resolveAgent(hookInput)` — extracts agent name from Claude Code hook stdin JSON; returns lowercase agent name (e.g. `"ba"`, `"murdock"`) or `null`
 - `isKnownAgent(name)` — checks against `KNOWN_AGENTS` list; use for fail-open on unknown/system agents (Explore, Plan, etc.)
-- `KNOWN_AGENTS` — `['hannibal', 'face', 'sosa', 'murdock', 'ba', 'lynch', 'stockwell', 'amy', 'tawnia']`
+- `KNOWN_AGENTS` — `['hannibal', 'face', 'sosa', 'murdock', 'ba', 'lynch', 'stockwell', 'amy', 'tawnia', 'frankie']`
 
 **`send-denied-event.js`** — denied event telemetry:
 - `sendDeniedEvent({ agentName, toolName, reason })` — fire-and-forget POST to API with `status: "denied"`
@@ -144,7 +148,7 @@ In both modes, `ateam` CLI commands are the source of truth. Communication tools
 briefings → ready → testing → implementing → review → probing → done
                       Murdock    B.A.          Lynch    Amy
 ```
-Then: Final Review (Stockwell, opus, PRD+diff) → Post-Checks → Documentation (Tawnia, haiku) → Complete.
+Then: Frankie (mission-tail QA walk, evidence bundle + graduated specs) → Final Review (Stockwell, opus, PRD+diff, includes Frankie's evidence) → Post-Checks → Documentation (Tawnia, haiku) → Complete. A Stockwell rejection restarts the tail at Frankie, not at Post-Checks.
 
 ## Related Context
 

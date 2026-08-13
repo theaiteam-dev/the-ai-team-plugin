@@ -251,7 +251,7 @@ items complete, before Tawnia's final commit**:
   an evidence bundle).
 
 **The agent profile is already written and field-tested:** the standalone
-audition profile (see `prd/010-frankie-profile.md` in this branch) is the
+audition profile (see `prd/ready/010-frankie-profile.md` in this branch) is the
 source text for the plugin's agent definition — port it, don't re-invent
 it. Its hard-rules block (evidence or it didn't happen; never fix code;
 never edit `specs/`; never weaken a check; blocked walk = honest flag +
@@ -293,6 +293,13 @@ Mechanics:
   holding the steps — no handoff, no follow-up items that go stale.
   Murdock reviews them in his existing lane. They land in `specs/` under
   the protection hook, in the same PR as the feature they protect.
+  > **Deferred (2026-08-12):** "Murdock reviews them in his existing
+  > lane" is **not implemented by the implementation mission.** Frankie
+  > writes the flow files once per mission, after every work item is
+  > already `done` — at which point Murdock's per-item lane has closed,
+  > and the mission tail has no Murdock slot. The graduated specs are
+  > reviewed by Stockwell as part of the final diff instead. Adding a
+  > Murdock review step to the mission tail is follow-up work.
 - **Scope per the contract's `testing_level`:** at `critical-path`
   (default), the DoD's user-journey spine graduates every mission; at
   `full-dod`, every statement does; at `smoke`, only the entry-path.
@@ -343,6 +350,15 @@ is always one config edit after a burn. Tiers make graduation a decision
 with criteria instead of a drift.
 
 ## 3. Definition of Done (for this PRD — dogfooding §2.2)
+
+> **Scope ruling (Josh, 2026-08-12):** the implementation mission is
+> judged on **items 1–4 only**. Items 5–8 describe *pilot-mission
+> outcomes* — they can only be observed by running a real mission on
+> joshowens.dev with Frankie in the loop, not by the mission that builds
+> the machinery. They are validated by the next real mission, and item 5's
+> in-mission bounce is knowingly shipped incomplete (see the ADR on `done`
+> being terminal: Frankie reports the integration miss, but reopening the
+> item is a manual operator action rather than an automatic bounce).
 
 1. Running `/ai-team:setup` on a repo asks about (or auto-detects)
    surfaces, QA recipe (incl. `drive`), `testing_level`, evidence policy,

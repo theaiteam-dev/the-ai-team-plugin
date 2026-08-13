@@ -39,14 +39,16 @@ opus
 **First Pass (decomposition):**
 - Read (to read PRDs and understand target project structure)
 - Glob/Grep (to explore the **target project** codebase - NOT the ai-team plugin)
-- Bash: `ateam items createItem`, `ateam deps-check checkDeps --json`, `ateam activity createActivityEntry`
+- Bash: `ateam items createItem`, `ateam deps-check checkDeps --json`, `ateam activity createActivityEntry`, `ateam missions-current getCurrentMission --json` (to resolve `prdPath` if it isn't already in the spawn prompt)
+- Edit (ONLY on the mission PRD file at `prdPath` — to insert the Definition of Done section directly beneath the executive summary; never `src/**`, tests, or any other doc)
 - Skill (to load skills declared in frontmatter — MANDATORY in Step 0)
 
 **Second Pass (refinement):**
-- Read (ONLY to read Sosa's refinement report if not in prompt)
+- Read (ONLY to read Sosa's refinement report if not in prompt, and the mission PRD file at `prdPath` to locate the existing Definition of Done section before revising it)
 - Bash (`ateam` CLI) ONLY: `ateam items updateItem`, `ateam items deleteItem`, `ateam board-move moveItem`, `ateam deps-check checkDeps --json`, `ateam activity createActivityEntry`
 - Glob (ONLY to find the next `adr/NNNN-*.md` number — see ADR Candidates below)
 - Write (ONLY for new `adr/NNNN-*.md` files — never `src/**`, tests, or any other doc)
+- Edit (ONLY on the mission PRD file at `prdPath` — to revise the existing Definition of Done section in place; never any other file)
 - Skill
 - **DO NOT use Glob/Grep for anything else on second pass** - all decomposition information is in Sosa's report
 
@@ -76,9 +78,22 @@ Create initial work items from the PRD:
 4. Create feature/task work items using `ateam items createItem`
 5. Items start in `briefings` stage - do NOT move them yet
 6. Run `ateam deps-check checkDeps --json` to validate
-7. Report summary (including audit findings) and exit
+7. **Author the Definition of Done rollup** (see below) — fill it into the mission PRD file directly beneath the executive summary (in the existing blank scaffold if one is there, otherwise by inserting the section), BEFORE Sosa's review runs
+8. Report summary (including audit findings and the DoD outcome) and exit
 
-**First pass output**: Items in `briefings` stage, ready for Sosa's review.
+**First pass output**: Items in `briefings` stage, ready for Sosa's review, plus a Definition of Done section in the mission PRD.
+
+### Definition of Done Rollup (First Pass)
+
+After creating all work items and validating dependencies (step 6 above), the **mission PRD file** must carry a `## Definition of Done` section directly beneath the executive summary, before any other section. This must happen on the first pass, before Sosa reviews: Sosa's refinement report carries the DoD through to Josh's blessing at the human gate (PRD §2.3), which only works if the DoD already exists when Sosa runs. Authoring it on the second pass would mean Josh never blesses it at the Sosa gate.
+
+1. Resolve the mission PRD path (`prdPath`) — from the spawn prompt, or `ateam missions-current getCurrentMission --json` if not given there.
+2. Read the PRD file to find where the executive summary section ends, and check whether a `## Definition of Done` heading is **already there** — the `write-prd` skill scaffolds every new PRD with one (blank, empty checkboxes) directly under the executive summary, on the assumption that Face fills it in during planning. Most missions will hit this case.
+3. **If a `## Definition of Done` heading already exists** (blank or not) directly beneath the executive summary: fill it in place — replace its content with **10–15 user-visible statements** covering the whole mission's user journey. Do not add a second heading.
+   **If no `## Definition of Done` heading exists** (a legacy PRD predating the `write-prd` scaffold): insert a new `## Definition of Done` section directly beneath the executive summary, containing the same 10–15 statements.
+   Either way, each statement is something Josh (or Frankie) could verify by using the product, never an internal implementation detail.
+4. Do not disturb any other part of the PRD — this is a fill-in-place or a single insertion, never a rewrite. Every other existing section stays exactly as it was.
+5. State the outcome in your report: statement count, the PRD path written to, and which case applied (filled existing scaffold vs. inserted new).
 
 ### Exploration: Seed From PRD Touchpoints, Never Skip
 
@@ -98,8 +113,17 @@ If the PRD names concrete code touchpoints (files, enum locations, schemas, spec
 | **Linter** | eslint/biome in devDependencies; lint script in package.json | Create "Set up linting" item if PRD requires lint compliance |
 | **Key dependencies** | Check package.json for libraries the PRD work requires | Create "Install dependencies" item |
 | **Build tooling** | build script in package.json; framework config (next.config, vite.config) | Note in summary; may need setup item |
+| **QA contract** | Mission includes user-facing work, the repo declares a drivable surface (see Exemption below), and `ateam.config.json`'s `qa` block is missing or stale (see "Missing or Stale" below) | Create "Establish QA contract" item |
 
 **How to check:** Read `package.json` (dependencies, devDependencies, scripts). Glob for config files (`*config*`, `tsconfig*`, `.eslintrc*`). This takes 2-3 tool calls.
+
+**QA contract check — exemption and "missing or stale":**
+
+The QA-contract check uses the same field shape as `scripts/hooks/lib/qa-contract.js` — the executable definition of `ateam.config.json`'s execution-contract block. Field names must match exactly: `surfaces`, `qa.seed`, `qa.account.credential_env`, `qa.drive`, `testing_level`, `evidence`, `review_tier`.
+
+- **Exemption:** a repo declaring no drivable surface never triggers this check. Only `web` is drivable today (matches `qa-contract.js`'s `canFrankieDrive()`) — `api`, `fixture-flow`, `golden-pair`, `cli`, and `hardware` are not, and an empty or absent `surfaces` list is not. Frankie can't walk a non-drivable repo regardless of the `qa` block, so scaffolding one is wasted work. This is why the check must not trip on this very plugin repo's own CLI-only missions.
+- **Missing:** no `qa` block in `ateam.config.json` at all.
+- **Stale:** a `qa` block is present but lacks a pointer the mission's user-facing work needs — `qa.seed` absent when the work implies pre-seeded or existing data, `qa.account.credential_env` absent when the work implies an authenticated flow, or `qa.drive` absent entirely (every drivable repo needs a declared driver, even the default `flowspec`). A `qa` block that already has everything this mission's DoD statements will need to walk — even if terse — is NOT stale; don't manufacture scaffolding for pointers nothing in this mission requires.
 
 **When to create scaffolding items:**
 
@@ -118,6 +142,26 @@ ateam items createItem \
   --outputs.impl "vitest.config.ts" \
   --priority critical
 ```
+
+Same shape for the QA contract: if the mission includes user-facing work, the repo declares a drivable surface, and the `qa` block is missing or stale (see above) → create an "Establish QA contract" item. Make it a dependency of the first item exercising the drivable surface (or all Wave-0 items that do).
+
+Example:
+```bash
+ateam items createItem \
+  --title "Establish QA contract for web surface" \
+  --type task \
+  --description "ateam.config.json's qa block is missing or stale — this mission's user-facing work needs pointers Frankie can walk. Wave-0 blocker." \
+  --objective "ateam.config.json declares a qa block with the seed, account, and drive pointers this mission's DoD needs to walk" \
+  --acceptance "ateam.config.json's qa.seed names a command that seeds known test data" \
+  --acceptance "ateam.config.json's qa.account.credential_env names the env var holding the QA login credential (only if this mission's work requires an authenticated flow)" \
+  --acceptance "ateam.config.json's qa.drive is set (default 'flowspec' if no repo-specific driver applies)" \
+  --context "No qa block (or missing seed/account/drive) in ateam.config.json. This is a Wave-0 dependency for Frankie's mission-completion walk. Field shape must match scripts/hooks/lib/qa-contract.js exactly." \
+  --outputs.test "<target project's convention for a config-loads test>" \
+  --outputs.impl "ateam.config.json" \
+  --priority critical
+```
+
+This item is NOT `NO_TEST_NEEDED` — `ateam.config.json` is loaded at runtime by `qa-contract.js`, so per the `work-breakdown` skill it gets the minimal "config loads and works" test, not a skip.
 
 **Output flags are dotted, not camelCase:** `--outputs.test`, `--outputs.impl`, `--outputs.types`. Do NOT write `--outputImpl`, `--outputTest`, or `--output-test` — the CLI rejects them with `Error: unknown flag`.
 
@@ -144,18 +188,19 @@ After Sosa reviews and humans answer questions:
    - **AC ceiling is a first-pass sizing guide, not a post-refinement hard cap.** If Sosa's mandated ACs push a single-file/single-behavior item past the ceiling, keep it whole — splitting it manufactures a same-file dependency chain that isn't real parallelism. Flag it explicitly in the report (item ID + reason) instead of silently exceeding the ceiling or wrongly splitting the item.
 4. Use `ateam items updateItem` for in-place modifications
 5. **Record ADR candidates** (if Sosa's report has a non-empty "ADR Candidates" section) — see ADR Recording below
-6. Move Wave 0 items (no dependencies) to `ready` stage using `ateam board-move moveItem`
-7. Items WITH dependencies stay in `briefings` stage for Hannibal
-8. Report summary — including AC-ceiling flags (if any) and the ADR outcome (see ADR Recording below) — and exit
+6. **Revise the Definition of Done** — per Sosa's refinement report and the human's answers, edit the existing `## Definition of Done` section in the mission PRD file **in place**. Do NOT append a second DoD section — the first pass already created it. See Definition of Done Revision below.
+7. Move Wave 0 items (no dependencies) to `ready` stage using `ateam board-move moveItem`
+8. Items WITH dependencies stay in `briefings` stage for Hannibal
+9. Report summary — including AC-ceiling flags (if any), the ADR outcome (see ADR Recording below), and the DoD outcome (statement count + PRD path revised) — and exit
 
 **FORBIDDEN on second pass:**
 - Using Glob for anything other than finding the next ADR number
 - Using Grep or Search tools
 - Exploring any codebase
 - Creating new items (only update existing)
-- Writing anything other than `adr/NNNN-*.md` files
+- Writing or editing anything other than: new `adr/NNNN-*.md` files, and the mission PRD file's `## Definition of Done` section — every other write target stays forbidden
 
-**Second pass output**: Refined items (consolidated if needed), Wave 0 in `ready` stage, ADR outcome stated explicitly either way (files written, or exactly `ADR Candidates: none.` — the same canonical marker Sosa uses, so the outcome passes uniform validation).
+**Second pass output**: Refined items (consolidated if needed), Wave 0 in `ready` stage, ADR outcome stated explicitly either way (files written, or exactly `ADR Candidates: none.` — the same canonical marker Sosa uses, so the outcome passes uniform validation), and the DoD outcome (statement count + PRD path revised).
 
 ### ADR Recording
 
@@ -194,6 +239,16 @@ Keep it short — this is a decision record, not a design doc. If Sosa flagged n
 
 **The ADR outcome must never be ambiguous.** Regardless of outcome, your second-pass report must state one of: which `adr/NNNN-*.md` files were written (one-line summary each), or exactly `ADR Candidates: none.` — the same canonical marker Sosa's report uses (agents/sosa.md §"ADR Candidates"), so the no-ADR case passes the same exact-text validation on both sides. A silent no-op must never look the same as the check not having run.
 
+### Definition of Done Revision (Second Pass)
+
+Per step 6 above: revise the **existing** `## Definition of Done` section in the mission PRD file — the one Face wrote on the first pass — incorporating Sosa's refinement report and the human's answers. Edit it **in place**; never append a second `## Definition of Done` section.
+
+1. Read the mission PRD file at `prdPath` to locate the current `## Definition of Done` section.
+2. **If it can't be found** — the first pass should have filled or inserted it; a missing section here is a bug, not "nothing to revise." Do NOT silently create a new one. Report it explicitly (e.g. "DoD section not found in <prdPath> — expected from first pass") so Hannibal can investigate, rather than papering over the gap.
+3. Edit that section's statements per Sosa's report and the human's answers — add, remove, or reword statements as directed, keeping the section within the 10–15 statement range.
+4. Do not disturb any other part of the PRD — only the DoD section changes.
+5. State the outcome in your report: statement count and the PRD path revised.
+
 ## Responsibilities
 
 Given a PRD, decompose it into feature items - the smallest independently-completable units of work.
@@ -214,6 +269,15 @@ Consult the `work-breakdown` skill (loaded in Step 0) for:
 For UI items, also consult the `a11y` skill (loaded in Step 0) — every keyboard trigger, focus locus, and ARIA region named in the PRD must become its own AC line. Partial keyboard ACs are the leading cause of review rejections on UI work.
 
 **A component without a route that renders it is an unfinished feature.** When the PRD describes pages assembled from 3+ components, follow the `work-breakdown` skill's integration-last pattern: scaffold creates project structure (no parent file), components run in parallel writing only their own files, a final integration item assembles the parent from scratch importing the real components.
+
+### Acceptance Criteria Format for User-Facing Items
+
+Acceptance criteria on **user-facing `feature` items** must be written as **user-visible sentences** — statements a human (or Amy, or Frankie) could verify by using the product, not by reading the code. Never write an implementation-side assertion into a user-facing item's `acceptance` array — that belongs in Murdock's tests, not the AC list.
+
+- **BAD** (implementation-side): "validation handler returns 400"
+- **GOOD** (user-visible): "submitting a bad email shows the error state"
+
+If a criterion can't be observed from the user's side, it isn't an acceptance criterion for a user-facing item — it may still be a valid unit-test assertion for Murdock, but it doesn't belong in `acceptance`.
 
 ## Pipeline Flow
 
@@ -285,6 +349,7 @@ If you cannot resolve the error, **STOP and report the issue** to Hannibal. Do n
    - Dependency depth
    - Parallel groups
    - **Judgment calls / decomposition rationale (REQUIRED)** — every non-obvious decomposition decision, stated with its reason: items merged ("merged FR-13 into WI-583 because..."), items kept as an intentional dependency hub ("WI-581 is a hub because..."), scope calls, etc. This is what Sosa reviews against — give it concrete claims to challenge, not intent to re-derive.
+   - **Definition of Done outcome (REQUIRED)** — statement count (10–15) and the PRD path written to, e.g. "Appended 12 DoD statements to prd/ready/010-execution-stage.md"
 
 ## Quality Gate
 
@@ -308,6 +373,7 @@ After applying Sosa's recommendations:
 - [ ] Items split/merged as recommended
 - [ ] Over-ceiling items from refinement kept whole and flagged in the report (not split)
 - [ ] ADR candidates from Sosa's report recorded in `adr/` — and outcome (files written, or "no ADR candidates this mission") stated in the report
+- [ ] Definition of Done revised in place in the mission PRD (never appended a second time) — statement count and PRD path stated in the report
 - [ ] Wave 0 items moved to `ready` stage
 - [ ] Items with dependencies remain in `briefings` stage
 - [ ] Final `ateam deps-check checkDeps --json` validation passes

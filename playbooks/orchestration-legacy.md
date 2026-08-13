@@ -187,7 +187,9 @@ LOOP CONTINUOUSLY:
         new_task = dispatch Murdock in background
         active_tasks[item_id] = new_task.id
 
-    # When finalReviewReady: true → dispatch Lynch for Final Review
+    # When finalReviewReady: true → dispatch Frankie's mission-tail walk first
+    # (see "Frankie Mission-Tail Dispatch" below), then Stockwell for Final
+    # Mission Review — never skip straight to Stockwell.
 
     # Brief pause then repeat
 ```
@@ -423,9 +425,40 @@ Read current assignments from board:
 ateam board getBoard --json
 ```
 
+## Frankie Mission-Tail Dispatch
+
+When ALL items reach `done` stage, dispatch Frankie BEFORE Stockwell's Final Mission Review — his evidence bundle and graduated specs must already be part of the diff Stockwell reviews, so evidence never ships stale. Fetch `prdPath` and the mission identifier (`missionId`) from `ateam missions-current getCurrentMission --json` — `missionId` also names Frankie's evidence directory, `.qa-evidence/{missionId}/`.
+
+**Always spawn a new Frankie agent** (not pre-warmed, runs once — like Stockwell and Tawnia):
+
+```
+Task(
+  subagent_type: "ai-team:frankie",
+  run_in_background: true,
+  description: "Frankie: mission-tail QA walk",
+  prompt: "You are Frankie, walking this mission's Definition of Done against the running app as a first-time user.
+
+  PRD path: {prdPath from ateam missions-current getCurrentMission}
+  Mission: {missionId}
+  Evidence dir: .qa-evidence/{missionId}/
+
+  Read the mission's DoD from the PRD and the execution contract from ateam.config.json. Walk every DoD statement from the user's front door, write the evidence bundle, and graduate specs per the contract's testing_level.
+
+  When done, report the checklist result, the evidence bundle path, and any failing work item IDs."
+)
+```
+
+Poll with TaskOutput as usual.
+
+**On success** (Frankie's report shows a clean walk, no failing items): proceed to Final Mission Review Dispatch (below).
+
+**On failure** (Frankie names one or more failing work items): the mission tail HALTS here — do NOT proceed to Stockwell. Surface the failing items to the operator; this is a manual operator action, not an automated bounce — `done` is terminal in `TRANSITION_MATRIX` and reopening a completed item is outside the pipeline.
+
+**Any rework** — whether the operator manually reopens a failing item after a Frankie flag, or Stockwell's verdict is FINAL REJECTED and named items are sent back to rework — that returns work items to `done` again RESTARTS the mission tail at Frankie. Frankie re-walks the FULL Definition of Done (every statement, not only the ones that previously failed), because a fix for one failure can break a neighboring statement.
+
 ## Final Mission Review Dispatch
 
-When ALL items reach `done` stage, fetch `prdPath` from `ateam missions-current getCurrentMission --json`, then dispatch:
+When ALL items reach `done` stage AND Frankie's walk succeeded (see "Frankie Mission-Tail Dispatch" above — never dispatch Stockwell before Frankie), fetch `prdPath` from `ateam missions-current getCurrentMission --json`, then dispatch:
 
 ```
 Task(
@@ -454,6 +487,8 @@ Task(
 ```
 
 Poll with TaskOutput as usual.
+
+**If REJECTED:** do not proceed to post-checks. Named items return to a rework stage; once every named item is back in `done`, the mission tail restarts at Frankie (see "Frankie Mission-Tail Dispatch" above) — not at post-checks — so the evidence bundle Stockwell eventually reviews always reflects the final code.
 
 ## Tawnia Dispatch
 

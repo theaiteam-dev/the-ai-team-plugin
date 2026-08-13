@@ -144,6 +144,12 @@ briefings → ready → testing → implementing → review → probing → done
                                                    (MANDATORY)    │
                                                                   ▼
                                                         ┌─────────────────┐
+                                                        │  Frankie Walk   │
+                                                        │ (mission tail)  │
+                                                        └────────┬────────┘
+                                                                 │
+                                                                 ▼
+                                                        ┌─────────────────┐
                                                         │  Final Review   │
                                                         │  (Stockwell)    │
                                                         └────────┬────────┘
@@ -181,7 +187,7 @@ briefings → ready → testing → implementing → review → probing → done
 3. `implementing → review`: Lynch reviews ALL outputs together
 4. `review → probing`: Lynch approves → **Amy MUST investigate** (NOT optional)
 5. `probing → done`: Amy verifies (or back to ready if bugs found)
-6. `all done → final review`: Lynch reviews entire codebase holistically
+6. `all done → Frankie's mission-tail walk → final review`: Frankie walks the mission's full Definition of Done against the running app first (a fresh, non-pre-warmed agent). A failure halts the tail and surfaces to the operator — reopening a `done` item is a manual operator action, not an automated bounce. Once Frankie's walk is clean, Stockwell reviews entire codebase holistically (including Frankie's evidence bundle and graduated specs). Any rework that returns items to `done` — from a Frankie failure or a Stockwell rejection — restarts the tail at Frankie, who re-walks the FULL Definition of Done.
 7. `final review → post-checks`: Run lint, unit, e2e tests
 8. `post-checks → documentation`: **Tawnia MUST run** (NOT optional)
 9. `documentation → complete`: Tawnia creates final commit, mission complete
@@ -322,12 +328,14 @@ WIP limits are **per stage** — each pipeline column independently caps how man
    - Use `ateam deps-check checkDeps` to find items ready to move from briefings → ready
    - Start new features if per-stage WIP limits allow (check instance availability, not global count)
 
-6. **Final Mission Review (Stockwell):**
-   - When ALL items reach `done` stage, dispatch Stockwell for final review
-   - Stockwell reviews PRD + diff for cross-cutting issues
+6. **Frankie's Mission-Tail Walk, then Final Mission Review (Stockwell):**
+   - When ALL items reach `done` stage, dispatch Frankie FIRST for the mission-tail QA walk — a fresh, non-pre-warmed agent (see the loaded orchestration playbook's "Frankie Mission-Tail Dispatch" section)
+   - If Frankie's walk fails (names failing work items): HALT the tail here — do NOT dispatch Stockwell. Surface the failing items to the operator; reopening a `done` item is a manual operator action, not an automated bounce (`done` is terminal in `TRANSITION_MATRIX`)
+   - Once Frankie's walk is clean, dispatch Stockwell for final review
+   - Stockwell reviews PRD + diff for cross-cutting issues, including Frankie's evidence bundle and graduated specs
    - Focus: PRD compliance, consistency, security, integration
    - If FINAL APPROVED → proceed to post-checks
-   - If FINAL REJECTED → specified items return to pipeline
+   - If FINAL REJECTED → specified items return to pipeline; once every named item is back in `done`, the mission tail RESTARTS at Frankie (not post-checks) — Frankie re-walks the FULL Definition of Done
 
 7. **Post-Mission Checks:**
    **GATE: Stockwell's Final Mission Review MUST have completed before running postchecks.**

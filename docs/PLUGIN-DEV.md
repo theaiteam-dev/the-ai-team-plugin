@@ -146,6 +146,7 @@ ai-team/
 │       ├── block-lynch-browser.js       # Block Playwright (Lynch + Stockwell)
 │       ├── block-lynch-writes.js        # Block file writes (Lynch)
 │       ├── block-sosa-writes.js         # Block all writes (Sosa)
+│       ├── block-frankie-writes.js      # Block impl/test/existing-specs writes (Frankie)
 │       ├── block-worker-board-move.js   # Block board_move (workers)
 │       ├── block-worker-board-claim.js  # Block board_claim (workers)
 │       ├── enforce-agent-start.js       # Require agentStart before work (workers)
@@ -198,7 +199,7 @@ These hooks fire for all sessions where the plugin is enabled:
 - **SubagentStart/Stop** (no matcher): `observe-subagent.js` — logs subagent lifecycle events
 - **TeammateIdle/TaskCompleted** (no matcher): `observe-teammate.js` — logs native teams events
 
-### Shared Working Agent Hooks (Murdock, B.A., Lynch, Stockwell, Amy, Tawnia)
+### Shared Working Agent Hooks (Murdock, B.A., Lynch, Stockwell, Amy, Frankie, Tawnia)
 
 All working agents share these hooks in their frontmatter:
 
@@ -209,7 +210,7 @@ All working agents share these hooks in their frontmatter:
 - **PostToolUse(no matcher)** → `observe-post-tool-use.js {agent}`: Telemetry
 - **Stop** → `observe-stop.js {agent}`: Telemetry
 
-Pipeline workers (Murdock, B.A., Lynch, Amy) use `enforce-handoff.js` as their Stop hook — it validates both `agentStop` lifecycle AND peer-to-peer handoff routing. Terminal agents (Tawnia, Stockwell) use `enforce-completion-log.js` instead — they complete without forwarding.
+Pipeline workers (Murdock, B.A., Lynch, Amy) use `enforce-handoff.js` as their Stop hook — it validates both `agentStop` lifecycle AND peer-to-peer handoff routing. Terminal agents (Tawnia, Stockwell, Frankie) use `enforce-completion-log.js` instead — they complete without forwarding. The mission tail runs all-items-done → Frankie → Stockwell → post-checks → Tawnia: Frankie runs once per mission (not a pooled pipeline agent, no peer handoff), reports failures to Hannibal rather than bouncing items automatically (`done` is terminal — no automated reopening), and a Stockwell rejection later in the tail restarts at Frankie, not at post-checks.
 
 ### Per-Agent Unique Hooks
 
@@ -218,6 +219,7 @@ Pipeline workers (Murdock, B.A., Lynch, Amy) use `enforce-handoff.js` as their S
 **Lynch**: `block-lynch-writes.js` + `block-lynch-browser.js` — prevents file writes and browser tools
 **Stockwell**: `block-lynch-browser.js` — prevents browser tools (read-only reviewer)
 **Amy**: `block-amy-writes.js` + `track-browser-usage.js` + `enforce-browser-verification.js`
+**Frankie**: `block-frankie-writes.js` — prevents writing implementation, tests, or existing `specs/` files; only his evidence bundle and new spec files are allowed
 **Sosa**: `block-sosa-writes.js` + `enforce-sosa-coverage.js`
 **Hannibal**: `block-hannibal-writes.js` + `block-raw-mv.js` + `enforce-final-review.js`
 

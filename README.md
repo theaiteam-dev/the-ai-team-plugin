@@ -60,6 +60,8 @@ Agents interact with the API via the `ateam` CLI binary (`${CLAUDE_PLUGIN_ROOT}/
 | **B.A.** | Implementer | `clean-code-architect` | Builds solid, reliable code. No jibber-jabber. |
 | **Lynch** | Reviewer | `code-review-expert` | Reviews tests + implementation together. |
 | **Amy** | Investigator | `bug-hunter` | Probes every feature for bugs beyond tests. |
+| **Frankie** | QA / Demo Man | `ai-team:frankie` | Walks the mission's Definition of Done against the running app. Verifies and evidences — never fixes. |
+| **Stockwell** | Reviewer | `ai-team:stockwell` | Final Mission Review — holistic PRD+diff review of the whole codebase. |
 | **Tawnia** | Documentation | `clean-code-architect` | Updates docs and makes the final commit. |
 
 ## Getting Started
@@ -174,7 +176,7 @@ The dashboard provides two views:
 
 ### Raw Agent View (NEW)
 - **Real-time observability** into agent tool calls via observer hooks
-- **Swim lanes** showing each agent's activity (Hannibal, Face, Sosa, Murdock, B.A., Lynch, Amy, Tawnia)
+- **Swim lanes** showing each agent's activity (Hannibal, Face, Sosa, Murdock, B.A., Lynch, Amy, Frankie, Stockwell, Tawnia)
 - **Tool call timeline** with PreToolUse, PostToolUse, and Stop events
 - **Duration tracking** showing how long each tool call took (e.g., "Write took 1.2s")
 - **Filtering controls** to view specific agents, tools, or event types
@@ -253,9 +255,16 @@ briefings → ready → testing → implementing → review → probing → done
                                           (per-feature)           │
                                                                   ▼
                                                         ┌─────────────────┐
+                                                        │  Frankie Walk   │
+                                                        │ (mission tail)  │
+                                                        └────────┬────────┘
+                                                                 │
+                                                                 ▼
+                                                        ┌─────────────────┐
                                                         │  Final Review   │
-                                                        │  (Lynch - all   │
-                                                        │   code at once) │
+                                                        │  (Stockwell -   │
+                                                        │   all code at   │
+                                                        │      once)      │
                                                         └────────┬────────┘
                                                                  │
                                                                  ▼
@@ -277,7 +286,7 @@ briefings → ready → testing → implementing → review → probing → done
 3. `implementing → review`: Lynch reviews ALL outputs together
 4. `review → probing`: Amy probes for bugs beyond tests (APPROVED)
 5. `probing → done`: Feature complete (VERIFIED), or back to ready (FLAG)
-6. `all done → final review`: Lynch reviews entire codebase holistically
+6. `all done → Frankie's mission-tail walk → final review`: Frankie walks the mission's full Definition of Done against the running app first (a fresh, non-pre-warmed agent). A failure halts the tail and surfaces to the operator — reopening a `done` item is a manual operator action, not an automated bounce. Once Frankie's walk is clean, Stockwell reviews entire codebase holistically (including Frankie's evidence bundle and graduated specs). Any rework that returns items to `done` — from a Frankie failure or a Stockwell rejection — restarts the tail at Frankie, who re-walks the FULL Definition of Done.
 7. `final review → post-checks`: Run `ateam missions-postcheck missionPostcheck` (lint, unit, e2e)
 8. `post-checks → documentation`: Tawnia updates CHANGELOG, README, docs/
 9. `documentation → complete`: Tawnia creates final commit with all co-authors
@@ -362,14 +371,14 @@ Each feature flows: **Murdock → B.A. → Lynch → Amy**
 
 ### Final Mission Review
 
-When ALL features are complete, Lynch performs a holistic review of the entire codebase:
+When ALL features reach `done`, Frankie walks the mission's full Definition of Done against the running app first (a fresh, non-pre-warmed agent) and produces an evidence bundle. A failure halts the tail and surfaces to the operator — reopening a `done` item is manual, not an automated bounce. Once Frankie's walk is clean, Stockwell performs a holistic review of the entire codebase, including Frankie's evidence bundle and graduated specs:
 - **Readability & consistency** across all files
 - **Race conditions & async issues** in concurrent code
 - **Security vulnerabilities** (injection, auth gaps, input validation)
 - **Code quality** (DRY violations, coupling, performance)
 - **Integration issues** between modules
 
-If issues are found, specific items return to the pipeline for fixes.
+If issues are found, specific items return to the pipeline for fixes; once they're back in `done`, the mission tail restarts at Frankie, not at post-checks.
 
 ### Mission Lifecycle Checks
 
@@ -656,6 +665,7 @@ ai-team/                     # Installed via marketplace or git submodule
 │       ├── block-amy-test-writes.js     # Block test file writes (Amy)
 │       ├── block-lynch-browser.js       # Block Playwright (Lynch)
 │       ├── block-sosa-writes.js         # Block all writes (Sosa)
+│       ├── block-frankie-writes.js      # Block impl/test/existing-specs writes (Frankie)
 │       ├── block-worker-board-move.js   # Block board_move (workers)
 │       ├── block-worker-board-claim.js  # Block board_claim (workers)
 │       ├── track-browser-usage.js       # Track browser tool usage (Amy)
@@ -689,26 +699,7 @@ Hook scripts live in `scripts/hooks/`. Exit code 0 = allow, non-zero = block.
 
 ## Project Configuration
 
-`ateam.config.json` (created by `/ai-team:setup`):
-
-```json
-{
-  "packageManager": "pnpm",
-  "checks": {
-    "lint": "pnpm run lint",
-    "unit": "pnpm test:unit",
-    "e2e": "pnpm exec playwright test"
-  },
-  "precheck": ["lint", "unit"],
-  "postcheck": ["lint", "unit", "e2e"],
-  "devServer": {
-    "url": "http://localhost:3000",
-    "start": "docker compose up",
-    "restart": "docker compose restart",
-    "managed": false
-  }
-}
-```
+`ateam.config.json` is created by `/ai-team:setup`, which auto-detects and asks for every field — package manager, checks, dev server, and the execution contract (drivable surfaces, QA recipe, testing level, evidence policy, review tier). See `commands/setup.md` (Step 6) for the canonical template and full field reference. This file doesn't duplicate it — see `adr/0006-ateam-config-schema-deferred.md` for why a second copy is exactly how this file's fields have drifted before.
 
 ## Development
 

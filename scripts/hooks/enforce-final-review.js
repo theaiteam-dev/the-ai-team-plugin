@@ -19,8 +19,10 @@
  *   __TEST_MOCK_NO_MISSION__ - Set to 'true' to simulate no active mission
  */
 
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
 import { resolveAgent, isKnownAgent } from './lib/resolve-agent.js';
+import { readExecutionContract, canFrankieDrive } from './lib/qa-contract.js';
 
 // Read hook input from stdin (optional — old callers may not pipe stdin)
 let hookInput = {};
@@ -131,6 +133,32 @@ async function checkFinalReview() {
     process.stderr.write(`Status: ${summary}\n`);
     process.stderr.write(`Done: ${doneCount}\n`);
     process.exit(2);
+  }
+
+  // Frankie's mission-tail walk precedes Stockwell's Final Mission Review —
+  // on a repo with a drivable surface, block until his evidence bundle
+  // exists on disk (only reached once totalActive === 0, i.e. every item is
+  // genuinely done — the check above already exited otherwise). Repos with
+  // no drivable surface (per canFrankieDrive()) are exempt. This gate uses
+  // the JSON decision-block format (never a nonzero exit code) — distinct
+  // from the pre-existing exit(2) gates below, which are untouched.
+  if (doneCount > 0) {
+    const contract = readExecutionContract();
+    const missionId = missionData.id;
+    // No mission id to check evidence against is itself an unexpected
+    // condition (AC7) — fail open rather than block on an unresolvable path.
+    if (missionId && canFrankieDrive(contract.surfaces)) {
+      const evidencePath = join(process.cwd(), '.qa-evidence', missionId, 'report.md');
+      if (!existsSync(evidencePath)) {
+        console.log(
+          JSON.stringify({
+            decision: 'block',
+            additionalContext: `STOP: Frankie's evidence bundle is missing. Expected: .qa-evidence/${missionId}/report.md. Dispatch Frankie to walk the mission DoD before the Final Mission Review can proceed.`,
+          })
+        );
+        process.exit(0);
+      }
+    }
   }
 
   // If all items done but no final review verdict, block stop

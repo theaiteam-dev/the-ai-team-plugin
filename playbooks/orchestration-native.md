@@ -395,7 +395,7 @@ spawn_lane(1)
 # Lane 2 spawned exactly when needed.
 ```
 
-Tawnia and Stockwell are NOT pre-warmed (each runs once at mission end — caching won't help).
+Tawnia, Stockwell, and Frankie are NOT pre-warmed (each runs once at mission end — caching won't help).
 
 ## Instance Selection
 
@@ -499,9 +499,12 @@ LOOP CONTINUOUSLY:
             if dep_item is in briefings stage:
                 Bash("ateam board-move moveItem --itemId {dep_item_id} --toStage ready")
 
-        # Proceed directly to Final Review sequence — skip Phase 4 completion detection
+        # Proceed to the mission tail — skip Phase 4 completion detection.
+        # Frankie's walk runs BEFORE Stockwell's Final Review (see "Frankie
+        # Mission-Tail Dispatch" below), so his evidence bundle and graduated
+        # specs are already part of the diff Stockwell reviews.
         finalReviewReady = true
-        break  # exit orchestration loop → proceed to Final Review
+        break  # exit orchestration loop → dispatch Frankie, then Final Review
 
     on FYI message from Amy {instanceName} (probing stage):
         # Amy verified an item but more items remain in the pipeline.
@@ -650,9 +653,11 @@ LOOP CONTINUOUSLY:
                 Bash("ateam activity createActivityEntry --agent hannibal --message 'Pipeline drained but {len(blocked_items)} item(s) blocked — awaiting human intervention' --level warn")
                 # Do NOT dispatch Stockwell — blocked items need resolution first
             else:
-                # ALL items in done — dispatch Stockwell for Final Mission Review
+                # ALL items in done — dispatch Frankie's mission-tail walk first,
+                # THEN Stockwell's Final Mission Review (see "Frankie
+                # Mission-Tail Dispatch" below) — never skip straight to Stockwell.
                 finalReviewReady = true
-                break  # exit orchestration loop → proceed to Final Review
+                break  # exit orchestration loop → dispatch Frankie, then Final Review
 
     # If not complete, loop back to Phase 1 (process next messages)
 ```
@@ -985,9 +990,10 @@ With CLI-automated pool handoffs, Hannibal receives **FYI** (successful handoff)
 "FYI: WI-003 → ba-1 (murdock-2)"          # successful handoff, no action needed
 "ALERT: WI-003 - no idle ba instance available (murdock-2)"  # queue for dispatch
 
-# Terminal agent messages (Amy, Tawnia, Stockwell → Hannibal):
+# Terminal agent messages (Amy, Frankie, Tawnia, Stockwell → Hannibal):
 "FYI: WI-003 - Probing complete. VERIFIED. (amy-1)"                          # More items remain
-"MISSION_COMPLETE: WI-007 - all items verified and in done stage. (amy-1)"   # ALL items done — triggers Stockwell
+"MISSION_COMPLETE: WI-007 - all items verified and in done stage. (amy-1)"   # ALL items done — triggers Frankie's mission-tail walk, then Stockwell
+"DONE: FRANKIE-WALK - 8/8 PASS, evidence bundle at .qa-evidence/{missionId}/"
 "DONE: docs - Updated README with commit abc123"
 "DONE: FINAL-REVIEW - FINAL APPROVED - all requirements met"
 
@@ -1199,9 +1205,38 @@ ateam pool destroy
 
 When `N=1`, instance names have no suffix (`murdock`, `ba`, `lynch`, `amy`). The pool directory still has `.idle` files (`murdock.idle`, `ba.idle`, etc.) and the claiming flow is identical — it just finds at most one file per type. The same code path handles both N=1 and N>1.
 
+## Frankie Mission-Tail Dispatch
+
+When ALL items reach `done` stage, dispatch Frankie BEFORE Stockwell's Final Mission Review — his evidence bundle and graduated specs must already be part of the diff Stockwell reviews, so evidence never ships stale. Fetch `prdPath` and the mission identifier (`missionId`) from `ateam missions-current getCurrentMission --json` (the same fields Stockwell reads below) — `missionId` also names Frankie's evidence directory, `.qa-evidence/{missionId}/`.
+
+**Always spawn a new Frankie agent** (not pre-warmed, runs once — like Stockwell and Tawnia):
+
+```text
+Agent(
+  name: "frankie",
+  subagent_type: "ai-team:frankie",
+  description: "Frankie: mission-tail QA walk",
+  prompt: "You are Frankie, walking this mission's Definition of Done against the running app as a first-time user.
+
+  PRD path: {prdPath}
+  Mission: {missionId}
+  Evidence dir: .qa-evidence/{missionId}/
+
+  Read the mission's DoD from the PRD and the execution contract from ateam.config.json. Walk every DoD statement from the user's front door, write the evidence bundle, and graduate specs per the contract's testing_level.
+
+  When done, send your terminal message to Hannibal with the checklist result, the evidence bundle path, and any failing work item IDs."
+)
+```
+
+**On success** (Frankie's terminal message reports a clean walk, no failing items): proceed to Final Mission Review Dispatch (below).
+
+**On failure** (Frankie names one or more failing work items): the mission tail HALTS here — do NOT proceed to Stockwell. Surface the failing items to the operator; this is a manual operator action, not an automated bounce — `done` is terminal in `TRANSITION_MATRIX` and reopening a completed item is outside the pipeline.
+
+**Any rework** — whether the operator manually reopens a failing item after a Frankie flag, or a Stockwell rejection below sends items back to rework — that returns work items to `done` again RESTARTS the mission tail at Frankie. Frankie re-walks the FULL Definition of Done (every statement, not only the ones that previously failed), because a fix for one failure can break a neighboring statement.
+
 ## Final Mission Review Dispatch
 
-When ALL items reach `done` stage, fetch `prdPath` from `ateam missions-current getCurrentMission --json`.
+When ALL items reach `done` stage AND Frankie's walk succeeded (see "Frankie Mission-Tail Dispatch" above — never dispatch Stockwell before Frankie), fetch `prdPath` from `ateam missions-current getCurrentMission --json`.
 
 **Always spawn a new Stockwell agent** (not pre-warmed, runs once):
 
@@ -1225,6 +1260,8 @@ Agent(
   When done, run `ateam missions-final-review writeFinalReview --missionId {missionId} --report \"...\"` to persist the review, then send DONE to Hannibal with verdict."
 )
 ```
+
+**If Stockwell rejects (FINAL REJECTED):** do not proceed to post-checks. Named items return to `ready` for rework; once every named item is back in `done`, the mission tail RESTARTS at Frankie (see "Frankie Mission-Tail Dispatch" above) — not at post-checks — so the evidence bundle Stockwell eventually reviews always reflects the final code.
 
 ## Concrete Example: N=2 Multi-Instance Pipeline with File-Based Routing
 

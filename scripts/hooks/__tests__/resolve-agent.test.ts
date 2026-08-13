@@ -68,11 +68,25 @@ describe('resolveAgent()', () => {
   it('handles non-string agent_type gracefully (boolean)', () => {
     expect(() => resolveAgent({ agent_type: true as unknown as string })).not.toThrow();
   });
+
+  // Pool-suffix stripping is gated on KNOWN_AGENTS membership — cover both branches.
+
+  it('strips the pool suffix from a known agent (frankie-1 -> frankie)', () => {
+    expect(resolveAgent({ agent_type: 'frankie-1' })).toBe('frankie');
+  });
+
+  it('keeps the suffix on an unrecognised name (notanagent-1 stays as-is)', () => {
+    expect(resolveAgent({ agent_type: 'notanagent-1' })).toBe('notanagent-1');
+  });
 });
 
 describe('isKnownAgent()', () => {
   it('returns true for known agents', () => {
     expect(isKnownAgent('murdock')).toBe(true);
+  });
+
+  it('returns true for frankie', () => {
+    expect(isKnownAgent('frankie')).toBe(true);
   });
 
   it('returns false for unknown/system agents', () => {
@@ -81,10 +95,21 @@ describe('isKnownAgent()', () => {
 });
 
 describe('KNOWN_AGENTS', () => {
-  it('contains all nine A(i)-Team agents', () => {
+  it('contains all ten A(i)-Team agents', () => {
     expect(KNOWN_AGENTS).toEqual(
-      expect.arrayContaining(['hannibal', 'face', 'sosa', 'murdock', 'ba', 'lynch', 'stockwell', 'amy', 'tawnia'])
+      expect.arrayContaining([
+        'hannibal',
+        'face',
+        'sosa',
+        'murdock',
+        'ba',
+        'lynch',
+        'stockwell',
+        'amy',
+        'tawnia',
+        'frankie',
+      ])
     );
-    expect(KNOWN_AGENTS).toHaveLength(9);
+    expect(KNOWN_AGENTS).toHaveLength(10);
   });
 });

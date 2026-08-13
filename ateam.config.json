@@ -14,6 +14,15 @@
     "restart": "docker compose restart",
     "managed": false
   },
+  "surfaces": ["web"],
+  "qa": {
+    "seed": "cd packages/kanban-viewer && npm run seed",
+    "account": { "credential_env": "ATEAM_QA_PASSWORD" },
+    "drive": "flowspec"
+  },
+  "testing_level": "critical-path",
+  "evidence": { "prd_work": "video+screenshots", "default": "screenshots" },
+  "review_tier": "hands-on",
   "pricing": {
     "models": {
       "claude-opus-4-8": {

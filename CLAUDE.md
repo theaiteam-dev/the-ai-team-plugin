@@ -17,6 +17,8 @@ The A(i)-Team is a Claude Code plugin for parallel agent orchestration. It trans
 - **B.A.** (Implementer): Implements code to pass tests (clean-code-architect subagent)
 - **Lynch** (Reviewer): Reviews tests + implementation together (code-review-expert subagent)
 - **Amy** (Investigator): Probes every feature for bugs beyond tests (bug-hunter subagent)
+- **Frankie** (QA/Demo Man): Walks the mission's Definition of Done against the running app once all items reach `done`, producing an evidence bundle — verifies and evidences, never writes implementation, tests, or existing specs
+- **Stockwell** (Reviewer): Final Mission Review — holistic PRD+diff review of the entire codebase, run after Frankie's walk succeeds
 - **Tawnia** (Documentation): Updates docs and makes final commit (clean-code-architect subagent)
 
 ### Pipeline Flow
@@ -36,6 +38,12 @@ briefings → ready → testing → implementing → review → probing → done
                     Murdock      B.A.        Lynch      Amy       │
                                           (per-feature)           │
                                                                   ▼
+                                                        ┌─────────────────┐
+                                                        │  Frankie Walk   │
+                                                        │ (mission tail)  │
+                                                        └────────┬────────┘
+                                                                 │
+                                                                 ▼
                                                         ┌─────────────────┐
                                                         │  Final Review   │
                                                         │  (Stockwell)  │
@@ -66,7 +74,7 @@ Use `ateam deps-check checkDeps --json` to see which items are ready. Within a w
 
 **True Individual Item Tracking:** Items advance immediately when their agent completes - no waiting for batch completion. In legacy mode, Hannibal polls TaskOutput for each background agent individually. In native teams mode, pipeline agents (Murdock → B.A. → Lynch → Amy) hand off directly to each other via START messages — Hannibal receives only FYI (handoff succeeded) or ALERT (handoff failed/timed out) messages and intervenes only on ALERT. In both modes, agents signal completion via `ateam agents-stop agentStop`.
 
-When ALL features reach `done`, Lynch performs a **Final Mission Review** of the entire codebase, checking for cross-cutting issues (consistency, race conditions, security, code quality).
+When ALL features reach `done`, Frankie walks the mission's full Definition of Done against the running app first (a fresh, non-pre-warmed agent, mission tail — see `agents/frankie.md`). A failure halts the tail and surfaces to the operator; reopening a `done` item is manual, not an automated bounce. Once Frankie's walk is clean, Stockwell performs a **Final Mission Review** of the entire codebase, checking for cross-cutting issues (consistency, race conditions, security, code quality) — his review includes Frankie's evidence bundle and graduated specs. A Stockwell rejection restarts the tail at Frankie once the named items are back in `done`.
 
 ### Data Storage
 
@@ -136,6 +144,7 @@ The `outputs` field is critical - without it, Murdock and B.A. don't know where 
 - **B.A.**: Writes ONLY implementation. Tests already exist from Murdock. In native teams mode, ACKs Murdock's START, then sends a START to Lynch after `agentStop --advance`.
 - **Lynch / Stockwell**: Reviews only. Does NOT write code. In native teams mode, Lynch sends START to Amy (approved) or peer rejection to Murdock/B.A. (rejected), then FYI/ALERT to Hannibal.
 - **Amy**: Investigates only. Does NOT write production code or tests. Reports findings with proof. In native teams mode, sends FYI/ALERT to Hannibal only (no downstream peer handoff).
+- **Frankie**: Verifies and evidences only. Does NOT write implementation, tests, or existing `specs/` files — walks the mission's DoD against the running app, writes his evidence bundle and new flow files, and reports failures to Hannibal. Never bounces items automatically: `done` is terminal, so reopening a failed item is a manual operator action.
 - **Tawnia**: Writes documentation only (CHANGELOG, README, docs/). Does NOT modify source code or tests. Makes the final commit.
 
 ### Stage Transitions
@@ -162,9 +171,12 @@ Every feature MUST flow through ALL stages. Skipping stages is NOT permitted.
 5. If rejected at any stage (max 2 times), item goes to `blocked`
 
 **Mission Completion (after ALL items reach done):**
-6. **Stockwell** performs **Final Mission Review** (PRD+diff scoped holistic review)
-7. **Post-checks** run (lint, unit, e2e)
-8. **Tawnia** updates documentation and creates final commit ← MANDATORY, NOT OPTIONAL
+6. **Frankie** walks the mission's full Definition of Done against the running app and produces an evidence bundle ← MANDATORY, RUNS BEFORE Stockwell. A failure halts here and surfaces to the operator (no automated bounce — `done` is terminal).
+7. **Stockwell** performs **Final Mission Review** (PRD+diff scoped holistic review, including Frankie's evidence)
+8. **Post-checks** run (lint, unit, e2e)
+9. **Tawnia** updates documentation and creates final commit ← MANDATORY, NOT OPTIONAL
+
+A Stockwell rejection restarts the tail at Frankie (not post-checks) once the named items are back in `done`, so the evidence bundle always reflects the final code.
 
 **A mission is NOT complete until Tawnia commits.** No shortcuts.
 
@@ -231,7 +243,8 @@ Model selection is defined in each agent's frontmatter (`agents/*.md`) — do NO
 - Amy: `subagent_type: "ai-team:amy"` → probing stage (EVERY feature, no exceptions)
 
 **Mission Completion (MANDATORY):**
-- Stockwell: `subagent_type: "ai-team:stockwell"` → Final Mission Review (PRD+diff scoped)
+- Frankie: `subagent_type: "ai-team:frankie"` → mission-tail QA walk, once all items reach `done` and BEFORE Stockwell. A fresh, non-pre-warmed agent.
+- Stockwell: `subagent_type: "ai-team:stockwell"` → Final Mission Review (PRD+diff scoped), runs only after Frankie's walk succeeds
 - Tawnia: `subagent_type: "ai-team:tawnia"` → after post-checks pass
 
 ## ateam CLI
@@ -280,7 +293,7 @@ Usage: `ateam <resource> <command> [flags]`
 
 ### Agent Lifecycle Commands
 
-Working agents (Murdock, B.A., Lynch, Stockwell, Amy, Tawnia) use lifecycle commands:
+Working agents (Murdock, B.A., Lynch, Amy, Frankie, Stockwell, Tawnia) use lifecycle commands:
 
 **Start** (`ateam agents-start agentStart`):
 ```bash

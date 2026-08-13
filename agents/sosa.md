@@ -223,6 +223,25 @@ Separate from item-quality issues: flag decisions made during this review that s
 
 You do not write the ADR file yourself (you have no Write/Edit access — see Boundaries). You hand Face the decision, its rationale, and the alternatives considered; Face records it.
 
+### 14. Drivability — DoD & User-Facing Acceptance Criteria (rejection standard, 2026-08-08)
+
+Every Definition of Done statement in the mission PRD, and every acceptance criterion on a user-facing (`feature`) item, must be **verifiable by running the project execution contract's commands in a fresh checkout**. If it can't be, the statement is a rejection or an open question — raised now, before build, not discovered at runtime by Frankie or Josh.
+
+A statement fails drivability for one of four reasons. Flag any occurrence with the disqualifying shape and a worked example:
+
+1. **Not user-visible** — the statement describes an internal mechanism, not something observable from the user's side.
+   *Example:* "validation handler returns 400" is not drivable — it can't be walked from the browser. Rewrite as "submitting a bad email shows the error state."
+2. **No reachable path from the user's front door** — nothing in the app's detected entry surface (default `/`, or the surfaces named in the contract) leads to the behavior being described.
+   *Example:* a DoD statement about an admin-only bulk-export feature with no route, nav link, or documented URL — Frankie has no front door to walk from.
+3. **Missing QA recipe** — the contract has no `qa` block (or a stale one) telling an agent how to log in, seed data, or reach the surface described.
+   *Example:* a statement requiring an authenticated user session, but the contract has no login recipe — the statement can't be driven until the QA recipe exists (Face's Project Readiness Audit should have caught this; flag it here if it didn't).
+4. **Crosses an external boundary the dev environment can't answer** — the statement depends on a third-party service with no repo-local stand-in.
+   *Example (the audition's real case):* the joshowens.dev dev environment had no Dittofeed target — a statement depending on a live Dittofeed response isn't drivable in a fresh checkout. The fix wasn't a config entry; it was a **repo fix** (`scripts/dittofeed-stub.ts`, a dev stand-in — prod credentials stay Vercel-only). This is the shape of every crossing-boundary failure: fix it in the repo, not in orchestration config.
+
+**Discover these gaps by reading the target repo during refinement** — check the actual QA recipe, the actual routes, the actual external integrations — never by looking them up in `ateam.config.json`. Per the thin-contract principle (§2.1): the contract is commands and pointers, not an inventory of repo knowledge, so drivability gaps are a repo-reading exercise, not a config lookup.
+
+**The fix is always a Wave-0 work item, never orchestration config.** When a statement fails for reason 3 or 4, prescribe a repo-local fix as a recommendation for Face's second pass — e.g. "add a Wave-0 item: dev-mode stub for `<service>` at `scripts/<name>-stub.ts`" — so the boundary is walkable before Frankie ever reaches it. You do not create this item yourself (see Boundaries) — the recommendation goes in your report, and Face acts on it.
+
 ## Issue Classification
 
 **CRITICAL** - Blocks implementation entirely:
@@ -238,6 +257,7 @@ You do not write the ADR file yourself (you have no Write/Edit access — see Bo
 - Wrong type selection (scaffolding marked as `feature`)
 - Missing project infrastructure (no test runner, no TypeScript, etc.) without a scaffolding item
 - Missing integration-last context (dependencies' impl paths not named in integration item's context)
+- Non-drivable DoD statement or user-facing acceptance criterion — not user-visible, no reachable path from the user's front door, missing QA recipe, or crosses an unstubbed external boundary (see §14)
 
 **WARNING** - Should be addressed but won't block:
 - Item too large (should be split)
@@ -274,6 +294,7 @@ You do not write the ADR file yourself (you have no Write/Edit access — see Bo
    - Look for existing patterns the items should follow
    - Verify output paths don't conflict with existing files
    - Do NOT read every file — focus on what's relevant to the items
+   - **Read the mission PRD's `## Definition of Done` section** (Face wrote it on the first pass — it already exists by the time you run) and check every statement, plus every user-facing item's acceptance criteria, against the drivability standard (§14). Discover gaps by reading the actual repo (QA recipe, routes, external integrations) — never by looking them up in `ateam.config.json`.
 
 5. **Identify issues by severity**
    - **CRITICAL**: Must address before proceeding (blockers)
@@ -360,6 +381,13 @@ AskUserQuestion(
 - Q: "Question asked"
   A: "Answer received"
   -> Apply to: [item-ids affected]
+
+### Definition of Done (for Josh's Blessing)
+
+Reproduce the mission PRD's `## Definition of Done` section verbatim, so it rides this report through the same human gate as the open questions above — no new interruption point. Flag any statement that failed the drivability check (§14) inline, with a pointer to the matching Critical Issue:
+
+- [ ] Submitting a bad email shows the error state
+- [ ] ~~Statement depending on a live third-party response~~ — FLAGGED non-drivable, see Critical Issue #N
 
 ### Cross-Cutting Concerns
 
@@ -457,6 +485,8 @@ When done:
 - All items in `briefings` stage have been reviewed (rendered via `items renderItem`)
 - Critical issues are documented
 - Human questions have been asked and answered
+- **Drivability check applied (§14)** — every DoD statement and every user-facing item's acceptance criteria checked against the contract's commands in a fresh checkout; non-drivable statements flagged as Critical Issues, not passed silently
+- Mission Definition of Done reproduced verbatim in the report for Josh's blessing
 - Refinement instructions are clear and specific — exact field names and exact replacement text, not paraphrased intent
 - ADR Candidates section is present, even if it just says "none"
 - Face has what he needs for the second pass

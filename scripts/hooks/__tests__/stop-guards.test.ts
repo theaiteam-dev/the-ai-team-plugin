@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'child_process';
 import { join } from 'path';
-import { readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { readFileSync, writeFileSync, unlinkSync, mkdtempSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 
 // Mission-active marker — enforce-orchestrator-stop needs this to enforce
@@ -41,7 +41,8 @@ function hookPath(name: string) {
 function runHook(
   scriptPath: string,
   stdin: object = {},
-  env: Record<string, string> = {}
+  env: Record<string, string> = {},
+  cwd?: string
 ) {
   const fullEnv = {
     ...process.env,
@@ -49,14 +50,16 @@ function runHook(
     ATEAM_PROJECT_ID: 'test-project',
     ...env,
   };
+  const options: Record<string, unknown> = {
+    env: fullEnv,
+    encoding: 'utf8',
+    timeout: 5000,
+    input: JSON.stringify(stdin),
+  };
+  if (cwd) options.cwd = cwd;
   try {
-    const stdout = execFileSync('node', [scriptPath], {
-      env: fullEnv,
-      encoding: 'utf8',
-      timeout: 5000,
-      input: JSON.stringify(stdin),
-    });
-    return { stdout: stdout.trim(), stderr: '', exitCode: 0 };
+    const stdout = execFileSync('node', [scriptPath], options as any);
+    return { stdout: (stdout as string).trim(), stderr: '', exitCode: 0 };
   } catch (err: any) {
     return {
       stdout: (err.stdout || '').trim(),
@@ -413,6 +416,320 @@ describe('enforce-final-review — agent guards', () => {
       ATEAM_API_URL: 'http://localhost:99999',
     });
     expect(result.exitCode).toBe(0);
+  });
+});
+
+// =============================================================================
+// enforce-final-review.js — Frankie evidence-bundle gate (WI-783)
+//
+// Extends the existing hook: on a drivable-surface repo, mission completion
+// is blocked until Frankie's evidence report exists on disk. The gate calls
+// canFrankieDrive() from scripts/hooks/lib/qa-contract.js directly — never
+// reimplements the drivability check (that helper has its own exhaustive
+// six-surface matrix in qa-contract.test.js; this suite does not re-derive
+// it, only proves the hook is correctly wired to it).
+//
+// readExecutionContract() resolves ateam.config.json relative to
+// process.cwd(), and execFileSync inherits the parent's cwd unless
+// overridden — so every test here uses a scratch temp directory (its own
+// throwaway ateam.config.json and, where needed, a real .qa-evidence/
+// fixture) via runHook's new cwd parameter, rather than depending on this
+// repo's own real config or mutating it.
+// =============================================================================
+describe('enforce-final-review — Frankie evidence-bundle gate', () => {
+  const HOOK = hookPath('enforce-final-review.js');
+  const MISSION_ID = 'M-TEST-001';
+  const scratchDirs: string[] = [];
+
+  it('calls the real canFrankieDrive() from lib/qa-contract.js — does not reimplement the drivability check', () => {
+    const source = readFileSync(HOOK, 'utf8');
+    expect(source).toMatch(/canFrankieDrive/);
+    expect(source).toMatch(/qa-contract/);
+  });
+
+  /**
+   * Creates a throwaway repo directory with its own ateam.config.json
+   * (surfaces controlled by the caller — pass `undefined` to omit the key
+   * entirely, or `null` to skip writing a config file at all, simulating an
+   * unreadable/missing config). Optionally seeds a real
+   * .qa-evidence/<missionId>/report.md fixture.
+   */
+  function makeScratchRepo(opts: {
+    surfaces?: string[] | undefined;
+    config?: 'missing' | 'malformed' | 'valid';
+    evidence?: 'none' | 'dir-only' | 'report';
+    missionId?: string;
+  }) {
+    const { surfaces, config = 'valid', evidence = 'none', missionId = MISSION_ID } = opts;
+    const dir = mkdtempSync(join(tmpdir(), 'ateam-frankie-gate-'));
+    scratchDirs.push(dir);
+
+    if (config === 'valid') {
+      const configBody = surfaces === undefined ? {} : { surfaces };
+      writeFileSync(join(dir, 'ateam.config.json'), JSON.stringify(configBody));
+    } else if (config === 'malformed') {
+      writeFileSync(join(dir, 'ateam.config.json'), '{ this is not valid json');
+    }
+    // 'missing': write nothing — readExecutionContract() must fail open (ENOENT).
+
+    if (evidence === 'dir-only') {
+      mkdirSync(join(dir, '.qa-evidence', missionId), { recursive: true });
+    } else if (evidence === 'report') {
+      mkdirSync(join(dir, '.qa-evidence', missionId), { recursive: true });
+      writeFileSync(join(dir, '.qa-evidence', missionId, 'report.md'), '# Evidence\n\n- [x] Login works\n');
+    }
+
+    return dir;
+  }
+
+  afterAll(() => {
+    for (const dir of scratchDirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup
+      }
+    }
+  });
+
+  const MOCK_BOARD_ONE_DONE = JSON.stringify({
+    columns: { done: [{ id: 'WI-001' }] },
+  });
+  const MOCK_BOARD_EMPTY = JSON.stringify({ columns: {} });
+
+  function missionWithId(overrides: Record<string, unknown> = {}) {
+    return JSON.stringify({
+      id: MISSION_ID,
+      status: 'active',
+      final_review_verdict: null,
+      postcheck: null,
+      ...overrides,
+    });
+  }
+
+  const MOCK_MISSION_FULLY_COMPLETE = JSON.stringify({
+    id: MISSION_ID,
+    status: 'active',
+    final_review_verdict: 'FINAL APPROVED',
+    postcheck: { passed: true },
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC1 — drivable surface, done items exist, no evidence bundle: block.
+  // ---------------------------------------------------------------------------
+  it('blocks with JSON decision, naming Frankie and the expected evidence path, when drivable and no evidence exists at all', () => {
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: 'none' });
+    const result = runHook(
+      HOOK,
+      {},
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: missionWithId() },
+      dir
+    );
+    expect(result.exitCode, 'Frankie gate blocks via JSON, exit 0 — never a nonzero exit code (AC8)').toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(output.additionalContext).toMatch(/frankie/i);
+    expect(output.additionalContext).toMatch(/\.qa-evidence\/M-TEST-001\/report\.md/);
+  });
+
+  it('blocks when the evidence directory exists but report.md itself is missing (adversarial: directory presence is not report presence)', () => {
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: 'dir-only' });
+    const result = runHook(
+      HOOK,
+      {},
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: missionWithId() },
+      dir
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+  });
+
+  it('blocks on Frankie even when the final review verdict is already set (Frankie is checked first, unconditionally — adversarial ordering)', () => {
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: 'none' });
+    const result = runHook(
+      HOOK,
+      {},
+      {
+        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE,
+        __TEST_MOCK_MISSION__: missionWithId({ final_review_verdict: 'FINAL APPROVED', postcheck: { passed: true } }),
+      },
+      dir
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+  });
+
+  it('blocks when surfaces mix a drivable value with non-drivable ones (integration check — full matrix lives in qa-contract.test.js)', () => {
+    const dir = makeScratchRepo({ surfaces: ['api', 'web'], evidence: 'none' });
+    const result = runHook(
+      HOOK,
+      {},
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: missionWithId() },
+      dir
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC2 — evidence exists: not blocked on Frankie's account; pre-existing
+  // gates continue to apply UNCHANGED (still exit(2), not JSON).
+  // ---------------------------------------------------------------------------
+  it('does not block on Frankie once the evidence report exists, but the pre-existing final-review gate still applies unchanged (exit 2)', () => {
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: 'report' });
+    const result = runHook(
+      HOOK,
+      {},
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: missionWithId() },
+      dir
+    );
+    expect(result.exitCode, 'pre-existing gate blocks via exit(2), not the JSON mechanism').toBe(2);
+    expect(result.stderr).toMatch(/Final Mission Review required/i);
+  });
+
+  it('allows the stop entirely once evidence exists and the pre-existing gates (final review + post-checks) are also satisfied', () => {
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: 'report' });
+    const result = runHook(
+      HOOK,
+      {},
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: MOCK_MISSION_FULLY_COMPLETE },
+      dir
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).not.toBe('block');
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC3 — no drivable surface (hardware-only, or surfaces absent entirely):
+  // never blocks on Frankie's account, evidence bundle notwithstanding.
+  // ---------------------------------------------------------------------------
+  it('does not block on Frankie for a hardware-only repo, even with no evidence bundle', () => {
+    const dir = makeScratchRepo({ surfaces: ['hardware'], evidence: 'none' });
+    const result = runHook(
+      HOOK,
+      {},
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: MOCK_MISSION_FULLY_COMPLETE },
+      dir
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).not.toBe('block');
+  });
+
+  it('does not block on Frankie when surfaces is absent from the contract entirely, even with no evidence bundle', () => {
+    const dir = makeScratchRepo({ surfaces: undefined, evidence: 'none' });
+    const result = runHook(
+      HOOK,
+      {},
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: MOCK_MISSION_FULLY_COMPLETE },
+      dir
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).not.toBe('block');
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC4 — a surface FlowSpec cannot drive today (api, fixture-flow,
+  // golden-pair, cli): consistent with canFrankieDrive(), never blocks.
+  // Representative sample, not exhaustive — the full 6-surface matrix is
+  // qa-contract.test.js's job, not this hook's.
+  // ---------------------------------------------------------------------------
+  it('does not block on Frankie for surfaces: ["api"]', () => {
+    const dir = makeScratchRepo({ surfaces: ['api'], evidence: 'none' });
+    const result = runHook(
+      HOOK,
+      {},
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: MOCK_MISSION_FULLY_COMPLETE },
+      dir
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).not.toBe('block');
+  });
+
+  it('does not block on Frankie for surfaces: ["cli"]', () => {
+    const dir = makeScratchRepo({ surfaces: ['cli'], evidence: 'none' });
+    const result = runHook(
+      HOOK,
+      {},
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: MOCK_MISSION_FULLY_COMPLETE },
+      dir
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).not.toBe('block');
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC5 — no active mission, or no items reached done: never blocks on
+  // Frankie's account.
+  // ---------------------------------------------------------------------------
+  it('does not block on Frankie when no items have reached done, even on a drivable surface with no evidence', () => {
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: 'none' });
+    const result = runHook(HOOK, {}, { __TEST_MOCK_BOARD__: MOCK_BOARD_EMPTY, __TEST_MOCK_MISSION__: missionWithId() }, dir);
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).not.toBe('block');
+  });
+
+  it('does not block on Frankie when no mission is active', () => {
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: 'none' });
+    const result = runHook(HOOK, {}, { __TEST_MOCK_NO_MISSION__: 'true' }, dir);
+    expect(result.exitCode).toBe(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC6 — only Hannibal's session evaluates the Frankie condition.
+  // ---------------------------------------------------------------------------
+  it('does not evaluate the Frankie condition for a non-hannibal agent, even in an otherwise-blocking scenario', () => {
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: 'none' });
+    const result = runHook(
+      HOOK,
+      { agent_type: 'tawnia', last_assistant_message: 'Documentation done' },
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: missionWithId() },
+      dir
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).not.toBe('block');
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC7 — fails open when the config cannot be read (missing file, or
+  // malformed JSON): readExecutionContract()'s own fail-open collapses to
+  // surfaces: [], so canFrankieDrive() is false and Frankie's gate never
+  // fires — proven end-to-end through the hook, not just inside
+  // qa-contract.test.js.
+  // ---------------------------------------------------------------------------
+  it('fails open (does not block on Frankie) when ateam.config.json is missing entirely', () => {
+    const dir = makeScratchRepo({ config: 'missing', evidence: 'none' });
+    const result = runHook(
+      HOOK,
+      {},
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: MOCK_MISSION_FULLY_COMPLETE },
+      dir
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).not.toBe('block');
+  });
+
+  it('fails open (does not block on Frankie) when ateam.config.json contains malformed JSON', () => {
+    const dir = makeScratchRepo({ config: 'malformed', evidence: 'none' });
+    const result = runHook(
+      HOOK,
+      {},
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: MOCK_MISSION_FULLY_COMPLETE },
+      dir
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).not.toBe('block');
   });
 });
 

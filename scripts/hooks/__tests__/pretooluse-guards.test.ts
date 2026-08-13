@@ -16,10 +16,10 @@
  * NOTE: enforce-orchestrator-boundary.js is covered in orchestrator-boundary.test.ts.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'child_process';
 import { join } from 'path';
-import { readFileSync } from 'fs';
+import { readFileSync, mkdirSync, writeFileSync, rmSync, rmdirSync } from 'fs';
 
 const HOOKS_DIR = join(__dirname, '..');
 const REPO_ROOT = join(__dirname, '..', '..', '..');
@@ -151,6 +151,11 @@ describe('hooks/hooks.json — all PreToolUse hooks registered', () => {
     expect(raw).toMatch(/block-worker-board-move\.js/);
   });
 
+  it('registers block-frankie-writes.js in PreToolUse', () => {
+    const raw = readFileSync(HOOKS_JSON_PATH, 'utf8');
+    expect(raw).toMatch(/block-frankie-writes\.js/);
+  });
+
   it('all registered hook commands use ${CLAUDE_PLUGIN_ROOT} path prefix', () => {
     const raw = readFileSync(HOOKS_JSON_PATH, 'utf8');
     const json = JSON.parse(raw);
@@ -183,6 +188,7 @@ describe('PreToolUse hooks — static resolveAgent() usage', () => {
     'block-raw-mv.js',
     'block-worker-board-claim.js',
     'block-worker-board-move.js',
+    'block-frankie-writes.js',
   ];
 
   for (const hook of TARGETED_HOOKS) {
@@ -1331,5 +1337,288 @@ describe('block-worker-board-move — agent guards', () => {
       tool_input: { command: 'ateam board-move WI-001 --to done' },
     });
     expect(result.exitCode).toBe(0);
+  });
+});
+
+// =============================================================================
+// block-frankie-writes.js — target: frankie
+//
+// Enforces Frankie's two structural hard rules from prd/ready/010-frankie-profile.md:
+// never fix the code (no implementation/test writes), and never edit an
+// existing file under specs/ (graduated specs are immutable — new flow files
+// only). His evidence bundle under .qa-evidence/ writes freely.
+// =============================================================================
+describe('block-frankie-writes — agent guards', () => {
+  const HOOK = hookPath('block-frankie-writes.js');
+
+  // The hook resolves relative file paths against its own process cwd, which
+  // inherits the test runner's cwd (repo root) — runHook's execFileSync does
+  // not override cwd. So "already exists under specs/" can only be exercised
+  // with a REAL file on disk at that relative path; fs.existsSync cannot be
+  // satisfied any other way without also mocking the hook process's own fs
+  // module (a separate child process — vi.spyOn in this file would not reach
+  // it). Create a real, throwaway fixture for the duration of this describe
+  // block and remove it afterward. This repo has no specs/ directory
+  // otherwise (verified before adding this), so only remove the directory
+  // if it ends up empty — never touch it if something else populated it
+  // concurrently.
+  const SPECS_DIR = join(REPO_ROOT, 'specs');
+  const EXISTING_SPEC_PATH = join(SPECS_DIR, 'checkout.flow.yaml');
+
+  beforeAll(() => {
+    mkdirSync(SPECS_DIR, { recursive: true });
+    writeFileSync(EXISTING_SPEC_PATH, 'name: checkout\nsteps: []\n');
+  });
+
+  afterAll(() => {
+    rmSync(EXISTING_SPEC_PATH, { force: true });
+    try {
+      rmdirSync(SPECS_DIR); // throws ENOTEMPTY (not recursive) if anything else is in there — leave it alone
+    } catch {
+      // Directory not empty (something else is using it concurrently) — leave it.
+    }
+  });
+
+  it('blocks frankie writing an implementation file (exit 2, names the path, tells him to bounce to B.A.)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'frankie',
+      tool_name: 'Write',
+      tool_input: { file_path: 'src/services/order.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+    expect(result.stderr).toMatch(/src\/services\/order\.ts/);
+    expect(result.stderr).toMatch(/B\.A\./i);
+    expect(result.stderr).toMatch(/repro/i);
+  });
+
+  it('blocks frankie editing a test file (exit 2, names the path, tells him to bounce to B.A.)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'frankie',
+      tool_name: 'Edit',
+      tool_input: { file_path: 'src/__tests__/order.test.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+    expect(result.stderr).toMatch(/src\/__tests__\/order\.test\.ts/);
+    expect(result.stderr).toMatch(/B\.A\./i);
+    expect(result.stderr).toMatch(/repro/i);
+  });
+
+  it('blocks frankie editing a file that already exists under specs/ (exit 2, immutability message)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'frankie',
+      tool_name: 'Edit',
+      tool_input: { file_path: 'specs/checkout.flow.yaml' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+    expect(result.stderr).toMatch(/immutable/i);
+  });
+
+  it('allows frankie writing a NEW file under specs/ that does not yet exist (exit 0)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'frankie',
+      tool_name: 'Write',
+      tool_input: { file_path: 'specs/new-checkout-flow.flow.yaml' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('allows frankie writing anywhere under .qa-evidence/ (exit 0)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'frankie',
+      tool_name: 'Write',
+      tool_input: { file_path: '.qa-evidence/M-20260812-003/report.md' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Adversarial path-traversal matrix (Amy's rejection, round 3).
+  //
+  // isUnderDir() must reject any file_path containing a literal ".." PATH
+  // SEGMENT before treating it as "under" specs/ or .qa-evidence/ — checked
+  // by splitting on "/" and testing for an exact ".." component, not by a
+  // naive substring/startsWith check on the raw string. Any ".." segment
+  // anywhere in the path falls through to the default block branch (the
+  // same "implementation/test territory" exit-2 path already required by
+  // AC1) regardless of what it would resolve to — categorical denial, not
+  // best-effort normalization. This is deliberately strict: even a traversal
+  // segment that happens to cancel out to a benign specs/ path is rejected
+  // (case below), because Frankie has no legitimate reason to ever construct
+  // a path containing ".." in the first place.
+  //
+  // Dimensions covered: traversal position (embedded / leading / multiple),
+  // target directory (specs/ vs .qa-evidence/ — the latter had NO existsSync
+  // guard at all per Amy's report, so is the higher-severity variant),
+  // resolved-target existence (new file vs a real existing file), and
+  // false-positive avoidance (a literal ".." substring that is part of a
+  // filename, not a path segment, must NOT be treated as traversal).
+  // ---------------------------------------------------------------------------
+  describe('adversarial: ".." path-traversal segments must never escape specs/ or .qa-evidence/', () => {
+    const BLOCKED_TRAVERSAL_CASES = [
+      [
+        'embedded traversal escapes specs/ into a NEW implementation-directory file',
+        'specs/../src/services/order-traversal-should-not-exist.ts',
+      ],
+      [
+        'embedded traversal escapes .qa-evidence/ into an EXISTING real implementation file (no existsSync guard on this branch at all)',
+        '.qa-evidence/../packages/shared/src/agents.ts',
+      ],
+      ['leading traversal before any real segment', '../specs/escape-traversal.flow.yaml'],
+      ['multiple traversal segments escaping specs/', 'specs/a/../../src/multi-traversal-should-not-exist.ts'],
+      [
+        'multiple/nested traversal segments escaping .qa-evidence/ into an existing file',
+        '.qa-evidence/../.qa-evidence/../../packages/shared/src/agents.ts',
+      ],
+      [
+        'traversal segment present even though it resolves to a benign specs/ path (strict categorical denial)',
+        'specs/sub/../benign-after-resolution.flow.yaml',
+      ],
+    ];
+
+    for (const [label, filePath] of BLOCKED_TRAVERSAL_CASES) {
+      it(`blocks: ${label} (exit 2)`, () => {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: filePath.includes('agents.ts') ? 'Edit' : 'Write',
+          tool_input: { file_path: filePath },
+        });
+        expect(result.exitCode, `file_path=${filePath}`).toBe(2);
+        expect(result.stderr).toMatch(/BLOCKED/i);
+      });
+    }
+
+    it('regression: a nested NEW specs/ file with no traversal is still allowed (exit 0)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Write',
+        tool_input: { file_path: 'specs/sub/nested-new-flow.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('regression: a nested .qa-evidence/ file with no traversal is still allowed (exit 0)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Write',
+        tool_input: { file_path: '.qa-evidence/M-20260812-003/screenshots/step1.png' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('regression: a literal ".." substring inside a filename (not a path segment) is NOT treated as traversal (exit 0)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Write',
+        tool_input: { file_path: 'specs/release-notes..v2.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  it('allows non-target agent ba to write implementation files (exit 0, no interference)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'ba',
+      tool_name: 'Write',
+      tool_input: { file_path: 'src/services/order.ts' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('allows an unrecognised agent (exit 0, fail-open, no interference)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'NotAnAgent',
+      tool_name: 'Write',
+      tool_input: { file_path: 'src/services/order.ts' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('allows a payload with no agent identity at all (exit 0, fail-open, no interference)', () => {
+    const result = runHook(HOOK, {
+      tool_name: 'Write',
+      tool_input: { file_path: 'src/services/order.ts' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('exits 0 on unparseable stdin JSON (fail-open)', () => {
+    const fullEnv = {
+      ...process.env,
+      ATEAM_API_URL: 'http://localhost:3000',
+      ATEAM_PROJECT_ID: 'test-project',
+    };
+    let exitCode: number;
+    try {
+      execFileSync('node', [HOOK], {
+        env: fullEnv,
+        encoding: 'utf8',
+        timeout: 5000,
+        input: 'not valid json',
+      });
+      exitCode = 0;
+    } catch (err: any) {
+      exitCode = err.status ?? 1;
+    }
+    expect(exitCode).toBe(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Telemetry: the fetch inside sendDeniedEvent races process.exit(2) in every
+  // hook using this fire-and-forget pattern (see block-murdock-impl-writes.js),
+  // so a live-network behavioral assertion here would be genuinely flaky, not
+  // just slow. Verified statically instead, matching the resolveAgent() check
+  // convention already established above for all thirteen other PreToolUse
+  // guard hooks.
+  // ---------------------------------------------------------------------------
+  it('reports the denial via sendDeniedEvent with agent name, tool name, and reason before exiting 2 (static wiring check)', () => {
+    const source = readFileSync(HOOK, 'utf8');
+    expect(source).toMatch(/resolveAgent/);
+    expect(source).toMatch(/resolve-agent/);
+    expect(source).toMatch(/sendDeniedEvent/);
+    expect(source).toMatch(/send-denied-event/);
+
+    const callMatch = source.match(/sendDeniedEvent\(([\s\S]*?)\)/);
+    expect(callMatch, 'expected a sendDeniedEvent({...}) call in the hook source').not.toBeNull();
+    const callArgs = callMatch![1];
+    expect(callArgs).toMatch(/agentName/);
+    expect(callArgs).toMatch(/toolName/);
+    expect(callArgs).toMatch(/reason/);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Dual registration, half two: agents/frankie.md's own hooks block (the
+  // hooks.json half is covered by "registers block-frankie-writes.js in
+  // PreToolUse" above). WI-778 reserves this slot in agents/frankie.md by
+  // comment; this item is the one that actually fills it in with a Write|Edit
+  // matcher, per the item's context notes.
+  // ---------------------------------------------------------------------------
+  it('is registered in agents/frankie.md under a Write|Edit PreToolUse matcher', () => {
+    const frankieMdPath = join(REPO_ROOT, 'agents', 'frankie.md');
+    const content = readFileSync(frankieMdPath, 'utf8');
+    const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+    expect(frontmatterMatch, 'expected agents/frankie.md to have parseable frontmatter').not.toBeNull();
+    const frontmatter = frontmatterMatch![1];
+
+    const sectionMatch = frontmatter.match(/^  PreToolUse:\n((?:(?:    |\n).*\n?)*)/m);
+    expect(sectionMatch, 'expected a PreToolUse section in agents/frankie.md frontmatter').not.toBeNull();
+    const sectionLines = sectionMatch![1].split('\n');
+    const preToolUseText: string[] = [];
+    for (const line of sectionLines) {
+      if (/^  \S/.test(line)) break;
+      preToolUseText.push(line);
+    }
+    const preToolUse = preToolUseText.join('\n');
+
+    const blocks = preToolUse.split(/^    - /m).filter(Boolean);
+    const hasWriteEditGuard = blocks.some(
+      (block) => block.includes('matcher: "Write|Edit"') && block.includes('block-frankie-writes.js')
+    );
+    expect(
+      hasWriteEditGuard,
+      'expected a "- matcher: \\"Write|Edit\\"" block containing block-frankie-writes.js in agents/frankie.md PreToolUse'
+    ).toBe(true);
   });
 });
