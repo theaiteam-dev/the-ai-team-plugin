@@ -252,6 +252,9 @@ var agentsStopAgentStopCmd = &cobra.Command{
 
 		if apiErr != nil {
 			// defer poolSelfRelease runs on exit — pool slot is always released
+			if strings.Contains(apiErr.Error(), "WIP_LIMIT_EXCEEDED") {
+				return fmt.Errorf("%w\nThe target stage is at WIP capacity. Retry with --advance=false to log work and release the claim without advancing, then send ALERT to Hannibal to redispatch when capacity opens.", apiErr)
+			}
 			return apiErr
 		}
 

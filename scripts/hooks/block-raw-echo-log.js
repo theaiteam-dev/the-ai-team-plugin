@@ -5,7 +5,7 @@
  * Blocks attempts to use raw `echo >> mission/activity.log` commands.
  * Redirects agents to use `ateam activity createActivityEntry` via Bash instead.
  *
- * Targets: murdock, ba, lynch, amy, tawnia
+ * Targets: murdock, ba, lynch, amy, frankie, stockwell, tawnia
  * Returns: { decision: "block" } JSON at exit 0 (NOT exit 2)
  *
  * Claude Code sends hook context via stdin JSON (tool_name, tool_input).
@@ -29,7 +29,7 @@ try {
   const agent = resolveAgent(hookInput);
 
   // Only enforce for working agents
-  const TARGET_AGENTS = ['murdock', 'ba', 'lynch', 'amy', 'tawnia'];
+  const TARGET_AGENTS = ['murdock', 'ba', 'lynch', 'amy', 'frankie', 'stockwell', 'tawnia'];
   if (!agent || !TARGET_AGENTS.includes(agent)) {
     process.exit(0);
   }

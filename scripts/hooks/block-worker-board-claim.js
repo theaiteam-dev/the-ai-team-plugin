@@ -6,7 +6,7 @@
  * Workers should use `ateam agents-start` to claim items, which handles both
  * the board claim and the assigned_agent metadata in one call.
  *
- * Targets: murdock, ba, lynch, lynch-final, amy, tawnia
+ * Targets: murdock, ba, lynch, lynch-final, stockwell, amy, frankie, tawnia
  *
  * Claude Code sends hook context via stdin JSON (tool_name, tool_input).
  */
@@ -28,7 +28,7 @@ try {
   const agent = resolveAgent(hookInput);
 
   // Only enforce for working agents
-  const TARGET_AGENTS = ['murdock', 'ba', 'lynch', 'lynch-final', 'amy', 'tawnia'];
+  const TARGET_AGENTS = ['murdock', 'ba', 'lynch', 'lynch-final', 'stockwell', 'amy', 'frankie', 'tawnia'];
   if (!agent || !TARGET_AGENTS.includes(agent)) {
     process.exit(0);
   }

@@ -1018,7 +1018,7 @@ describe('block-hannibal-writes — agent guards', () => {
 });
 
 // =============================================================================
-// block-raw-echo-log.js — target: murdock,ba,lynch,amy,tawnia
+// block-raw-echo-log.js — target: murdock,ba,lynch,amy,frankie,stockwell,tawnia
 // NOTE: blocks via JSON stdout { decision: "block" } at exit 0, NOT exit 2
 // =============================================================================
 describe('block-raw-echo-log — agent guards (JSON block, exit 0)', () => {
@@ -1040,6 +1040,28 @@ describe('block-raw-echo-log — agent guards (JSON block, exit 0)', () => {
       agent_type: 'amy',
       tool_name: 'Bash',
       tool_input: { command: 'echo "result" >> mission/activity.log' },
+    });
+    expect(result.exitCode).toBe(0);
+    const output = parseOutput(result.stdout);
+    expect(output.decision).toBe('block');
+  });
+
+  it('outputs { decision: "block" } JSON for frankie echoing to activity.log', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'frankie',
+      tool_name: 'Bash',
+      tool_input: { command: 'echo "walk complete" >> mission/activity.log' },
+    });
+    expect(result.exitCode).toBe(0);
+    const output = parseOutput(result.stdout);
+    expect(output.decision).toBe('block');
+  });
+
+  it('outputs { decision: "block" } JSON for stockwell echoing to activity.log', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'stockwell',
+      tool_name: 'Bash',
+      tool_input: { command: 'echo "FINAL APPROVED" >> mission/activity.log' },
     });
     expect(result.exitCode).toBe(0);
     const output = parseOutput(result.stdout);
@@ -1165,7 +1187,7 @@ describe('block-raw-mv — agent guards', () => {
 });
 
 // =============================================================================
-// block-worker-board-claim.js — target: murdock,ba,lynch,lynch-final,amy,tawnia
+// block-worker-board-claim.js — target: murdock,ba,lynch,lynch-final,stockwell,amy,frankie,tawnia
 // =============================================================================
 describe('block-worker-board-claim — agent guards', () => {
   const HOOK = hookPath('block-worker-board-claim.js');
@@ -1225,6 +1247,26 @@ describe('block-worker-board-claim — agent guards', () => {
     expect(result.exitCode).toBe(2);
   });
 
+  it('blocks frankie calling ateam board-claim via Bash (exit 2)', () => {
+    // ADR 0005: Frankie never claims board items — his walk uses no item claim.
+    const result = runHook(HOOK, {
+      agent_type: 'frankie',
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-claim WI-001' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('blocks stockwell calling ateam board-claim via Bash (exit 2)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'stockwell',
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-claim WI-001' },
+    });
+    expect(result.exitCode).toBe(2);
+  });
+
   it('allows non-target agent hannibal to call ateam board-claim (exit 0)', () => {
     const result = runHook(HOOK, {
       agent_type: 'hannibal',
@@ -1253,7 +1295,7 @@ describe('block-worker-board-claim — agent guards', () => {
 });
 
 // =============================================================================
-// block-worker-board-move.js — target: murdock,ba,lynch,lynch-final,amy,tawnia
+// block-worker-board-move.js — target: murdock,ba,lynch,lynch-final,stockwell,amy,frankie,tawnia
 // =============================================================================
 describe('block-worker-board-move — agent guards', () => {
   const HOOK = hookPath('block-worker-board-move.js');
@@ -1307,6 +1349,26 @@ describe('block-worker-board-move — agent guards', () => {
   it('blocks stockwell calling ateam board-move via Bash (exit 2)', () => {
     const result = runHook(HOOK, {
       agent_type: 'stockwell',
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-move WI-001 --to done' },
+    });
+    expect(result.exitCode).toBe(2);
+  });
+
+  it('blocks frankie calling ateam board-move via Bash (exit 2)', () => {
+    // ADR 0005: `done` is terminal — Frankie reports failures, never moves items.
+    const result = runHook(HOOK, {
+      agent_type: 'frankie',
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-move WI-007 --to implementing' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('blocks lynch-final calling ateam board-move via Bash (exit 2)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'lynch-final',
       tool_name: 'Bash',
       tool_input: { command: 'ateam board-move WI-001 --to done' },
     });
