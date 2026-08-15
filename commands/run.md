@@ -451,9 +451,12 @@ WIP limits are **per stage** — each pipeline column independently caps how man
 [Amy] 001 VERIFIED - no bugs found
 [Hannibal] Feature 001 → done
 ...
-[Hannibal] All features complete. Dispatching final review.
-[Lynch] FINAL MISSION REVIEW - reviewing 12 files
-[Lynch] VERDICT: FINAL APPROVED
+[Hannibal] All features complete. Dispatching Frankie for the mission-tail QA walk.
+[Frankie] Walking Definition of Done - 6 statements against http://localhost:3000
+[Frankie] WALK PASSED - evidence bundle at .qa-evidence/M-20240115-001/report.md
+[Hannibal] Frankie's walk clean. Dispatching Stockwell for Final Mission Review.
+[Stockwell] FINAL MISSION REVIEW - reviewing 12 files
+[Stockwell] VERDICT: FINAL APPROVED
 [Hannibal] Running post-mission checks...
 [Hannibal] Post-checks PASSED (lint ✓, unit ✓, e2e ✓)
 [Hannibal] Dispatching Tawnia for documentation and final commit.
@@ -489,8 +492,10 @@ The main Claude session becomes Hannibal and orchestrates directly:
 Main Claude (as Hannibal)
     ├── subagent → Murdock (testing stage)
     ├── subagent → B.A. (implementing stage)
-    ├── subagent → Lynch (review stage, final review)
+    ├── subagent → Lynch (review stage)
     ├── subagent → Amy (probing stage)
+    ├── subagent → Frankie (mission-tail QA walk, after all items reach done)
+    ├── subagent → Stockwell (Final Mission Review, after Frankie's walk succeeds)
     ├── subagent → Tawnia (documentation, after post-checks pass)
     └── subagent → Retro (Debrief, detached/non-blocking, dispatched right after Tawnia's commit)
 ```

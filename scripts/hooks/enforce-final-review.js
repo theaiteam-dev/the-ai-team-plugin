@@ -4,8 +4,10 @@
  *
  * Prevents mission from ending without:
  * 1. All items reaching done stage
- * 2. Final Mission Review being completed
- * 3. Post-mission checks passing (via mission_postcheck MCP tool)
+ * 2. Frankie's evidence bundle existing, fresh, and free of failing (❌) statements
+ * 3. Final Mission Review being completed — and not FINAL REJECTED (a
+ *    rejection blocks with the ADR 0004 restart-at-Frankie path)
+ * 4. Post-mission checks passing (via mission_postcheck MCP tool)
  *
  * Queries the A(i)-Team API instead of reading filesystem.
  *
@@ -33,6 +35,7 @@ import {
   normalizeMission,
   countBoard,
   checkFrankieEvidence,
+  checkFinalReviewRejection,
 } from './lib/stop-gates.js';
 
 // Read hook input from stdin (optional — old callers may not pipe stdin)
@@ -121,6 +124,7 @@ async function checkFinalReview() {
   const frankieBlock = checkFrankieEvidence({
     missionId: missionData.id,
     doneCount,
+    doneItems: boardData.columns.done,
   });
   if (frankieBlock) {
     console.log(JSON.stringify({ decision: 'block', additionalContext: frankieBlock }));
@@ -131,11 +135,21 @@ async function checkFinalReview() {
   if (doneCount > 0 && !missionData.final_review_verdict) {
     process.stderr.write('Final Mission Review required.\n');
     process.stderr.write(
-      `All ${doneCount} items are done, but Lynch has not completed the final review.\n`
+      `All ${doneCount} items are done, but Stockwell has not completed the final review.\n`
     );
     process.stderr.write(
-      'Dispatch Lynch for Final Mission Review before ending.\n'
+      'Dispatch Stockwell for Final Mission Review before ending.\n'
     );
+    process.exit(2);
+  }
+
+  // An explicit FINAL REJECTED verdict is a completed review, but it must not
+  // fall through to the post-check gate ("run postcheck" would misdirect).
+  // Block with the ADR 0004 restart-at-Frankie path instead. Reviews with no
+  // recognizable verdict marker fall through unchanged (fail open).
+  const rejectionBlock = checkFinalReviewRejection(missionData.final_review_verdict);
+  if (rejectionBlock) {
+    process.stderr.write(`${rejectionBlock}\n`);
     process.exit(2);
   }
 

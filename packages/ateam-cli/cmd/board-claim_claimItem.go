@@ -61,6 +61,10 @@ var boardClaimClaimItemCmd = &cobra.Command{
 		if err := validate.RequireFlags(cmd, "agent", "itemId"); err != nil {
 			return err
 		}
+		// Deliberately narrower than the openapi.yaml AgentName enum: Frankie
+		// never claims or moves board items — `done` is terminal (ADR 0005) —
+		// and Sosa is a planning-phase critic who never claims items either.
+		// Do not re-add them here on regeneration.
 		if err := validate.Enum("agent", boardClaimClaimItemCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Tawnia"}); err != nil { return err }
 		bodyMap := map[string]interface{}{}
 		bodyMap["agent"] = boardClaimClaimItemCmd_agent
@@ -86,9 +90,11 @@ func init() {
 	boardClaimCmd.AddCommand(boardClaimClaimItemCmd)
 	boardClaimClaimItemCmd.Flags().StringVar(&boardClaimClaimItemCmdBody, "body", "", "Raw JSON body (overrides individual flags)")
 	boardClaimClaimItemCmd.Flags().StringVar(&boardClaimClaimItemCmdBodyFile, "body-file", "", "Path to JSON file to use as request body")
-	boardClaimClaimItemCmd.Flags().StringVar(&boardClaimClaimItemCmd_agent, "agent", "", "(Hannibal|Face|Murdock|B.A.|Amy|Lynch|Stockwell|Sosa|Tawnia)")
+	// Help text and completion mirror the validate.Enum list in RunE — no
+	// Sosa or Frankie (see the comment there before widening either).
+	boardClaimClaimItemCmd.Flags().StringVar(&boardClaimClaimItemCmd_agent, "agent", "", "(Hannibal|Face|Murdock|B.A.|Amy|Lynch|Stockwell|Tawnia)")
 	boardClaimClaimItemCmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}, cobra.ShellCompDirectiveNoFileComp
+		return []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Tawnia"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	boardClaimClaimItemCmd.Flags().StringVar(&boardClaimClaimItemCmd_itemId, "itemId", "", "")
 	// NOTE: required-flag enforcement is done in RunE via validate.RequireFlags

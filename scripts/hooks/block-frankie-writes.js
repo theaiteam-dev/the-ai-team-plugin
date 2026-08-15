@@ -10,18 +10,29 @@
  *
  * Allowed:
  *   - Anything under .qa-evidence/ (his evidence bundle)
- *   - A NEW file under specs/ that does not already exist on disk
+ *   - A NEW flow file under specs/ — one Frankie authors THIS session.
+ *     "New" is judged against a session-scoped snapshot of specs/ taken on
+ *     this hook's first invocation for the session, so Frankie can still
+ *     Edit a flow file he just Wrote (fixing a typo in his own draft is
+ *     not a graduated-spec mutation — PRD 010 §2.5 protects PRE-EXISTING
+ *     graduated specs, and Frankie writes new flow files in-mission).
  *
  * Blocked:
- *   - An Edit/Write targeting a file that already exists under specs/
+ *   - An Edit/Write targeting a spec that pre-dates the session snapshot
  *     ("immutable" — graduated specs cannot be altered, only added to)
  *   - Everything else (implementation, tests, and any other path) —
  *     Frankie's job is to report, not to fix; the failure bounces to B.A.
  *
- * Claude Code sends hook context via stdin JSON (tool_name, tool_input).
+ * Fail-closed: if session_id is missing, malformed, or the snapshot can't
+ * be written or read, the check falls back to the strict at-call-time
+ * existsSync behavior — an error path never weakens the guard.
+ *
+ * Claude Code sends hook context via stdin JSON (tool_name, tool_input,
+ * session_id).
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, readdirSync } from 'fs';
+import { tmpdir } from 'os';
 import path from 'path';
 import { resolveAgent } from './lib/resolve-agent.js';
 import { sendDeniedEvent } from './lib/send-denied-event.js';
@@ -67,6 +78,74 @@ function isUnderDir(filePath, dirName) {
   return abs === base || abs.startsWith(base + path.sep);
 }
 
+/**
+ * Where session snapshots of specs/ live. One JSON file per session_id,
+ * self-contained in this hook (mirrors lib/observer.js's tmpdir()-keyed
+ * ateam-agent-map convention).
+ */
+const SNAPSHOT_DIR = path.join(tmpdir(), 'ateam-frankie-spec-snapshot');
+
+/**
+ * Snapshot file path for a session, or null when the session_id is absent
+ * or not filesystem-safe (anything but [A-Za-z0-9._-]) — null means
+ * "no snapshot available, use the strict fallback". A session_id is never
+ * trusted as a raw filename: a hostile or malformed id must not become a
+ * path escape out of SNAPSHOT_DIR.
+ */
+function snapshotPathFor(sessionId) {
+  if (typeof sessionId !== 'string' || !/^[A-Za-z0-9._-]+$/.test(sessionId)) {
+    return null;
+  }
+  return path.join(SNAPSHOT_DIR, `${sessionId}.json`);
+}
+
+/**
+ * Recursively lists every file under dir as absolute paths.
+ */
+function listFilesUnder(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...listFilesUnder(entryPath));
+    } else {
+      out.push(entryPath);
+    }
+  }
+  return out;
+}
+
+/**
+ * Returns the Set of absolute paths that existed under <cwd>/specs/ at the
+ * start of this session (taking the snapshot now if this is the first
+ * invocation for the session), or null when no snapshot can be used —
+ * missing/unsafe session_id, unreadable or corrupt snapshot file, or a
+ * failed write. Callers treat null as "fall back to strict existsSync",
+ * so every error path here fails CLOSED, never open.
+ */
+function loadOrTakeSpecSnapshot(sessionId) {
+  const snapshotPath = snapshotPathFor(sessionId);
+  if (!snapshotPath) {
+    return null;
+  }
+  try {
+    if (existsSync(snapshotPath)) {
+      const parsed = JSON.parse(readFileSync(snapshotPath, 'utf8'));
+      if (!Array.isArray(parsed) || !parsed.every((p) => typeof p === 'string')) {
+        return null;
+      }
+      return new Set(parsed);
+    }
+    const specsRoot = path.join(process.cwd(), 'specs');
+    const files = existsSync(specsRoot) ? listFilesUnder(specsRoot) : [];
+    mkdirSync(SNAPSHOT_DIR, { recursive: true });
+    writeFileSync(snapshotPath, JSON.stringify(files));
+    return new Set(files);
+  } catch {
+    return null;
+  }
+}
+
 let hookInput = {};
 try {
   const raw = readFileSync(0, 'utf8');
@@ -83,6 +162,12 @@ try {
   if (agent !== 'frankie') {
     process.exit(0);
   }
+
+  // Take (or load) the session's specs/ snapshot on EVERY Frankie
+  // invocation, not just specs/-targeting ones — the first hook fire of the
+  // session (whatever it targets) freezes the "graduated" set before any
+  // Frankie write can land. null = strict fallback (see loadOrTakeSpecSnapshot).
+  const specSnapshot = loadOrTakeSpecSnapshot(hookInput.session_id);
 
   const toolName = hookInput.tool_name || '';
   const toolInput = hookInput.tool_input || {};
@@ -104,12 +189,17 @@ try {
     process.exit(0);
   }
 
-  // specs/ has two cases: a brand-new flow file is fine; an existing one
-  // is immutable.
+  // specs/ has two cases: a flow file Frankie authored this session is
+  // fine (including follow-up Edits to it); a spec that pre-dates the
+  // session is a GRADUATED spec and immutable.
   if (isUnderDir(filePath, 'specs')) {
-    // Resolve against the same root isUnderDir anchored to, so the existence
-    // check can never look at a different file than the one just allowlisted.
-    if (!existsSync(path.resolve(process.cwd(), filePath))) {
+    // Resolve against the same root isUnderDir anchored to, so the
+    // immutability check can never look at a different file than the one
+    // just allowlisted. With a snapshot, "immutable" = present at session
+    // start; without one (strict fallback), "immutable" = exists right now.
+    const abs = path.resolve(process.cwd(), filePath);
+    const isImmutable = specSnapshot !== null ? specSnapshot.has(abs) : existsSync(abs);
+    if (!isImmutable) {
       process.exit(0);
     }
 

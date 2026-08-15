@@ -156,17 +156,7 @@ Adjacent tools: `curl` for direct API endpoint probes, `Bash` for running code/t
 cat ateam.config.json | grep -A3 devServer
 ```
 
-The config contains:
-```json
-{
-  "devServer": {
-    "url": "http://localhost:3000",
-    "start": "npm run dev",
-    "restart": "docker compose restart",
-    "managed": false
-  }
-}
-```
+The canonical `ateam.config.json` template — including the full `devServer` field reference — lives in `commands/setup.md` (Step 6); this file doesn't duplicate it (see `adr/0006-ateam-config-schema-deferred.md`). What the fields mean for your workflow: `devServer.url` is where you point the browser; `devServer.start` and `devServer.restart` are the user's commands — quote them in your messages, never run them; `devServer.managed: false` means the user manages the server — you check that it's running but never start or restart it.
 
 **Before browser testing:**
 1. Check if server is running: `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000`

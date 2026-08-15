@@ -176,7 +176,7 @@ The dashboard provides two views:
 
 ### Raw Agent View (NEW)
 - **Real-time observability** into agent tool calls via observer hooks
-- **Swim lanes** showing each agent's activity (Hannibal, Face, Murdock, B.A., Lynch, Amy, Frankie, Stockwell, Tawnia)
+- **Swim lanes** showing each agent's activity (Hannibal, Face, Murdock, B.A., Amy, Lynch, Frankie, Stockwell, Tawnia)
 - **Tool call timeline** with PreToolUse, PostToolUse, and Stop events
 - **Duration tracking** showing how long each tool call took (e.g., "Write took 1.2s")
 - **Filtering controls** to view specific agents, tools, or event types
@@ -397,7 +397,7 @@ If issues are found, specific items return to the pipeline for fixes; once they'
 - Dashboard shows recoverable `precheck_failure` with blocker details and retry affordance
 
 **Post-Mission Checks** (`ateam missions-postcheck missionPostcheck`):
-- Run after Lynch's Final Mission Review approves
+- Run after Stockwell's Final Mission Review approves (which itself runs only after Frankie's DoD walk succeeds)
 - Configured via `ateam.config.json` (typically lint + unit + e2e)
 - Proves all code works together
 - Required for mission completion (enforced by Hannibal's Stop hook)
@@ -691,7 +691,7 @@ The plugin uses Claude Code's hook system to enforce workflow discipline. All ag
 
 **Completion enforcement hooks** ensure proper handoff:
 - All working agents must run `ateam agents-stop agentStop` before exiting — the Stop hook blocks premature exit
-- Hannibal's Stop hook validates that all items are in `done`, Lynch's Final Review is complete, and post-checks have passed
+- Hannibal's Stop hook validates that all items are in `done`, Frankie's evidence gate and Stockwell's Final Mission Review are complete, and post-checks have passed
 
 **Observer hooks** for telemetry (Raw Agent View) fire automatically for all sessions via `hooks/hooks.json` — no per-project configuration needed.
 

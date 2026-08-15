@@ -128,17 +128,24 @@ invent a QA recipe or describe app behavior from memory:
   mission PRD file (the path is in your dispatch prompt, or resolve it via
   `ateam missions-current getCurrentMission --json`'s `prdPath` field).
   This is the DoD Face authored and Sosa reviewed for drivability — do not
-  draft your own.
+  draft your own. A missing or empty `## Definition of Done` section is a
+  BLOCKED walk to flag to Hannibal — Face's pass owed it — never a
+  draft-your-own case (overrides the profile's standalone default in
+  Inputs item 1).
 - **The execution contract** — read `ateam.config.json` at the repo root
   and extract the same shape `scripts/hooks/lib/qa-contract.js` defines:
   `surfaces`, `qa.seed`, `qa.account.credential_env`, `qa.drive`,
-  `testing_level`, `evidence`. `qa.account.credential_env` is an env-var
-  **name** — read the credential's value from that environment variable,
-  never from the config file itself.
+  `testing_level`, `evidence`. The contract's seventh field,
+  `review_tier`, is deliberately excluded — it governs the operator's
+  step when the PR arrives, not your walk. `qa.account.credential_env`
+  is an env-var **name** — read the credential's value from that
+  environment variable, never from the config file itself.
 - **The dev server URL** — from the existing `devServer.url` field in
   `ateam.config.json` (the same field Amy uses). Don't start the server
   yourself; if it's not responding, that's a blocked walk (see Environment
-  Failures below), not something to work around.
+  Failures below), not something to work around (overrides the profile's
+  standalone default in Inputs item 2 — never try the repo's dev command
+  yourself).
 
 ## Process
 
@@ -230,6 +237,11 @@ runs once per mission instead of once per PR:
 - **Contents:** `report.md` with a checklist entry and a relative-linked
   screenshot per DoD statement, failures with repro steps listed first
   (per Failure Path above).
+- **Video:** when the effective `evidence.prd_work` policy (read per
+  "Reading the Execution Contract" above) includes video (e.g.
+  `"video+screenshots"`), also capture a short compressed video of the
+  PRD's primary user flow — target a few MB, within the bundle budget
+  below — and link it from `report.md`.
 - **Size:** whole bundle compressed to a 5-10MB target — resize/compress
   screenshots as needed to stay in range.
 

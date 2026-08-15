@@ -4,6 +4,8 @@ export interface AgentStatusBarProps {
   agents: Partial<Record<AgentName, AgentStatus>>;
 }
 
+// Pipeline order, ending with the mission tail per ADR 0004:
+// Frankie → Stockwell → Tawnia.
 export const AGENT_NAMES: AgentName[] = [
   'Hannibal',
   'Face',
@@ -12,8 +14,8 @@ export const AGENT_NAMES: AgentName[] = [
   'Amy',
   'Lynch',
   'Frankie',
-  'Tawnia',
   'Stockwell',
+  'Tawnia',
 ];
 
 export const AGENT_INITIALS: Record<AgentName, string> = {

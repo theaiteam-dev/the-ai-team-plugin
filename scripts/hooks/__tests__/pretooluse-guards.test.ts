@@ -20,6 +20,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { readFileSync, mkdirSync, writeFileSync, rmSync, rmdirSync } from 'fs';
+import { tmpdir } from 'os';
 
 const HOOKS_DIR = join(__dirname, '..');
 const REPO_ROOT = join(__dirname, '..', '..', '..');
@@ -1670,6 +1671,205 @@ describe('block-frankie-writes — agent guards', () => {
         });
         expect(result.exitCode).toBe(0);
       });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Fresh-spec edit window (finding B5): "immutable" is judged against a
+  // session-scoped snapshot of specs/ taken on the hook's FIRST invocation
+  // for a session (keyed by stdin's session_id, stored under
+  // <tmpdir>/ateam-frankie-spec-snapshot/<session_id>.json). A flow file
+  // Frankie creates AFTER the snapshot is his own in-mission draft and stays
+  // editable by him; anything present AT the snapshot is a graduated spec and
+  // stays immutable (PRD 010 §2.5). Missing/unsafe session_id or any snapshot
+  // read/write failure falls back to the strict at-call-time existsSync
+  // behavior — errors fail CLOSED, never open.
+  // ---------------------------------------------------------------------------
+  describe('session-scoped spec snapshot: fresh-spec edit window (finding B5)', () => {
+    const RUN_TAG = `${process.pid}-${Date.now()}`; // unique per run — never reuse a stale snapshot
+    const SNAPSHOT_DIR = join(tmpdir(), 'ateam-frankie-spec-snapshot');
+    const MID_SESSION_SPEC = join(SPECS_DIR, 'mid-session-draft.flow.yaml');
+    const SECOND_SESSION_SPEC = join(SPECS_DIR, 'first-session-draft.flow.yaml');
+    const STRICT_FALLBACK_SPEC = join(SPECS_DIR, 'strict-fallback.flow.yaml');
+
+    /** Warm-up invocation that freezes the session's specs/ snapshot. */
+    function takeSnapshot(sessionId: string) {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        session_id: sessionId,
+        tool_name: 'Write',
+        tool_input: { file_path: '.qa-evidence/snapshot-warmup/report.md' },
+      });
+      expect(result.exitCode).toBe(0); // .qa-evidence is always allowed
+    }
+
+    afterAll(() => {
+      rmSync(MID_SESSION_SPEC, { force: true });
+      rmSync(SECOND_SESSION_SPEC, { force: true });
+      rmSync(STRICT_FALLBACK_SPEC, { force: true });
+      // Remove only THIS run's snapshot files — the dir is shared with any
+      // concurrently running real session, so never rm it wholesale.
+      for (const name of ['preexisting', 'midsession', 'session-a', 'session-b', 'newwrite']) {
+        rmSync(join(SNAPSHOT_DIR, `frankie-b5-${name}-${RUN_TAG}.json`), { force: true });
+      }
+    });
+
+    it('still blocks editing a spec that pre-dates the session snapshot (exit 2, immutable)', () => {
+      const sessionId = `frankie-b5-preexisting-${RUN_TAG}`;
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        session_id: sessionId,
+        tool_name: 'Edit',
+        tool_input: { file_path: 'specs/checkout.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
+    it('allows editing a spec created AFTER the session snapshot (Frankie fixing his own fresh draft, exit 0)', () => {
+      const sessionId = `frankie-b5-midsession-${RUN_TAG}`;
+      takeSnapshot(sessionId);
+
+      // Simulate Frankie's own Write landing after the snapshot was taken.
+      writeFileSync(MID_SESSION_SPEC, 'name: mid-session draft\nsteps: []\n');
+
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        session_id: sessionId,
+        tool_name: 'Edit',
+        tool_input: { file_path: 'specs/mid-session-draft.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('a SECOND session (different session_id) treats the first session\'s new spec as immutable (exit 2)', () => {
+      const firstSession = `frankie-b5-session-a-${RUN_TAG}`;
+      const secondSession = `frankie-b5-session-b-${RUN_TAG}`;
+
+      // Session A: snapshot, then author a new flow file.
+      takeSnapshot(firstSession);
+      writeFileSync(SECOND_SESSION_SPEC, 'name: first-session draft\nsteps: []\n');
+
+      // Session A can still edit its own draft…
+      const sameSession = runHook(HOOK, {
+        agent_type: 'frankie',
+        session_id: firstSession,
+        tool_name: 'Edit',
+        tool_input: { file_path: 'specs/first-session-draft.flow.yaml' },
+      });
+      expect(sameSession.exitCode).toBe(0);
+
+      // …but session B's snapshot is taken NOW, with the file on disk: graduated.
+      const crossSession = runHook(HOOK, {
+        agent_type: 'frankie',
+        session_id: secondSession,
+        tool_name: 'Edit',
+        tool_input: { file_path: 'specs/first-session-draft.flow.yaml' },
+      });
+      expect(crossSession.exitCode).toBe(2);
+      expect(crossSession.stderr).toMatch(/BLOCKED/i);
+      expect(crossSession.stderr).toMatch(/immutable/i);
+    });
+
+    it('missing session_id falls back to strict existsSync behavior (existing file blocked, exit 2)', () => {
+      writeFileSync(STRICT_FALLBACK_SPEC, 'name: strict fallback\nsteps: []\n');
+
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Edit',
+        tool_input: { file_path: 'specs/strict-fallback.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
+    it('a filesystem-unsafe session_id also falls back to strict behavior instead of trusting it as a filename (exit 2)', () => {
+      writeFileSync(STRICT_FALLBACK_SPEC, 'name: strict fallback\nsteps: []\n');
+
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        session_id: '../../session-escape',
+        tool_name: 'Edit',
+        tool_input: { file_path: 'specs/strict-fallback.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
+    it('with a session snapshot active, writing a brand-new spec file is still allowed (exit 0, regression)', () => {
+      const sessionId = `frankie-b5-newwrite-${RUN_TAG}`;
+      takeSnapshot(sessionId);
+
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        session_id: sessionId,
+        tool_name: 'Write',
+        tool_input: { file_path: 'specs/brand-new-after-snapshot.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // MultiEdit / NotebookEdit path-extraction coverage (finding D2).
+  // MultiEdit uses file_path (same as Write/Edit); NotebookEdit uses
+  // notebook_path. Both are in the hook's WRITE_TOOLS set and must hit the
+  // same block AND allow branches as Write/Edit — a tool-name gap here would
+  // let Frankie edit implementation via MultiEdit or a notebook unblocked.
+  // ---------------------------------------------------------------------------
+  describe('MultiEdit / NotebookEdit — same block and allow branches as Write/Edit', () => {
+    it('blocks frankie MultiEdit to an implementation file (exit 2, bounce to B.A.)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'MultiEdit',
+        tool_input: { file_path: 'src/services/order.ts' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/B\.A\./i);
+    });
+
+    it('blocks frankie MultiEdit to an existing spec (exit 2, immutable)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'MultiEdit',
+        tool_input: { file_path: 'specs/checkout.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
+    it('allows frankie MultiEdit to a NEW file under specs/ (exit 0)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'MultiEdit',
+        tool_input: { file_path: 'specs/multiedit-new-flow.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('blocks frankie NotebookEdit to an implementation notebook via notebook_path (exit 2)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'NotebookEdit',
+        tool_input: { notebook_path: 'src/notebooks/analysis.ipynb' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/B\.A\./i);
+    });
+
+    it('allows frankie NotebookEdit under .qa-evidence/ via notebook_path (exit 0)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'NotebookEdit',
+        tool_input: { notebook_path: '.qa-evidence/M-20260812-003/walk.ipynb' },
+      });
+      expect(result.exitCode).toBe(0);
     });
   });
 

@@ -44,7 +44,7 @@ You are Hannibal, leader of the A(i)-Team and orchestrator of this development m
 
 When `/ai-team:run` or `/ai-team:resume` is invoked, the main Claude session becomes Hannibal. This means:
 - User sees all orchestration decisions in real-time
-- Worker agents (Murdock, B.A., Lynch, Amy, Tawnia) are dispatched as subagents
+- Worker agents (Murdock, B.A., Lynch, Amy, Frankie, Stockwell, Tawnia) are dispatched as subagents
 - No nested subagent overhead
 - User can intervene mid-run if needed
 
@@ -52,8 +52,10 @@ When `/ai-team:run` or `/ai-team:resume` is invoked, the main Claude session bec
 Main Claude (you, as Hannibal)
     ├── subagent → Murdock (testing)
     ├── subagent → B.A. (implementing)
-    ├── subagent → Lynch (review + final review)
+    ├── subagent → Lynch (review)
     ├── subagent → Amy (probing)
+    ├── subagent → Frankie (mission-tail QA walk)
+    ├── subagent → Stockwell (Final Mission Review)
     └── subagent → Tawnia (documentation)
 ```
 
@@ -82,7 +84,8 @@ Hannibal's behavior is enforced by Claude Code hooks defined in the frontmatter:
 
 **Stop Hook** (`enforce-final-review.js`):
 - Blocks mission completion until all items are in `done` stage
-- Requires Lynch's Final Mission Review verdict
+- Requires Frankie's evidence bundle (when the repo has a drivable surface — see `scripts/hooks/lib/qa-contract.js`)
+- Requires Stockwell's Final Mission Review verdict
 - Requires post-mission checks to pass
 
 These hooks enforce role separation - you can't accidentally (or intentionally) bypass the pipeline.
@@ -596,7 +599,7 @@ Reopening a `done` item after a Stockwell rejection is a **manual operator actio
 
 ## Post-Mission Checks
 
-**After Lynch returns `VERDICT: FINAL APPROVED`**, run post-mission checks to verify everything works:
+**After Stockwell returns `VERDICT: FINAL APPROVED`**, run post-mission checks to verify everything works:
 
 ```bash
 ateam missions-postcheck missionPostcheck --json

@@ -187,6 +187,72 @@ describe('readExecutionContract() - unrecognised enum values', () => {
   });
 });
 
+describe('readExecutionContract() - surfaces enum validation (PRD 010 section 2.1, finding B4)', () => {
+  /** Spies on stderr and silences it; returns the spy for warning asserts. */
+  function spyStderr() {
+    return vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  }
+
+  it('passes all six PRD surface values through untouched, with no warning', () => {
+    const stderrSpy = spyStderr();
+    mockConfigFile(
+      JSON.stringify({
+        surfaces: ['web', 'api', 'fixture-flow', 'golden-pair', 'hardware', 'cli'],
+      })
+    );
+
+    const contract = readExecutionContract();
+
+    expect(contract.surfaces).toEqual([
+      'web',
+      'api',
+      'fixture-flow',
+      'golden-pair',
+      'hardware',
+      'cli',
+    ]);
+    expect(stderrSpy).not.toHaveBeenCalled();
+  });
+
+  it('drops a case-mistake like "Web" and warns naming the rejected value (case-sensitivity made obvious)', () => {
+    const stderrSpy = spyStderr();
+    mockConfigFile(JSON.stringify({ surfaces: ['Web'] }));
+
+    const contract = readExecutionContract();
+
+    expect(contract.surfaces).toEqual([]);
+    expect(stderrSpy).toHaveBeenCalledTimes(1);
+    const warning = stderrSpy.mock.calls[0][0];
+    expect(warning).toMatch(/"Web"/); // names the exact rejected spelling
+    expect(warning).toMatch(/case-sensitive/i); // makes the case mistake obvious
+    expect(warning).toMatch(/\bweb\b/); // the valid lowercase spelling is right there
+  });
+
+  it('keeps the valid values and drops only the invalid ones from a mixed list, warning names each rejected value', () => {
+    const stderrSpy = spyStderr();
+    mockConfigFile(JSON.stringify({ surfaces: ['Web', 'web', 'webapp', 'api'] }));
+
+    const contract = readExecutionContract();
+
+    expect(contract.surfaces).toEqual(['web', 'api']);
+    expect(stderrSpy).toHaveBeenCalledTimes(1);
+    const warning = stderrSpy.mock.calls[0][0];
+    expect(warning).toMatch(/"Web"/);
+    expect(warning).toMatch(/"webapp"/);
+    expect(warning).not.toMatch(/"api"/);
+  });
+
+  it('an all-invalid list collapses to [] and behaves exactly like an empty surfaces list (fail-inert)', () => {
+    spyStderr();
+    mockConfigFile(JSON.stringify({ surfaces: ['Web', 'desktop'] }));
+
+    const contract = readExecutionContract();
+
+    expect(contract.surfaces).toEqual([]);
+    expect(canFrankieDrive(contract.surfaces)).toBe(false);
+  });
+});
+
 describe('readExecutionContract() - tolerates malformed neighboring fields', () => {
   it('extracts contract fields correctly even when unrelated config fields are the wrong shape (drifted devServer)', () => {
     // Mirrors the real drift documented in adr/0001: packages/kanban-viewer's

@@ -33,6 +33,7 @@ The `skills:` key is optional and lists skill files (from `skills/`) to load whe
 | **B.A.** | `defensive-coding`, `security-input` |
 | **Lynch** | `test-writing`, `defensive-coding`, `security-input`, `code-patterns` |
 | **Amy** | `defensive-coding` |
+| **Frankie** | `ateam-cli`, `agent-lifecycle`, `teams-messaging`, `a11y`, `perspective-test` |
 | **Stockwell** | `test-writing`, `defensive-coding`, `security-input`, `code-patterns` |
 
 Skills live in `skills/<name>/SKILL.md`. The available skills are:
@@ -157,7 +158,7 @@ In both modes, `ateam` CLI commands are the source of truth. Communication tools
 briefings → ready → testing → implementing → review → probing → done
                       Murdock    B.A.          Lynch    Amy
 ```
-Then: Frankie (mission-tail QA walk, evidence bundle + graduated specs) → Final Review (Stockwell, opus, PRD+diff, includes Frankie's evidence) → Post-Checks → Documentation (Tawnia, haiku) → Complete. A Stockwell rejection restarts the tail at Frankie, not at Post-Checks.
+Then: Frankie (mission-tail QA walk, evidence bundle + graduated specs; skipped on repos whose execution contract declares no drivable surface — see `scripts/hooks/lib/qa-contract.js`) → Final Review (Stockwell, opus, PRD+diff, includes Frankie's evidence) → Post-Checks → Documentation (Tawnia, haiku) → Complete. A Stockwell rejection restarts the tail at Frankie, not at Post-Checks.
 
 ## Related Context
 

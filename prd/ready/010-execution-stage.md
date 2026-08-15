@@ -236,6 +236,14 @@ items complete, before Tawnia's final commit**:
 - **On failure:** bounce the offending item back to B.A. **in-mission**,
   with the repro. B.A. still has full context; no post-merge rework, no
   stale fix branches.
+  > **Deferred (2026-08-15):** the in-mission bounce is **not implemented
+  > by the implementation mission.** `done` is terminal
+  > (`adr/0005-done-is-terminal-no-in-mission-rework.md`; see also the
+  > §3 scope ruling): Frankie reports the failing item to Hannibal with
+  > the repro, the mission tail halts, and reopening the item is a
+  > manual operator action — the bounce is reported, not automated. The
+  > same applies to the §2 timeline diagram's "bounce to B.A.
+  > in-mission" arrow.
 - **On green:** write the evidence bundle and graduated specs (§2.5);
   both ride Tawnia's final commit.
 - **On environment failure:** if a walk fails for environment reasons

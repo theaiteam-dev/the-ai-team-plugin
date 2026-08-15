@@ -15,9 +15,11 @@ import type { HookEventSummary } from '@/types/hook-event';
 
 /**
  * Frankie (QA / Demo Man) is a first-class agent in the shared registry
- * (`packages/shared/src/agents.ts`) and claims work items via agentStart, so the
- * kanban viewer must render him everywhere the other agents are rendered rather
- * than falling through to the unknown-agent gray dot.
+ * (`packages/shared/src/agents.ts`). He never claims or moves board items —
+ * `done` is terminal (ADR 0005) — but he appears in activity and hook-event
+ * streams during the mission-tail DoD walk, so the kanban viewer must render
+ * him everywhere the other agents are rendered rather than falling through to
+ * the unknown-agent gray dot.
  */
 
 function createHookEvent(overrides: Partial<HookEventSummary> = {}): HookEventSummary {
@@ -127,6 +129,10 @@ describe('Frankie agent registry', () => {
   });
 
   describe('agent status derivation', () => {
+    // Per ADR 0005 Frankie never claims board items, so `assigned_agent:
+    // 'Frankie'` should not arise in practice. This is defensive rendering:
+    // if the state ever appears (bad data, future API change), the viewer
+    // must degrade to a normal active lane rather than an unknown-agent hole.
     it('should treat Frankie as a valid assigned agent', () => {
       const item = {
         id: 'WI-001',

@@ -11,7 +11,8 @@ const AGENT_COLORS: Record<AgentName, string> = {
   'B.A.': 'bg-orange-500',
   Amy: 'bg-pink-500',
   Lynch: 'bg-purple-500',
-  Frankie: 'bg-indigo-500',
+  // violet matches Frankie's color on every other surface (agent-status-bar).
+  Frankie: 'bg-violet-500',
   Tawnia: 'bg-teal-500',
   Stockwell: 'bg-gray-700',
 };

@@ -202,10 +202,14 @@ function runHookLive(
     ...extraEnv,
   };
   // Guard against a stray mock leaking in from the ambient environment and
-  // silently turning this back into a unit test.
+  // silently turning this back into a unit test — and against an ambient
+  // gate-skip var silently disabling the Frankie gate under test.
   delete env.__TEST_MOCK_BOARD__;
   delete env.__TEST_MOCK_MISSION__;
   delete env.__TEST_MOCK_NO_MISSION__;
+  if (!('ATEAM_SKIP_FRANKIE_GATE' in extraEnv)) {
+    delete env.ATEAM_SKIP_FRANKIE_GATE;
+  }
 
   return new Promise((resolve) => {
     const child = execFile(
@@ -306,6 +310,20 @@ describe('enforce-orchestrator-stop — real API path', async () => {
 
     expect(result.exitCode).toBe(0);
     expect(parseStopOutput(result.stdout).decision).not.toBe('block');
+  });
+
+  it('blocks with the restart-at-Frankie path when the stored review carries VERDICT: FINAL REJECTED (real final-review route)', async () => {
+    state.items = [{ id: 'WI-001', stageId: 'done' }];
+    state.missionState = 'completed';
+    state.finalReview = '# Final Mission Review\n\nVERDICT: FINAL REJECTED\n\n- WI-001: broken';
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: true });
+
+    const output = parseStopOutput((await runHookLive(HOOK, {}, dir)).stdout);
+
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/FINAL REJECTED/);
+    expect(String(output.additionalContext)).toMatch(/RESTARTS at Frankie/i);
+    expect(String(output.additionalContext)).not.toMatch(/Run ateam missions postcheck/i);
   });
 
   it('fails open when the API returns 404 for every route (adversity must not trap the operator)', async () => {

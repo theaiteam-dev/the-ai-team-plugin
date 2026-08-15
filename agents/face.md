@@ -113,7 +113,7 @@ If the PRD names concrete code touchpoints (files, enum locations, schemas, spec
 | **Linter** | eslint/biome in devDependencies; lint script in package.json | Create "Set up linting" item if PRD requires lint compliance |
 | **Key dependencies** | Check package.json for libraries the PRD work requires | Create "Install dependencies" item |
 | **Build tooling** | build script in package.json; framework config (next.config, vite.config) | Note in summary; may need setup item |
-| **QA contract** | Mission includes user-facing work, the repo declares a drivable surface (see Exemption below), and `ateam.config.json`'s `qa` block is missing or stale (see "Missing or Stale" below) | Create "Establish QA contract" item |
+| **QA contract** | Mission includes user-facing work, the repo declares — or detectably has — a drivable surface (see Exemption below), and `ateam.config.json`'s `qa` block is missing or stale (see "Missing or Stale" below) | Create "Establish QA contract" item |
 
 **How to check:** Read `package.json` (dependencies, devDependencies, scripts). Glob for config files (`*config*`, `tsconfig*`, `.eslintrc*`). This takes 2-3 tool calls.
 
@@ -121,9 +121,9 @@ If the PRD names concrete code touchpoints (files, enum locations, schemas, spec
 
 The QA-contract check uses the same field shape as `scripts/hooks/lib/qa-contract.js` — the executable definition of `ateam.config.json`'s execution-contract block. Field names must match exactly: `surfaces`, `qa.seed`, `qa.account.credential_env`, `qa.drive`, `testing_level`, `evidence`, `review_tier`.
 
-- **Exemption:** a repo declaring no drivable surface never triggers this check. Only `web` is drivable today (matches `qa-contract.js`'s `canFrankieDrive()`) — `api`, `fixture-flow`, `golden-pair`, `cli`, and `hardware` are not, and an empty or absent `surfaces` list is not. Frankie can't walk a non-drivable repo regardless of the `qa` block, so scaffolding one is wasted work. This is why the check must not trip on this very plugin repo's own CLI-only missions.
+- **Exemption:** a repo that genuinely has no drivable surface never triggers this check. Only `web` is drivable today (matches `qa-contract.js`'s `canFrankieDrive()`) — `api`, `fixture-flow`, `golden-pair`, `cli`, and `hardware` are not. Frankie can't walk a non-drivable repo regardless of the `qa` block, so scaffolding one is wasted work. This is why the check must not trip on this very plugin repo's own CLI-only missions. **An absent or empty `surfaces` list is NOT automatically exempt** — a config that predates the execution-contract fields looks identical to a genuinely non-drivable repo, so check the target repo before exempting (see Stale below). And when the exemption does apply, it must be visible, never silent: state it explicitly in your readiness report (e.g. "Execution stage exempt: no drivable surface declared") so the call surfaces at the human gate instead of quietly disabling the mission's Frankie walk.
 - **Missing:** no `qa` block in `ateam.config.json` at all.
-- **Stale:** a `qa` block is present but lacks a pointer the mission's user-facing work needs — `qa.seed` absent when the work implies pre-seeded or existing data, `qa.account.credential_env` absent when the work implies an authenticated flow, or `qa.drive` absent entirely (every drivable repo needs a declared driver, even the default `flowspec`). A `qa` block that already has everything this mission's DoD statements will need to walk — even if terse — is NOT stale; don't manufacture scaffolding for pointers nothing in this mission requires.
+- **Stale:** a `qa` block is present but lacks a pointer the mission's user-facing work needs — `qa.seed` absent when the work implies pre-seeded or existing data, `qa.account.credential_env` absent when the work implies an authenticated flow, or `qa.drive` absent entirely (every drivable repo needs a declared driver, even the default `flowspec`). **Also stale:** `surfaces` is absent or empty but your audit detects a web framework or dev-server entrypoint in the target repo (`next.config.*`, `vite.config.*`, `astro.config.*`, `nuxt.config.*`, or a `dev`/`start` script that boots an HTTP server) — treat this exactly like a missing `qa` block, and the Wave-0 scaffolding item must propose `surfaces` (detected from the repo, ratified by the operator, per PRD 010 §2.1's detect-and-ratify rule) in addition to the qa recipe. A `qa` block that already has everything this mission's DoD statements will need to walk — even if terse — is NOT stale; don't manufacture scaffolding for pointers nothing in this mission requires.
 
 **When to create scaffolding items:**
 
@@ -143,7 +143,7 @@ ateam items createItem \
   --priority critical
 ```
 
-Same shape for the QA contract: if the mission includes user-facing work, the repo declares a drivable surface, and the `qa` block is missing or stale (see above) → create an "Establish QA contract" item. Make it a dependency of the first item exercising the drivable surface (or all Wave-0 items that do).
+Same shape for the QA contract: if the mission includes user-facing work, the repo declares — or detectably has — a drivable surface, and the `qa` block is missing or stale (see above) → create an "Establish QA contract" item. Make it a dependency of the first item exercising the drivable surface (or all Wave-0 items that do).
 
 Example:
 ```bash
@@ -155,6 +155,7 @@ ateam items createItem \
   --acceptance "ateam.config.json's qa.seed names a command that seeds known test data" \
   --acceptance "ateam.config.json's qa.account.credential_env names the env var holding the QA login credential (only if this mission's work requires an authenticated flow)" \
   --acceptance "ateam.config.json's qa.drive is set (default 'flowspec' if no repo-specific driver applies)" \
+  --acceptance "ateam.config.json's surfaces declares the repo's drivable surface(s), proposed from the detected framework and ratified by the operator (only if surfaces was absent or empty — see Stale above)" \
   --context "No qa block (or missing seed/account/drive) in ateam.config.json. This is a Wave-0 dependency for Frankie's mission-completion walk. Field shape must match scripts/hooks/lib/qa-contract.js exactly." \
   --outputs.test "<target project's convention for a config-loads test>" \
   --outputs.impl "ateam.config.json" \

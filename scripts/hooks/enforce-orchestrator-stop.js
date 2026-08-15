@@ -42,6 +42,7 @@ import {
   normalizeMission,
   countBoard,
   checkFrankieEvidence,
+  checkFinalReviewRejection,
 } from './lib/stop-gates.js';
 
 const hookInput = readHookInput();
@@ -151,6 +152,7 @@ async function checkCompletion() {
   const frankieBlock = checkFrankieEvidence({
     missionId: missionData.id,
     doneCount,
+    doneItems: boardData.columns.done,
   });
   if (frankieBlock) {
     console.log(JSON.stringify({ decision: 'block', additionalContext: frankieBlock }));
@@ -161,9 +163,19 @@ async function checkCompletion() {
     console.log(
       JSON.stringify({
         decision: 'block',
-        additionalContext: `All ${doneCount} items are done but Lynch has not completed the Final Mission Review. Dispatch Lynch for final review.`,
+        additionalContext: `All ${doneCount} items are done but Stockwell has not completed the Final Mission Review. Dispatch Stockwell for final review.`,
       })
     );
+    process.exit(0);
+  }
+
+  // An explicit FINAL REJECTED verdict is a completed review, but it must not
+  // fall through to the post-check gate ("run postcheck" would misdirect).
+  // Block with the ADR 0004 restart-at-Frankie path instead. Reviews with no
+  // recognizable verdict marker fall through unchanged (fail open).
+  const rejectionBlock = checkFinalReviewRejection(missionData.final_review_verdict);
+  if (rejectionBlock) {
+    console.log(JSON.stringify({ decision: 'block', additionalContext: rejectionBlock }));
     process.exit(0);
   }
 

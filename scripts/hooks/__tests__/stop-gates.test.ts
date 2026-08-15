@@ -16,26 +16,17 @@
  * HTTP server in stop-hooks-api-integration.test.ts.
  */
 
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { join } from 'path';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'fs';
 import { tmpdir } from 'os';
 
-// readExecutionContract() resolves ateam.config.json against process.cwd(),
-// and vitest workers cannot process.chdir(). Stubbing only that reader lets
-// these tests control the declared surfaces without depending on this repo's
-// own config — while the REAL canFrankieDrive() still decides drivability, so
-// the gate's wiring to it stays genuinely under test.
-const contract = vi.hoisted(() => ({ surfaces: ['web'] as string[] }));
-
-vi.mock('../lib/qa-contract.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../lib/qa-contract.js')>();
-  return {
-    ...actual,
-    readExecutionContract: () => ({ surfaces: contract.surfaces }),
-  };
-});
-
+// The gate resolves EVERYTHING — the execution contract AND the evidence
+// path — against the `cwd` it is handed (it used to read the contract via
+// readExecutionContract(), which is bound to process.cwd(), forcing these
+// tests to stub the reader). Each test now writes a real ateam.config.json
+// into a scratch repo instead, so the REAL config read and the REAL
+// canFrankieDrive() are both genuinely under test.
 import {
   buildBoardUrl,
   buildMissionUrl,
@@ -43,6 +34,8 @@ import {
   normalizeBoard,
   normalizeMission,
   checkFrankieEvidence,
+  parseFinalReviewVerdict,
+  checkFinalReviewRejection,
 } from '../lib/stop-gates.js';
 
 // ---------------------------------------------------------------------------
@@ -166,28 +159,117 @@ describe('stop-gates — normalizeMission', () => {
 });
 
 // ---------------------------------------------------------------------------
+// parseFinalReviewVerdict — the playbooks standardize Stockwell's verdict
+// line as `VERDICT: FINAL APPROVED` / `VERDICT: FINAL REJECTED`.
+// ---------------------------------------------------------------------------
+describe('stop-gates — parseFinalReviewVerdict', () => {
+  it('parses VERDICT: FINAL APPROVED', () => {
+    expect(parseFinalReviewVerdict('# Final Mission Review\n\nVERDICT: FINAL APPROVED\n')).toBe(
+      'approved'
+    );
+  });
+
+  it('parses VERDICT: FINAL REJECTED', () => {
+    expect(parseFinalReviewVerdict('# Final Mission Review\n\nVERDICT: FINAL REJECTED\n')).toBe(
+      'rejected'
+    );
+  });
+
+  it('honors a bare FINAL APPROVED / FINAL REJECTED marker without the VERDICT: prefix', () => {
+    expect(parseFinalReviewVerdict('FINAL APPROVED — all requirements met')).toBe('approved');
+    expect(parseFinalReviewVerdict('FINAL REJECTED — see WI-003, WI-007')).toBe('rejected');
+  });
+
+  it('the last VERDICT line wins when a re-review appends below the original', () => {
+    expect(
+      parseFinalReviewVerdict(
+        'VERDICT: FINAL REJECTED\n\n## Re-review after rework\n\nVERDICT: FINAL APPROVED\n'
+      )
+    ).toBe('approved');
+  });
+
+  it('a VERDICT line outranks a stray bare marker quoted elsewhere in the prose', () => {
+    expect(
+      parseFinalReviewVerdict(
+        'The previous run ended FINAL REJECTED; all issues addressed.\n\nVERDICT: FINAL APPROVED\n'
+      )
+    ).toBe('approved');
+  });
+
+  it('returns unknown for review text with no recognizable marker (fail open — never a deadlock)', () => {
+    expect(parseFinalReviewVerdict('# Final Mission Review\n\nAPPROVED')).toBe('unknown');
+    expect(parseFinalReviewVerdict('Looks good to me.')).toBe('unknown');
+  });
+
+  it('returns unknown when both bare markers appear with no VERDICT line to disambiguate', () => {
+    expect(parseFinalReviewVerdict('FINAL APPROVED? no — FINAL REJECTED? unclear')).toBe('unknown');
+  });
+
+  it('returns unknown for non-string input', () => {
+    expect(parseFinalReviewVerdict(null)).toBe('unknown');
+    expect(parseFinalReviewVerdict(undefined)).toBe('unknown');
+    expect(parseFinalReviewVerdict(42 as unknown as string)).toBe('unknown');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkFinalReviewRejection — an explicit FINAL REJECTED must block with the
+// ADR 0004 restart-at-Frankie path, never fall through to "run postcheck".
+// ---------------------------------------------------------------------------
+describe('stop-gates — checkFinalReviewRejection', () => {
+  it('blocks a FINAL REJECTED review with the restart-at-Frankie instructions', () => {
+    const message = checkFinalReviewRejection('VERDICT: FINAL REJECTED\n\n- WI-003: broken');
+    expect(message).toMatch(/FINAL REJECTED/);
+    expect(message, 'must not misdirect toward postcheck').toMatch(/Do NOT run post-checks/i);
+    expect(message, 'ADR 0004: the tail restarts at Frankie').toMatch(/RESTARTS at Frankie/i);
+    expect(message, 'ADR 0004: full DoD re-walk, then Stockwell re-reviews').toMatch(
+      /FULL Definition of Done/i
+    );
+    expect(message, 'ADR 0005: reopening done items is a manual operator action').toMatch(
+      /manual operator action/i
+    );
+  });
+
+  it('returns null for FINAL APPROVED (falls through to the postcheck gate)', () => {
+    expect(checkFinalReviewRejection('VERDICT: FINAL APPROVED')).toBeNull();
+  });
+
+  it('returns null for review text with no recognizable marker (preserves current treat-as-complete behavior)', () => {
+    expect(checkFinalReviewRejection('# Final Mission Review\n\nAPPROVED')).toBeNull();
+  });
+
+  it('returns null when there is no review at all', () => {
+    expect(checkFinalReviewRejection(null)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // checkFrankieEvidence — returns a block message, or null to allow.
 //
-// The declared surfaces come from the stubbed contract above (default:
-// drivable); the evidence path is resolved against the cwd passed in.
+// The declared surfaces come from a real ateam.config.json written into the
+// scratch repo; the evidence path is resolved against the same cwd.
 // ---------------------------------------------------------------------------
 describe('stop-gates — checkFrankieEvidence', () => {
   const scratchDirs: string[] = [];
 
   /** Throwaway repo dir; pass a mission id to seed a real evidence report. */
-  function scratch(withReport: string | null = null) {
+  function scratch(
+    withReport: string | null = null,
+    opts: { surfaces?: string[]; reportBody?: string } = {}
+  ) {
+    const { surfaces = ['web'], reportBody = '# Evidence\n' } = opts;
     const dir = mkdtempSync(join(tmpdir(), 'ateam-stop-gates-'));
     scratchDirs.push(dir);
+    writeFileSync(join(dir, 'ateam.config.json'), JSON.stringify({ surfaces }));
     if (withReport) {
       mkdirSync(join(dir, '.qa-evidence', withReport), { recursive: true });
-      writeFileSync(join(dir, '.qa-evidence', withReport, 'report.md'), '# Evidence\n');
+      writeFileSync(join(dir, '.qa-evidence', withReport, 'report.md'), reportBody);
     }
     return dir;
   }
 
   afterEach(() => {
     delete process.env.ATEAM_SKIP_FRANKIE_GATE;
-    contract.surfaces = ['web'];
     for (const dir of scratchDirs.splice(0)) {
       try {
         rmSync(dir, { recursive: true, force: true });
@@ -198,9 +280,12 @@ describe('stop-gates — checkFrankieEvidence', () => {
   });
 
   it('does not block when the contract declares no drivable surface', () => {
-    contract.surfaces = ['hardware'];
     expect(
-      checkFrankieEvidence({ missionId: 'M-TEST-001', doneCount: 1, cwd: scratch() })
+      checkFrankieEvidence({
+        missionId: 'M-TEST-001',
+        doneCount: 1,
+        cwd: scratch(null, { surfaces: ['hardware'] }),
+      })
     ).toBeNull();
   });
 
@@ -277,5 +362,150 @@ describe('stop-gates — checkFrankieEvidence', () => {
         cwd: 12345 as unknown as string,
       })
     ).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // Staleness — a pre-rework report must not satisfy the gate forever. The
+  // done-transition timestamp comes from the board's done items
+  // (completedAt, falling back to updatedAt).
+  // -------------------------------------------------------------------------
+  describe('staleness (ADR 0004: evidence must reflect the final code)', () => {
+    const HOUR = 60 * 60 * 1000;
+
+    /** Backdates the report so a done transition can postdate it. */
+    function backdateReport(cwd: string, missionId: string, when: Date) {
+      utimesSync(join(cwd, '.qa-evidence', missionId, 'report.md'), when, when);
+    }
+
+    it('blocks with a re-walk message when the newest done transition postdates the report', () => {
+      const cwd = scratch('M-TEST-001');
+      backdateReport(cwd, 'M-TEST-001', new Date(Date.now() - 2 * HOUR));
+      const message = checkFrankieEvidence({
+        missionId: 'M-TEST-001',
+        doneCount: 2,
+        doneItems: [
+          { id: 'WI-001', updatedAt: new Date(Date.now() - 3 * HOUR).toISOString() },
+          { id: 'WI-002', updatedAt: new Date(Date.now() - 1 * HOUR).toISOString() },
+        ],
+        cwd,
+      });
+      expect(message).toMatch(/STALE/i);
+      expect(message, 'ADR 0004: full re-walk, not only previous failures').toMatch(
+        /FULL Definition of Done/i
+      );
+      expect(message).toMatch(/ATEAM_SKIP_FRANKIE_GATE=1/);
+    });
+
+    it('prefers completedAt over updatedAt as the done-transition record', () => {
+      const cwd = scratch('M-TEST-001');
+      backdateReport(cwd, 'M-TEST-001', new Date(Date.now() - 2 * HOUR));
+      const message = checkFrankieEvidence({
+        missionId: 'M-TEST-001',
+        doneCount: 1,
+        doneItems: [
+          {
+            id: 'WI-001',
+            completedAt: new Date(Date.now() - 1 * HOUR).toISOString(),
+            updatedAt: new Date(Date.now() - 3 * HOUR).toISOString(),
+          },
+        ],
+        cwd,
+      });
+      expect(message).toMatch(/STALE/i);
+    });
+
+    it('passes when the report is newer than every done transition', () => {
+      const cwd = scratch('M-TEST-001');
+      expect(
+        checkFrankieEvidence({
+          missionId: 'M-TEST-001',
+          doneCount: 1,
+          doneItems: [{ id: 'WI-001', updatedAt: new Date(Date.now() - 1 * HOUR).toISOString() }],
+          cwd,
+        })
+      ).toBeNull();
+    });
+
+    it('fails open when the done items carry no usable timestamp (staleness cannot be derived)', () => {
+      const cwd = scratch('M-TEST-001');
+      backdateReport(cwd, 'M-TEST-001', new Date(Date.now() - 2 * HOUR));
+      expect(
+        checkFrankieEvidence({
+          missionId: 'M-TEST-001',
+          doneCount: 1,
+          doneItems: [{ id: 'WI-001' }, { id: 'WI-002', updatedAt: 'not-a-date' }],
+          cwd,
+        })
+      ).toBeNull();
+    });
+
+    it('honors the ATEAM_SKIP_FRANKIE_GATE escape valve for the staleness check', () => {
+      process.env.ATEAM_SKIP_FRANKIE_GATE = '1';
+      const cwd = scratch('M-TEST-001');
+      backdateReport(cwd, 'M-TEST-001', new Date(Date.now() - 2 * HOUR));
+      expect(
+        checkFrankieEvidence({
+          missionId: 'M-TEST-001',
+          doneCount: 1,
+          doneItems: [{ id: 'WI-001', updatedAt: new Date().toISOString() }],
+          cwd,
+        })
+      ).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Failed walk — a report full of ❌ statements is evidence of FAILURE, not
+  // completion. Distinct message: do not dispatch Stockwell.
+  // -------------------------------------------------------------------------
+  describe('failed walk (❌ statements in the report)', () => {
+    const FAILED_REPORT = '# Evidence\n\n- ✅ Login works\n- ❌ Checkout total is wrong (WI-003)\n';
+    const GREEN_REPORT = '# Evidence\n\n- ✅ Login works\n- ✅ Checkout total correct\n';
+
+    it('blocks with a distinct do-not-dispatch-Stockwell message when the report contains ❌', () => {
+      const message = checkFrankieEvidence({
+        missionId: 'M-TEST-001',
+        doneCount: 1,
+        cwd: scratch('M-TEST-001', { reportBody: FAILED_REPORT }),
+      });
+      expect(message).toMatch(/FAILED/);
+      expect(message, 'distinct from the missing/stale messages').toMatch(
+        /Do NOT dispatch Stockwell/i
+      );
+      expect(message).toMatch(/❌/);
+      expect(message).toMatch(/ATEAM_SKIP_FRANKIE_GATE=1/);
+      expect(message).not.toMatch(/STALE/);
+    });
+
+    it('passes a fresh, all-green report', () => {
+      expect(
+        checkFrankieEvidence({
+          missionId: 'M-TEST-001',
+          doneCount: 1,
+          cwd: scratch('M-TEST-001', { reportBody: GREEN_REPORT }),
+        })
+      ).toBeNull();
+    });
+
+    it('honors the ATEAM_SKIP_FRANKIE_GATE escape valve for the failed-walk check', () => {
+      process.env.ATEAM_SKIP_FRANKIE_GATE = 'true';
+      expect(
+        checkFrankieEvidence({
+          missionId: 'M-TEST-001',
+          doneCount: 1,
+          cwd: scratch('M-TEST-001', { reportBody: FAILED_REPORT }),
+        })
+      ).toBeNull();
+    });
+
+    it('fails open when the report exists but cannot be read as a file (unreadable report)', () => {
+      // Make report.md a DIRECTORY: existsSync passes, readFileSync throws
+      // EISDIR — the gate must fail open rather than trap the operator.
+      const cwd = scratch(null);
+      mkdirSync(join(cwd, '.qa-evidence', 'M-TEST-001', 'report.md'), { recursive: true });
+      expect(
+        checkFrankieEvidence({ missionId: 'M-TEST-001', doneCount: 1, cwd })
+      ).toBeNull();
+    });
   });
 });

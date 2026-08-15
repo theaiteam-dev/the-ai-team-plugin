@@ -32,16 +32,45 @@
  * checked where the file's structure actually supports it: the linear,
  * single-narrative files (CLAUDE.md, README.md, commands/run.md,
  * agents/hannibal.md) and the fenced pipeline-flow diagrams specifically.
+ *
+ * Two cross-file guards live at the bottom: a proximity-regex sweep that no
+ * doc still credits Lynch with the final review (replacing brittle
+ * exact-phrase negatives), and the ADR 0006 guard that commands/setup.md is
+ * the ONLY markdown file carrying an ateam.config.json template block.
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 
 const REPO_ROOT = join(__dirname, '..', '..');
 
 function read(relPath) {
   return readFileSync(join(REPO_ROOT, relPath), 'utf8');
+}
+
+/** Recursively collect .md files under a repo-relative directory. */
+function collectMarkdownFiles(relDir) {
+  const out = [];
+  for (const entry of readdirSync(join(REPO_ROOT, relDir), { withFileTypes: true })) {
+    const rel = `${relDir}/${entry.name}`;
+    if (entry.isDirectory()) {
+      if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+      out.push(...collectMarkdownFiles(rel));
+    } else if (entry.name.endsWith('.md')) {
+      out.push(rel);
+    }
+  }
+  return out;
+}
+
+/** Return the inner content of every fenced code block (``` ... ```). */
+function extractFencedBlocks(content) {
+  const blocks = [];
+  const re = /```[^\n]*\n([\s\S]*?)```/g;
+  let m;
+  while ((m = re.exec(content))) blocks.push(m[1]);
+  return blocks;
 }
 
 /**
@@ -147,23 +176,12 @@ describe('numbered stage-transition lists state the same order', () => {
     expect(violations, violations.join('\n')).toEqual([]);
   });
 
-  it('README.md no longer credits Lynch with the final review', () => {
-    const content = read('README.md');
-    expect(content).not.toMatch(/Lynch reviews entire codebase holistically/i);
-    expect(content).not.toMatch(/Final Review\s*\n\s*│\s*\(Lynch/i);
-  });
-
   it('commands/run.md "Stage transitions" numbered list', () => {
     const content = read('commands/run.md');
     const section = extractSection(content, /\*\*Stage transitions \(ALL REQUIRED\):\*\*/, /\n## /);
     expect(section, 'expected a "Stage transitions" list in commands/run.md').not.toBeNull();
     const violations = checkAscendingOrder(section, [FRANKIE, STOCKWELL, POSTCHECKS, TAWNIA]);
     expect(violations, violations.join('\n')).toEqual([]);
-  });
-
-  it('commands/run.md no longer credits Lynch with the final review', () => {
-    const content = read('commands/run.md');
-    expect(content).not.toMatch(/Lynch reviews entire codebase holistically/i);
   });
 
   it('commands/run.md per-step instructions place Frankie between the last item reaching done and Final Mission Review (Behavior section)', () => {
@@ -192,11 +210,6 @@ describe('agents/hannibal.md states the tail order and required conditions', () 
     expect(violations, violations.join('\n')).toEqual([]);
   });
 
-  it('no longer credits Lynch with the final mission review', () => {
-    expect(content).not.toMatch(/dispatch Lynch for a final holistic review/i);
-    expect(content).not.toMatch(/Lynch for a final holistic review/i);
-  });
-
   it('the completion checklist includes Frankie as a required condition', () => {
     const section = extractSection(content, /## Completion\n/, /\n## /);
     expect(section, 'expected a "## Completion" section in agents/hannibal.md').not.toBeNull();
@@ -217,7 +230,9 @@ describe('agents/hannibal.md states the tail order and required conditions', () 
   it('a Stockwell rejection is documented as restarting the tail at Frankie, not post-checks', () => {
     const section = extractSection(content, /\*\*If FINAL REJECTED:\*\*/, /\n## /);
     expect(section, 'expected a "**If FINAL REJECTED:**" block in agents/hannibal.md').not.toBeNull();
-    expect(section).toMatch(/frankie/i);
+    // Anchor on the restart language itself, not any incidental Frankie mention.
+    expect(section).toMatch(/restarts?\s+at\s+frankie/i);
+    expect(section).not.toMatch(/restarts?\s+at\s+post-checks/i);
   });
 });
 
@@ -286,16 +301,12 @@ describe('playbooks/orchestration-native.md wires Frankie into the mission tail'
   });
 
   it('a Stockwell rejection restarts the tail at Frankie, not at post-checks', () => {
-    // Frankie's own dispatch-block context (searched above) or the Stockwell
-    // section itself must state this — check both windows.
-    const stockwellSectionIdx = content.search(/^## Final Mission Review Dispatch/m);
-    const frankieIdx = content.search(/subagent_type:\s*"ai-team:frankie"/);
-    expect(stockwellSectionIdx, 'expected "## Final Mission Review Dispatch"').toBeGreaterThan(-1);
-    expect(frankieIdx, 'expected a Frankie dispatch block').toBeGreaterThan(-1);
-    const stockwellWindow = content.slice(stockwellSectionIdx, stockwellSectionIdx + 2000);
-    const frankieWindow = content.slice(frankieIdx, frankieIdx + 3000);
-    const statesRestart = /frankie/i.test(stockwellWindow) || /rejected[\s\S]{0,500}frankie/i.test(frankieWindow);
-    expect(statesRestart, 'expected either the Stockwell dispatch section or the Frankie block to state a rejection restarts at Frankie').toBe(true);
+    // Anchor on the FINAL REJECTED handling itself and its restart language,
+    // not any incidental Frankie mention within a wide window.
+    const rejected = content.match(/\*\*If Stockwell rejects \(FINAL REJECTED\):\*\*[\s\S]{0,1500}/);
+    expect(rejected, 'expected an "**If Stockwell rejects (FINAL REJECTED):**" block').not.toBeNull();
+    expect(rejected[0]).toMatch(/restarts?\s+(?:the mission tail\s+)?at\s+frankie/i);
+    expect(rejected[0]).toMatch(/not at post-checks/i);
   });
 });
 
@@ -325,16 +336,13 @@ describe('playbooks/orchestration-legacy.md wires Frankie into the mission tail'
     expect(frankieIdx).toBeLessThan(stockwellSectionIdx);
   });
 
-  it('the stale "dispatch Lynch for Final Review" loop comment is gone', () => {
-    expect(content).not.toMatch(/dispatch Lynch for Final Review/i);
-  });
-
-  it('the orchestration loop comment routes to Frankie when finalReviewReady, not straight to Lynch/Stockwell', () => {
-    // Search near where the stale comment used to live: the main dispatch
-    // loop, before "## Minimizing Per-Cycle Token Spend".
-    const section = extractSection(content, /\*\*KEY BEHAVIORS:\*\*/, /## Minimizing Per-Cycle Token Spend/);
-    expect(section, 'expected the loop KEY BEHAVIORS / trailing-comment region').not.toBeNull();
-    expect(content).toMatch(/frankie/i);
+  it('the orchestration loop comment routes to Frankie when finalReviewReady, not straight to Stockwell', () => {
+    // Anchor on the finalReviewReady routing comment inside the dispatch loop
+    // itself (a naive whole-file /frankie/i here would be vacuously true).
+    const trigger = content.match(/finalReviewReady[^\n]*(?:\n[^\n]*){0,3}/);
+    expect(trigger, 'expected a finalReviewReady routing comment in the dispatch loop').not.toBeNull();
+    expect(trigger[0]).toMatch(/frankie/i);
+    expect(trigger[0]).toMatch(/never skip straight to Stockwell/i);
   });
 
   it('states a Frankie failure halts the tail and is surfaced to the operator', () => {
@@ -353,14 +361,12 @@ describe('playbooks/orchestration-legacy.md wires Frankie into the mission tail'
   });
 
   it('a Stockwell rejection restarts the tail at Frankie, not at post-checks', () => {
-    const stockwellSectionIdx = content.search(/^## Final Mission Review Dispatch/m);
-    const frankieIdx = content.search(/subagent_type:\s*"ai-team:frankie"/);
-    expect(stockwellSectionIdx, 'expected "## Final Mission Review Dispatch"').toBeGreaterThan(-1);
-    expect(frankieIdx, 'expected a Frankie dispatch block').toBeGreaterThan(-1);
-    const stockwellWindow = content.slice(stockwellSectionIdx, stockwellSectionIdx + 2000);
-    const frankieWindow = content.slice(frankieIdx, frankieIdx + 3000);
-    const statesRestart = /frankie/i.test(stockwellWindow) || /rejected[\s\S]{0,500}frankie/i.test(frankieWindow);
-    expect(statesRestart, 'expected either the Stockwell dispatch section or the Frankie block to state a rejection restarts at Frankie').toBe(true);
+    // Anchor on the REJECTED handling itself and its restart language,
+    // not any incidental Frankie mention within a wide window.
+    const rejected = content.match(/\*\*If REJECTED:\*\*[\s\S]{0,1500}/);
+    expect(rejected, 'expected an "**If REJECTED:**" block').not.toBeNull();
+    expect(rejected[0]).toMatch(/restarts?\s+(?:the mission tail\s+)?at\s+frankie/i);
+    expect(rejected[0]).toMatch(/not at post-checks/i);
   });
 });
 
@@ -376,19 +382,18 @@ describe('docs/ORCHESTRATION.md documents Frankie in the mission tail', () => {
     expect(content).toMatch(/frankie/i);
   });
 
-  it('no longer credits Lynch with the Final Mission Review approval', () => {
-    expect(content).not.toMatch(/Lynch'?s Final Mission Review/i);
-    expect(content).not.toMatch(/Run after Lynch'?s Final Mission Review approves/i);
-  });
-
   it('dispatches Frankie before Stockwell in its dispatch-mode agent listing', () => {
-    // "### Current Skill Wiring"-style dispatch listing:
+    // Inspect the actual dispatch-mode listing lines:
+    // "- Frankie: `subagent_type: "ai-team:frankie"` → mission-tail QA walk..."
     // "- Stockwell: `subagent_type: "ai-team:stockwell"` → Final Mission Review..."
-    const stockwellLineIdx = content.search(/Stockwell:\s*`subagent_type:\s*"ai-team:stockwell"`/);
-    expect(stockwellLineIdx, 'expected the Stockwell dispatch-mode listing line').toBeGreaterThan(-1);
-    const frankieIdx = content.search(/frankie/i);
-    expect(frankieIdx, 'expected "Frankie" to appear somewhere in the file').toBeGreaterThan(-1);
-    expect(frankieIdx).toBeLessThan(stockwellLineIdx);
+    const frankieLine = content.match(/^- Frankie:\s*`subagent_type:\s*"ai-team:frankie"`.*$/m);
+    const stockwellLine = content.match(/^- Stockwell:\s*`subagent_type:\s*"ai-team:stockwell"`.*$/m);
+    expect(frankieLine, 'expected the Frankie dispatch-mode listing line').not.toBeNull();
+    expect(stockwellLine, 'expected the Stockwell dispatch-mode listing line').not.toBeNull();
+    expect(frankieLine.index).toBeLessThan(stockwellLine.index);
+    // The lines themselves must state the ordering, not merely appear in order.
+    expect(frankieLine[0]).toMatch(/before Stockwell/i);
+    expect(stockwellLine[0]).toMatch(/after Frankie'?s walk/i);
   });
 });
 
@@ -397,7 +402,7 @@ describe('docs/ORCHESTRATION.md documents Frankie in the mission tail', () => {
 // this item (Frankie runs off the board, per the ADR — done stays terminal).
 // =============================================================================
 describe('Frankie requires no board stage or TRANSITION_MATRIX change', () => {
-  it('none of the five touched docs reference a new board stage for Frankie', () => {
+  it('none of the four touched docs reference a new board stage for Frankie', () => {
     const files = [
       'playbooks/orchestration-native.md',
       'playbooks/orchestration-legacy.md',
@@ -410,5 +415,103 @@ describe('Frankie requires no board stage or TRANSITION_MATRIX change', () => {
         /toStage\s+"?frankie"?|stage:\s*"?frankie"?/i
       );
     }
+  });
+});
+
+// =============================================================================
+// Cross-file: no doc still credits Lynch with the final review. A proximity
+// regex ("Lynch" within the same sentence as final-review language) replaces
+// the earlier exact-phrase negatives, which only caught the specific wordings
+// they were written against and let reworded stale credits through.
+// =============================================================================
+describe('no doc still credits Lynch with the final review', () => {
+  const STALE_LYNCH_FINAL_REVIEW_CREDIT =
+    /Lynch[^.\n]{0,60}(final\s+(mission\s+)?review|FINAL APPROVED|FINAL MISSION REVIEW)/i;
+
+  const files = [
+    'commands/run.md',
+    'agents/hannibal.md',
+    'README.md',
+    'docs/ORCHESTRATION.md',
+    'playbooks/orchestration-native.md',
+    'playbooks/orchestration-legacy.md',
+    'CLAUDE.md',
+  ];
+
+  for (const file of files) {
+    it(`${file} does not mention Lynch near final-review language`, () => {
+      const content = read(file);
+      const match = content.match(STALE_LYNCH_FINAL_REVIEW_CREDIT);
+      expect(
+        match,
+        `${file} still credits Lynch with the final review near: "${match?.[0]}" — the Final Mission Review belongs to Stockwell (Lynch is per-feature review only)`
+      ).toBeNull();
+    });
+  }
+});
+
+// =============================================================================
+// ADR 0006: exactly ONE canonical ateam.config.json template, in
+// commands/setup.md. Every other markdown file must point there instead of
+// carrying its own fenced-JSON copy — divergent copies are exactly how the
+// config fields drifted before (the ADR's own trigger condition).
+// =============================================================================
+describe('ADR 0006: single canonical ateam.config.json template', () => {
+  const CANONICAL_FILE = 'commands/setup.md';
+  const CONFIG_KEYS = [
+    'devServer',
+    'checks',
+    'projectName',
+    'wipLimits',
+    'pricing',
+    'surfaces',
+    'ateamCliVersion',
+    'testing_level',
+    'evidence',
+    'review_tier',
+  ];
+
+  /**
+   * A fenced block "looks like" an ateam.config.json template when it carries
+   * a quoted "devServer" key (the field every historical divergent copy
+   * restated), or a quoted "checks" key alongside at least one other known
+   * config key (so a generic, unrelated "checks" object alone can't trip it).
+   */
+  function looksLikeConfigTemplate(block) {
+    const keysPresent = CONFIG_KEYS.filter((key) => new RegExp(`"${key}"\\s*:`).test(block));
+    if (keysPresent.includes('devServer')) return true;
+    return keysPresent.includes('checks') && keysPresent.length >= 2;
+  }
+
+  function allMarkdownFiles() {
+    return [
+      ...['agents', 'commands', 'docs', 'playbooks', 'skills'].flatMap(collectMarkdownFiles),
+      'README.md',
+      'CLAUDE.md',
+    ];
+  }
+
+  it(`no markdown file outside ${CANONICAL_FILE} carries an ateam.config.json-shaped fenced block`, () => {
+    const offenders = [];
+    for (const file of allMarkdownFiles()) {
+      if (file === CANONICAL_FILE) continue;
+      for (const block of extractFencedBlocks(read(file))) {
+        if (looksLikeConfigTemplate(block)) {
+          offenders.push(file);
+          break;
+        }
+      }
+    }
+    expect(
+      offenders,
+      `these files carry their own ateam.config.json template copy — replace each with a pointer to ${CANONICAL_FILE} (see adr/0006-ateam-config-schema-deferred.md): ${offenders.join(', ')}`
+    ).toEqual([]);
+  });
+
+  it(`${CANONICAL_FILE} still carries the canonical template (heuristic stays live)`, () => {
+    // Positive control: if setup.md's template moves or the heuristic rots,
+    // this fails instead of the sweep above passing vacuously.
+    const blocks = extractFencedBlocks(read(CANONICAL_FILE));
+    expect(blocks.some(looksLikeConfigTemplate)).toBe(true);
   });
 });

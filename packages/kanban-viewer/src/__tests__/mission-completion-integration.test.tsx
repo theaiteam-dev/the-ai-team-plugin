@@ -2,7 +2,7 @@
  * Integration Tests for Mission Completion Flow (Item 008)
  *
  * Tests the mission completion flow components working together:
- * - Agent Status Bar (7 agents including Tawnia)
+ * - Agent Status Bar (9 agents, mission tail ordered Frankie → Stockwell → Tawnia per ADR 0004)
  * - Header Bar (phase indicators for completion states)
  * - Mission Completion Panel (three-phase pipeline)
  * - Live Feed Panel (COMMITTED message highlighting)
@@ -178,9 +178,10 @@ describe('Mission Completion Integration: Agent Status Bar', () => {
       expect(badges).toHaveLength(9);
       expect(badges[0]).toHaveAttribute('data-testid', 'agent-badge-Hannibal');
       expect(badges[5]).toHaveAttribute('data-testid', 'agent-badge-Lynch');
+      // Mission tail per ADR 0004: Frankie → Stockwell → Tawnia.
       expect(badges[6]).toHaveAttribute('data-testid', 'agent-badge-Frankie');
-      expect(badges[7]).toHaveAttribute('data-testid', 'agent-badge-Tawnia');
-      expect(badges[8]).toHaveAttribute('data-testid', 'agent-badge-Stockwell');
+      expect(badges[7]).toHaveAttribute('data-testid', 'agent-badge-Stockwell');
+      expect(badges[8]).toHaveAttribute('data-testid', 'agent-badge-Tawnia');
     });
 
     it('should show correct initials for all agents', () => {

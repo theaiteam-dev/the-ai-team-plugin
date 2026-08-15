@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'child_process';
 import { join } from 'path';
-import { readFileSync, writeFileSync, unlinkSync, mkdtempSync, mkdirSync, rmSync } from 'fs';
+import { readFileSync, writeFileSync, unlinkSync, mkdtempSync, mkdirSync, rmSync, utimesSync } from 'fs';
 import { tmpdir } from 'os';
 
 // Mission-active marker — enforce-orchestrator-stop needs this to enforce
@@ -50,6 +50,13 @@ function runHook(
     ATEAM_PROJECT_ID: 'test-project',
     ...env,
   };
+  // Spreading process.env means an ambient gate-skip var on a dev machine
+  // (e.g. ATEAM_SKIP_FRANKIE_GATE=1 left over in a shell) would silently
+  // disable the very gates under test. Scrub it unless a test sets it
+  // explicitly.
+  if (!('ATEAM_SKIP_FRANKIE_GATE' in env)) {
+    delete fullEnv.ATEAM_SKIP_FRANKIE_GATE;
+  }
   const options: Record<string, unknown> = {
     env: fullEnv,
     encoding: 'utf8',
@@ -429,11 +436,11 @@ describe('enforce-final-review — agent guards', () => {
 // six-surface matrix in qa-contract.test.js; this suite does not re-derive
 // it, only proves the hook is correctly wired to it).
 //
-// readExecutionContract() resolves ateam.config.json relative to
-// process.cwd(), and execFileSync inherits the parent's cwd unless
+// The gate resolves both ateam.config.json and the evidence path against
+// the hook process's cwd, and execFileSync inherits the parent's cwd unless
 // overridden — so every test here uses a scratch temp directory (its own
 // throwaway ateam.config.json and, where needed, a real .qa-evidence/
-// fixture) via runHook's new cwd parameter, rather than depending on this
+// fixture) via runHook's cwd parameter, rather than depending on this
 // repo's own real config or mutating it.
 // =============================================================================
 describe('enforce-final-review — Frankie evidence-bundle gate', () => {
@@ -596,6 +603,8 @@ describe('enforce-final-review — Frankie evidence-bundle gate', () => {
     );
     expect(result.exitCode, 'pre-existing gate blocks via exit(2), not the JSON mechanism').toBe(2);
     expect(result.stderr).toMatch(/Final Mission Review required/i);
+    expect(result.stderr, 'the Final Mission Review belongs to Stockwell').toMatch(/Stockwell/);
+    expect(result.stderr).not.toMatch(/Lynch/);
   });
 
   it('allows the stop entirely once evidence exists and the pre-existing gates (final review + post-checks) are also satisfied', () => {
@@ -920,6 +929,10 @@ describe('enforce-orchestrator-stop — Frankie evidence-bundle gate', () => {
     const output = parseStopOutput(result.stdout);
     expect(output.decision).toBe('block');
     expect(String(output.additionalContext)).toMatch(/Final Mission Review/i);
+    expect(String(output.additionalContext), 'the Final Mission Review belongs to Stockwell').toMatch(
+      /Stockwell/
+    );
+    expect(String(output.additionalContext)).not.toMatch(/Lynch/);
     expect(String(output.additionalContext)).not.toMatch(/frankie/i);
   });
 
@@ -1050,5 +1063,293 @@ describe('Frankie evidence gate — ATEAM_SKIP_FRANKIE_GATE escape hatch', () =>
     expect(result.exitCode).toBe(0);
     const output = parseStopOutput(result.stdout);
     expect(output.decision).not.toBe('block');
+  });
+});
+
+// =============================================================================
+// Final Mission Review verdict gate — a FINAL REJECTED review is a COMPLETE
+// review, so mere truthiness of the stored markdown must not fall through to
+// the "run postcheck" gate. Both hooks parse the standardized verdict marker
+// (VERDICT: FINAL APPROVED / FINAL REJECTED, playbooks/orchestration-*.md)
+// via checkFinalReviewRejection() in lib/stop-gates.js: an explicit rejection
+// blocks with the ADR 0004 restart-at-Frankie path; text with no recognizable
+// marker preserves today's treat-as-complete behavior (fail open).
+// =============================================================================
+describe('Final Mission Review verdict gate', () => {
+  const MISSION_ID = 'M-TEST-004';
+  const scratchDirs: string[] = [];
+
+  beforeAll(() => setMissionMarker());
+  afterAll(() => {
+    clearMissionMarker();
+    for (const dir of scratchDirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup
+      }
+    }
+  });
+
+  /** Drivable repo with a fresh, all-green evidence bundle (Frankie gate passes). */
+  function repoWithEvidence() {
+    const dir = mkdtempSync(join(tmpdir(), 'ateam-verdict-gate-'));
+    scratchDirs.push(dir);
+    writeFileSync(join(dir, 'ateam.config.json'), JSON.stringify({ surfaces: ['web'] }));
+    mkdirSync(join(dir, '.qa-evidence', MISSION_ID), { recursive: true });
+    writeFileSync(
+      join(dir, '.qa-evidence', MISSION_ID, 'report.md'),
+      '# Evidence\n\n- ✅ Login works\n'
+    );
+    return dir;
+  }
+
+  const MOCK_BOARD_ONE_DONE = JSON.stringify({ columns: { done: [{ id: 'WI-001' }] } });
+
+  function missionMock(overrides: Record<string, unknown> = {}) {
+    return JSON.stringify({
+      id: MISSION_ID,
+      status: 'active',
+      final_review_verdict: null,
+      postcheck: null,
+      ...overrides,
+    });
+  }
+
+  const REJECTED_REVIEW = '# Final Mission Review\n\nVERDICT: FINAL REJECTED\n\n- WI-003: broken';
+  const APPROVED_REVIEW = '# Final Mission Review\n\nVERDICT: FINAL APPROVED\n';
+  const MARKERLESS_REVIEW = '# Final Mission Review\n\nEverything looks reasonable.';
+
+  it('enforce-orchestrator-stop: FINAL REJECTED blocks with the restart-at-Frankie path, not the postcheck misdirection', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE,
+        __TEST_MOCK_MISSION__: missionMock({ final_review_verdict: REJECTED_REVIEW }),
+      },
+      repoWithEvidence()
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    const context = String(output.additionalContext);
+    expect(context).toMatch(/FINAL REJECTED/);
+    expect(context, 'ADR 0004: the tail restarts at Frankie after rework').toMatch(
+      /RESTARTS at Frankie/i
+    );
+    expect(context, 'full DoD re-walk before Stockwell re-reviews').toMatch(
+      /FULL Definition of Done/i
+    );
+    expect(context, 'must not misdirect toward running postcheck').not.toMatch(
+      /Run ateam missions postcheck/i
+    );
+  });
+
+  it('enforce-orchestrator-stop: FINAL APPROVED proceeds to the postcheck gate', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE,
+        __TEST_MOCK_MISSION__: missionMock({ final_review_verdict: APPROVED_REVIEW }),
+      },
+      repoWithEvidence()
+    );
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/postcheck/i);
+    expect(String(output.additionalContext)).not.toMatch(/RESTARTS at Frankie/i);
+  });
+
+  it('enforce-orchestrator-stop: review text with no recognizable marker preserves current behavior (postcheck gate, fail open)', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE,
+        __TEST_MOCK_MISSION__: missionMock({ final_review_verdict: MARKERLESS_REVIEW }),
+      },
+      repoWithEvidence()
+    );
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/postcheck/i);
+    expect(String(output.additionalContext)).not.toMatch(/RESTARTS at Frankie/i);
+  });
+
+  it('enforce-orchestrator-stop: FINAL APPROVED with passing postchecks allows the stop (rejection gate is inert)', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE,
+        __TEST_MOCK_MISSION__: missionMock({
+          final_review_verdict: APPROVED_REVIEW,
+          postcheck: { passed: true },
+        }),
+      },
+      repoWithEvidence()
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).not.toBe('block');
+  });
+
+  it('enforce-final-review: FINAL REJECTED blocks (exit 2) with the restart-at-Frankie path on stderr', () => {
+    const result = runHook(
+      hookPath('enforce-final-review.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE,
+        __TEST_MOCK_MISSION__: missionMock({ final_review_verdict: REJECTED_REVIEW }),
+      },
+      repoWithEvidence()
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/FINAL REJECTED/);
+    expect(result.stderr).toMatch(/RESTARTS at Frankie/i);
+    expect(result.stderr).toMatch(/FULL Definition of Done/i);
+    expect(result.stderr).not.toMatch(/Run ateam missions postcheck/i);
+  });
+
+  it('enforce-final-review: FINAL APPROVED proceeds to the postcheck gate (exit 2, postcheck message)', () => {
+    const result = runHook(
+      hookPath('enforce-final-review.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE,
+        __TEST_MOCK_MISSION__: missionMock({ final_review_verdict: APPROVED_REVIEW }),
+      },
+      repoWithEvidence()
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/Post-mission checks required/i);
+    expect(result.stderr).not.toMatch(/RESTARTS at Frankie/i);
+  });
+
+  it('enforce-final-review: review text with no recognizable marker preserves current behavior (postcheck gate)', () => {
+    const result = runHook(
+      hookPath('enforce-final-review.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE,
+        __TEST_MOCK_MISSION__: missionMock({ final_review_verdict: MARKERLESS_REVIEW }),
+      },
+      repoWithEvidence()
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/Post-mission checks required/i);
+    expect(result.stderr).not.toMatch(/RESTARTS at Frankie/i);
+  });
+});
+
+// =============================================================================
+// Frankie evidence QUALITY gates — existence alone is not enough:
+//   - a report older than the newest done transition is STALE (post-rework
+//     evidence must reflect the final code, ADR 0004);
+//   - a report containing ❌ statements records a FAILED walk (do not
+//     dispatch Stockwell).
+// Exercised through enforce-orchestrator-stop.js — the hook that binds in the
+// primary execution mode; the logic itself is shared via lib/stop-gates.js
+// and unit-tested exhaustively in stop-gates.test.ts.
+// =============================================================================
+describe('enforce-orchestrator-stop — Frankie evidence quality gates', () => {
+  const MISSION_ID = 'M-TEST-005';
+  const scratchDirs: string[] = [];
+
+  beforeAll(() => setMissionMarker());
+  afterAll(() => {
+    clearMissionMarker();
+    for (const dir of scratchDirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup
+      }
+    }
+  });
+
+  function repoWithReport(body: string, reportMtime?: Date) {
+    const dir = mkdtempSync(join(tmpdir(), 'ateam-evidence-quality-'));
+    scratchDirs.push(dir);
+    writeFileSync(join(dir, 'ateam.config.json'), JSON.stringify({ surfaces: ['web'] }));
+    mkdirSync(join(dir, '.qa-evidence', MISSION_ID), { recursive: true });
+    const reportPath = join(dir, '.qa-evidence', MISSION_ID, 'report.md');
+    writeFileSync(reportPath, body);
+    if (reportMtime) utimesSync(reportPath, reportMtime, reportMtime);
+    return dir;
+  }
+
+  function missionMock() {
+    return JSON.stringify({
+      id: MISSION_ID,
+      status: 'active',
+      final_review_verdict: null,
+      postcheck: null,
+    });
+  }
+
+  const HOUR = 60 * 60 * 1000;
+
+  it('blocks with a STALE re-walk message when a done transition postdates the report (post-rework evidence)', () => {
+    const dir = repoWithReport('# Evidence\n\n- ✅ Login works\n', new Date(Date.now() - 2 * HOUR));
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: JSON.stringify({
+          columns: {
+            done: [{ id: 'WI-001', updatedAt: new Date(Date.now() - 1 * HOUR).toISOString() }],
+          },
+        }),
+        __TEST_MOCK_MISSION__: missionMock(),
+      },
+      dir
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/STALE/i);
+    expect(String(output.additionalContext)).toMatch(/FULL Definition of Done/i);
+  });
+
+  it('blocks with the distinct failed-walk message when the report contains ❌ statements', () => {
+    const dir = repoWithReport('# Evidence\n\n- ✅ Login works\n- ❌ Checkout broken (WI-003)\n');
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: JSON.stringify({ columns: { done: [{ id: 'WI-001' }] } }),
+        __TEST_MOCK_MISSION__: missionMock(),
+      },
+      dir
+    );
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/FAILED/);
+    expect(String(output.additionalContext)).toMatch(/Do NOT dispatch Stockwell/i);
+    expect(String(output.additionalContext)).not.toMatch(/STALE/);
+  });
+
+  it('passes a fresh all-green report through to the next gate (Final Mission Review)', () => {
+    const dir = repoWithReport('# Evidence\n\n- ✅ Login works\n');
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: JSON.stringify({
+          columns: {
+            done: [{ id: 'WI-001', updatedAt: new Date(Date.now() - 1 * HOUR).toISOString() }],
+          },
+        }),
+        __TEST_MOCK_MISSION__: missionMock(),
+      },
+      dir
+    );
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/Final Mission Review/i);
+    expect(String(output.additionalContext)).not.toMatch(/frankie/i);
   });
 });

@@ -28,9 +28,9 @@
  * adapt at the fetch boundary so the gates below see one shape only.
  */
 
-import { existsSync } from 'fs';
+import { existsSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
-import { readExecutionContract, canFrankieDrive } from './qa-contract.js';
+import { canFrankieDrive } from './qa-contract.js';
 
 /** Stages that mean a mission still has work in flight. */
 export const ACTIVE_STAGES = [
@@ -138,6 +138,55 @@ export function normalizeMission(payload) {
 }
 
 /**
+ * Parses Stockwell's verdict marker out of the final review text.
+ *
+ * The playbooks standardize the verdict line as `VERDICT: FINAL APPROVED` /
+ * `VERDICT: FINAL REJECTED` (playbooks/orchestration-*.md, agents/stockwell.md).
+ * The last VERDICT line wins (a re-review appends below the original). When no
+ * VERDICT line exists, a bare `FINAL APPROVED` / `FINAL REJECTED` marker is
+ * honored only when exactly one of the two appears — anything else is
+ * 'unknown', which callers must treat as "review complete" (fail open: an
+ * unrecognized marker must never deadlock the mission tail).
+ *
+ * @param {unknown} review - The stored finalReview markdown.
+ * @returns {'approved'|'rejected'|'unknown'}
+ */
+export function parseFinalReviewVerdict(review) {
+  if (typeof review !== 'string') return 'unknown';
+
+  const verdictLines = review.match(/VERDICT:\s*FINAL\s+(?:APPROVED|REJECTED)/gi);
+  if (verdictLines && verdictLines.length > 0) {
+    return /REJECTED/i.test(verdictLines[verdictLines.length - 1]) ? 'rejected' : 'approved';
+  }
+
+  const approved = /FINAL\s+APPROVED/i.test(review);
+  const rejected = /FINAL\s+REJECTED/i.test(review);
+  if (approved !== rejected) return approved ? 'approved' : 'rejected';
+  return 'unknown';
+}
+
+/**
+ * Gate: an explicit FINAL REJECTED verdict must not fall through to the
+ * post-check gate ("run postcheck" would misdirect the operator). Instead the
+ * stop blocks with the ADR 0004 restart-at-Frankie path. Approved and
+ * unrecognized reviews return null — the pre-existing gates apply unchanged.
+ *
+ * @param {unknown} review - The mission's final_review_verdict text.
+ * @returns {string|null} A block message, or null to fall through.
+ */
+export function checkFinalReviewRejection(review) {
+  if (parseFinalReviewVerdict(review) !== 'rejected') return null;
+  return (
+    `STOP: Stockwell's Final Mission Review verdict is FINAL REJECTED. Do NOT run post-checks ` +
+    `and do NOT dispatch Tawnia. Surface the items Stockwell named to the operator — reopening a ` +
+    `done item is a manual operator action outside the pipeline (done is terminal, ADR 0005). ` +
+    `Once every named item is reworked and back in done, the mission tail RESTARTS at Frankie ` +
+    `(ADR 0004): he re-walks the FULL Definition of Done before Stockwell re-reviews, so the ` +
+    `evidence bundle always reflects the final code.`
+  );
+}
+
+/**
  * Fetches and normalizes the board. Returns null when the API is unreachable
  * or answers non-2xx — callers must treat null as "allow the stop".
  */
@@ -208,22 +257,74 @@ export function countBoard(columns) {
 }
 
 /**
+ * Reads the declared `surfaces` from `<cwd>/ateam.config.json`, applying the
+ * same guard as qa-contract.js's readExecutionContract() (an array of strings,
+ * anything else collapses to `[]`).
+ *
+ * readExecutionContract() is bound to process.cwd() (and cached per process),
+ * but the Frankie gate resolves its evidence path against the caller-supplied
+ * `cwd` — resolving the contract against a DIFFERENT directory made the gate
+ * incoherent (and forced tests to stub the reader). Everything the gate reads
+ * now resolves against the same `cwd`. Drivability itself still comes from the
+ * real canFrankieDrive() in qa-contract.js.
+ */
+function readSurfaces(cwd) {
+  try {
+    const raw = JSON.parse(readFileSync(join(cwd, 'ateam.config.json'), 'utf-8'));
+    const surfaces = isPlainObject(raw) ? raw.surfaces : undefined;
+    return Array.isArray(surfaces) && surfaces.every((s) => typeof s === 'string')
+      ? surfaces
+      : [];
+  } catch {
+    // Missing or malformed config — no declared surfaces, gate stays inert.
+    return [];
+  }
+}
+
+/**
+ * The most recent done-transition timestamp derivable from the board's done
+ * column, in epoch ms. `completedAt` is the transition record when the API
+ * provides it; `updatedAt` is the fallback (done is terminal per ADR 0005, so
+ * a done item's last update IS its move into done). Returns null when no
+ * timestamp is derivable — callers must skip the staleness check (fail open).
+ */
+function latestDoneTransition(doneItems) {
+  if (!Array.isArray(doneItems)) return null;
+  let latest = null;
+  for (const item of doneItems) {
+    if (!isPlainObject(item)) continue;
+    const ts = Date.parse(item.completedAt ?? item.updatedAt ?? '');
+    if (Number.isFinite(ts) && (latest === null || ts > latest)) latest = ts;
+  }
+  return latest;
+}
+
+/**
  * Frankie's mission-tail walk precedes Stockwell's Final Mission Review: on a
  * repo with a drivable surface, the mission cannot end until his evidence
- * bundle exists on disk.
+ * bundle exists on disk — and that bundle must be trustworthy:
+ *
+ *   1. Missing report → block (dispatch Frankie).
+ *   2. Report older than the newest done transition → block (STALE: rework
+ *      happened after the walk; ADR 0004 requires a FULL DoD re-walk so the
+ *      evidence always reflects the final code).
+ *   3. Report containing failing (❌) DoD statements → block (Frankie's walk
+ *      FAILED; do not dispatch Stockwell).
  *
  * Unlike every other check in these hooks, this one keys off a LOCAL
  * filesystem condition, so adversity that has nothing to do with mission
  * progress (no Playwright headless shell, no flowspec, dev server down) could
- * otherwise trap the operator. Two safety valves prevent that: any thrown
- * error fails open, and `ATEAM_SKIP_FRANKIE_GATE=1` overrides the gate — an
- * override named in the block message itself so it is discoverable from
- * inside the trap.
+ * otherwise trap the operator. Two safety valves prevent that, and they cover
+ * ALL three checks: any thrown error (unreadable report included) fails open,
+ * and `ATEAM_SKIP_FRANKIE_GATE=1` overrides the gate — an override named in
+ * each block message itself so it is discoverable from inside the trap. The
+ * staleness check additionally fails open when the board items carry no
+ * usable timestamp.
  *
- * @param {{ missionId: string|null|undefined, doneCount: number, cwd?: string }} args
+ * @param {{ missionId: string|null|undefined, doneCount: number, doneItems?: unknown[], cwd?: string }} args
  * @returns {string|null} A block message, or null to allow the stop.
  */
-export function checkFrankieEvidence({ missionId, doneCount, cwd = process.cwd() }) {
+export function checkFrankieEvidence({ missionId, doneCount, doneItems = [], cwd = process.cwd() }) {
   try {
     const override = String(process.env.ATEAM_SKIP_FRANKIE_GATE || '')
       .trim()
@@ -236,20 +337,53 @@ export function checkFrankieEvidence({ missionId, doneCount, cwd = process.cwd()
     // unresolvable path.
     if (!missionId || !(doneCount > 0)) return null;
 
-    if (!canFrankieDrive(readExecutionContract().surfaces)) return null;
+    if (!canFrankieDrive(readSurfaces(cwd))) return null;
 
-    if (existsSync(join(cwd, '.qa-evidence', missionId, 'report.md'))) return null;
+    const reportPath = join(cwd, '.qa-evidence', missionId, 'report.md');
+    if (!existsSync(reportPath)) {
+      return (
+        `STOP: Frankie's evidence bundle is missing. ` +
+        `Expected: .qa-evidence/${missionId}/report.md. ` +
+        `Dispatch Frankie to walk the mission DoD before the Final Mission Review can proceed. ` +
+        `If Frankie cannot run in this environment (no Playwright headless shell, no flowspec, ` +
+        `dev server unavailable), re-run with ATEAM_SKIP_FRANKIE_GATE=1 to override this gate.`
+      );
+    }
 
-    return (
-      `STOP: Frankie's evidence bundle is missing. ` +
-      `Expected: .qa-evidence/${missionId}/report.md. ` +
-      `Dispatch Frankie to walk the mission DoD before the Final Mission Review can proceed. ` +
-      `If Frankie cannot run in this environment (no Playwright headless shell, no flowspec, ` +
-      `dev server unavailable), re-run with ATEAM_SKIP_FRANKIE_GATE=1 to override this gate.`
-    );
+    // Staleness: a pre-rework report must not satisfy the gate forever. If
+    // the newest done transition postdates the report, items were reworked
+    // after the walk — ADR 0004 requires a full re-walk.
+    const latestDone = latestDoneTransition(doneItems);
+    if (latestDone !== null && statSync(reportPath).mtimeMs < latestDone) {
+      return (
+        `STOP: Frankie's evidence bundle is STALE. ` +
+        `.qa-evidence/${missionId}/report.md predates the most recent done transition, so items ` +
+        `were reworked after the walk. Dispatch Frankie to re-walk the FULL Definition of Done ` +
+        `(every statement, not only previous failures — ADR 0004) so the evidence reflects the ` +
+        `final code before the Final Mission Review. ` +
+        `If this gate is wrong for this environment, re-run with ATEAM_SKIP_FRANKIE_GATE=1 to override it.`
+      );
+    }
+
+    // Failed walk: the report's checklist marks each DoD statement ✅/❌.
+    // Any ❌ means the walk FAILED — evidence of failure must not read as
+    // evidence of completion.
+    if (readFileSync(reportPath, 'utf-8').includes('❌')) {
+      return (
+        `STOP: Frankie's walk FAILED. ` +
+        `.qa-evidence/${missionId}/report.md contains failing (❌) Definition of Done statements. ` +
+        `Do NOT dispatch Stockwell for the Final Mission Review. Surface the failing items to the ` +
+        `operator — reopening a done item is a manual operator action (done is terminal, ADR 0005). ` +
+        `Once the named items are reworked and back in done, dispatch Frankie to re-walk the FULL ` +
+        `Definition of Done. ` +
+        `If this gate is wrong for this environment, re-run with ATEAM_SKIP_FRANKIE_GATE=1 to override it.`
+      );
+    }
+
+    return null;
   } catch {
-    // Config unreadable, filesystem unavailable, anything else — fail open,
-    // matching every other check in these hooks.
+    // Config unreadable, report unreadable, filesystem unavailable, anything
+    // else — fail open, matching every other check in these hooks.
     return null;
   }
 }

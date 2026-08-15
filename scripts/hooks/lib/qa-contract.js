@@ -25,6 +25,10 @@ import path from 'path';
  * constant is the single place that decision lives. */
 const DRIVABLE_SURFACES = ['web'];
 
+/** The six surfaces PRD 010 §2.1 enumerates. Matching is deliberately
+ * case-sensitive to the PRD's lowercase spelling — "Web" is NOT "web". */
+const SURFACE_VALUES = ['web', 'api', 'fixture-flow', 'golden-pair', 'hardware', 'cli'];
+
 const TESTING_LEVEL_VALUES = ['smoke', 'critical-path', 'full-dod'];
 const REVIEW_TIER_VALUES = ['hands-on', 'evidence-only', 'auto'];
 
@@ -65,7 +69,9 @@ function stringOrDefault(value, fallback) {
  * wipe out sibling defaults (e.g. `qa.seed` stays null, not undefined).
  * Enum fields (`testing_level`, `review_tier`) fall back to their own
  * default independently when the declared value isn't recognized; sibling
- * fields are untouched. `qa.drive` is NOT an enum — any declared string
+ * fields are untouched. `surfaces` entries are filtered against the PRD's
+ * six-value enum: unknown entries are dropped with a stderr warning, valid
+ * siblings survive. `qa.drive` is NOT an enum — any declared string
  * passes through unvalidated; it only defaults when absent.
  *
  * @param {unknown} raw - The parsed JSON contents of ateam.config.json (or
@@ -75,10 +81,23 @@ function stringOrDefault(value, fallback) {
 function normalizeContract(raw) {
   const root = isPlainObject(raw) ? raw : {};
 
-  const surfaces =
-    Array.isArray(root.surfaces) && root.surfaces.every((s) => typeof s === 'string')
-      ? root.surfaces
-      : DEFAULT_CONTRACT.surfaces;
+  let surfaces = DEFAULT_CONTRACT.surfaces;
+  if (Array.isArray(root.surfaces) && root.surfaces.every((s) => typeof s === 'string')) {
+    // Unknown values are DROPPED (fail-inert: canFrankieDrive() stays false
+    // rather than the gate firing on a surface nobody can drive), but never
+    // silently — a typo like "Web" would otherwise disable the mission gate
+    // with no diagnostic at all. The warning names each rejected value and
+    // the valid set, so a case mistake is obvious at a glance.
+    const rejected = root.surfaces.filter((s) => !SURFACE_VALUES.includes(s));
+    if (rejected.length > 0) {
+      process.stderr.write(
+        `qa-contract: dropping unknown surfaces value(s) ${rejected
+          .map((s) => JSON.stringify(s))
+          .join(', ')} — valid (case-sensitive, lowercase): ${SURFACE_VALUES.join(', ')}\n`
+      );
+    }
+    surfaces = root.surfaces.filter((s) => SURFACE_VALUES.includes(s));
+  }
 
   const qaRaw = isPlainObject(root.qa) ? root.qa : {};
   const accountRaw = isPlainObject(qaRaw.account) ? qaRaw.account : {};

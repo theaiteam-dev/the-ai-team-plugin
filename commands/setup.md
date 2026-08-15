@@ -284,13 +284,20 @@ AskUserQuestion({
     question: "What evidence should Frankie bundle with a mission's PR?",
     header: "Evidence policy",
     options: [
-      { label: "Screenshots only (Recommended default)", description: "A screenshot per DoD statement walked" },
-      { label: "Video + screenshots for PRD work", description: "Full flow video for the PRD's primary journey, screenshots elsewhere" }
+      { label: "Video + screenshots for PRD work (Recommended)", description: "Full flow video for the PRD's primary journey, screenshots elsewhere — the canonical policy (PRD 010 §2.1)" },
+      { label: "Screenshots only", description: "A screenshot per DoD statement walked; no video" }
     ],
     multiSelect: false
   }]
 })
 ```
+
+**Answer → JSON mapping** — what each choice writes as the `evidence` field in `ateam.config.json`:
+
+| Answer | `evidence` written |
+|---|---|
+| Video + screenshots for PRD work (Recommended) | `{ "prd_work": "video+screenshots", "default": "screenshots" }` |
+| Screenshots only | `{ "prd_work": "screenshots", "default": "screenshots" }` |
 
 **Review Tier** (policy)
 ```
