@@ -153,12 +153,12 @@ describe('AgentStatusBar', () => {
   });
 
   describe('agents container', () => {
-    it('should render all 8 agents in the agents container', () => {
+    it('should render all 9 agents in the agents container', () => {
       render(<AgentStatusBar agents={createAgentsStatus()} />);
 
       const container = screen.getByTestId('agents-container');
       const agentElements = container.querySelectorAll('[data-testid^="agent-badge-"]');
-      expect(agentElements).toHaveLength(8);
+      expect(agentElements).toHaveLength(9);
     });
   });
 

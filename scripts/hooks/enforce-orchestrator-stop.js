@@ -16,11 +16,33 @@
  * Stop hooks use JSON stdout format:
  *   { "decision": "block", "additionalContext": "..." } - block stop
  *   {} - allow stop
+ *
+ * The gate logic and API access live in lib/stop-gates.js, shared with
+ * enforce-final-review.js so the two hooks cannot drift apart. This is the
+ * hook that binds in the primary execution mode (Hannibal runs in the main
+ * session); enforce-final-review.js only binds for subagent sessions.
+ *
+ * Environment variables:
+ *   ATEAM_API_URL - Base URL for the A(i)-Team API
+ *   ATEAM_PROJECT_ID - Project identifier
+ *   ATEAM_SKIP_FRANKIE_GATE - Set to 1 to override the Frankie evidence gate
+ *
+ * For testing:
+ *   __TEST_MOCK_BOARD__ - JSON string for fake board response
+ *   __TEST_MOCK_MISSION__ - JSON string for fake mission response
  */
 
 import { readHookInput, lookupAgent } from './lib/observer.js';
 import { resolveAgent, isKnownAgent } from './lib/resolve-agent.js';
 import { isMissionActive } from './lib/mission-active.js';
+import {
+  fetchBoard,
+  fetchMission,
+  normalizeBoard,
+  normalizeMission,
+  countBoard,
+  checkFrankieEvidence,
+} from './lib/stop-gates.js';
 
 const hookInput = readHookInput();
 
@@ -63,6 +85,7 @@ if (!isMissionActive()) {
 const apiUrl = process.env.ATEAM_API_URL || '';
 const projectId = process.env.ATEAM_PROJECT_ID || '';
 const mockBoard = process.env.__TEST_MOCK_BOARD__;
+const mockMission = process.env.__TEST_MOCK_MISSION__;
 
 // No API config and no mock = no active mission to enforce
 if (!mockBoard && (!apiUrl || !projectId)) {
@@ -74,47 +97,18 @@ async function checkCompletion() {
   let boardData;
 
   if (mockBoard !== undefined) {
-    boardData = JSON.parse(mockBoard);
+    boardData = normalizeBoard(JSON.parse(mockBoard));
   } else {
-    // Fetch board state
-    const boardResp = await fetch(
-      `${apiUrl.replace(/\/+$/, '')}/api/projects/${projectId}/board`,
-      { headers: { 'X-Project-ID': projectId } }
-    );
+    boardData = await fetchBoard(apiUrl, projectId);
 
-    if (!boardResp.ok) {
+    if (!boardData) {
       // API error — allow stop (don't trap the user)
       console.log(JSON.stringify({}));
       process.exit(0);
     }
-
-    boardData = await boardResp.json();
   }
 
-  const columns = boardData.columns || {};
-
-  // Check for items still in active stages
-  const activeStages = [
-    'briefings',
-    'ready',
-    'testing',
-    'implementing',
-    'review',
-    'probing',
-    'blocked',
-  ];
-  const activeCounts = {};
-  let totalActive = 0;
-
-  for (const stage of activeStages) {
-    const items = columns[stage] || [];
-    if (items.length > 0) {
-      activeCounts[stage] = items.length;
-      totalActive += items.length;
-    }
-  }
-
-  const doneCount = (columns.done || []).length;
+  const { activeCounts, totalActive, doneCount } = countBoard(boardData.columns);
 
   // No items at all — no mission, allow stop
   if (totalActive === 0 && doneCount === 0) {
@@ -137,19 +131,31 @@ async function checkCompletion() {
     process.exit(0);
   }
 
-  // All items done — check final review and post-checks
-  const missionResp = await fetch(
-    `${apiUrl.replace(/\/+$/, '')}/api/projects/${projectId}/missions/current`,
-    { headers: { 'X-Project-ID': projectId } }
-  );
+  // All items done — check Frankie's walk, then final review and post-checks
+  let missionData;
 
-  if (!missionResp.ok) {
+  if (mockMission !== undefined) {
+    missionData = normalizeMission(JSON.parse(mockMission));
+  } else {
+    missionData = await fetchMission(apiUrl, projectId);
+  }
+
+  if (!missionData) {
     // No active mission — allow stop
     console.log(JSON.stringify({}));
     process.exit(0);
   }
 
-  const missionData = await missionResp.json();
+  // Frankie's mission-tail walk precedes Stockwell's Final Mission Review —
+  // same gate enforce-final-review.js applies, shared via lib/stop-gates.js.
+  const frankieBlock = checkFrankieEvidence({
+    missionId: missionData.id,
+    doneCount,
+  });
+  if (frankieBlock) {
+    console.log(JSON.stringify({ decision: 'block', additionalContext: frankieBlock }));
+    process.exit(0);
+  }
 
   if (doneCount > 0 && !missionData.final_review_verdict) {
     console.log(

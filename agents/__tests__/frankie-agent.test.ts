@@ -185,9 +185,32 @@ describe('agents/frankie.md - mechanical frontmatter contract', () => {
       expect(section).toContain('observe-post-tool-use.js');
     });
 
-    it('Stop carries enforce-completion-log.js alongside the observer (terminal agent, not pipeline)', () => {
+    // enforce-completion-log.js is an ITEM-scoped hook: it scrapes a WI-XXX id
+    // out of the agent's last message and asks the API for that item's
+    // work_log. Frankie is MISSION-scoped — his lifecycle id is the sentinel
+    // "FRANKIE-WALK", which is not an item row at all (the API answers
+    // ITEM_NOT_FOUND; see prd/drafts/mission-phase-lifecycle.md), so there is
+    // nothing for the hook to read and no regex change can give it one.
+    //
+    // Worse, wiring it up would be actively wrong rather than merely inert:
+    // Frankie's Failure Path REQUIRES him to name the failing WI-XXX ids in his
+    // final message, so /WI-(\d+)/ would latch onto a real, unrelated item,
+    // correctly find no `frankie` entry in its work_log, and block him with an
+    // instruction to log completion against someone else's work item.
+    //
+    // Frankie's real completion gate is the evidence-bundle check in
+    // enforce-final-review.js, which tests the filesystem
+    // (.qa-evidence/<mission>/report.md) instead of an item row — see
+    // scripts/hooks/__tests__/stop-guards.test.ts.
+    it('Stop does NOT carry enforce-completion-log.js (item-scoped hook, mission-scoped agent)', () => {
       const section = extractHookSection(frontmatter, 'Stop');
-      expect(section).toContain('enforce-completion-log.js');
+      expect(section).not.toContain('enforce-completion-log.js');
+    });
+
+    it('Stop carries only the observer hook', () => {
+      const section = extractHookSection(frontmatter, 'Stop');
+      expect(countHookCommands(section)).toBe(1);
+      expect(section).toContain('observe-stop.js');
     });
 
     it('Stop does NOT carry enforce-handoff.js (Frankie has no bounce/handoff — done is terminal per adr/0005)', () => {

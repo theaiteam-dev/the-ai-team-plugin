@@ -329,13 +329,14 @@ WIP limits are **per stage** — each pipeline column independently caps how man
    - Start new features if per-stage WIP limits allow (check instance availability, not global count)
 
 6. **Frankie's Mission-Tail Walk, then Final Mission Review (Stockwell):**
-   - When ALL items reach `done` stage, dispatch Frankie FIRST for the mission-tail QA walk — a fresh, non-pre-warmed agent (see the loaded orchestration playbook's "Frankie Mission-Tail Dispatch" section)
+   - **Drivability precondition (check FIRST):** read `surfaces` from the target repo's `ateam.config.json` — `scripts/hooks/lib/qa-contract.js` is the executable definition, exporting `readExecutionContract()` and `canFrankieDrive(surfaces)`. Only `web` is drivable today; `api`, `fixture-flow`, `golden-pair`, `cli`, `hardware`, and an empty/absent list are not. **If the repo has no drivable surface, SKIP Frankie entirely and go straight to Stockwell's final review** — dispatching him there deadlocks the tail (he reports a blocked walk, and the failure path below halts with no way forward). Same exemption the completion-gate hook (`scripts/hooks/enforce-final-review.js`) already enforces and the loaded playbook's Frankie section spells out (a skipped Frankie satisfies the documentation agent's precondition vacuously); say so in your status output so the skip reads as deliberate
+   - Otherwise, when ALL items reach `done` stage, dispatch Frankie FIRST for the mission-tail QA walk — a fresh, non-pre-warmed agent (see the loaded orchestration playbook's "Frankie Mission-Tail Dispatch" section)
    - If Frankie's walk fails (names failing work items): HALT the tail here — do NOT dispatch Stockwell. Surface the failing items to the operator; reopening a `done` item is a manual operator action, not an automated bounce (`done` is terminal in `TRANSITION_MATRIX`)
    - Once Frankie's walk is clean, dispatch Stockwell for final review
    - Stockwell reviews PRD + diff for cross-cutting issues, including Frankie's evidence bundle and graduated specs
    - Focus: PRD compliance, consistency, security, integration
    - If FINAL APPROVED → proceed to post-checks
-   - If FINAL REJECTED → specified items return to pipeline; once every named item is back in `done`, the mission tail RESTARTS at Frankie (not post-checks) — Frankie re-walks the FULL Definition of Done
+   - If FINAL REJECTED → surface the named items to the operator and stop. Reopening a `done` item is a manual operator action outside the pipeline, not an automated bounce — same as Frankie's failure path above (`done` is terminal in `TRANSITION_MATRIX`; see `adr/0005-done-is-terminal-no-in-mission-rework.md`). Once the operator has reworked every named item and it is back in `done`, the mission tail RESTARTS at Frankie (not post-checks) — Frankie re-walks the FULL Definition of Done
 
 7. **Post-Mission Checks:**
    **GATE: Stockwell's Final Mission Review MUST have completed before running postchecks.**

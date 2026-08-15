@@ -17,12 +17,13 @@ const AGENT_DISPLAY_NAMES: Record<string, string> = {
   ba: "B.A.",
   amy: "Amy",
   lynch: "Lynch",
+  frankie: "Frankie",
   tawnia: "Tawnia",
   stockwell: "Stockwell",
 };
 
 // Canonical agent order for swim lanes
-const AGENT_ORDER = ["hannibal", "face", "murdock", "ba", "amy", "lynch", "stockwell", "tawnia"];
+const AGENT_ORDER = ["hannibal", "face", "murdock", "ba", "amy", "lynch", "frankie", "stockwell", "tawnia"];
 
 // Status color mapping
 function getStatusColor(status: string): string {

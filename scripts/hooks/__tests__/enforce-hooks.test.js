@@ -227,9 +227,19 @@ describe('enforce-final-review', () => {
   describe('API querying', () => {
     it('should use fetch to query the API for board and mission state', () => {
       const source = readFileSync(FINAL_REVIEW_HOOK, 'utf8');
-      expect(source).toMatch(/fetch\s*\(/);
+      // The fetch calls moved into lib/stop-gates.js, shared with
+      // enforce-orchestrator-stop.js so both hooks hit the same routes; the
+      // hook still reads the API config and delegates the queries there.
       expect(source).toMatch(/ATEAM_API_URL/);
       expect(source).toMatch(/ATEAM_PROJECT_ID/);
+      expect(source).toMatch(/fetchBoard/);
+      expect(source).toMatch(/fetchMission/);
+
+      const gateSource = readFileSync(
+        join(__dirname, '..', 'lib', 'stop-gates.js'),
+        'utf8'
+      );
+      expect(gateSource).toMatch(/fetch\s*\(/);
     });
   });
 

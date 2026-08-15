@@ -22,6 +22,7 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
+import path from 'path';
 import { resolveAgent } from './lib/resolve-agent.js';
 import { sendDeniedEvent } from './lib/send-denied-event.js';
 
@@ -37,27 +38,33 @@ function hasTraversalSegment(filePath) {
 }
 
 /**
- * True if filePath names `dirName` itself or a path underneath it,
- * whether filePath is relative ("specs/x.yaml") or absolute
+ * True if filePath is the project-root `dirName` directory itself or a path
+ * underneath it, whether filePath is relative ("specs/x.yaml") or absolute
  * (".../repo/specs/x.yaml").
+ *
+ * The match is ANCHORED: the path is resolved against the process cwd (the
+ * target project root) and prefix-matched against `<cwd>/<dirName>`. A
+ * component-name or substring match would allowlist any path that merely
+ * happens to contain a segment called "specs" or ".qa-evidence" — nested
+ * production code (packages/shared/src/specs/hack.ts) and, worse, anything
+ * anywhere on the filesystem (/tmp/x/specs/pwn.sh). Frankie runs with
+ * permissionMode: acceptEdits, so this hook is the only barrier between him
+ * and those writes; there is no human confirmation behind it.
  *
  * Any path containing a ".." traversal segment is NEVER "under" anything,
  * even if the segment would resolve back into dirName — Frankie has no
- * legitimate reason to construct a path containing "..", and both the
- * specs/ and .qa-evidence/ allowlists depend on this function, so this
- * one check closes the traversal hole for both (e.g. "specs/../src/x.ts"
- * or ".qa-evidence/../packages/shared/src/agents.ts" both fall through to
- * the default block branch instead of being treated as allowed writes).
+ * legitimate reason to construct a path containing "..", so it is denied
+ * categorically rather than normalized away (path.resolve below would
+ * happily collapse "specs/sub/../x.yaml" back into an allowed write).
  */
 function isUnderDir(filePath, dirName) {
   if (hasTraversalSegment(filePath)) {
     return false;
   }
-  return (
-    filePath === dirName ||
-    filePath.startsWith(`${dirName}/`) ||
-    filePath.includes(`/${dirName}/`)
-  );
+  const root = process.cwd();
+  const abs = path.resolve(root, filePath);
+  const base = path.join(root, dirName);
+  return abs === base || abs.startsWith(base + path.sep);
 }
 
 let hookInput = {};
@@ -100,7 +107,9 @@ try {
   // specs/ has two cases: a brand-new flow file is fine; an existing one
   // is immutable.
   if (isUnderDir(filePath, 'specs')) {
-    if (!existsSync(filePath)) {
+    // Resolve against the same root isUnderDir anchored to, so the existence
+    // check can never look at a different file than the one just allowlisted.
+    if (!existsSync(path.resolve(process.cwd(), filePath))) {
       process.exit(0);
     }
 

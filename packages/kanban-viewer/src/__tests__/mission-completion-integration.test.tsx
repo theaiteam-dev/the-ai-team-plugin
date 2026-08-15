@@ -162,8 +162,9 @@ describe('Mission Completion Integration: Agent Status Bar', () => {
       expect(screen.getByText('Tawnia')).toBeInTheDocument();
     });
 
-    it('should have 8 agents in AGENT_NAMES constant', () => {
-      expect(AGENT_NAMES).toHaveLength(8);
+    it('should have 9 agents in AGENT_NAMES constant', () => {
+      expect(AGENT_NAMES).toHaveLength(9);
+      expect(AGENT_NAMES).toContain('Frankie');
       expect(AGENT_NAMES).toContain('Tawnia');
       expect(AGENT_NAMES).toContain('Stockwell');
     });
@@ -174,11 +175,12 @@ describe('Mission Completion Integration: Agent Status Bar', () => {
       const container = screen.getByTestId('agents-container');
       const badges = container.querySelectorAll('[data-testid^="agent-badge-"]');
 
-      expect(badges).toHaveLength(8);
+      expect(badges).toHaveLength(9);
       expect(badges[0]).toHaveAttribute('data-testid', 'agent-badge-Hannibal');
       expect(badges[5]).toHaveAttribute('data-testid', 'agent-badge-Lynch');
-      expect(badges[6]).toHaveAttribute('data-testid', 'agent-badge-Tawnia');
-      expect(badges[7]).toHaveAttribute('data-testid', 'agent-badge-Stockwell');
+      expect(badges[6]).toHaveAttribute('data-testid', 'agent-badge-Frankie');
+      expect(badges[7]).toHaveAttribute('data-testid', 'agent-badge-Tawnia');
+      expect(badges[8]).toHaveAttribute('data-testid', 'agent-badge-Stockwell');
     });
 
     it('should show correct initials for all agents', () => {

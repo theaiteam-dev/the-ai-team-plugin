@@ -95,7 +95,7 @@ mission/
 
 ```typescript
 type Stage = 'briefings' | 'ready' | 'probing' | 'testing' | 'implementing' | 'review' | 'done' | 'blocked';
-type AgentName = 'Hannibal' | 'Face' | 'Murdock' | 'B.A.' | 'Lynch' | 'Amy' | 'Tawnia' | 'Stockwell';
+type AgentName = 'Hannibal' | 'Face' | 'Murdock' | 'B.A.' | 'Lynch' | 'Amy' | 'Frankie' | 'Tawnia' | 'Stockwell';
 type BoardEventType = 'item-added' | 'item-moved' | 'item-updated' | 'item-deleted' | 'board-updated' | 'activity-entry-added';
 
 interface LogEntry {

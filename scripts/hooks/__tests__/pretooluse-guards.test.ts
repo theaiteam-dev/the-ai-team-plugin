@@ -1516,6 +1516,99 @@ describe('block-frankie-writes — agent guards', () => {
       });
       expect(result.exitCode).toBe(0);
     });
+
+    // -------------------------------------------------------------------------
+    // Second escape vector on the same helper (sweep review, CRITICAL): even
+    // with every ".." segment denied, an UNANCHORED match on the raw string
+    // ("does the path contain a component named specs/.qa-evidence anywhere?")
+    // treats any path with a same-named component as allowlisted. That covers
+    // real production code nested inside the repo (packages/shared/src/specs/…)
+    // AND anything at all on the filesystem outside the repo (/tmp/x/specs/…).
+    // Frankie runs with permissionMode: acceptEdits, so this hook is the only
+    // barrier — there is no human confirmation behind it.
+    //
+    // The allowlist must therefore be anchored: resolve the path against the
+    // process cwd (the target project root) and prefix-match against the
+    // repo-root specs/ and .qa-evidence/ directories themselves.
+    // -------------------------------------------------------------------------
+    describe('adversarial: allowlisted dirs are anchored at the repo root, not matched by component name', () => {
+      const BLOCKED_LOOKALIKE_CASES: Array<[string, string]> = [
+        [
+          'nested in-repo path with a "specs" component that is NOT the repo-root specs/ dir',
+          'packages/shared/src/specs/hack.ts',
+        ],
+        [
+          'nested in-repo path with a ".qa-evidence" component that is NOT the repo-root .qa-evidence/ dir',
+          'packages/kanban-viewer/.qa-evidence/exfil.ts',
+        ],
+        [
+          'absolute out-of-repo path with a "/specs/" component',
+          '/tmp/ateam-hook-escape/specs/pwn.sh',
+        ],
+        [
+          'absolute out-of-repo path with a "/.qa-evidence/" component',
+          '/tmp/ateam-hook-escape/.qa-evidence/exfil.md',
+        ],
+        [
+          'sibling directory whose name merely starts with the allowlisted name (specs-backup/)',
+          'specs-backup/order.ts',
+        ],
+        [
+          'sibling directory whose name merely starts with the allowlisted name (.qa-evidence-old/)',
+          '.qa-evidence-old/order.ts',
+        ],
+      ];
+
+      for (const [label, filePath] of BLOCKED_LOOKALIKE_CASES) {
+        it(`blocks: ${label} (exit 2)`, () => {
+          const result = runHook(HOOK, {
+            agent_type: 'frankie',
+            tool_name: 'Write',
+            tool_input: { file_path: filePath },
+          });
+          expect(result.exitCode, `file_path=${filePath}`).toBe(2);
+          expect(result.stderr).toMatch(/BLOCKED/i);
+        });
+      }
+
+      it('regression: an ABSOLUTE path to a NEW file under the real repo-root specs/ is still allowed (exit 0)', () => {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Write',
+          tool_input: { file_path: join(REPO_ROOT, 'specs', 'abs-new-flow.flow.yaml') },
+        });
+        expect(result.exitCode).toBe(0);
+      });
+
+      it('regression: an ABSOLUTE path to a NEW file under the real repo-root .qa-evidence/ is still allowed (exit 0)', () => {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Write',
+          tool_input: { file_path: join(REPO_ROOT, '.qa-evidence', 'M-20260812-003', 'report.md') },
+        });
+        expect(result.exitCode).toBe(0);
+      });
+
+      it('regression: an ABSOLUTE path to an EXISTING file under the real repo-root specs/ is still blocked as immutable (exit 2)', () => {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Edit',
+          tool_input: { file_path: EXISTING_SPEC_PATH },
+        });
+        expect(result.exitCode).toBe(2);
+        expect(result.stderr).toMatch(/BLOCKED/i);
+        expect(result.stderr).toMatch(/immutable/i);
+      });
+
+      it('regression: a "./"-prefixed relative path to a NEW repo-root specs/ file is still allowed (exit 0)', () => {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Write',
+          tool_input: { file_path: './specs/dot-slash-new-flow.flow.yaml' },
+        });
+        expect(result.exitCode).toBe(0);
+      });
+    });
   });
 
   it('allows non-target agent ba to write implementation files (exit 0, no interference)', () => {

@@ -76,7 +76,7 @@ You are dispatched AFTER all four conditions are met:
 3. Stockwell's Final Mission Review passed (`finalReview.passed: true`)
 4. Post-mission checks passed (`postChecks.passed: true`)
 
-**The exemption in condition 2 is not optional.** This very repo, the-ai-team-plugin, is a CLI/plugin repo — if its own execution contract declares no drivable surface, Frankie never runs, and an unconditional precondition would deadlock this mission's own final commit.
+**The exemption in condition 2 is not optional.** This very repo, the-ai-team-plugin, is the worked example: its own `ateam.config.json` declares `surfaces: []`, so Frankie never runs here and an unconditional precondition would deadlock this repo's own final commits. (The one web app it contains, `packages/kanban-viewer`, is not a QA-drivable surface today — no isolated QA seed, no flowspec — see the drivability test in `scripts/hooks/__tests__/qa-contract.test.js`.)
 
 At this point, all the code is complete, reviewed, and verified. Your job is to document what was built and create the final commit.
 

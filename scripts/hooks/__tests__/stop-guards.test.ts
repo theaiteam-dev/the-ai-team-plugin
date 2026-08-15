@@ -442,9 +442,17 @@ describe('enforce-final-review — Frankie evidence-bundle gate', () => {
   const scratchDirs: string[] = [];
 
   it('calls the real canFrankieDrive() from lib/qa-contract.js — does not reimplement the drivability check', () => {
+    // The gate moved into lib/stop-gates.js so enforce-orchestrator-stop.js
+    // enforces the identical condition; the assertion follows that one hop.
+    // The original intent is unchanged and now covers both hooks: neither
+    // reimplements drivability, they reach the same canFrankieDrive().
     const source = readFileSync(HOOK, 'utf8');
-    expect(source).toMatch(/canFrankieDrive/);
-    expect(source).toMatch(/qa-contract/);
+    expect(source).toMatch(/checkFrankieEvidence/);
+    expect(source).toMatch(/stop-gates/);
+
+    const gateSource = readFileSync(join(HOOKS_DIR, 'lib', 'stop-gates.js'), 'utf8');
+    expect(gateSource).toMatch(/canFrankieDrive/);
+    expect(gateSource).toMatch(/qa-contract/);
   });
 
   /**
@@ -799,6 +807,246 @@ describe('enforce-orchestrator-stop — agent guards', () => {
     const result = runHook(HOOK, {}, {
       ATEAM_API_URL: 'http://localhost:99999',
     });
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).not.toBe('block');
+  });
+});
+
+// =============================================================================
+// enforce-orchestrator-stop.js — Frankie evidence-bundle gate
+//
+// The Frankie gate originally shipped only in enforce-final-review.js, which
+// binds via agents/hannibal.md frontmatter — i.e. only when hannibal runs as a
+// SUBAGENT session. In the primary execution mode Hannibal runs in the MAIN
+// session, gated by this hook (registered plugin-wide in hooks/hooks.json), so
+// the mandatory gate never fired. Both hooks now call the same
+// checkFrankieEvidence() from lib/stop-gates.js; this suite mirrors the
+// enforce-final-review coverage above so the two cannot drift apart again.
+// =============================================================================
+describe('enforce-orchestrator-stop — Frankie evidence-bundle gate', () => {
+  const HOOK = hookPath('enforce-orchestrator-stop.js');
+  const MISSION_ID = 'M-TEST-002';
+  const scratchDirs: string[] = [];
+
+  beforeAll(() => setMissionMarker());
+  afterAll(() => {
+    clearMissionMarker();
+    for (const dir of scratchDirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup
+      }
+    }
+  });
+
+  it('shares the gate with enforce-final-review via lib/stop-gates.js — neither hook reimplements it', () => {
+    const orchestratorSource = readFileSync(HOOK, 'utf8');
+    const finalReviewSource = readFileSync(hookPath('enforce-final-review.js'), 'utf8');
+    expect(orchestratorSource).toMatch(/checkFrankieEvidence/);
+    expect(orchestratorSource).toMatch(/stop-gates/);
+    expect(finalReviewSource).toMatch(/checkFrankieEvidence/);
+    expect(finalReviewSource).toMatch(/stop-gates/);
+  });
+
+  function makeScratchRepo(opts: { surfaces?: string[]; evidence?: boolean }) {
+    const dir = mkdtempSync(join(tmpdir(), 'ateam-orchestrator-gate-'));
+    scratchDirs.push(dir);
+    const body = opts.surfaces === undefined ? {} : { surfaces: opts.surfaces };
+    writeFileSync(join(dir, 'ateam.config.json'), JSON.stringify(body));
+    if (opts.evidence) {
+      mkdirSync(join(dir, '.qa-evidence', MISSION_ID), { recursive: true });
+      writeFileSync(join(dir, '.qa-evidence', MISSION_ID, 'report.md'), '# Evidence\n');
+    }
+    return dir;
+  }
+
+  const MOCK_BOARD_ONE_DONE = JSON.stringify({ columns: { done: [{ id: 'WI-001' }] } });
+
+  function missionMock(overrides: Record<string, unknown> = {}) {
+    return JSON.stringify({
+      id: MISSION_ID,
+      status: 'active',
+      final_review_verdict: null,
+      postcheck: null,
+      ...overrides,
+    });
+  }
+
+  const MISSION_FULLY_COMPLETE = missionMock({
+    final_review_verdict: 'FINAL APPROVED',
+    postcheck: { passed: true },
+  });
+
+  it('blocks the main session when all items are done, the surface is drivable, and no evidence bundle exists', () => {
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: false });
+    const result = runHook(
+      HOOK,
+      { session_id: 'main-session-123' },
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: missionMock() },
+      dir
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/frankie/i);
+    expect(String(output.additionalContext)).toMatch(
+      new RegExp(`\\.qa-evidence/${MISSION_ID}/report\\.md`)
+    );
+  });
+
+  it('blocks on Frankie before the final-review gate, even when the verdict is already recorded', () => {
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: false });
+    const result = runHook(
+      HOOK,
+      {},
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: MISSION_FULLY_COMPLETE },
+      dir
+    );
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/frankie/i);
+  });
+
+  it('does not block on Frankie once the evidence report exists (pre-existing final-review gate still applies)', () => {
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: true });
+    const result = runHook(
+      HOOK,
+      {},
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: missionMock() },
+      dir
+    );
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/Final Mission Review/i);
+    expect(String(output.additionalContext)).not.toMatch(/frankie/i);
+  });
+
+  it('does not block on Frankie for a repo with no drivable surface', () => {
+    const dir = makeScratchRepo({ surfaces: ['hardware'], evidence: false });
+    const result = runHook(
+      HOOK,
+      {},
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: MISSION_FULLY_COMPLETE },
+      dir
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).not.toBe('block');
+  });
+
+  it('does not evaluate the Frankie condition for a subagent session', () => {
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: false });
+    const result = runHook(
+      HOOK,
+      { agent_type: 'tawnia' },
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: missionMock() },
+      dir
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).not.toBe('block');
+  });
+});
+
+// =============================================================================
+// ATEAM_SKIP_FRANKIE_GATE — operator escape hatch.
+//
+// Every other check in these two hooks fails open on adversity (missing
+// config, failed fetch, thrown error). The Frankie gate blocks on a local
+// filesystem condition, so a missing Playwright headless shell, a missing
+// flowspec, or an unavailable dev server could otherwise trap the operator
+// with no way out. The override is documented in the block message itself.
+// =============================================================================
+describe('Frankie evidence gate — ATEAM_SKIP_FRANKIE_GATE escape hatch', () => {
+  const MISSION_ID = 'M-TEST-003';
+  const scratchDirs: string[] = [];
+
+  beforeAll(() => setMissionMarker());
+  afterAll(() => {
+    clearMissionMarker();
+    for (const dir of scratchDirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup
+      }
+    }
+  });
+
+  function drivableRepoWithoutEvidence() {
+    const dir = mkdtempSync(join(tmpdir(), 'ateam-frankie-escape-'));
+    scratchDirs.push(dir);
+    writeFileSync(join(dir, 'ateam.config.json'), JSON.stringify({ surfaces: ['web'] }));
+    return dir;
+  }
+
+  const MOCK_BOARD_ONE_DONE = JSON.stringify({ columns: { done: [{ id: 'WI-001' }] } });
+  const MISSION_FULLY_COMPLETE = JSON.stringify({
+    id: MISSION_ID,
+    status: 'active',
+    final_review_verdict: 'FINAL APPROVED',
+    postcheck: { passed: true },
+  });
+
+  it('enforce-final-review: names the override in the block message', () => {
+    const result = runHook(
+      hookPath('enforce-final-review.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE,
+        __TEST_MOCK_MISSION__: MISSION_FULLY_COMPLETE,
+      },
+      drivableRepoWithoutEvidence()
+    );
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/ATEAM_SKIP_FRANKIE_GATE=1/);
+  });
+
+  it('enforce-final-review: allows the stop when ATEAM_SKIP_FRANKIE_GATE=1', () => {
+    const result = runHook(
+      hookPath('enforce-final-review.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE,
+        __TEST_MOCK_MISSION__: MISSION_FULLY_COMPLETE,
+        ATEAM_SKIP_FRANKIE_GATE: '1',
+      },
+      drivableRepoWithoutEvidence()
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).not.toBe('block');
+  });
+
+  it('enforce-orchestrator-stop: names the override in the block message', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE,
+        __TEST_MOCK_MISSION__: MISSION_FULLY_COMPLETE,
+      },
+      drivableRepoWithoutEvidence()
+    );
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/ATEAM_SKIP_FRANKIE_GATE=1/);
+  });
+
+  it('enforce-orchestrator-stop: allows the stop when ATEAM_SKIP_FRANKIE_GATE=1', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE,
+        __TEST_MOCK_MISSION__: MISSION_FULLY_COMPLETE,
+        ATEAM_SKIP_FRANKIE_GATE: '1',
+      },
+      drivableRepoWithoutEvidence()
+    );
     expect(result.exitCode).toBe(0);
     const output = parseStopOutput(result.stdout);
     expect(output.decision).not.toBe('block');

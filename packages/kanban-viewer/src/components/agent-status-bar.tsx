@@ -11,6 +11,7 @@ export const AGENT_NAMES: AgentName[] = [
   'B.A.',
   'Amy',
   'Lynch',
+  'Frankie',
   'Tawnia',
   'Stockwell',
 ];
@@ -22,6 +23,8 @@ export const AGENT_INITIALS: Record<AgentName, string> = {
   'B.A.': 'B',
   Amy: 'A',
   Lynch: 'L',
+  // 'FR' rather than 'F' — Face already owns 'F'.
+  Frankie: 'FR',
   Tawnia: 'T',
   Stockwell: 'S',
 };
@@ -33,6 +36,7 @@ export const AGENT_COLORS: Record<AgentName, string> = {
   'B.A.': 'bg-red-500',
   Amy: 'bg-pink-500',
   Lynch: 'bg-blue-500',
+  Frankie: 'bg-violet-500',
   Tawnia: 'bg-teal-500',
   Stockwell: 'bg-gray-700',
 };

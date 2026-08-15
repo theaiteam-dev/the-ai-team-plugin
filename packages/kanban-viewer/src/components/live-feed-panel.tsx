@@ -42,6 +42,7 @@ export const agentColors: Record<AgentName, string> = {
   "B.A.": "text-red-500",
   Amy: "text-pink-500",
   Lynch: "text-blue-500",
+  Frankie: "text-violet-500",
   Tawnia: "text-teal-500",
   Stockwell: "text-gray-400",
 };

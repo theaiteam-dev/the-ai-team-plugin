@@ -481,7 +481,7 @@ When Amy completes and verifies the feature, she sends `FYI: {itemId} - Probing 
 ```bash
 ateam board-move moveItem --itemId "WI-001" --toStage "done"
 ```
-Check the board-move response for `finalReviewReady: true` — when present, dispatch Frankie for the mission-tail QA walk FIRST, then Stockwell for the Final Mission Review once Frankie succeeds (see "Final Mission Review" below — never skip straight to Stockwell).
+Check the board-move response for `finalReviewReady: true` — when present, dispatch Frankie for the mission-tail QA walk FIRST, then Stockwell for the Final Mission Review once Frankie succeeds (see "Final Mission Review" below — never skip straight to Stockwell, except on a repo with no drivable surface, where Frankie is skipped by contract).
 
 ## Heartbeat health check (self-wake loop)
 
@@ -531,19 +531,21 @@ ateam items getItem --id "WI-001"
 
 ## Final Mission Review
 
-When ALL items reach `done` stage, dispatch **Frankie FIRST** for the mission-tail QA walk, then Stockwell for the Final Mission Review once Frankie succeeds. Frankie's evidence bundle and graduated specs must already be part of the diff Stockwell reviews — never dispatch Stockwell before Frankie.
+When ALL items reach `done` stage, dispatch **Frankie FIRST** for the mission-tail QA walk — unless the repo has no drivable surface, in which case Frankie is skipped entirely (see "Dispatch Frankie's Mission-Tail Walk" below) — then Stockwell for the Final Mission Review once Frankie succeeds or is skipped. Frankie's evidence bundle and graduated specs must already be part of the diff Stockwell reviews — never dispatch Stockwell before Frankie.
 
 Frankie is a **mission-level agent that runs off the board**, like Stockwell and Tawnia — he requires no new board stage and no change to `TRANSITION_MATRIX`. There is no `frankie` stage to move items into or out of; he claims and releases his own mission-level work (not a `WI-XXX` item) via the `ateam` CLI, same as Stockwell's `FINAL-REVIEW` and Tawnia's `docs`.
 
 ### Dispatch Frankie's Mission-Tail Walk
 
-Use the loaded orchestration playbook's "Frankie Mission-Tail Dispatch" section for the exact dispatch pattern — a fresh, non-pre-warmed agent, passing the mission PRD path and mission identifier (for the `.qa-evidence/{missionId}/` evidence directory).
+**Drivability precondition — check this BEFORE dispatching.** Read `surfaces` from the target repo's `ateam.config.json`; `scripts/hooks/lib/qa-contract.js` is the executable definition, exporting `readExecutionContract()` and `canFrankieDrive(surfaces)`. Only `web` is drivable today — `api`, `fixture-flow`, `golden-pair`, `cli`, `hardware`, and an empty or absent `surfaces` list are not. **If the repo has no drivable surface, SKIP Frankie entirely** — do not dispatch him, do not wait for an evidence bundle — and go straight to "Check if Final Review Needed" below, treating the walk condition as satisfied. Dispatching Frankie on a repo he cannot drive deadlocks the mission tail: he correctly reports a blocked walk, and the failure path below then HALTS with no way forward. This is the same exemption the completion gate in `scripts/hooks/enforce-final-review.js` enforces (it only demands an evidence bundle when `canFrankieDrive(contract.surfaces)`), and the loaded playbook's "Frankie Mission-Tail Dispatch" section spells it out in full. Say so in your status output so the operator knows Frankie was skipped by contract, not forgotten.
+
+Otherwise, use the loaded orchestration playbook's "Frankie Mission-Tail Dispatch" section for the exact dispatch pattern — a fresh, non-pre-warmed agent, passing the mission PRD path and mission identifier (for the `.qa-evidence/{missionId}/` evidence directory).
 
 **On success** (Frankie reports a clean walk, no failing items): proceed to "Check if Final Review Needed" below.
 
 **On failure** (Frankie names one or more failing work items): the mission tail HALTS — do NOT dispatch Stockwell. Surface the failing items to the operator. This is a manual operator action, not an automated bounce: `done` is terminal in `TRANSITION_MATRIX`, and none of `agentStart`, `agentStop --outcome rejected`, `board-move`, or `board-claim` can reopen a `done` item — reopening happens outside the pipeline.
 
-**After ANY rework** — whether the operator manually reopens a failing item after a Frankie flag, or a Stockwell rejection below sends items back — that returns work items to `done` again, the mission tail RESTARTS at Frankie. Frankie re-walks the FULL Definition of Done (every statement, not only the ones that previously failed), because a fix for one failure can break a neighboring statement.
+**After ANY rework** — whether the operator manually reopens a failing item after a Frankie flag, or the operator reworks the items Stockwell named in a FINAL REJECTED verdict below (also a manual action) — that returns work items to `done` again, the mission tail RESTARTS at Frankie. Frankie re-walks the FULL Definition of Done (every statement, not only the ones that previously failed), because a fix for one failure can break a neighboring statement.
 
 ### Check if Final Review Needed
 
@@ -552,7 +554,7 @@ Use the loaded orchestration playbook's "Frankie Mission-Tail Dispatch" section 
 ateam board getBoard --json
 ```
 
-If `phases.done` contains all items AND `phases.testing`, `phases.implementing`, `phases.review` are empty AND Frankie's walk succeeded → trigger final review.
+If `phases.done` contains all items AND `phases.testing`, `phases.implementing`, `phases.review` are empty AND Frankie's walk succeeded (or Frankie was skipped because the repo has no drivable surface) → trigger final review.
 
 ### Include PRD in Final Review
 
@@ -580,15 +582,17 @@ Use the loaded orchestration playbook's "Final Mission Review Dispatch" section 
 "I love it when a plan comes together."
 ```
 
-**If FINAL REJECTED:**
-```bash
-# For each item listed in rejection:
-ateam agents-stop agentStop --itemId "WI-003" --agent "Stockwell" \
-  --outcome rejected --return-to ready \
-  --summary "FINAL REJECTED - Race condition in token refresh"
+**If FINAL REJECTED:** do not proceed to post-checks. Announce the verdict, then report every item Stockwell named — with his issues — to the operator and stop:
+
+```
+[Hannibal] Final review REJECTED.
+Items requiring fixes: WI-003, WI-007
+Issues: [Stockwell's list]
+These items are in `done`, which is terminal — reopening them is a manual
+operator action. Awaiting human intervention.
 ```
 
-Items return to `ready` stage and go through the pipeline again. When `rejectionCount` reaches the configured cap (default `4`, override via `ATEAM_REJECTION_CAP`), the API escalates them to `blocked` — announce to the user that human intervention is needed. Once every named item is back in `done`, the mission tail RESTARTS at Frankie (see "Dispatch Frankie's Mission-Tail Walk" above) — not at post-checks — so the evidence bundle Stockwell eventually reviews always reflects the final code.
+Reopening a `done` item after a Stockwell rejection is a **manual operator action outside the pipeline, not an automated bounce** — exactly like Frankie's failure path above. `done` is terminal in `TRANSITION_MATRIX`, and none of `agentStart`, `agentStop --outcome rejected`, `board-move`, or `board-claim` can move an item out of it (see `adr/0005-done-is-terminal-no-in-mission-rework.md`). Do NOT try to run `agentStop --outcome rejected --return-to ready` against a done item — it has no live claim, so the API returns `NOT_CLAIMED`. Once the operator has reworked every named item and it is back in `done`, the mission tail RESTARTS at Frankie (see "Dispatch Frankie's Mission-Tail Walk" above) — not at post-checks — so the evidence bundle Stockwell eventually reviews always reflects the final code.
 
 ## Post-Mission Checks
 
@@ -666,12 +670,12 @@ If Tawnia fails (status: "failed"):
 
 **ALL of these conditions MUST be met for mission completion:**
 1. All items in `done` stage
-2. Frankie's mission-tail walk: clean (no failing DoD statements) ← REQUIRED, RUNS BEFORE Stockwell
+2. Frankie's mission-tail walk: clean (no failing DoD statements) ← REQUIRED, RUNS BEFORE Stockwell. Satisfied vacuously when the repo has no drivable surface and Frankie was skipped by contract (see "Dispatch Frankie's Mission-Tail Walk")
 3. Stockwell's Final Review: `VERDICT: FINAL APPROVED`
 4. Post-checks: PASSED
 5. Tawnia: Documentation committed ← REQUIRED, NOT OPTIONAL
 
-A mission is not complete without Frankie's walk — even a green Stockwell review means nothing if it reviewed a diff Frankie never walked.
+On a repo with a drivable surface, a mission is not complete without Frankie's walk — even a green Stockwell review means nothing if it reviewed a diff Frankie never walked.
 
 When all conditions are met:
 
@@ -683,7 +687,7 @@ Generate summary:
 - Total features completed
 - Rejection rate (including final review rejections)
 - Files created
-- Frankie's walk: PASSED (checklist result + evidence bundle path)
+- Frankie's walk: PASSED (checklist result + evidence bundle path) — or SKIPPED (no drivable surface)
 - Final review: PASSED
 - Post-checks: PASSED (lint, unit, e2e)
 - Documentation: COMPLETE (commit: {hash})

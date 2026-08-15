@@ -233,28 +233,41 @@ describe('canFrankieDrive() - drivability per surface (PRD 010 section 2.5: web-
 });
 
 describe("this repo's own ateam.config.json", () => {
-  it('carries an execution-contract block that parses into a fully-populated contract', () => {
+  it('carries an execution-contract block whose every field parses into the reader shape', () => {
     // No fs mocking here -- this reads the real root ateam.config.json,
     // proving the reader's shape and this repo's own declared contract
-    // agree (AC7). This repo must be web-drivable so Frankie can run on
-    // this very mission's own future final commits (see WI-775 context:
-    // coordination with the Tawnia precondition item).
+    // agree (AC7).
     const contract = readExecutionContract();
 
     expect(Array.isArray(contract.surfaces)).toBe(true);
-    expect(contract.surfaces.length).toBeGreaterThan(0);
-    expect(contract.surfaces).toContain('web');
-
-    expect(typeof contract.qa.seed).toBe('string');
-    expect(contract.qa.seed.length).toBeGreaterThan(0);
-    expect(typeof contract.qa.account.credential_env).toBe('string');
-    expect(contract.qa.account.credential_env.length).toBeGreaterThan(0);
+    expect(contract.qa.seed === null || typeof contract.qa.seed === 'string').toBe(true);
+    expect(
+      contract.qa.account.credential_env === null ||
+        typeof contract.qa.account.credential_env === 'string'
+    ).toBe(true);
     expect(typeof contract.qa.drive).toBe('string');
 
     expect(['smoke', 'critical-path', 'full-dod']).toContain(contract.testing_level);
     expect(['hands-on', 'evidence-only', 'auto']).toContain(contract.review_tier);
     expect(typeof contract.evidence.default).toBe('string');
+  });
 
-    expect(canFrankieDrive(contract.surfaces)).toBe(true);
+  it('declares no drivable surface, so Frankie never runs on this repo', () => {
+    // This plugin repo's missions are CLI/prose work; the one web app it
+    // contains (packages/kanban-viewer) is NOT a QA-drivable surface today:
+    // there is no isolated QA seed (the kanban-viewer `seed` script writes
+    // through DATABASE_URL to the same SQLite file the running container
+    // uses for live mission tracking, and creates zero test fixtures), and
+    // flowspec isn't installed here. Declaring `surfaces: ['web']` before
+    // those exist would make Frankie mandatory on every mission in this repo
+    // with nothing safe for him to drive -- the self-referential deadlock
+    // agents/tawnia.md's precondition exemption and agents/face.md's
+    // Project Readiness Audit exemption both describe. Flip this the day
+    // this repo grows a real isolated QA seed; both prose surfaces name
+    // this repo explicitly and must be updated with it.
+    const contract = readExecutionContract();
+
+    expect(contract.surfaces).toEqual([]);
+    expect(canFrankieDrive(contract.surfaces)).toBe(false);
   });
 });

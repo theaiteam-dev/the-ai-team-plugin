@@ -48,13 +48,13 @@ Skills live in `skills/<name>/SKILL.md`. The available skills are:
 | **Hannibal** | Orchestration only | `src/**`, tests | `block-hannibal-writes`, `block-raw-mv`, `enforce-final-review` |
 | **Face** | Work items via ateam CLI | Tests, implementation | observers only |
 | **Sosa** | Review reports | Work items directly | None |
-| **Murdock** | Tests + types | Implementation code | `block-raw-echo-log`, `enforce-completion-log` |
+| **Murdock** | Tests + types | Implementation code | `block-raw-echo-log`, `enforce-handoff` |
 | **B.A.** | Implementation | Tests | Same as Murdock |
 | **Lynch** | Review verdicts | Any code | Same as Murdock + `block-lynch-writes`, `block-lynch-browser` |
-| **Stockwell** | Final review verdicts | Any code | Same as Lynch (per-feature) |
+| **Stockwell** | Final review verdicts | Any code | `block-raw-echo-log`, `block-lynch-browser`, `enforce-completion-log` |
 | **Amy** | Debug scripts only | Production code, tests | Same as Murdock + `track-browser-usage`, `enforce-browser-verification` |
-| **Frankie** | Evidence bundle (`.qa-evidence/`), NEW `specs/` files | Implementation, tests, existing `specs/` files | Same as Murdock + `block-frankie-writes` |
-| **Tawnia** | Docs (CHANGELOG, README) | `src/**`, tests | Same as Murdock |
+| **Frankie** | Evidence bundle (`.qa-evidence/`), NEW `specs/` files | Implementation, tests, existing `specs/` files | `block-raw-echo-log`, `block-frankie-writes` |
+| **Tawnia** | Docs (CHANGELOG, README) | `src/**`, tests | `block-raw-echo-log`, `enforce-completion-log` |
 
 **Hooks enforce these boundaries at runtime.** Agents physically cannot violate them.
 
@@ -69,9 +69,18 @@ Scripts in `scripts/hooks/` run at lifecycle points. Exit code 0 = allow, non-ze
 
 These fire on every tool invocation and always exit 0 (never block). The agent name is passed as a CLI argument so the API can attribute activity to the right agent.
 
-**Working agents** (Murdock, B.A., Lynch, Amy, Frankie, Stockwell, Tawnia) all share enforcement hooks in addition to the observers:
+**Working agents** (Murdock, B.A., Lynch, Amy, Frankie, Stockwell, Tawnia) all share one enforcement hook in addition to the observers:
 - `PreToolUse(Bash)` → `block-raw-echo-log.js` — forces `ateam activity createActivityEntry` instead of raw echo
-- `Stop` → `enforce-completion-log.js` — blocks exit until `ateam agents-stop agentStop` is called
+
+Their **Stop** enforcement, though, splits three ways by role — there is no single completion hook they all carry:
+
+| Agents | Stop hook | What it requires |
+|--------|-----------|------------------|
+| Murdock, B.A., Lynch, Amy | `enforce-handoff.js` | Both `ateam agents-stop agentStop` **and** the peer-to-peer handoff message. A strict superset of completion logging, so these four deliberately do *not* also carry `enforce-completion-log.js` (swapped in `1f143ce`). |
+| Stockwell, Tawnia | `enforce-completion-log.js` | Blocks exit until `agentStop` is logged — terminal agents that hand off to nobody. |
+| Frankie | *(observer only)* | Gated instead by the evidence-bundle check inside Hannibal's `enforce-final-review.js`. |
+
+`enforce-completion-log.js` is **item-scoped**: it scrapes a `WI-XXX` id out of the agent's last message and asks the API for that item's `work_log`. That makes it a poor fit for mission-scoped agents, whose lifecycle ids are sentinels (`FRANKIE-WALK`, `FINAL-REVIEW`, `docs`) rather than item rows — the API answers `ITEM_NOT_FOUND` for those, and the hook fails open (see `prd/drafts/mission-phase-lifecycle.md`). Frankie omits it entirely because activating it would be worse than inert: his Failure Path *requires* him to name failing `WI-XXX` ids in his final message, so the hook would latch onto an unrelated item and block him for not logging against someone else's work. His completion gate reads the filesystem (`.qa-evidence/<mission>/report.md`) instead, which needs no item row. Stockwell keeps the hook registered but is likewise absent from its `TARGET_AGENTS` list, so it is currently a no-op for him too.
 
 **Hannibal** has unique enforcement hooks:
 - `PreToolUse(Write|Edit)` → `block-hannibal-writes.js` — prevents writing to source/test files

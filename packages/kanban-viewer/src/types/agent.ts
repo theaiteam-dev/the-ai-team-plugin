@@ -15,6 +15,7 @@ export type AgentName =
   | 'B.A.'
   | 'Lynch'
   | 'Amy'
+  | 'Frankie'
   | 'Tawnia'
   | 'Stockwell';
 

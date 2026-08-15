@@ -176,7 +176,7 @@ The dashboard provides two views:
 
 ### Raw Agent View (NEW)
 - **Real-time observability** into agent tool calls via observer hooks
-- **Swim lanes** showing each agent's activity (Hannibal, Face, Sosa, Murdock, B.A., Lynch, Amy, Frankie, Stockwell, Tawnia)
+- **Swim lanes** showing each agent's activity (Hannibal, Face, Murdock, B.A., Lynch, Amy, Frankie, Stockwell, Tawnia)
 - **Tool call timeline** with PreToolUse, PostToolUse, and Stop events
 - **Duration tracking** showing how long each tool call took (e.g., "Write took 1.2s")
 - **Filtering controls** to view specific agents, tools, or event types

@@ -9,9 +9,14 @@
  *
  * Queries the A(i)-Team API instead of reading filesystem.
  *
+ * The gate logic and API access live in lib/stop-gates.js, shared with
+ * enforce-orchestrator-stop.js — the two hooks must enforce the same rules,
+ * and only that hook binds when Hannibal runs in the main session.
+ *
  * Environment variables:
  *   ATEAM_API_URL - Base URL for the A(i)-Team API
  *   ATEAM_PROJECT_ID - Project identifier
+ *   ATEAM_SKIP_FRANKIE_GATE - Set to 1 to override the Frankie evidence gate
  *
  * For testing:
  *   __TEST_MOCK_BOARD__ - JSON string for fake board response
@@ -19,10 +24,16 @@
  *   __TEST_MOCK_NO_MISSION__ - Set to 'true' to simulate no active mission
  */
 
-import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { readFileSync } from 'fs';
 import { resolveAgent, isKnownAgent } from './lib/resolve-agent.js';
-import { readExecutionContract, canFrankieDrive } from './lib/qa-contract.js';
+import {
+  fetchBoard,
+  fetchMission,
+  normalizeBoard,
+  normalizeMission,
+  countBoard,
+  checkFrankieEvidence,
+} from './lib/stop-gates.js';
 
 // Read hook input from stdin (optional — old callers may not pipe stdin)
 let hookInput = {};
@@ -58,8 +69,8 @@ async function checkFinalReview() {
 
   if (mockBoard !== undefined || mockMission !== undefined) {
     // Use test mocks
-    boardData = mockBoard ? JSON.parse(mockBoard) : { columns: {} };
-    missionData = mockMission ? JSON.parse(mockMission) : {};
+    boardData = normalizeBoard(mockBoard ? JSON.parse(mockBoard) : { columns: {} });
+    missionData = normalizeMission(mockMission ? JSON.parse(mockMission) : {}) || {};
   } else {
     // Query the API
     if (!apiUrl || !projectId) {
@@ -67,59 +78,20 @@ async function checkFinalReview() {
       process.exit(0);
     }
 
-    // Fetch board state
-    const boardUrl = `${apiUrl}/api/projects/${projectId}/board`;
-    const boardResp = await fetch(boardUrl, {
-      headers: { 'X-Project-ID': projectId },
-    });
-
-    if (!boardResp.ok) {
+    boardData = await fetchBoard(apiUrl, projectId);
+    if (!boardData) {
       // No board / API error, allow stop
       process.exit(0);
     }
 
-    boardData = await boardResp.json();
-
-    // Fetch mission state
-    const missionUrl = `${apiUrl}/api/projects/${projectId}/missions/current`;
-    const missionResp = await fetch(missionUrl, {
-      headers: { 'X-Project-ID': projectId },
-    });
-
-    if (!missionResp.ok) {
+    missionData = await fetchMission(apiUrl, projectId);
+    if (!missionData) {
       // No active mission, allow stop
       process.exit(0);
     }
-
-    missionData = await missionResp.json();
   }
 
-  const columns = boardData.columns || {};
-
-  // Check for items still in active stages
-  const activeStages = [
-    'briefings',
-    'ready',
-    'testing',
-    'implementing',
-    'review',
-    'probing',
-    'blocked',
-  ];
-  const activeCounts = {};
-  let totalActive = 0;
-
-  for (const stage of activeStages) {
-    const items = columns[stage] || [];
-    const count = items.length;
-    if (count > 0) {
-      activeCounts[stage] = count;
-      totalActive += count;
-    }
-  }
-
-  const doneItems = columns.done || [];
-  const doneCount = doneItems.length;
+  const { activeCounts, totalActive, doneCount } = countBoard(boardData.columns);
 
   // If items are still active, block stop
   if (totalActive > 0) {
@@ -139,26 +111,20 @@ async function checkFinalReview() {
   // on a repo with a drivable surface, block until his evidence bundle
   // exists on disk (only reached once totalActive === 0, i.e. every item is
   // genuinely done — the check above already exited otherwise). Repos with
-  // no drivable surface (per canFrankieDrive()) are exempt. This gate uses
-  // the JSON decision-block format (never a nonzero exit code) — distinct
-  // from the pre-existing exit(2) gates below, which are untouched.
-  if (doneCount > 0) {
-    const contract = readExecutionContract();
-    const missionId = missionData.id;
-    // No mission id to check evidence against is itself an unexpected
-    // condition (AC7) — fail open rather than block on an unresolvable path.
-    if (missionId && canFrankieDrive(contract.surfaces)) {
-      const evidencePath = join(process.cwd(), '.qa-evidence', missionId, 'report.md');
-      if (!existsSync(evidencePath)) {
-        console.log(
-          JSON.stringify({
-            decision: 'block',
-            additionalContext: `STOP: Frankie's evidence bundle is missing. Expected: .qa-evidence/${missionId}/report.md. Dispatch Frankie to walk the mission DoD before the Final Mission Review can proceed.`,
-          })
-        );
-        process.exit(0);
-      }
-    }
+  // no drivable surface are exempt. This gate uses the JSON decision-block
+  // format (never a nonzero exit code) — distinct from the pre-existing
+  // exit(2) gates below, which are untouched.
+  //
+  // The gate itself lives in lib/stop-gates.js so enforce-orchestrator-stop.js
+  // enforces exactly the same condition — that hook is the one that binds in
+  // the primary execution mode, where Hannibal runs in the main session.
+  const frankieBlock = checkFrankieEvidence({
+    missionId: missionData.id,
+    doneCount,
+  });
+  if (frankieBlock) {
+    console.log(JSON.stringify({ decision: 'block', additionalContext: frankieBlock }));
+    process.exit(0);
   }
 
   // If all items done but no final review verdict, block stop

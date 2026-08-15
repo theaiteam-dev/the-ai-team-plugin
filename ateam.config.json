@@ -14,14 +14,14 @@
     "restart": "docker compose restart",
     "managed": false
   },
-  "surfaces": ["web"],
+  "surfaces": [],
   "qa": {
-    "seed": "cd packages/kanban-viewer && npm run seed",
-    "account": { "credential_env": "ATEAM_QA_PASSWORD" },
+    "seed": null,
+    "account": { "credential_env": null },
     "drive": "flowspec"
   },
   "testing_level": "critical-path",
-  "evidence": { "prd_work": "video+screenshots", "default": "screenshots" },
+  "evidence": { "prd_work": null, "default": "screenshots" },
   "review_tier": "hands-on",
   "pricing": {
     "models": {

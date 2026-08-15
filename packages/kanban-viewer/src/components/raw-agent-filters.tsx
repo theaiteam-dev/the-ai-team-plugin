@@ -117,7 +117,7 @@ export function RawAgentFilters({
   onReset,
 }: RawAgentFiltersProps) {
   // Agent names in canonical order
-  const agents = ["hannibal", "face", "murdock", "ba", "amy", "lynch", "tawnia"];
+  const agents = ["hannibal", "face", "murdock", "ba", "amy", "lynch", "frankie", "tawnia"];
   const agentDisplayNames: Record<string, string> = {
     hannibal: "Hannibal",
     face: "Face",
@@ -125,6 +125,7 @@ export function RawAgentFilters({
     ba: "B.A.",
     amy: "Amy",
     lynch: "Lynch",
+    frankie: "Frankie",
     tawnia: "Tawnia",
   };
 

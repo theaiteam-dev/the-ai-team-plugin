@@ -40,10 +40,18 @@ hooks:
     - hooks:
         - type: command
           command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/observe-post-tool-use.js frankie"
+  # No enforce-completion-log.js here: that hook is item-scoped (it scrapes a
+  # WI-XXX id from the agent's last message and reads that item's work_log),
+  # while Frankie is mission-scoped — his lifecycle id is the sentinel
+  # "FRANKIE-WALK", which is not an item row (see prd/drafts/
+  # mission-phase-lifecycle.md). It could never fire correctly, and since the
+  # Failure Path requires Frankie to name failing WI-XXX ids in his final
+  # message, it would latch onto an unrelated item and block him for not
+  # logging against someone else's work. His completion gate is instead the
+  # evidence-bundle check in enforce-final-review.js, which reads the
+  # filesystem (.qa-evidence/<mission>/report.md) rather than an item row.
   Stop:
     - hooks:
-        - type: command
-          command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/enforce-completion-log.js"
         - type: command
           command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/observe-stop.js frankie"
 ---
