@@ -266,7 +266,7 @@ Run `/ai-team:setup` once per project to configure required permissions in `.cla
 
 Two hooks enforce the lifecycle and routing invariants for peer-to-peer handoffs:
 
-- **`enforce-agent-start.js`** (PreToolUse) — blocks `ateam agents-stop` and `ateam activity` calls until `agents-start` has been called in the session. Prevents `NOT_CLAIMED` errors from agents (especially Lynch) who would otherwise skip claiming before logging work.
+- **`enforce-agent-start.js`** (PreToolUse) — blocks `ateam agents-stop` and `ateam activity createActivityEntry` calls until `agents-start` has been called in the session. Prevents `NOT_CLAIMED` errors from agents (especially Lynch) who would otherwise skip claiming before logging work. Read-only `activity listActivity` is not gated — mission-scoped agents (e.g. retro) have no item to claim and must be able to read the feed.
 - **`enforce-handoff.js`** (Stop) — registered per-agent on Murdock, B.A., Lynch, and Amy. After `agentStop` returns, verifies the agent sent exactly one `SendMessage` to the correct peer (matching the `claimedNext` instance from the CLI response) with the expected content type. Blocks the Stop event if the handoff is missing or misrouted. Intentionally NOT registered globally, since legacy subagent mode dispatches via the `Task` tool and would false-positive.
 
 ## Environment Variables

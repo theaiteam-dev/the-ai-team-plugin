@@ -1,7 +1,8 @@
 /**
  * Tests for enforce-agent-start.js — PreToolUse hook that blocks
- * `ateam agents-stop` / `ateam activity` when the session never
- * called `ateam agents-start`.
+ * `ateam agents-stop` / `ateam activity createActivityEntry` when the
+ * session never called `ateam agents-start`. Read-only activity
+ * subcommands (listActivity) are never gated.
  *
  * Regression focus: the original implementation used naive substring
  * matching on the command (`command.includes('agents-stop')`), which
@@ -385,6 +386,58 @@ describe('enforce-agent-start', () => {
         });
         expect(result.exitCode).toBe(0);
       });
+    });
+  });
+
+  describe('regression: read-only activity commands are never gated (retro M-20260815-001)', () => {
+    // The original regex blocked the ENTIRE `activity` resource, but the
+    // documented intent is a write-intent gate. Mission-scoped agents
+    // (retro) have no item to claim, cannot satisfy agentStart, and were
+    // collaterally blocked from reading the activity feed. Only the write
+    // verb `createActivityEntry` requires a prior start.
+    it('allows `ateam activity listActivity` without marker (exit 0)', () => {
+      const result = runHook({
+        session_id: SESSION_WITHOUT_START,
+        tool_name: 'Bash',
+        tool_input: { command: 'ateam activity listActivity --json' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('allows `ateam activity listActivity` piped to a parser without marker (exit 0)', () => {
+      const result = runHook({
+        session_id: SESSION_WITHOUT_START,
+        tool_name: 'Bash',
+        tool_input: {
+          command: "ateam activity listActivity --json | python3 -c 'import json,sys'",
+        },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('still blocks `ateam activity createActivityEntry` without marker (exit 2)', () => {
+      const result = runHook({
+        session_id: SESSION_WITHOUT_START,
+        tool_name: 'Bash',
+        tool_input: {
+          command: 'ateam activity createActivityEntry --agent Murdock --message hi --level info',
+        },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+    });
+
+    it('blocks a compound where listActivity precedes createActivityEntry, without marker (exit 2)', () => {
+      const result = runHook({
+        session_id: SESSION_WITHOUT_START,
+        tool_name: 'Bash',
+        tool_input: {
+          command:
+            'ateam activity listActivity --json && ateam activity createActivityEntry --agent Murdock --message hi',
+        },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
     });
   });
 
