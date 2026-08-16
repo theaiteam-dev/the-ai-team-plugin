@@ -25,8 +25,10 @@ try {
 
   const agent = resolveAgent(hookInput);
 
-  // Only enforce for Lynch (both per-feature and final review variants)
-  if (agent !== 'lynch' && agent !== 'lynch-final') {
+  // Only enforce for reviewers: Lynch (per-feature) and Stockwell (final
+  // review, resolved name since the lynch-final rename). 'lynch-final' is
+  // kept for legacy dispatch types.
+  if (agent !== 'lynch' && agent !== 'lynch-final' && agent !== 'stockwell') {
     process.exit(0);
   }
 
@@ -43,9 +45,9 @@ try {
     process.exit(0);
   }
 
-  sendDeniedEvent({ agentName: agent, toolName, reason: `BLOCKED: Lynch cannot write or edit project files: ${filePath}` });
-  process.stderr.write('BLOCKED: Lynch cannot write or edit project files.\n');
-  process.stderr.write('Lynch reviews code statically. Browser investigation belongs to Amy.\n');
+  sendDeniedEvent({ agentName: agent, toolName, reason: `BLOCKED: reviewers (Lynch/Stockwell) cannot write or edit project files: ${filePath}` });
+  process.stderr.write('BLOCKED: reviewers (Lynch/Stockwell) cannot write or edit project files.\n');
+  process.stderr.write('Reviewers review code statically. Browser investigation belongs to Amy.\n');
   process.stderr.write('Put your findings in the review report (as text output).\n');
   process.exit(2);
 } catch {

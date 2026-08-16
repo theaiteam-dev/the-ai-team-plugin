@@ -114,6 +114,28 @@ describe('POST /api/missions/[missionId]/final-review — AC2 transaction atomic
     expect(mockPrisma.mission.update).not.toHaveBeenCalled();
   });
 
+  it('selects promotion candidates scoped to THIS mission via MissionItem and excludes archived items', async () => {
+    // The behavioural proof lives in final-review-promotion.test.ts against a
+    // real database; this asserts the query issued inside the transaction is
+    // the mission-scoped one, so the scoping can never be silently dropped
+    // back to a project-wide sweep (which promoted other missions' leftover
+    // staged items and credited this review in their work logs).
+    txMock.item.findMany.mockResolvedValue([]);
+    txMock.mission.update.mockResolvedValue({ ...mockMission, finalReview: APPROVED_REPORT });
+
+    const res = await POST(buildRequest('project-a', { finalReview: APPROVED_REPORT }), buildContext('M-001'));
+    expect(res.status).toBe(200);
+
+    expect(txMock.item.findMany).toHaveBeenCalledTimes(1);
+    const [{ where }] = txMock.item.findMany.mock.calls[0] as [{ where: Record<string, unknown> }];
+    expect(where).toMatchObject({
+      projectId: 'project-a',
+      stageId: 'staged',
+      archivedAt: null,
+      missionItems: { some: { missionId: 'M-001' } },
+    });
+  });
+
   it('a rejected verdict does not require touching the promotion machinery at all (sanity: this file only asserts the approved/atomicity path)', async () => {
     const REJECTED_REPORT = '## Final Mission Review\n\nVERDICT: FINAL REJECTED\n\nNeeds rework.';
     mockPrisma.$transaction.mockImplementation(

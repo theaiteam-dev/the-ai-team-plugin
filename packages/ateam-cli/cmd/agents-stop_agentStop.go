@@ -252,13 +252,15 @@ var agentsStopAgentStopCmd = &cobra.Command{
 
 		if apiErr != nil {
 			// defer poolSelfRelease runs on exit — pool slot is always released
-			if strings.Contains(apiErr.Error(), "WIP_LIMIT_EXCEEDED") {
-				return fmt.Errorf("%w\nThe target stage is at WIP capacity. Retry with --advance=false to log work and release the claim without advancing, then send ALERT to Hannibal to redispatch when capacity opens.", apiErr)
-			}
 			return apiErr
 		}
 
-		// Check for wipExceeded — item was NOT advanced but work was logged
+		// Check for wipExceeded — item was NOT advanced but work was logged.
+		// NOTE: /api/agents/stop never fails with WIP_LIMIT_EXCEEDED; it always
+		// logs the work and returns 200, signalling the skipped transition with
+		// wipExceeded/blockedStage. (Only /api/agents/start rejects on WIP.)
+		// There is deliberately no "retry with --advance=false" advice here:
+		// the work is already recorded, so a retry would double-log it.
 		var parsed struct {
 			Data struct {
 				WipExceeded  bool   `json:"wipExceeded"`

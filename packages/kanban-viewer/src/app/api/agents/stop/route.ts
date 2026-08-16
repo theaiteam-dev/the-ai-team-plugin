@@ -31,11 +31,10 @@ import {
   type StageId as SharedStageId,
 } from '@ai-team/shared';
 import { logApiError } from '@/lib/api-logger';
+import { getRejectionEscalationThreshold } from '@/lib/rejection-cap';
 
 const VALID_OUTCOMES = ['completed', 'blocked', 'rejected'] as const;
 const VALID_RETURN_TO_STAGES: StageId[] = ['ready', 'testing', 'implementing', 'review', 'probing'];
-
-const DEFAULT_REJECTION_CAP = 4;
 
 // Stages that do NOT satisfy dependency completion (see WI-788's
 // isDependencySatisfied). Derived from the shared predicate rather than a
@@ -44,19 +43,6 @@ const DEFAULT_REJECTION_CAP = 4;
 const UNSATISFIED_DEPENDENCY_STAGES: SharedStageId[] = ALL_STAGES.filter(
   (stage) => !isDependencySatisfied(stage)
 );
-
-/**
- * Exported so WI-794's board/move route can reuse the exact same rejection
- * cap the Lynch/Amy rejection path uses, rather than a second hardcoded
- * copy — tail rework and per-item rejections must share one cap.
- */
-export function getRejectionEscalationThreshold(): number {
-  const raw = process.env.ATEAM_REJECTION_CAP;
-  if (raw === undefined || raw === '') return DEFAULT_REJECTION_CAP;
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_REJECTION_CAP;
-  return parsed;
-}
 
 /**
  * POST /api/agents/stop

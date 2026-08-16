@@ -360,7 +360,9 @@ ateam board getBoard --json
 - **Amy** → `testing` (Murdock) for FLAGs that name a test gap, or `implementing` (B.A.) for FLAGs that name only an impl bug. If the FLAG names both: `testing`.
 - **B.A.** → `testing` (Murdock) **only** when a test is genuinely broken (TEST BUG: prefix). Rare — used to avoid the "BA blocks waiting for someone to fix the test" stall pattern. Trigger criteria are narrow (see `agents/ba.md` "When the Test Is Wrong"); the handoff hook blocks B.A. from rejecting to any other stage.
 
-**Hannibal cannot walk items backward through the matrix.** `board-move` enforces the forward `TRANSITION_MATRIX` in `packages/shared/src/stages.ts`; only `agentStop --outcome rejected --return-to <stage>` can move items backward. If a teammate's rejection routed to a later stage than it should have (e.g. Amy rejected to `implementing` when the FLAG also named a test gap), do NOT attempt manual `board-move` recovery — the matrix will reject it as `INVALID_TRANSITION`. Re-dispatch from the current stage and rely on the next reviewer to bounce it correctly with the right `--return-to`.
+**Hannibal does not walk items backward out of mid-pipeline stages (`review`, `probing`).** Rework out of those stages belongs to the agent holding the claim, expressed as `agentStop --outcome rejected --return-to <stage>` — that is what increments `rejection_count`, records the rejection summary in the work log, and escalates to `blocked` at the cap. A bare `board-move` out of `probing` to `testing`/`implementing` is not even in the matrix (`probing: ['ready', 'staged', 'blocked']`) and fails with `INVALID_TRANSITION`; out of `review` the matrix does allow `testing`/`implementing`, but a raw move there silently skips the rejection bookkeeping, so it is still not yours to run. If a teammate's rejection routed to a later stage than it should have (e.g. Amy rejected to `implementing` when the FLAG also named a test gap), do NOT attempt manual `board-move` recovery. Re-dispatch from the current stage and rely on the next reviewer to bounce it correctly with the right `--return-to`.
+
+**The one backward `board-move` Hannibal DOES execute is tail rework out of `staged`.** `staged` carries real backward edges (`staged: ['done', 'testing', 'implementing', 'ready', 'blocked']`), and `ateam board-move moveItem --itemId <id> --toStage <testing|implementing>` is a first-class, rejection-cap-counted transition (WI-794) — it increments `rejectionCount` and escalates to `blocked` at the cap exactly like a reviewer's rejection. It exists because at mission-tail time no agent holds a claim on the item, so `agentStop --outcome rejected` is unavailable (see `adr/0005-done-is-terminal-no-in-mission-rework.md`). This is the route to use when Frankie's walk or a FINAL REJECTED verdict names failing items — see "Dispatch Frankie's Mission-Tail Walk" and "Handle Final Review Result" below. It applies ONLY to items sitting in `staged`; it is not a general-purpose backward move.
 
 **What Hannibal receives on rejection:**
 - **FYI from Lynch/Amy/B.A.** — rejection handled, agent re-dispatched. Check for escalation: if the FYI message indicates `escalated: true` or the item moved to `blocked`, announce to the user that human intervention is needed.
@@ -416,7 +418,7 @@ Do not skip the `## Prior Rejection` section on retries. B.A. cannot fix what it
 
 ## On Rejection: Optional Diagnosis
 
-Before moving a rejected item back to `ready` stage, you can optionally spawn Amy to diagnose the root cause. This provides B.A. with better guidance for the retry.
+Before re-dispatching a rejected item at its `--return-to` stage (`testing` or `implementing` — `review` has no `ready` edge in the matrix), you can optionally spawn Amy to diagnose the root cause. This provides B.A. with better guidance for the retry.
 
 ### When to Use Amy for Diagnosis
 
@@ -544,6 +546,8 @@ Otherwise, use the loaded orchestration playbook's "Frankie Mission-Tail Dispatc
 
 **On failure** (Frankie names one or more failing work items): the mission tail HALTS — do NOT dispatch Stockwell. For each named item, move it out of `staged` using the SAME earliest-flagged-stage rule that already governs Lynch and Amy rejections: a named test gap routes to `testing`, an impl-only bug routes to `implementing`. Execute the move with `ateam board-move moveItem --itemId <id> --toStage <testing|implementing>` — WI-794 made this a first-class, rejection-cap-counted transition (it increments `rejectionCount` and escalates to `blocked` at the cap, exactly like a Lynch/Amy rejection), so this is a real, automated backward move, not a manual reopen outside the pipeline.
 
+**Check each move's response for cap escalation.** A tail-rework move returns two extra fields in `data`: `rejectionCount` (the item's new total) and `escalated` (boolean). If `escalated` is `true`, the item hit the rejection cap and the API sent it to `blocked` instead of the stage you asked for — `data.wipStatus.stageId` will read `blocked`, not `testing`/`implementing`. Do NOT expect a pipeline agent to pick that item up, and do NOT count it toward the items you are waiting on to return to `staged`; surface it to the operator as a blocked item needing human intervention, with its `rejectionCount`, exactly as you would any other escalation. The mission tail stays halted until the operator resolves it.
+
 **After ANY rework** — whether it was triggered by a Frankie failure above or by the items Stockwell named in a FINAL REJECTED verdict below — once every named item is back in `staged`, the mission tail RESTARTS at Frankie. Frankie re-walks the FULL Definition of Done (every statement, not only the ones that previously failed), because a fix for one failure can break a neighboring statement.
 
 ### Check if Final Review Needed
@@ -561,10 +565,10 @@ Get the PRD path from `ateam missions-current getCurrentMission --json` and pass
 
 ### Collect All Output Files
 
-Read each done item and collect all `outputs.test`, `outputs.impl`, and `outputs.types` paths:
+Read each `staged` item and collect all `outputs.test`, `outputs.impl`, and `outputs.types` paths. Every item is in `staged` at this point — promotion to `done` happens only after an APPROVED verdict (WI-790, see "Handle Final Review Result" below), so reading the `done` stage here would come back empty:
 
 ```bash
-# For each item in done stage, read its outputs
+# For each item in staged stage, read its outputs
 ateam items getItem --id "WI-001"
 # Extract outputs.test, outputs.impl, outputs.types
 ```
@@ -590,6 +594,8 @@ Items requiring fixes: WI-003, WI-007
 Issues: [Stockwell's list]
 Moved WI-003 -> testing, WI-007 -> implementing (earliest-flagged-stage rule).
 ```
+
+**Check each move's response for cap escalation**, same as on the Frankie-failure path: the response's `data.escalated` is `true` when the item hit the rejection cap and went to `blocked` instead of the stage you requested (`data.wipStatus.stageId` reads `blocked`, and `data.rejectionCount` carries the new total). An escalated item will NOT be picked up by any pipeline agent and will never return to `staged` on its own — announce it to the operator as blocked, needing human intervention, and leave the mission tail halted until it is resolved.
 
 Once every named item is back in `staged`, the mission tail RESTARTS at Frankie (see "Dispatch Frankie's Mission-Tail Walk" above) — not at post-checks — so the evidence bundle Stockwell eventually reviews always reflects the final code.
 

@@ -23,7 +23,7 @@ ScheduleWakeup(
 ```
 
 **Skip re-arming** if any of these are true:
-- All mission items are in `done` and the mission is transitioning to Final Review / post-checks / documentation
+- Every mission item is in `staged`, `blocked`, or `done` — nothing is left for per-item pipeline workers to do, and the mission has entered the tail (Frankie → Final Review → promotion to `done` → post-checks → documentation). Items sit in `staged`, not `done`, for the whole tail: keying this on `done` would never match while Frankie and Stockwell are running.
 - The mission state is `aborted` / `completed` / `archived`
 - The user has signaled exit
 
@@ -61,7 +61,7 @@ Read the data. Pick a response per item — there is no rigid ladder:
 | Agent alive but quiet (`.busy` + recent `hook_event`) | Send `STATUS?` via SendMessage, wait one more heartbeat |
 | Agent silent + `.busy` orphaned (no recent activity, `lastActivitySource: agent_claim`) | `ateam pool release`, then re-dispatch from item's current stage |
 | Item back in pre-pipeline stage with no `assignedAgent` | Re-dispatch normally via the playbook |
-| Mission idle, all items `done` or `blocked` | Mission is over — do NOT re-arm (skip step 1 next time) |
+| Mission idle, all items `staged`, `blocked`, or `done` | Per-item pipeline is finished (mission is in the tail, or over) — do NOT re-arm (skip step 1 next time) |
 
 Avoid threshold-driven autopilot. The point of the heartbeat is to give Hannibal a chance to look; the action depends on what he sees.
 

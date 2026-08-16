@@ -177,7 +177,7 @@ Every feature MUST flow through ALL stages. Skipping stages is NOT permitted.
 2. **B.A.** implements to pass those tests
 3. **Lynch** reviews tests + implementation together
 4. **Amy** probes for bugs beyond tests (Raptor Protocol) ← MANDATORY, NOT OPTIONAL
-5. If rejected at any stage (max 2 times), item goes to `blocked`
+5. If an item exceeds the rejection cap, it goes to `blocked` instead of returning to its `--return-to` stage (cap defaults to **4**, overridable per API server via `ATEAM_REJECTION_CAP` — see **Rejections** under Stage Transitions above)
 
 **Mission Completion (after ALL items reach staged — the per-item pipeline's real terminal stage, WI-786/787):**
 6. **Frankie** walks the mission's full Definition of Done against the running app and produces an evidence bundle ← MANDATORY, RUNS BEFORE Stockwell (skipped only on repos whose execution contract declares no drivable surface — see `scripts/hooks/lib/qa-contract.js`). A failure halts here: Hannibal moves each named item out of `staged` to `testing` or `implementing` via a real `board-move` (earliest-flagged-stage rule, WI-794) — a rejection-cap-counted transition, not a manual bounce.

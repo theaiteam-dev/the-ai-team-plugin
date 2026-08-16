@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { NextRequest } from 'next/server';
 import type { MoveItemRequest } from '@/types/api';
 
@@ -58,7 +60,8 @@ import type { MoveItemRequest } from '@/types/api';
  */
 
 const txMock = vi.hoisted(() => ({
-  item: { count: vi.fn(), update: vi.fn() },
+  item: { count: vi.fn(), update: vi.fn(), findFirst: vi.fn() },
+  stage: { findUnique: vi.fn() },
   workLog: { create: vi.fn() },
 }));
 
@@ -129,6 +132,16 @@ describe('POST /api/board/move — WI-794: tail-triggered rework counts against 
     );
     txMock.item.count.mockImplementation(({ where: { stageId } }: { where: { stageId: string } }) =>
       Promise.resolve(stageCounts[stageId] ?? 0)
+    );
+    txMock.stage.findUnique.mockImplementation(({ where: { id } }: { where: { id: string } }) =>
+      Promise.resolve(STAGE_ROWS[id] ?? null)
+    );
+    // Default: the in-transaction re-read observes the same row the
+    // pre-transaction read did. Tests that exercise the TOCTOU window
+    // override this with a DIFFERENT row so it is visible which read the
+    // escalation decision actually came from.
+    txMock.item.findFirst.mockImplementation((...args: unknown[]) =>
+      mockPrisma.item.findFirst(...args)
     );
   });
 
@@ -354,9 +367,206 @@ describe('POST /api/board/move — WI-794: tail-triggered rework counts against 
     expect(res.status).toBe(200);
     expect(data.data.item.stageId).toBe('blocked');
   });
+
+  // ---------------------------------------------------------------------
+  // Response contract: an escalation silently rewrites the destination to
+  // 'blocked'. A caller that asked for 'testing' and got a 200 back has no
+  // way to learn that happened without diffing item.stageId against its own
+  // request. The sibling rejection path (POST /api/agents/stop, outcome
+  // 'rejected') already returns `escalated` + `rejectionCount` for exactly
+  // this reason — the tail-rework path must report the same two fields with
+  // the same names and semantics.
+  // ---------------------------------------------------------------------
+  describe('response contract: escalated / rejectionCount', () => {
+    it('reports escalated:false and the new rejectionCount on a tail-rework move that stays under the cap', async () => {
+      mockPrisma.item.findFirst.mockResolvedValue(baseItem({ rejectionCount: 1 }));
+      txMock.item.update.mockResolvedValue(baseItem({ stageId: 'testing', rejectionCount: 2 }));
+      txMock.workLog.create.mockResolvedValue({ id: 1, agent: 'Hannibal', action: 'tail_rework', summary: 'x' });
+
+      const res = await callMove({ itemId: 'WI-500', toStage: 'testing' as MoveItemRequest['toStage'] });
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.data.escalated).toBe(false);
+      expect(data.data.rejectionCount).toBe(2);
+    });
+
+    it('reports escalated:true and the capped rejectionCount when the move escalates to blocked', async () => {
+      mockPrisma.item.findFirst.mockResolvedValue(baseItem({ rejectionCount: 3 }));
+      txMock.item.update.mockResolvedValue(baseItem({ stageId: 'blocked', rejectionCount: 4 }));
+      txMock.workLog.create.mockResolvedValue({ id: 1, agent: 'Hannibal', action: 'tail_rework', summary: 'x' });
+
+      const res = await callMove({ itemId: 'WI-500', toStage: 'testing' as MoveItemRequest['toStage'] });
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.data.escalated).toBe(true);
+      expect(data.data.rejectionCount).toBe(4);
+      // The caller asked for testing and is being told, in the response
+      // itself, that it landed in blocked instead.
+      expect(data.data.item.stageId).toBe('blocked');
+      expect(data.data.wipStatus.stageId).toBe('blocked');
+    });
+
+    it('omits escalated / rejectionCount on moves that are not tail rework (staged -> done), matching agents/stop, where the fields are rejection-only', async () => {
+      mockPrisma.item.findFirst.mockResolvedValue(baseItem({ rejectionCount: 2 }));
+      txMock.item.update.mockResolvedValue(baseItem({ stageId: 'done', rejectionCount: 2 }));
+
+      const res = await callMove({ itemId: 'WI-500', toStage: 'done' as MoveItemRequest['toStage'] });
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.data.escalated).toBeUndefined();
+      expect(data.data.rejectionCount).toBeUndefined();
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // TOCTOU: the rejectionCount that drives the escalation decision must be
+  // read INSIDE the transaction that performs the increment. Reading it from
+  // the pre-transaction findFirst leaves a window where two concurrent
+  // tail-rework moves both observe the same count — they then either both
+  // escalate (one item, two 'blocked' resolutions) or both decline to
+  // escalate and overshoot the cap.
+  //
+  // The mock makes the two reads return DIFFERENT counts; only the
+  // in-transaction value may influence the outcome.
+  // ---------------------------------------------------------------------
+  describe('escalation decides on the in-transaction rejectionCount, not the pre-transaction read', () => {
+    it('escalates when the in-transaction count reaches the cap even though the pre-transaction read was well under it', async () => {
+      // Pre-transaction read: 0 -> 1, nowhere near the default cap of 4.
+      mockPrisma.item.findFirst.mockResolvedValue(baseItem({ rejectionCount: 0 }));
+      // A concurrent tail-rework move committed in between: the row now
+      // reads 3, so THIS move is the one that hits 4.
+      txMock.item.findFirst.mockResolvedValue(baseItem({ rejectionCount: 3 }));
+      txMock.item.update.mockResolvedValue(baseItem({ stageId: 'blocked', rejectionCount: 4 }));
+      txMock.workLog.create.mockResolvedValue({ id: 1, agent: 'Hannibal', action: 'tail_rework', summary: 'x' });
+
+      const res = await callMove({ itemId: 'WI-500', toStage: 'testing' as MoveItemRequest['toStage'] });
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.data.escalated).toBe(true);
+      expect(data.data.rejectionCount).toBe(4);
+      expect(txMock.item.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ rejectionCount: { increment: 1 }, stageId: 'blocked' }),
+        })
+      );
+    });
+
+    it('does NOT escalate when the in-transaction count is below the cap even though the pre-transaction read was at it', async () => {
+      // Pre-transaction read says 3 -> 4 (escalate)...
+      mockPrisma.item.findFirst.mockResolvedValue(baseItem({ rejectionCount: 3 }));
+      // ...but the authoritative in-transaction row says 0 -> 1. Escalating
+      // here would send a healthy item to blocked on a stale read.
+      txMock.item.findFirst.mockResolvedValue(baseItem({ rejectionCount: 0 }));
+      txMock.item.update.mockResolvedValue(baseItem({ stageId: 'testing', rejectionCount: 1 }));
+      txMock.workLog.create.mockResolvedValue({ id: 1, agent: 'Hannibal', action: 'tail_rework', summary: 'x' });
+
+      const res = await callMove({ itemId: 'WI-500', toStage: 'testing' as MoveItemRequest['toStage'] });
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.data.escalated).toBe(false);
+      expect(data.data.rejectionCount).toBe(1);
+      expect(data.data.item.stageId).toBe('testing');
+      expect(txMock.item.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ rejectionCount: { increment: 1 }, stageId: 'testing' }),
+        })
+      );
+    });
+
+    it('the in-transaction re-read happens against the same item and project scope', async () => {
+      mockPrisma.item.findFirst.mockResolvedValue(baseItem({ rejectionCount: 0 }));
+      txMock.item.update.mockResolvedValue(baseItem({ stageId: 'testing', rejectionCount: 1 }));
+      txMock.workLog.create.mockResolvedValue({ id: 1, agent: 'Hannibal', action: 'tail_rework', summary: 'x' });
+
+      await callMove({ itemId: 'WI-500', toStage: 'testing' as MoveItemRequest['toStage'] });
+
+      expect(txMock.item.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: 'WI-500', projectId: 'test-project' }),
+        })
+      );
+    });
+
+    it('does not count the rework when the item left staged between the two reads', async () => {
+      // The pre-transaction read saw 'staged', but by the time the
+      // transaction opened, another writer had already moved the item.
+      // Counting a second tail rework here would double-charge the cap.
+      mockPrisma.item.findFirst.mockResolvedValue(baseItem({ rejectionCount: 1 }));
+      txMock.item.findFirst.mockResolvedValue(baseItem({ stageId: 'testing', rejectionCount: 2 }));
+      txMock.item.update.mockResolvedValue(baseItem({ stageId: 'testing', rejectionCount: 2 }));
+
+      const res = await callMove({ itemId: 'WI-500', toStage: 'testing' as MoveItemRequest['toStage'] });
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      const updateCallArg = txMock.item.update.mock.calls[0][0];
+      expect(updateCallArg.data).not.toHaveProperty('rejectionCount');
+      expect(txMock.workLog.create).not.toHaveBeenCalled();
+      expect(data.data.escalated).toBeUndefined();
+      expect(data.data.rejectionCount).toBeUndefined();
+    });
+
+    it('returns ITEM_NOT_FOUND when the item disappears between the pre-transaction read and the transaction', async () => {
+      mockPrisma.item.findFirst.mockResolvedValue(baseItem({ rejectionCount: 1 }));
+      txMock.item.findFirst.mockResolvedValue(null);
+
+      const res = await callMove({ itemId: 'WI-500', toStage: 'testing' as MoveItemRequest['toStage'] });
+      const data = await res.json();
+
+      expect(res.status).toBe(404);
+      expect(data.error.code).toBe('ITEM_NOT_FOUND');
+      expect(txMock.item.update).not.toHaveBeenCalled();
+      expect(txMock.workLog.create).not.toHaveBeenCalled();
+    });
+  });
 });
 
 async function callMove(body: MoveItemRequest) {
   const { POST } = await import('@/app/api/board/move/route');
   return POST(buildRequest(body));
 }
+
+// ── Cross-artifact contract: openapi.yaml ────────────────────────────────────
+
+/**
+ * The route writes action:'tail_rework' and src/types/item.ts declares it in
+ * the WorkLogAction union, but openapi.yaml is a hand-maintained duplicate of
+ * that same enum — it shipped without the value and drifted. Pin the two so
+ * the next value added to the union cannot land spec-less either.
+ */
+describe('openapi.yaml — WorkLogAction enum matches the TS union', () => {
+  const readOpenapi = () => readFileSync(join(process.cwd(), 'openapi.yaml'), 'utf-8');
+
+  /** Hand-parse the single spelled-out WorkLogAction enum rather than pulling in a YAML dep. */
+  function specWorkLogActions(): string[] {
+    const match = readOpenapi().match(
+      /WorkLogAction:\s*\n\s*type:\s*string\s*\n\s*enum:\s*\[([^\]]+)\]/
+    );
+    expect(match, 'openapi.yaml should define a WorkLogAction enum').not.toBeNull();
+    return match![1].split(',').map((v) => v.trim());
+  }
+
+  it('documents tail_rework, the action the tail-rework move writes', () => {
+    expect(specWorkLogActions()).toContain('tail_rework');
+  });
+
+  it('documents every value in the WorkLogAction union, in the same order', () => {
+    // Read the union out of src/types/item.ts rather than restating it here — a
+    // second hand-maintained copy would drift exactly the way the spec just did.
+    const typesSrc = readFileSync(join(process.cwd(), 'src', 'types', 'item.ts'), 'utf-8');
+    const union = typesSrc.match(/export type WorkLogAction =([^;]+);/);
+    expect(union, 'src/types/item.ts should declare the WorkLogAction union').not.toBeNull();
+    const unionValues = union![1]
+      .split('|')
+      .map((v) => v.trim().replace(/^'|'$/g, ''))
+      .filter(Boolean);
+
+    expect(unionValues).toContain('tail_rework'); // guard against an empty parse passing vacuously
+    expect(specWorkLogActions()).toEqual(unionValues);
+  });
+});

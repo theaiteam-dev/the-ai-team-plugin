@@ -39,6 +39,18 @@ export interface MoveItemResponse {
     item: Item;
     previousStage: StageId;
     wipStatus: WipStatus;
+    /**
+     * Present only on tail-rework moves (`staged -> testing|implementing`,
+     * WI-794). The item's new total rejection count after this move.
+     * Mirrors the same field on AgentStopResponse's rejection path.
+     */
+    rejectionCount?: number;
+    /**
+     * Present only on tail-rework moves. `true` when the rejection count
+     * reached the cap and the item was moved to `blocked` instead of the
+     * requested stage. Mirrors AgentStopResponse's rejection path.
+     */
+    escalated?: boolean;
   };
 }
 

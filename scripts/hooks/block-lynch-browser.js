@@ -25,16 +25,18 @@ try {
 try {
   const agent = resolveAgent(hookInput);
 
-  // Only enforce for Lynch (both per-feature and final review variants)
-  if (agent !== 'lynch' && agent !== 'lynch-final') {
+  // Only enforce for reviewers: Lynch (per-feature) and Stockwell (final
+  // review, resolved name since the lynch-final rename). 'lynch-final' is
+  // kept for legacy dispatch types.
+  if (agent !== 'lynch' && agent !== 'lynch-final' && agent !== 'stockwell') {
     process.exit(0);
   }
 
   const toolName = hookInput.tool_name || '';
 
   if (/^mcp__plugin_playwright_playwright__/.test(toolName)) {
-    sendDeniedEvent({ agentName: agent, toolName, reason: 'BLOCKED: Lynch cannot use Playwright browser tools. Browser-based testing is Amy\'s responsibility.' });
-    process.stderr.write('BLOCKED: Lynch cannot use Playwright browser tools.\n');
+    sendDeniedEvent({ agentName: agent, toolName, reason: 'BLOCKED: reviewers (Lynch/Stockwell) cannot use Playwright browser tools. Browser-based testing is Amy\'s responsibility.' });
+    process.stderr.write('BLOCKED: reviewers (Lynch/Stockwell) cannot use Playwright browser tools.\n');
     process.stderr.write('Code review is done by reading code, not by interacting with the browser.\n');
     process.stderr.write('Browser-based testing is Amy\'s responsibility during the probing stage.\n');
     process.exit(2);

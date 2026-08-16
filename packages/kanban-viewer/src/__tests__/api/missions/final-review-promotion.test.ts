@@ -46,6 +46,12 @@ import { prisma } from '@/lib/db';
 
 const PROJECT_ID = 'test-wi790-promotion-project';
 const MISSION_ID = 'M-wi790-promotion-test';
+// A second, already-archived mission in the SAME project. Archiving sets
+// Mission.archivedAt and Item.archivedAt but deliberately leaves stageId
+// alone, so a finished-and-archived mission can legitimately leave items
+// sitting in 'staged' forever. Those must never be swept into 'done' by a
+// LATER mission's approved review.
+const OTHER_MISSION_ID = 'M-wi790-other-mission';
 
 const APPROVED_REPORT =
   '## Final Mission Review\n\nVERDICT: FINAL APPROVED\n\nAll PRD requirements met, no security issues.';
@@ -73,11 +79,30 @@ async function seedStage(id: string): Promise<void> {
   });
 }
 
-/** Upserts an Item at a given stage, scoped to the test project. */
-async function seedItem(id: string, stageId: string): Promise<void> {
+interface SeedItemOptions {
+  /**
+   * Which mission the item belongs to, via the MissionItem join table.
+   * Defaults to the mission under test. Pass `null` to seed an ORPHAN item
+   * with no MissionItem row at all (items created outside any active
+   * mission) — those belong to no mission and must never be promoted.
+   */
+  missionId?: string | null;
+  /** Soft-delete marker set by mission archival. */
+  archivedAt?: Date | null;
+}
+
+/**
+ * Upserts an Item at a given stage, scoped to the test project, and (unless
+ * told otherwise) links it to a mission through MissionItem — the same join
+ * every other mission-scoped query in this codebase goes through
+ * (agents/stop, missions/archive, missions/current/health-report).
+ */
+async function seedItem(id: string, stageId: string, options: SeedItemOptions = {}): Promise<void> {
+  const { missionId = MISSION_ID, archivedAt = null } = options;
+
   await prisma.item.upsert({
     where: { id },
-    update: { stageId },
+    update: { stageId, archivedAt },
     create: {
       id,
       title: `WI-790 test fixture ${id}`,
@@ -86,8 +111,17 @@ async function seedItem(id: string, stageId: string): Promise<void> {
       priority: 'medium',
       stageId,
       projectId: PROJECT_ID,
+      archivedAt,
     },
   });
+
+  if (missionId !== null) {
+    await prisma.missionItem.upsert({
+      where: { missionId_itemId: { missionId, itemId: id } },
+      update: {},
+      create: { missionId, itemId: id },
+    });
+  }
 }
 
 beforeEach(async () => {
@@ -107,6 +141,20 @@ beforeEach(async () => {
       prdPath: '/prd/test.md',
       projectId: PROJECT_ID,
       startedAt: new Date(),
+    },
+  });
+
+  await prisma.mission.upsert({
+    where: { id: OTHER_MISSION_ID },
+    update: {},
+    create: {
+      id: OTHER_MISSION_ID,
+      name: 'WI-790 Previously Archived Mission',
+      state: 'archived',
+      prdPath: '/prd/other.md',
+      projectId: PROJECT_ID,
+      startedAt: new Date(),
+      archivedAt: new Date(),
     },
   });
 
@@ -230,6 +278,68 @@ describe('POST /api/missions/[missionId]/final-review — staged-to-done promoti
     const activityLogNamesReview = activityLogs.some((a) => /final review/i.test(a.message));
 
     expect(workLogNamesReview || activityLogNamesReview).toBe(true);
+  });
+
+  it('promotes ONLY this mission\'s staged items — a previously archived mission\'s staged items are left alone', async () => {
+    await seedItem('WI-P13', 'staged');
+    // Left behind by an earlier, already-archived mission: archival stamps
+    // archivedAt but never touches stageId, so these sit in 'staged' forever.
+    await seedItem('WI-OLD1', 'staged', { missionId: OTHER_MISSION_ID, archivedAt: new Date() });
+    await seedItem('WI-OLD2', 'staged', { missionId: OTHER_MISSION_ID, archivedAt: new Date() });
+
+    const response = await POST(makeRequest({ finalReview: APPROVED_REPORT }), routeParams);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.data.promotedCount).toBe(1); // WI-P13 only — not the other mission's two
+
+    expect((await prisma.item.findUnique({ where: { id: 'WI-P13' } }))?.stageId).toBe('done');
+    expect((await prisma.item.findUnique({ where: { id: 'WI-OLD1' } }))?.stageId).toBe('staged');
+    expect((await prisma.item.findUnique({ where: { id: 'WI-OLD2' } }))?.stageId).toBe('staged');
+
+    // Nor may this mission's review be credited in another mission's work log.
+    const strayLogs = await prisma.workLog.findMany({ where: { itemId: { in: ['WI-OLD1', 'WI-OLD2'] } } });
+    expect(strayLogs).toHaveLength(0);
+  });
+
+  it('leaves another mission\'s staged items alone even when that mission was never archived', async () => {
+    await seedItem('WI-P14', 'staged');
+    await seedItem('WI-OTHER1', 'staged', { missionId: OTHER_MISSION_ID });
+
+    const response = await POST(makeRequest({ finalReview: APPROVED_REPORT }), routeParams);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.data.promotedCount).toBe(1);
+    expect((await prisma.item.findUnique({ where: { id: 'WI-P14' } }))?.stageId).toBe('done');
+    expect((await prisma.item.findUnique({ where: { id: 'WI-OTHER1' } }))?.stageId).toBe('staged');
+  });
+
+  it('never promotes an orphan item that belongs to no mission at all', async () => {
+    await seedItem('WI-P15', 'staged');
+    await seedItem('WI-ORPHAN', 'staged', { missionId: null });
+
+    const response = await POST(makeRequest({ finalReview: APPROVED_REPORT }), routeParams);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.data.promotedCount).toBe(1);
+    expect((await prisma.item.findUnique({ where: { id: 'WI-P15' } }))?.stageId).toBe('done');
+    expect((await prisma.item.findUnique({ where: { id: 'WI-ORPHAN' } }))?.stageId).toBe('staged');
+    expect(await prisma.workLog.findMany({ where: { itemId: 'WI-ORPHAN' } })).toHaveLength(0);
+  });
+
+  it('never promotes an archived item, even one linked to the mission being approved', async () => {
+    await seedItem('WI-P16', 'staged');
+    await seedItem('WI-P17-ARCHIVED', 'staged', { archivedAt: new Date() });
+
+    const response = await POST(makeRequest({ finalReview: APPROVED_REPORT }), routeParams);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.data.promotedCount).toBe(1);
+    expect((await prisma.item.findUnique({ where: { id: 'WI-P16' } }))?.stageId).toBe('done');
+    expect((await prisma.item.findUnique({ where: { id: 'WI-P17-ARCHIVED' } }))?.stageId).toBe('staged');
   });
 
   it('AC7: no log entry is written for an item that was already done (nothing to promote)', async () => {

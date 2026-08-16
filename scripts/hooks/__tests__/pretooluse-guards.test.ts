@@ -775,6 +775,27 @@ describe('block-lynch-browser — agent guards', () => {
     expect(result.exitCode).toBe(2);
   });
 
+  // Regression: the final reviewer resolves as 'stockwell' since the rename
+  // (resolve-agent.js KNOWN_AGENTS), so a gate listing only lynch/lynch-final
+  // silently fails open for the agent stockwell.md actually registers it for.
+  it('blocks stockwell using browser_navigate (exit 2)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'ai-team:stockwell',
+      tool_name: 'mcp__plugin_playwright_playwright__browser_navigate',
+      tool_input: { url: 'http://localhost:3000' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('blocks stockwell using browser_snapshot (exit 2)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'stockwell',
+      tool_name: 'mcp__plugin_playwright_playwright__browser_snapshot',
+    });
+    expect(result.exitCode).toBe(2);
+  });
+
   it('allows non-target agent amy to use browser tools (exit 0)', () => {
     const result = runHook(HOOK, {
       agent_type: 'amy',
@@ -841,6 +862,37 @@ describe('block-lynch-writes — agent guards (regression)', () => {
       tool_input: { file_path: 'src/components/Button.tsx' },
     });
     expect(result.exitCode).toBe(2);
+  });
+
+  // Regression: same rename gap as block-lynch-browser — 'stockwell' is the
+  // resolved name of the final reviewer, and he must never write project files
+  // (the write-guard incident that motivated these hooks was a Stockwell run).
+  it('blocks stockwell writing project files (exit 2)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'ai-team:stockwell',
+      tool_name: 'Write',
+      tool_input: { file_path: 'src/services/auth.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('blocks stockwell editing project files (exit 2)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'stockwell',
+      tool_name: 'Edit',
+      tool_input: { file_path: 'src/components/Button.tsx' },
+    });
+    expect(result.exitCode).toBe(2);
+  });
+
+  it('allows stockwell scratch writes to /tmp/ (exit 0)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'stockwell',
+      tool_name: 'Write',
+      tool_input: { file_path: '/tmp/review-notes.md' },
+    });
+    expect(result.exitCode).toBe(0);
   });
 
   it('allows non-target agent ba writing src/ (exit 0)', () => {

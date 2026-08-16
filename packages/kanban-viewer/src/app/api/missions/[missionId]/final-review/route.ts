@@ -2,11 +2,11 @@
  * API Route: /api/missions/[missionId]/final-review
  *
  * POST - Store a final review report on the mission record. When the report's
- *        verdict is FINAL APPROVED, every item in this project sitting in the
- *        'staged' stage is promoted to 'done' in the SAME transaction that
- *        persists the review — a crash mid-promotion rolls back the review
- *        write too, so an approval can never be recorded against a
- *        half-promoted board (WI-790).
+ *        verdict is FINAL APPROVED, every non-archived item belonging to THIS
+ *        mission and sitting in the 'staged' stage is promoted to 'done' in
+ *        the SAME transaction that persists the review — a crash
+ *        mid-promotion rolls back the review write too, so an approval can
+ *        never be recorded against a half-promoted board (WI-790).
  * GET  - Return the stored final review report
  *
  * Both endpoints return 404 when the mission does not exist.
@@ -97,8 +97,21 @@ export async function POST(request: Request, context: RouteContext) {
         return 0;
       }
 
+      // Scope promotion to items belonging to THIS mission, through the same
+      // MissionItem join every other mission-scoped query uses (agents/stop,
+      // missions/archive, missions/current/health-report). A project-wide
+      // sweep would promote staged leftovers from earlier missions — archival
+      // stamps archivedAt but never clears stageId, so an archived mission can
+      // legitimately leave items parked in 'staged' — and would credit this
+      // mission's review in their work logs. Archived items are excluded even
+      // when linked to this mission: a soft-deleted item is not promotable.
       const stagedItems = await tx.item.findMany({
-        where: { projectId, stageId: STAGED_STAGE_ID },
+        where: {
+          projectId,
+          stageId: STAGED_STAGE_ID,
+          archivedAt: null,
+          missionItems: { some: { missionId } },
+        },
         select: { id: true },
       });
 

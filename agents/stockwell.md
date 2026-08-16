@@ -37,10 +37,17 @@ hooks:
     - hooks:
         - type: command
           command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/observe-post-tool-use.js stockwell"
+  # No enforce-completion-log.js here (same reasoning as frankie.md): that
+  # hook is item-scoped — it scrapes a WI-XXX id from the agent's last message
+  # and reads that item's work_log — while Stockwell is mission-scoped and
+  # never claims items. His final report names many WI ids he did not work,
+  # so the hook would latch onto one and block him for not logging against
+  # someone else's item. It sat here inert for a long time only because its
+  # TARGET_AGENTS list predates the lynch-final → stockwell rename and never
+  # matched him. His completion gate is instead the persisted final review
+  # (missions-final-review), checked by Hannibal's Stop gates.
   Stop:
     - hooks:
-        - type: command
-          command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/enforce-completion-log.js"
         - type: command
           command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/observe-stop.js stockwell"
 ---

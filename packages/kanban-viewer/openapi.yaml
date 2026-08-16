@@ -67,7 +67,13 @@ components:
 
     WorkLogAction:
       type: string
-      enum: [started, completed, rejected, note]
+      enum: [started, completed, rejected, note, tail_rework]
+      description: |
+        `tail_rework` (WI-794) is deliberately distinct from `rejected` — it
+        marks a mission-tail rework move out of `staged` (triggered by Frankie
+        or Stockwell, executed by Hannibal via `moveItem` since no agent holds
+        a claim by tail time), so retros can measure found-by-the-tail
+        separately from found-in-per-item-review.
 
     # ── Shared objects ─────────────────────────────────────────────────────────
     ItemOutputs:
@@ -512,7 +518,16 @@ paths:
     post:
       operationId: moveItem
       summary: Move item to a new stage
-      description: Validates the transition matrix and WIP limits before moving.
+      description: |
+        Validates the transition matrix and WIP limits before moving.
+
+        A move out of `staged` to `testing` or `implementing` is a tail
+        rework (Hannibal executing a Frankie/Stockwell decision) and counts
+        against the same rejection cap `agentStop`'s rejection path uses
+        (default 4, override via `ATEAM_REJECTION_CAP` on the API server).
+        Those moves return `rejectionCount` and `escalated`; when the cap is
+        reached the item is moved to `blocked` instead of the requested
+        stage and `escalated` is `true`.
       tags: [board]
       parameters:
         - $ref: '#/components/parameters/ProjectId'
@@ -555,6 +570,20 @@ paths:
                         $ref: '#/components/schemas/StageId'
                       wipStatus:
                         $ref: '#/components/schemas/WipStatus'
+                      rejectionCount:
+                        type: integer
+                        minimum: 0
+                        description: |
+                          Present on tail-rework moves
+                          (`staged -> testing|implementing`). The new total
+                          rejection count for this item after this move.
+                      escalated:
+                        type: boolean
+                        description: |
+                          Present on tail-rework moves. `true` when the
+                          rejection count reached the escalation threshold and
+                          the item was moved to `blocked` instead of the
+                          requested stage.
         '400':
           description: VALIDATION_ERROR · INVALID_TRANSITION · WIP_LIMIT_EXCEEDED
           content:
@@ -2103,6 +2132,12 @@ paths:
         Stores the markdown final review report on the mission record.
         The lookup is scoped to the requesting project so missions cannot
         be read or overwritten across project boundaries.
+
+        When the report's verdict is FINAL APPROVED, the same transaction
+        that persists the review also promotes every `staged` item in the
+        project to `done` (WI-790) — the write and the promotion succeed or
+        roll back together, so a crash mid-promotion never leaves a stored
+        review beside a half-promoted board.
       tags: [missions]
       requestBody:
         required: true
@@ -2129,10 +2164,17 @@ paths:
                     enum: [true]
                   data:
                     type: object
-                    required: [missionId]
+                    required: [missionId, promotedCount]
                     properties:
                       missionId:
                         type: string
+                      promotedCount:
+                        type: integer
+                        minimum: 0
+                        description: |
+                          How many `staged` items this call promoted to `done`
+                          as part of the same transaction (WI-790). Always `0`
+                          when the review's verdict is not FINAL APPROVED.
         '400':
           description: VALIDATION_ERROR — finalReview body field is required
           content:

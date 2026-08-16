@@ -76,7 +76,9 @@ You are dispatched AFTER all four conditions are met:
 3. Stockwell's Final Mission Review passed (`finalReview.passed: true`)
 4. Post-mission checks passed (`postChecks.passed: true`)
 
-**The exemption in condition 2 is not optional.** This very repo, the-ai-team-plugin, is the worked example: its own `ateam.config.json` declares `surfaces: []`, so Frankie never runs here and an unconditional precondition would deadlock this repo's own final commits. (The one web app it contains, `packages/kanban-viewer`, is not a QA-drivable surface today — no isolated QA seed, no flowspec — see the drivability test in `scripts/hooks/__tests__/qa-contract.test.js`.)
+**The exemption in condition 2 is not optional — but it does NOT apply to this repo.** `the-ai-team-plugin`'s own `ateam.config.json` declares `surfaces: ["web"]`, because ADR 0007 (`adr/0007-drivable-surface-kanban-viewer.md`) made `packages/kanban-viewer` this repo's drivable QA surface. `canFrankieDrive(['web'])` is therefore true: **Frankie runs on every mission tail here**, condition 2 is a real gate, and everything downstream that keys on "if Frankie ran" applies for real — his evidence bundle at `.qa-evidence/<mission>/`, any NEW `specs/*.flow.yaml` files he graduated, and the report link in your commit message (all in Step 6). Do not assume a missing bundle means "Frankie was skipped by contract" on this repo; on this repo it means the walk did not happen and the tail is incomplete.
+
+The exemption exists for repos with no drivable surface at all — e.g. a CLI-only tool declaring `surfaces: ["cli"]`, or any repo whose `surfaces` list is empty or absent. There, Frankie never runs, there is no evidence bundle to stage or link, and an unconditional precondition would deadlock the final commit.
 
 At this point, all the code is complete, reviewed, and verified. Your job is to document what was built and create the final commit.
 
