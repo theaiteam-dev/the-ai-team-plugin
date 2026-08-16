@@ -12,11 +12,12 @@ The mission tail (Frankie's DoD walk, Stockwell's Final Mission Review) can find
 
 ## Definition of Done
 
-*(Left blank for the pipeline: Face rolls per-item acceptance criteria into this section during planning; the human blesses it at the refinement gate.)*
-
-- [ ]
-- [ ]
-- [ ]
+- [ ] A mission whose items all reach `staged` triggers Frankie's walk without any item having entered `done`.
+- [ ] A Frankie or Stockwell failure moves the named items `staged → testing|implementing` through pipeline mechanics alone — zero manual board edits.
+- [ ] `VERDICT: FINAL APPROVED` promotes every `staged` item to `done` atomically with the review write; a rejected or unparseable verdict promotes nothing.
+- [ ] A wave-2 item becomes claimable as soon as its wave-1 dependency reaches `staged`, and `deps-check` and `agentStart` agree.
+- [ ] `TRANSITION_MATRIX.done` is still `[]`.
+- [ ] The board renders Staged between Probing and Done, and no `staged` item is silently rendered as Briefings.
 
 ## 1. Context & Background
 
@@ -79,7 +80,7 @@ The pipeline's state machine has no state between "this item passed its per-item
 ### Functional Requirements
 
 1. The transition matrix shall define `probing → staged` as the per-item pipeline's completion transition; `probing → done` shall no longer be legal.
-2. The matrix shall define `staged → done` (promotion) and `staged → testing` / `staged → implementing` (rework) as the only routes out of `staged`; `done` shall remain terminal with no outbound transitions.
+2. The matrix shall define five outbound routes from `staged`: `staged → done` (promotion, requirement 6), `staged → testing` / `staged → implementing` (tail rework, requirement 7/8), `staged → blocked` (rejection-cap escalation, requirement 8 / FR8), and `staged → ready` (manual operator recovery — re-decompose an item the tail proved misconceived, mirroring the existing `probing → ready` escape hatch; approved by the operator at the refinement gate, see resolved Open Question below). `staged → ready` is deliberately excluded from the rejection-cap count in requirement 8: it is an operator-initiated recovery action, not a tail-triggered rejection, and counting it would let repeated healthy re-decomposition escalate an item to `blocked` on its own. `done` shall remain terminal with no outbound transitions.
 3. Amy's `agentStop --advance` from `probing` shall land the item in `staged` with no change to her workflow or messaging.
 4. A dependency shall count as satisfied when the depended-on item is in `staged` or `done`, so wave scheduling is unchanged relative to today's behavior.
 5. Frankie's mission-tail walk shall trigger when all items have reached `staged` (today: `done`), including the NO_TEST_NEEDED task path, which is unchanged upstream.
@@ -140,6 +141,6 @@ One new column, three ideas:
 
 ### Open Questions
 - [x] ~~Post-check failures after promotion~~ — **resolved (Josh, 2026-08-15):** mission-level, Hannibal's work to call out and handle; promotion timing stays on `FINAL APPROVED`; items are never demoted for post-check failures. Recorded under Edge Cases.
-- [ ] Does the operator need a manual `staged → ready` escape hatch (re-decompose an item the tail proved misconceived), mirroring `probing → ready`?
+- [x] ~~Does the operator need a manual `staged → ready` escape hatch~~ — **resolved (Josh, refinement gate):** yes. `staged → ready` ships as an approved manual operator recovery transition, mirroring `probing → ready`, and is excluded from the FR8 rejection-cap count for the reason given in FR2. Closed per Stockwell's Final Mission Review (Priority 3 #1): this PRD's own text hadn't been updated to reflect the approval, so FR2 was reworded above to name it.
 - [ ] Should the kanban UI visually pair `staged` and `done` (e.g., a "verification" column group) so the board reads as pipeline → tail → sealed?
 - [ ] Should tail-triggered rework use a distinct work-log marker (vs. Lynch/Amy rejections) so retros can measure "found by the tail" separately from "found in per-item review"?

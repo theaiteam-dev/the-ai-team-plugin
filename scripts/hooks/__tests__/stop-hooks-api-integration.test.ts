@@ -290,14 +290,47 @@ describe('enforce-orchestrator-stop — real API path', async () => {
     expect(String(output.additionalContext)).toMatch(/Final Mission Review/i);
   });
 
-  it('blocks on the Frankie evidence gate over the real API path when all items are done and no bundle exists', async () => {
-    state.items = [{ id: 'WI-001', stageId: 'done' }];
+  it('blocks on the Frankie evidence gate over the real API path when items are staged and no bundle exists (WI-791)', async () => {
+    // WI-791: checkFrankieEvidence keys on stagedCount, not doneCount — real
+    // API item shape (stageId: 'staged'), through the real /api/board fetch
+    // and normalizeBoard/countBoard pipeline, not a __TEST_MOCK_BOARD__ fixture.
+    state.items = [{ id: 'WI-001', stageId: 'staged' }];
     const dir = makeScratchRepo({ surfaces: ['web'], evidence: false });
 
     const output = parseStopOutput((await runHookLive(HOOK, {}, dir)).stdout);
 
     expect(output.decision).toBe('block');
     expect(String(output.additionalContext)).toMatch(/frankie/i);
+  });
+
+  it('blocks with a "staged, not promoted" message over the real API path once Frankie evidence exists but the item has not been promoted (WI-791 AC2)', async () => {
+    state.items = [{ id: 'WI-001', stageId: 'staged' }];
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: true });
+
+    const output = parseStopOutput((await runHookLive(HOOK, {}, dir)).stdout);
+
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).not.toMatch(/frankie/i);
+    expect(String(output.additionalContext)).toMatch(/staged/i);
+  });
+
+  it('does not treat an all-staged board as an empty board over the real API path (AC2 — the exact regression this item prevents)', async () => {
+    // Confirms the real /api/board fetch (which excludes literal 'done'
+    // items by default but never filters 'staged' ones) plus the real
+    // countBoard/normalizeBoard pipeline correctly report stagedCount > 0,
+    // so the mission cannot silently stop while nothing is active AND
+    // nothing has reached done, purely because it's sitting in staged.
+    state.items = [{ id: 'WI-001', stageId: 'staged' }];
+    const dir = makeScratchRepo({ surfaces: ['hardware'] }); // non-drivable — Frankie itself stays inert
+
+    const result = await runHookLive(HOOK, {}, dir);
+
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(
+      output.decision,
+      'an all-staged board must never be treated as an empty (no-mission) board'
+    ).toBe('block');
   });
 
   it('allows the stop once every gate is genuinely satisfied via the real API shapes', async () => {
@@ -368,8 +401,8 @@ describe('enforce-final-review — real API path', async () => {
     expect(requestedPaths.some((p) => p.includes('/api/projects/'))).toBe(false);
   });
 
-  it('blocks on the Frankie evidence gate over the real API path', async () => {
-    state.items = [{ id: 'WI-001', stageId: 'done' }];
+  it('blocks on the Frankie evidence gate over the real API path (WI-791: staged, not done)', async () => {
+    state.items = [{ id: 'WI-001', stageId: 'staged' }];
     const dir = makeScratchRepo({ surfaces: ['web'], evidence: false });
 
     const result = await runHookLive(HOOK, {}, dir);

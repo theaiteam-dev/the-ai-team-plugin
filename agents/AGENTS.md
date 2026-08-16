@@ -98,7 +98,7 @@ Their **Stop** enforcement, though, splits three ways by role — there is no si
 - `Stop` → `enforce-browser-verification.js` — blocks Amy from completing without evidence of browser verification for UI features (checks work log for browser activity before allowing exit)
 
 **Frankie** has an additional hook:
-- `PreToolUse(Write|Edit)` → `block-frankie-writes.js` — blocks writes to implementation, tests, or existing `specs/` files; only his evidence bundle (`.qa-evidence/`) and NEW spec files are allowed. A mission-level agent (not per-feature) — runs once, after all items reach `done` and before Stockwell's Final Mission Review. He reports failures to Hannibal rather than bouncing items automatically — `done` is terminal, so reopening a failed item is a manual operator action, not something the hook or Frankie does.
+- `PreToolUse(Write|Edit)` → `block-frankie-writes.js` — blocks writes to implementation, tests, or existing `specs/` files; only his evidence bundle (`.qa-evidence/`) and NEW spec files are allowed. A mission-level agent (not per-feature) — runs once, after all items reach `staged` and before Stockwell's Final Mission Review. He reports failures to Hannibal rather than moving items himself — that boundary is enforced regardless of the fact that a real path out of `staged` exists now (Hannibal executes the move via a real `board-move`, using the earliest-flagged-stage rule).
 
 ## Dual-Registration Pattern
 
@@ -155,10 +155,10 @@ In both modes, `ateam` CLI commands are the source of truth. Communication tools
 
 **Pipeline flow (all stages mandatory):**
 ```
-briefings → ready → testing → implementing → review → probing → done
+briefings → ready → testing → implementing → review → probing → staged
                       Murdock    B.A.          Lynch    Amy
 ```
-Then: Frankie (mission-tail QA walk, evidence bundle + graduated specs; skipped on repos whose execution contract declares no drivable surface — see `scripts/hooks/lib/qa-contract.js`) → Final Review (Stockwell, opus, PRD+diff, includes Frankie's evidence) → Post-Checks → Documentation (Tawnia, haiku) → Complete. A Stockwell rejection restarts the tail at Frankie, not at Post-Checks.
+`staged` is the per-item pipeline's real terminal stage (WI-786/787). Then: Frankie (mission-tail QA walk, evidence bundle + graduated specs; skipped on repos whose execution contract declares no drivable surface — see `scripts/hooks/lib/qa-contract.js`) → Final Review (Stockwell, opus, PRD+diff, includes Frankie's evidence) → an APPROVED verdict atomically promotes every `staged` item to `done` (WI-790) → Post-Checks → Documentation (Tawnia, haiku) → Complete. A Stockwell rejection moves the named items out of `staged` via the earliest-flagged-stage rule and restarts the tail at Frankie once they're back in `staged`, not at Post-Checks.
 
 ## Related Context
 

@@ -97,6 +97,22 @@ const mockDependencyDone = {
   completedAt: new Date('2026-01-21T11:00:00Z'),
 };
 
+// WI-788: dependency satisfaction now accepts 'staged' as complete, not just
+// 'done' — this is the second of the two independent copies of the rule
+// (the other is GET /api/deps/check) that must converge on one shared
+// predicate, or deps-check can say ready while this endpoint still refuses
+// the claim with DEPENDENCIES_NOT_MET.
+const mockDependencyStaged = {
+  ...mockDependencyInProgress,
+  stageId: 'staged',
+  completedAt: null,
+};
+
+const mockDependencyProbing = {
+  ...mockDependencyInProgress,
+  stageId: 'probing',
+};
+
 const mockExistingClaim = {
   agentName: 'Murdock',
   itemId: 'WI-999',
@@ -675,6 +691,134 @@ describe('POST /api/agents/start', () => {
       expect(data.error.code).toBe('DEPENDENCIES_NOT_MET');
       expect(data.error.details).toBeDefined();
       expect((data.error.details as { unmetDependencies: string[] }).unmetDependencies).toContain('WI-006');
+    });
+
+    it('should succeed when the dependency is in staged stage, not just done (WI-788 AC4)', async () => {
+      mockPrisma.item.findFirst.mockResolvedValue({
+        ...mockItemWithUnmetDependencies,
+        dependsOn: [
+          { dependsOnId: 'WI-002', dependsOn: { ...mockDependencyStaged } },
+        ],
+      });
+      mockPrisma.agentClaim.findFirst.mockResolvedValue(null);
+      mockPrisma.$transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) => {
+        return callback(mockPrisma);
+      });
+      mockPrisma.agentClaim.create.mockResolvedValue({
+        agentName: 'B.A.',
+        itemId: 'WI-007',
+        claimedAt: new Date('2026-01-21T12:00:00Z'),
+      });
+      mockPrisma.item.update.mockResolvedValue({
+        ...mockItemWithUnmetDependencies,
+        stageId: 'testing',
+        assignedAgent: 'B.A.',
+        dependsOn: [],
+        workLogs: [],
+      });
+      mockPrisma.workLog.create.mockResolvedValue({
+        id: 1,
+        itemId: 'WI-007',
+        agent: 'B.A.',
+        action: 'started',
+        summary: 'Started work on item',
+        timestamp: new Date('2026-01-21T12:00:00Z'),
+      });
+
+      const { POST } = await import('@/app/api/agents/start/route');
+      const request = new NextRequest('http://localhost:3000/api/agents/start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Project-ID': 'test-project'
+        },
+        body: JSON.stringify({
+          itemId: 'WI-007',
+          agent: 'B.A.',
+        } as AgentStartRequest),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+    });
+
+    it('should succeed for a mixed dependency graph where one dependency is staged and another is done (WI-788 AC6)', async () => {
+      mockPrisma.item.findFirst.mockResolvedValue({
+        ...mockItemWithDependencies,
+        dependsOn: [
+          { dependsOnId: 'WI-003', dependsOn: { ...mockItemInDone } },
+          { dependsOnId: 'WI-006', dependsOn: { ...mockDependencyStaged } },
+        ],
+      });
+      mockPrisma.agentClaim.findFirst.mockResolvedValue(null);
+      mockPrisma.$transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) => {
+        return callback(mockPrisma);
+      });
+      mockPrisma.agentClaim.create.mockResolvedValue({
+        agentName: 'B.A.',
+        itemId: 'WI-005',
+        claimedAt: new Date('2026-01-21T12:00:00Z'),
+      });
+      mockPrisma.item.update.mockResolvedValue({
+        ...mockItemWithDependencies,
+        stageId: 'testing',
+        assignedAgent: 'B.A.',
+        dependsOn: [],
+        workLogs: [],
+      });
+      mockPrisma.workLog.create.mockResolvedValue({
+        id: 1,
+        itemId: 'WI-005',
+        agent: 'B.A.',
+        action: 'started',
+        summary: 'Started work on item',
+        timestamp: new Date('2026-01-21T12:00:00Z'),
+      });
+
+      const { POST } = await import('@/app/api/agents/start/route');
+      const request = new NextRequest('http://localhost:3000/api/agents/start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Project-ID': 'test-project'
+        },
+        body: JSON.stringify({
+          itemId: 'WI-005',
+          agent: 'B.A.',
+        } as AgentStartRequest),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+    });
+
+    it('should still return DEPENDENCIES_NOT_MET when a dependency is in probing, a non-terminal stage (WI-788 AC5)', async () => {
+      mockPrisma.item.findFirst.mockResolvedValue({
+        ...mockItemWithUnmetDependencies,
+        dependsOn: [
+          { dependsOnId: 'WI-002', dependsOn: { ...mockDependencyProbing } },
+        ],
+      });
+
+      const { POST } = await import('@/app/api/agents/start/route');
+      const request = new NextRequest('http://localhost:3000/api/agents/start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Project-ID': 'test-project'
+        },
+        body: JSON.stringify({
+          itemId: 'WI-007',
+          agent: 'Hannibal',
+        } as AgentStartRequest),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(400);
+
+      const data: ApiError = await response.json();
+      expect(data.success).toBe(false);
+      expect(data.error.code).toBe('DEPENDENCIES_NOT_MET');
     });
 
     it('should allow start when item has no dependencies', async () => {
@@ -1483,6 +1627,75 @@ describe('POST /api/agents/start', () => {
 
       const data3: ApiError = await response3.json();
       expect(data3.error.code).toBe('WIP_LIMIT_EXCEEDED');
+    });
+  });
+
+  // WI-789 AC7: 'staged' is a holding pen with no PIPELINE_STAGES entry — no
+  // agent's targetStage can ever equal 'staged', so a pipeline agent must
+  // never be able to claim an item sitting there. This is a regression-guard
+  // test: the existing `currentStage !== 'ready' && !isWorkStageClaim` check
+  // already refuses this by construction (isWorkStageClaim can never be true
+  // for 'staged' since no agent's targetStage resolves to it) — this test
+  // pins that invariant explicitly rather than leaving it an untested
+  // emergent property that a future change to the targetStage lookup could
+  // silently break.
+  describe("WI-789 AC7: agentStart refuses to claim an item in staged — no agent owns the holding pen", () => {
+    it('returns an error (not a successful claim) when the item is in staged', async () => {
+      mockPrisma.item.findFirst.mockResolvedValue({
+        ...mockItemInReady,
+        id: 'WI-050',
+        stageId: 'staged',
+      });
+
+      const { POST } = await import('@/app/api/agents/start/route');
+      const request = new NextRequest('http://localhost:3000/api/agents/start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Project-ID': 'test-project'
+        },
+        body: JSON.stringify({
+          itemId: 'WI-050',
+          agent: 'Amy',
+        } as AgentStartRequest),
+      });
+
+      const response = await POST(request);
+      const data: ApiError = await response.json();
+
+      expect(response.status).not.toBe(200);
+      expect(data.success).toBe(false);
+      // A claim must never be created for a staged item, regardless of the
+      // exact error code/status chosen.
+      expect(mockPrisma.agentClaim.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses the claim for a non-pipeline agent too (e.g. Hannibal), not just pipeline agents', async () => {
+      mockPrisma.item.findFirst.mockResolvedValue({
+        ...mockItemInReady,
+        id: 'WI-051',
+        stageId: 'staged',
+      });
+
+      const { POST } = await import('@/app/api/agents/start/route');
+      const request = new NextRequest('http://localhost:3000/api/agents/start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Project-ID': 'test-project'
+        },
+        body: JSON.stringify({
+          itemId: 'WI-051',
+          agent: 'Hannibal',
+        } as AgentStartRequest),
+      });
+
+      const response = await POST(request);
+      const data: ApiError = await response.json();
+
+      expect(response.status).not.toBe(200);
+      expect(data.success).toBe(false);
+      expect(mockPrisma.agentClaim.create).not.toHaveBeenCalled();
     });
   });
 });

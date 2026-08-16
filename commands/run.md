@@ -138,7 +138,7 @@ Hannibal's job is coordination, not deep reasoning. Sonnet handles dispatch loop
 Each feature MUST flow through ALL stages. **No shortcuts. No exceptions.**
 
 ```
-briefings → ready → testing → implementing → review → probing → done
+briefings → ready → testing → implementing → review → probing → staged
                        ↑           ↑            ↑         ↑       │
                     Murdock      B.A.        Lynch      Amy       │
                                                    (MANDATORY)    │
@@ -152,6 +152,13 @@ briefings → ready → testing → implementing → review → probing → done
                                                         ┌─────────────────┐
                                                         │  Final Review   │
                                                         │  (Stockwell)    │
+                                                        └────────┬────────┘
+                                                                 │ FINAL APPROVED
+                                                                 ▼
+                                                        ┌─────────────────┐
+                                                        │ Promote staged  │
+                                                        │  items → done   │
+                                                        │   (API, WI-790) │
                                                         └────────┬────────┘
                                                                  │
                                                                  ▼
@@ -186,19 +193,20 @@ briefings → ready → testing → implementing → review → probing → done
 2. `testing → implementing`: B.A. implements to pass tests
 3. `implementing → review`: Lynch reviews ALL outputs together
 4. `review → probing`: Lynch approves → **Amy MUST investigate** (NOT optional)
-5. `probing → done`: Amy verifies (or back to ready if bugs found)
-6. `all done → Frankie's mission-tail walk → final review`: Frankie walks the mission's full Definition of Done against the running app first (a fresh, non-pre-warmed agent). A failure halts the tail and surfaces to the operator — reopening a `done` item is a manual operator action, not an automated bounce. Once Frankie's walk is clean, Stockwell reviews entire codebase holistically (including Frankie's evidence bundle and graduated specs). Any rework that returns items to `done` — from a Frankie failure or a Stockwell rejection — restarts the tail at Frankie, who re-walks the FULL Definition of Done.
-7. `final review → post-checks`: Run lint, unit, e2e tests
-8. `post-checks → documentation`: **Tawnia MUST run** (NOT optional)
-9. `documentation → complete`: Tawnia creates final commit, mission complete
-10. `complete → debrief`: retro agent dispatched **detached, non-blocking** — not a gate on completion (see step 10 below)
+5. `probing → staged`: Amy verifies (or back to ready if bugs found) — `staged` is the per-item pipeline's real terminal stage (WI-786/787), a holding pen awaiting mission-tail verification
+6. `all staged → Frankie's mission-tail walk → final review`: Frankie walks the mission's full Definition of Done against the running app first (a fresh, non-pre-warmed agent). A failure halts the tail: Hannibal moves each named item out of `staged` to `testing` or `implementing` using the earliest-flagged-stage rule, via a real `board-move` (WI-794, rejection-cap-counted) — not a manual bounce. Once Frankie's walk is clean, Stockwell reviews entire codebase holistically (including Frankie's evidence bundle and graduated specs). Any rework — from a Frankie failure or a Stockwell rejection — moves the named items the same way; once they're back in `staged`, the tail restarts at Frankie, who re-walks the FULL Definition of Done.
+7. `final review APPROVED → promotion`: the API atomically promotes every `staged` item to `done` (WI-790) as part of persisting the review — a Hannibal batch `board-move` is the documented fallback only.
+8. `done → post-checks`: Run lint, unit, e2e tests
+9. `post-checks → documentation`: **Tawnia MUST run** (NOT optional)
+10. `documentation → complete`: Tawnia creates final commit, mission complete
+11. `complete → debrief`: retro agent dispatched **detached, non-blocking** — not a gate on completion (see step 10 below)
 
 ## Pipeline Parallelism
 
 Different features can be at different stages simultaneously:
 
 ```
-Feature 001: [testing]  →  [implementing]  →  [review]  →  [probing]  →  done
+Feature 001: [testing]  →  [implementing]  →  [review]  →  [probing]  →  staged
 Feature 002:      [testing]  →  [implementing]  →  [review]  →  [probing]
 Feature 003:            [testing]  →  [implementing]  →  [review]
 ```
@@ -327,16 +335,17 @@ WIP limits are **per stage** — each pipeline column independently caps how man
    - Use `ateam board-move moveItem` to advance items between stages
    - Use `ateam deps-check checkDeps` to find items ready to move from briefings → ready
    - Start new features if per-stage WIP limits allow (check instance availability, not global count)
+   - Each feature's per-item pipeline ends at `staged` (WI-786/787) once Amy verifies it — `staged` is a holding pen awaiting the mission-tail walk below, not `done`
 
 6. **Frankie's Mission-Tail Walk, then Final Mission Review (Stockwell):**
    - **Drivability precondition (check FIRST):** read `surfaces` from the target repo's `ateam.config.json` — `scripts/hooks/lib/qa-contract.js` is the executable definition, exporting `readExecutionContract()` and `canFrankieDrive(surfaces)`. Only `web` is drivable today; `api`, `fixture-flow`, `golden-pair`, `cli`, `hardware`, and an empty/absent list are not. **If the repo has no drivable surface, SKIP Frankie entirely and go straight to Stockwell's final review** — dispatching him there deadlocks the tail (he reports a blocked walk, and the failure path below halts with no way forward). Same exemption the completion-gate hook (`scripts/hooks/enforce-final-review.js`) already enforces and the loaded playbook's Frankie section spells out (a skipped Frankie satisfies the documentation agent's precondition vacuously); say so in your status output so the skip reads as deliberate
-   - Otherwise, when ALL items reach `done` stage, dispatch Frankie FIRST for the mission-tail QA walk — a fresh, non-pre-warmed agent (see the loaded orchestration playbook's "Frankie Mission-Tail Dispatch" section)
-   - If Frankie's walk fails (names failing work items): HALT the tail here — do NOT dispatch Stockwell. Surface the failing items to the operator; reopening a `done` item is a manual operator action, not an automated bounce (`done` is terminal in `TRANSITION_MATRIX`)
+   - Otherwise, when ALL items reach `staged` stage (the per-item pipeline's real terminal stage, WI-786/787 — not `done`), dispatch Frankie FIRST for the mission-tail QA walk — a fresh, non-pre-warmed agent (see the loaded orchestration playbook's "Frankie Mission-Tail Dispatch" section)
+   - If Frankie's walk fails (names failing work items): HALT the tail here — do NOT dispatch Stockwell. For each named item, move it out of `staged` to `testing` or `implementing` using the earliest-flagged-stage rule, via a real `ateam board-move moveItem` — WI-794 made this a rejection-cap-counted transition, not a manual bounce
    - Once Frankie's walk is clean, dispatch Stockwell for final review
    - Stockwell reviews PRD + diff for cross-cutting issues, including Frankie's evidence bundle and graduated specs
    - Focus: PRD compliance, consistency, security, integration
-   - If FINAL APPROVED → proceed to post-checks
-   - If FINAL REJECTED → surface the named items to the operator and stop. Reopening a `done` item is a manual operator action outside the pipeline, not an automated bounce — same as Frankie's failure path above (`done` is terminal in `TRANSITION_MATRIX`; see `adr/0005-done-is-terminal-no-in-mission-rework.md`). Once the operator has reworked every named item and it is back in `done`, the mission tail RESTARTS at Frankie (not post-checks) — Frankie re-walks the FULL Definition of Done
+   - If FINAL APPROVED → the API atomically promotes every `staged` item to `done` (WI-790) as part of persisting the review; proceed to post-checks once promotion is confirmed
+   - If FINAL REJECTED → surface the named items to the operator, then move each one out of `staged` to `testing` or `implementing` using the earliest-flagged-stage rule — same real, rejection-cap-counted `board-move` as Frankie's failure path above. Once every named item is back in `staged`, the mission tail RESTARTS at Frankie (not post-checks) — Frankie re-walks the FULL Definition of Done
 
 7. **Post-Mission Checks:**
    **GATE: Stockwell's Final Mission Review MUST have completed before running postchecks.**
@@ -384,7 +393,7 @@ WIP limits are **per stage** — each pipeline column independently caps how man
 
    - If `passed = true`: mission transitions to `completed`.
    - If `passed = false`: mission transitions to `failed`. Report blockers to user.
-     Items that caused the failure return to pipeline for fixes.
+     This is a mission-level failure — no item's stage or rejection count changes as a result.
 
 8. **Documentation Phase (Tawnia):**
    - Dispatch Tawnia when ALL three conditions are met:
@@ -449,15 +458,15 @@ WIP limits are **per stage** — each pipeline column independently caps how man
 [Lynch] 001 APPROVED
 [Hannibal] Feature 001 → probing, dispatching Amy
 [Amy] 001 VERIFIED - no bugs found
-[Hannibal] Feature 001 → done
+[Hannibal] Feature 001 → staged
 ...
-[Hannibal] All features complete. Dispatching Frankie for the mission-tail QA walk.
+[Hannibal] All features staged. Dispatching Frankie for the mission-tail QA walk.
 [Frankie] Walking Definition of Done - 6 statements against http://localhost:3000
 [Frankie] WALK PASSED - evidence bundle at .qa-evidence/M-20240115-001/report.md
 [Hannibal] Frankie's walk clean. Dispatching Stockwell for Final Mission Review.
 [Stockwell] FINAL MISSION REVIEW - reviewing 12 files
 [Stockwell] VERDICT: FINAL APPROVED
-[Hannibal] Running post-mission checks...
+[Hannibal] Staged items promoted to done (API, WI-790). Running post-mission checks...
 [Hannibal] Post-checks PASSED (lint ✓, unit ✓, e2e ✓)
 [Hannibal] Dispatching Tawnia for documentation and final commit.
 [Tawnia] Updated CHANGELOG.md with 4 entries
@@ -494,7 +503,7 @@ Main Claude (as Hannibal)
     ├── subagent → B.A. (implementing stage)
     ├── subagent → Lynch (review stage)
     ├── subagent → Amy (probing stage)
-    ├── subagent → Frankie (mission-tail QA walk, after all items reach done)
+    ├── subagent → Frankie (mission-tail QA walk, after all items reach staged)
     ├── subagent → Stockwell (Final Mission Review, after Frankie's walk succeeds)
     ├── subagent → Tawnia (documentation, after post-checks pass)
     └── subagent → Retro (Debrief, detached/non-blocking, dispatched right after Tawnia's commit)

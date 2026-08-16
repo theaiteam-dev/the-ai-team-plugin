@@ -5,7 +5,7 @@ import { BoardColumn } from "@/components/board-column";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
-import type { WorkItem, Stage } from "@/types";
+import type { WorkItem, Stage, CardAnimationState, CardAnimationDirection } from "@/types";
 
 // All stage definitions for the board
 export const ALL_STAGES: Stage[] = [
@@ -15,6 +15,7 @@ export const ALL_STAGES: Stage[] = [
   "implementing",
   "review",
   "probing",
+  "staged",
   "done",
   "blocked",
 ];
@@ -27,6 +28,7 @@ export const STAGE_LABELS: Record<Stage, string> = {
   implementing: "Implementing",
   review: "Review",
   probing: "Probing",
+  staged: "Staged",
   done: "Done",
   blocked: "Blocked",
 };
@@ -35,7 +37,7 @@ export interface ResponsiveBoardProps {
   /** Work items grouped by stage */
   itemsByStage: Record<Stage, WorkItem[]>;
   /** WIP limits per stage */
-  wipLimits: Record<string, number>;
+  wipLimits: Record<string, number | null>;
   /** Callback when an item is clicked */
   onItemClick?: (item: WorkItem) => void;
   /** Whether the side panel is visible (controlled externally) */
@@ -46,6 +48,10 @@ export interface ResponsiveBoardProps {
   sidePanel?: React.ReactNode;
   /** Callback when WIP limit is changed */
   onWipLimitChange?: (stageId: string, newLimit: number | null) => void;
+  /** In-flight card move animations, keyed by item id (forwarded to every BoardColumn) */
+  animatingItems?: Map<string, { state: CardAnimationState; direction: CardAnimationDirection }>;
+  /** Callback fired when a card's move animation completes */
+  onAnimationEnd?: (itemId: string) => void;
 }
 
 export function ResponsiveBoard({
@@ -56,6 +62,8 @@ export function ResponsiveBoard({
   onPanelToggle,
   sidePanel,
   onWipLimitChange,
+  animatingItems,
+  onAnimationEnd,
 }: ResponsiveBoardProps) {
   // Mobile stage selector state
   const [selectedStage, setSelectedStage] = useState<Stage>("briefings");
@@ -63,7 +71,14 @@ export function ResponsiveBoard({
   return (
     <div data-testid="responsive-board" className="flex flex-1 overflow-hidden">
       {/* Mobile view: Stage tabs with single column */}
-      <div className="flex-1 flex flex-col md:hidden">
+      {/* WI-792 (Amy's FLAG, 3rd rework): min-w-0 overrides the flex item's
+          default min-width:auto, which otherwise lets the TabsList's
+          intrinsic content width (w-max, ~924px for 9 tabs) propagate up
+          through this flex-column ancestor and force the mobile view wider
+          than the viewport. JSDOM has no real CSS box layout so this was
+          invisible to every existing test — Amy caught it live in a real
+          browser and verified this exact fix via DOM patch. */}
+      <div className="flex-1 flex flex-col min-w-0 md:hidden">
         <Tabs
           value={selectedStage}
           onValueChange={(value) => setSelectedStage(value as Stage)}
@@ -105,6 +120,8 @@ export function ResponsiveBoard({
                 wipLimit={wipLimits[stage]}
                 onItemClick={onItemClick}
                 onWipLimitChange={onWipLimitChange}
+                animatingItems={animatingItems}
+                onAnimationEnd={onAnimationEnd}
               />
             </TabsContent>
           ))}
@@ -121,6 +138,8 @@ export function ResponsiveBoard({
             wipLimit={wipLimits[stage]}
             onItemClick={onItemClick}
             onWipLimitChange={onWipLimitChange}
+            animatingItems={animatingItems}
+            onAnimationEnd={onAnimationEnd}
           />
         ))}
       </div>

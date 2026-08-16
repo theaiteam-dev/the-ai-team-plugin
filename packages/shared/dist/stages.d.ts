@@ -1,8 +1,15 @@
-export declare const ALL_STAGES: readonly ["briefings", "ready", "testing", "implementing", "review", "probing", "done", "blocked"];
+export declare const ALL_STAGES: readonly ["briefings", "ready", "testing", "implementing", "review", "probing", "staged", "done", "blocked"];
 export type StageId = (typeof ALL_STAGES)[number];
 export declare const TRANSITION_MATRIX: Record<StageId, readonly StageId[]>;
 export declare function isValidTransition(from: StageId, to: StageId): boolean;
 export declare function getValidNextStages(from: StageId): readonly StageId[];
+/**
+ * Answers "is a dependency in this stage satisfied?" — true for 'staged'
+ * and 'done', false for every other stage. Use this everywhere dependency
+ * completion is checked instead of comparing against 'done' directly, so
+ * every call site stays in lockstep (see WI-788).
+ */
+export declare function isDependencySatisfied(stageId: StageId): boolean;
 /**
  * Maps each pipeline stage to the agent responsible for it and the
  * expected next stage in the happy-path pipeline flow.

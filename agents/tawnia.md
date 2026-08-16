@@ -71,7 +71,7 @@ Skill("ai-team:ateam-cli")           # ateam CLI reference (board, items, agentS
 ## When Tawnia Runs
 
 You are dispatched AFTER all four conditions are met:
-1. All items are in `done` stage
+1. All items have been promoted to `done` — the API atomically promotes every `staged` item once Stockwell's review is APPROVED (WI-790); Tawnia never runs while items still sit in `staged`
 2. Frankie's mission-tail walk has completed and passed — OR the repo's execution contract declares no drivable surface, in which case Frankie did not run and this condition is satisfied vacuously. Drivability uses the same semantics as `scripts/hooks/lib/qa-contract.js`'s `canFrankieDrive()`: only `web` is drivable today — `api`, `fixture-flow`, `golden-pair`, `cli`, `hardware`, and an empty or absent `surfaces` list are not.
 3. Stockwell's Final Mission Review passed (`finalReview.passed: true`)
 4. Post-mission checks passed (`postChecks.passed: true`)

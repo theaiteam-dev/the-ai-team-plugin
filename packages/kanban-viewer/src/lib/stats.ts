@@ -6,9 +6,14 @@ import type { WorkItem, Stage } from '@/types';
 const BACKLOG_STAGES: readonly Stage[] = ['briefings', 'ready'] as const;
 
 /**
- * Stages that count as "in progress" (actively being worked on)
+ * Stages that count as "in progress" (actively being worked on).
+ *
+ * WI-792 (Josh's refinement-gate decision): 'staged' counts as in-progress
+ * here, not completed — an item sitting in staged is individually done but
+ * still awaiting mission-tail verification (Frankie + Stockwell) before the
+ * atomic promotion to 'done' seals it. Only 'done' is completion.
  */
-const IN_PROGRESS_STAGES: readonly Stage[] = ['testing', 'implementing', 'review', 'probing'] as const;
+const IN_PROGRESS_STAGES: readonly Stage[] = ['testing', 'implementing', 'review', 'probing', 'staged'] as const;
 
 /**
  * Board statistics structure

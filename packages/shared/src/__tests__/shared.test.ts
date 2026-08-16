@@ -5,6 +5,7 @@ import {
   PIPELINE_STAGES,
   isValidTransition,
   getValidNextStages,
+  isDependencySatisfied,
   type StageId,
 } from '../stages';
 import {
@@ -24,7 +25,7 @@ import { ERROR_CODES, type ErrorCode } from '../errors';
 
 describe('Shared Package', () => {
   describe('stages', () => {
-    it('should contain all expected stages', () => {
+    it('should contain all expected stages, with staged positioned between probing and done', () => {
       expect(ALL_STAGES).toEqual([
         'briefings',
         'ready',
@@ -32,6 +33,7 @@ describe('Shared Package', () => {
         'implementing',
         'review',
         'probing',
+        'staged',
         'done',
         'blocked',
       ]);
@@ -43,13 +45,41 @@ describe('Shared Package', () => {
       expect(isValidTransition('ready', 'testing')).toBe(true);
       expect(isValidTransition('testing', 'implementing')).toBe(true);
       expect(isValidTransition('review', 'probing')).toBe(true);
-      expect(isValidTransition('probing', 'done')).toBe(true);
+      expect(isValidTransition('probing', 'staged')).toBe(true);
+      // staged -> ready is the operator escape hatch (mirrors probing -> ready)
+      expect(isValidTransition('staged', 'ready')).toBe(true);
 
       // Invalid transitions - review cannot skip probing to reach done
       expect(isValidTransition('review', 'done')).toBe(false);
       expect(isValidTransition('briefings', 'done')).toBe(false);
       expect(isValidTransition('testing', 'done')).toBe(false);
       expect(isValidTransition('done', 'ready')).toBe(false);
+      // probing no longer routes directly to done — it must land in staged first
+      expect(isValidTransition('probing', 'done')).toBe(false);
+    });
+
+    it('done has no outbound transitions to any stage (terminal)', () => {
+      for (const target of ALL_STAGES) {
+        expect(isValidTransition('done', target)).toBe(false);
+      }
+    });
+
+    it('TRANSITION_MATRIX.probing is exactly [ready, staged, blocked] — no longer routes to done', () => {
+      expect(getValidNextStages('probing')).toEqual(['ready', 'staged', 'blocked']);
+    });
+
+    it('TRANSITION_MATRIX.staged is exactly [done, testing, implementing, ready, blocked]', () => {
+      expect(getValidNextStages('staged')).toEqual([
+        'done',
+        'testing',
+        'implementing',
+        'ready',
+        'blocked',
+      ]);
+    });
+
+    it('TRANSITION_MATRIX.done remains an empty array (unchanged)', () => {
+      expect(getValidNextStages('done')).toEqual([]);
     });
 
     it('should return valid next stages for a given stage', () => {
@@ -65,14 +95,11 @@ describe('Shared Package', () => {
       expect(reviewNext).toContain('probing');
       expect(reviewNext).toContain('testing');
 
-      const probingNext = getValidNextStages('probing');
-      expect(probingNext).toContain('done');
-
       const doneNext = getValidNextStages('done');
       expect(doneNext).toEqual([]);
     });
 
-    it('should define pipeline stages with agent assignments', () => {
+    it('should define pipeline stages with agent assignments, with probing handing off to staged', () => {
       expect(PIPELINE_STAGES.testing?.agent).toBe('murdock');
       expect(PIPELINE_STAGES.testing?.nextStage).toBe('implementing');
       expect(PIPELINE_STAGES.implementing?.agent).toBe('ba');
@@ -80,7 +107,40 @@ describe('Shared Package', () => {
       expect(PIPELINE_STAGES.review?.agent).toBe('lynch');
       expect(PIPELINE_STAGES.review?.nextStage).toBe('probing');
       expect(PIPELINE_STAGES.probing?.agent).toBe('amy');
-      expect(PIPELINE_STAGES.probing?.nextStage).toBe('done');
+      expect(PIPELINE_STAGES.probing?.nextStage).toBe('staged');
+    });
+
+    it('PIPELINE_STAGES has no staged key — no agent owns the holding pen (Partial<Record> is not compiler-enforced)', () => {
+      expect(Object.prototype.hasOwnProperty.call(PIPELINE_STAGES, 'staged')).toBe(false);
+      expect(PIPELINE_STAGES.staged).toBeUndefined();
+    });
+  });
+
+  // WI-788: dependency-wave satisfaction must accept 'staged' as complete
+  // (not just 'done'), because once the pipeline ends at 'staged' nothing
+  // ever reaches 'done' until the mission tail promotes it — every wave-2+
+  // item would deadlock otherwise. This is the ONE shared predicate that
+  // both GET /api/deps/check and POST /api/agents/start must call — the
+  // item's context is explicit that a duplicated inline condition in either
+  // route (instead of importing this) is exactly the bug class this item
+  // exists to prevent.
+  describe('isDependencySatisfied (WI-788: staged counts as complete for dependency-wave satisfaction)', () => {
+    it('returns true for staged and done', () => {
+      expect(isDependencySatisfied('staged')).toBe(true);
+      expect(isDependencySatisfied('done')).toBe(true);
+    });
+
+    it('returns false for every non-terminal stage', () => {
+      // Derived from ALL_STAGES (not a hardcoded list) so this test
+      // automatically covers any stage added in the future.
+      const nonTerminalStages = ALL_STAGES.filter(
+        (stage) => stage !== 'staged' && stage !== 'done'
+      );
+      expect(nonTerminalStages.length).toBeGreaterThan(0); // sanity: the filter actually excluded something
+
+      for (const stage of nonTerminalStages) {
+        expect(isDependencySatisfied(stage)).toBe(false);
+      }
     });
   });
 

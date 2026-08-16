@@ -1,0 +1,6 @@
+name: example-flow
+description: Example flow - customize this for your app
+steps:
+  - visit: /
+expect:
+  - visible: Welcome

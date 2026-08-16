@@ -372,7 +372,7 @@ Based on answers, create `ateam.config.json` in project root. **This is the sing
 - `devServer.url`: Where Amy should point Playwright for browser testing
 - `devServer.start`: Command to start the server (for user reference)
 - `devServer.restart`: Command to restart the server (e.g., to pick up code changes)
-- `devServer.managed`: If false, user manages server; Amy checks if running but doesn't start/restart it
+- `devServer.managed`: If `false` (the default), a human or a standing process owns the server; Amy checks if it's running but never starts, restarts, or stops it. If `true`, the pipeline owns the server's lifecycle: Frankie starts it himself from `devServer.start` before his mission-tail walk, confirms it's serving, and stops it when the walk ends — used when the repo needs a dedicated, isolated dev server (its own port, a scratch database) rather than a shared/standing one.
 - `surfaces`: How this repo is driven — `web` | `api` | `fixture-flow` | `golden-pair` | `hardware` | `cli`. Detected in Step 2, ratified in Step 4. Only `web` is drivable by Frankie today (`scripts/hooks/lib/qa-contract.js`'s `canFrankieDrive()`); other surfaces stay `hands-on` until a FlowSpec adapter ships.
 - `qa.seed`: The command that produces known test data — a pointer, detected from `package.json` scripts. `null` if none detected.
 - `qa.account.credential_env`: The env-var NAME holding the QA login credential, never the credential itself — a pointer, detected from `.env.example`. `null` if the repo has no authenticated surface.

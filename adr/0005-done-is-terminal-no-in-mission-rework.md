@@ -85,3 +85,29 @@ though both are out of scope here:
 - The rejection branch of `agentStop` performs **no WIP check** (contrast
   `stop/route.ts:211-242` with `254-268`), so any rejection bounce from any
   stage bypasses WIP limits.
+
+## Amendment (2026-08-16)
+
+**The `done: []` invariant in `TRANSITION_MATRIX` is unchanged — this ADR's
+Decision stands as written.** What changed is upstream of it. WI-786/787
+introduced a new `staged` stage as the per-item pipeline's real terminal
+stage, sitting between `probing` and `done`. An item no longer lands in
+`done` when its per-item pipeline finishes — it reaches `staged` instead,
+and `done` is reached only later, via the mission tail's atomic promotion
+(`staged` → `done`) once Stockwell's Final Mission Review is APPROVED
+(WI-790).
+
+Because Frankie and Stockwell now run against items sitting in `staged`,
+not `done`, `TRANSITION_MATRIX` already permits real routes out of `staged`
+— including back to `testing` or `implementing` — which WI-794 made a
+first-class, rejection-cap-counted move. The in-mission bounce this ADR
+shipped without is therefore now legal and automated, not a manual
+operator action: Hannibal executes it via `ateam board-move moveItem`,
+using the earliest-flagged-stage rule, once Frankie or Stockwell names the
+failing item(s).
+
+This does not reopen the specific gap this ADR closed: no route out of
+`done` itself exists, and none is needed, since the mission tail's
+decision points (Frankie's walk, Stockwell's review, any resulting rework)
+all operate on `staged`, before promotion. See `prd/ready/staged-stage.md`
+for the full design.

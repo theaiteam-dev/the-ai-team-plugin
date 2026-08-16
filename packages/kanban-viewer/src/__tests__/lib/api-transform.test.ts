@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { transformApiItemsToWorkItems } from '@/lib/api-transform';
+import { transformApiItemsToWorkItems, transformBoardStateToMetadata } from '@/lib/api-transform';
 import type { ItemWithRelations, WorkLogEntry } from '@/types/item';
+import type { BoardState } from '@/types/board';
 import type { WorkItem } from '@/types';
 
 /**
@@ -420,5 +421,49 @@ describe('transformApiItemsToWorkItems', () => {
       expect(workItem.work_logs![1].action).toBe('rejected');
       expect(workItem.work_logs![2].action).toBe('completed');
     });
+  });
+});
+
+// WI-792 AC: buildWipLimitsFromStages (private, exercised via the exported
+// transformBoardStateToMetadata) must treat the staged Stage row's null
+// wipLimit as unlimited — i.e. absent from wip_limits entirely, matching
+// every other unlimited stage (briefings, done, blocked) — not coerced to a
+// limit of 0. board-column.tsx already renders '∞' for undefined/null, so
+// this pins the transform layer feeding it, consistent with the Stage row
+// WI-786 seeds (staged: wipLimit null).
+describe('transformBoardStateToMetadata — wip_limits (WI-792)', () => {
+  function makeBoardState(stages: BoardState['stages']): BoardState {
+    return {
+      stages,
+      items: [],
+      claims: [],
+      currentMission: null,
+    };
+  }
+
+  it('omits staged from wip_limits when its wipLimit is null (renders as unlimited, not 0)', () => {
+    const boardState = makeBoardState([
+      { id: 'testing', name: 'Testing', order: 2, wipLimit: 3 },
+      { id: 'staged', name: 'Staged', order: 6, wipLimit: null },
+      { id: 'done', name: 'Done', order: 7, wipLimit: null },
+    ]);
+
+    const metadata = transformBoardStateToMetadata(boardState);
+
+    expect(metadata.wip_limits.staged).toBeUndefined();
+    expect(metadata.wip_limits.testing).toBe(3);
+  });
+
+  it('does not silently default staged to a hardcoded limit the way testing/implementing/review/probing do', () => {
+    // buildWipLimitsFromStages hardcodes defaults ONLY for
+    // testing/implementing/review/probing when the API doesn't supply them.
+    // staged must never gain a default here — an unlimited stage staying
+    // unlimited even when the API row is missing entirely.
+    const boardState = makeBoardState([]); // no stages returned by the API at all
+
+    const metadata = transformBoardStateToMetadata(boardState);
+
+    expect(metadata.wip_limits.staged).toBeUndefined();
+    expect(metadata.wip_limits.testing).toBe(2); // the documented hardcoded default
   });
 });

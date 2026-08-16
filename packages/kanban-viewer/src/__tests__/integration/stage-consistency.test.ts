@@ -5,19 +5,20 @@ import { NextRequest } from 'next/server';
  * Integration tests for stage name consistency across the system.
  *
  * These tests verify that after stage harmonization:
- * 1. All 8 stages are valid and recognized in StageId type
+ * 1. All 9 stages are valid and recognized in StageId type
  * 2. Stage transitions follow the validation matrix
  * 3. SSE endpoint emits events with correct stage IDs
- * 4. API GET /api/board returns all 8 stages correctly
+ * 4. API GET /api/board returns all 9 stages correctly
  * 5. Unknown or unmapped stages are detected at runtime
  *
- * The 8 canonical stages are:
+ * The 9 canonical stages are (WI-787 added 'staged' between probing and done):
  * - briefings: Work items not yet started
  * - ready: Items ready for work
  * - testing: Items being tested (Murdock)
  * - implementing: Items being built (B.A.)
  * - probing: Items being investigated (Amy)
  * - review: Items under review (Lynch)
+ * - staged: Items Amy has cleared, holding pen before mission-tail done (no agent owns it)
  * - done: Completed items
  * - blocked: Items needing human input
  */
@@ -25,7 +26,7 @@ import { NextRequest } from 'next/server';
 // ============ Constants ============
 
 /**
- * The 8 canonical stage IDs after harmonization.
+ * The 9 canonical stage IDs after harmonization (WI-787: added 'staged').
  * This is the source of truth for valid stage names.
  */
 const CANONICAL_STAGES = [
@@ -35,6 +36,7 @@ const CANONICAL_STAGES = [
   'implementing',
   'probing',
   'review',
+  'staged',
   'done',
   'blocked',
 ] as const;
@@ -92,8 +94,9 @@ const createMockStages = () => [
   { id: 'implementing', name: 'Implementing', order: 3, wipLimit: 3 },
   { id: 'probing', name: 'Probing', order: 4, wipLimit: 3 },
   { id: 'review', name: 'Review', order: 5, wipLimit: 3 },
-  { id: 'done', name: 'Done', order: 6, wipLimit: null },
-  { id: 'blocked', name: 'Blocked', order: 7, wipLimit: null },
+  { id: 'staged', name: 'Staged', order: 6, wipLimit: null },
+  { id: 'done', name: 'Done', order: 7, wipLimit: null },
+  { id: 'blocked', name: 'Blocked', order: 8, wipLimit: null },
 ];
 
 const createMockItem = (overrides: Record<string, unknown> = {}) => ({
@@ -119,7 +122,7 @@ const createMockItem = (overrides: Record<string, unknown> = {}) => ({
 
 describe('Stage Consistency - Type System', () => {
   describe('StageId type definition', () => {
-    it('should recognize all 8 canonical stages', () => {
+    it('should recognize all 9 canonical stages', () => {
       // Import the StageId type to verify it exists
       // This test verifies the type definition at compile time
       const validStages: import('@/types/board').StageId[] = [
@@ -129,11 +132,12 @@ describe('Stage Consistency - Type System', () => {
         'implementing',
         'probing',
         'review',
+        'staged',
         'done',
         'blocked',
       ];
 
-      expect(validStages).toHaveLength(8);
+      expect(validStages).toHaveLength(9);
       expect(validStages).toEqual(CANONICAL_STAGES);
     });
 
@@ -146,13 +150,68 @@ describe('Stage Consistency - Type System', () => {
         'implementing',
         'probing',
         'review',
+        'staged',
         'done',
         'blocked',
       ];
 
-      expect(validStages).toHaveLength(8);
+      expect(validStages).toHaveLength(9);
       expect(validStages).toEqual(CANONICAL_STAGES);
     });
+  });
+});
+
+// ============ API Transform Stage Mapping Tests ============
+
+import { transformApiItemsToWorkItems } from '@/lib/api-transform';
+import type { ItemWithRelations } from '@/types/item';
+
+/** Minimal valid ItemWithRelations fixture — only stageId varies per test. */
+function createApiItem(overrides: Partial<ItemWithRelations> = {}): ItemWithRelations {
+  return {
+    id: 'WI-900',
+    title: 'Transform fixture item',
+    description: 'Fixture for api-transform stage mapping tests',
+    type: 'feature',
+    priority: 'medium',
+    stageId: 'ready',
+    assignedAgent: null,
+    rejectionCount: 0,
+    createdAt: new Date('2026-01-21T10:00:00Z'),
+    updatedAt: new Date('2026-01-21T10:00:00Z'),
+    completedAt: null,
+    outputs: {},
+    dependencies: [],
+    workLogs: [],
+    ...overrides,
+  };
+}
+
+describe('Stage Consistency - API Transform (STAGE_ID_TO_UI_STAGE mapping)', () => {
+  // AC6 (WI-787): an item with stageId 'staged' must transform to UI stage
+  // 'staged' — NOT silently fall through to '?? briefings'. This calls the real
+  // transformApiItemsToWorkItems function directly (no route/mock layer) so a
+  // regression here fails at the exact function responsible, not just at the
+  // API boundary.
+  it("maps stageId 'staged' to UI stage 'staged', not the '?? briefings' fallback", () => {
+    const [workItem] = transformApiItemsToWorkItems([
+      createApiItem({ id: 'WI-901', stageId: 'staged' }),
+    ]);
+
+    expect(workItem.stage).toBe('staged');
+    expect(workItem.stage).not.toBe('briefings');
+  });
+
+  it('still maps every other stageId to its own UI stage (no cross-stage collapse)', () => {
+    const items = CANONICAL_STAGES.map((stageId, i) =>
+      createApiItem({ id: `WI-${910 + i}`, stageId })
+    );
+
+    const workItems = transformApiItemsToWorkItems(items);
+
+    for (let i = 0; i < CANONICAL_STAGES.length; i++) {
+      expect(workItems[i].stage).toBe(CANONICAL_STAGES[i]);
+    }
   });
 });
 
@@ -161,7 +220,7 @@ describe('Stage Consistency - Type System', () => {
 import { isValidTransition } from '@/lib/validation';
 
 describe('Stage Consistency - Validation Matrix', () => {
-  describe('all 8 stages are recognized by validation', () => {
+  describe('all 9 stages are recognized by validation', () => {
     it.each(CANONICAL_STAGES)('should handle %s as source stage', (stage) => {
       // Each stage should be usable as a source - no errors
       const result = isValidTransition(stage, 'blocked');
@@ -216,7 +275,7 @@ describe('Stage Consistency - API GET /api/board', () => {
     vi.restoreAllMocks();
   });
 
-  it('should return all 8 stages with correct IDs', async () => {
+  it('should return all 9 stages with correct IDs', async () => {
     const mockStages = createMockStages();
     mockPrisma.stage.findMany.mockResolvedValue(mockStages);
     mockPrisma.item.findMany.mockResolvedValue([]);
@@ -233,7 +292,7 @@ describe('Stage Consistency - API GET /api/board', () => {
     const data = await response.json();
 
     expect(data.success).toBe(true);
-    expect(data.data.stages).toHaveLength(8);
+    expect(data.data.stages).toHaveLength(9);
 
     // Verify all canonical stage IDs are present
     const stageIds = data.data.stages.map((s: { id: string }) => s.id);
@@ -367,6 +426,44 @@ describe('Stage Consistency - API POST /api/board/move', () => {
     expect(data.error.code).toBe('INVALID_TRANSITION');
   });
 
+  // AC5 (WI-787): VALID_STAGES in board/move/route.ts must include 'staged' so
+  // POST /api/board/move with toStage 'staged' is accepted (200), not rejected
+  // as an unknown stage (400 VALIDATION_ERROR "Invalid stage: staged"). probing
+  // -> staged is a genuinely valid transition per TRANSITION_MATRIX (AC2), so a
+  // 200 here proves both VALID_STAGES recognition AND the transition succeeding —
+  // not just that some 400 was avoided.
+  it('accepts staged as a valid target stage: probing -> staged succeeds with 200, not "Invalid stage"', async () => {
+    const mockItem = createMockItem({ id: 'WI-001', stageId: 'probing' });
+    const updatedItem = { ...mockItem, stageId: 'staged' };
+
+    mockPrisma.item.findFirst.mockResolvedValue(mockItem);
+    mockPrisma.item.findUnique.mockResolvedValue(mockItem);
+    mockPrisma.stage.findUnique.mockResolvedValue({ id: 'staged', name: 'Staged', order: 6, wipLimit: null });
+    mockPrisma.item.count.mockResolvedValue(0);
+    mockPrisma.item.update.mockResolvedValue(updatedItem);
+
+    const { POST } = await import('@/app/api/board/move/route');
+    const request = new NextRequest('http://localhost:3000/api/board/move', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Project-ID': 'kanban-viewer',
+      },
+      body: JSON.stringify({ itemId: 'WI-001', toStage: 'staged' }),
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    // A VALIDATION_ERROR here (any status) would mean VALID_STAGES doesn't
+    // recognize 'staged' — assert the specific failure mode is absent, not just
+    // that *a* success happened.
+    expect(data.error?.code).not.toBe('VALIDATION_ERROR');
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.data.item.stageId).toBe('staged');
+  });
+
   it.each(CANONICAL_STAGES)('should recognize %s as a valid target stage', async (targetStage) => {
     // Test that each canonical stage is recognized
     // (even if the transition itself may be invalid)
@@ -452,7 +549,7 @@ describe('Stage Consistency - WorkItem Type', () => {
       content: 'Test content',
     }));
 
-    expect(workItems).toHaveLength(8);
+    expect(workItems).toHaveLength(9);
     for (let i = 0; i < workItems.length; i++) {
       expect(workItems[i].stage).toBe(CANONICAL_STAGES[i]);
     }

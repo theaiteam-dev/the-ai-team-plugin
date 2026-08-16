@@ -4,6 +4,7 @@ import { Suspense, useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { HeaderBar } from "@/components/header-bar";
 import { BoardColumn } from "@/components/board-column";
+import { ResponsiveBoard } from "@/components/responsive-board";
 import { LiveFeedPanel, type TabId } from "@/components/live-feed-panel";
 import { TokenUsagePanel } from "@/components/token-usage-panel";
 import type { LogEntry, MissionTokenUsageData } from "@/types";
@@ -13,6 +14,7 @@ import { ItemDetailModal } from "@/components/item-detail-modal";
 import { ConnectionStatusIndicator } from "@/components/connection-status-indicator";
 import { useBoardEvents } from "@/hooks/use-board-events";
 import { useFilterState } from "@/hooks/use-filter-state";
+import { useIsMobileViewport } from "@/hooks/use-is-mobile-viewport";
 import { filterWorkItems } from "@/lib/filter-utils";
 import { deriveAgentStatusesFromWorkItems } from "@/lib/agent-status-utils";
 import { FilterBar } from "@/components/filter-bar";
@@ -41,13 +43,17 @@ import type {
 } from "@/types";
 import "@/styles/animations.css";
 
-const ALL_STAGES: Stage[] = [
+// Exported (alongside getAnimationDirection below) so tests exercise the
+// real source of truth instead of a local copy that can silently drift —
+// see page-animations.test.tsx's "real function, not a local copy" suite.
+export const ALL_STAGES: Stage[] = [
   "briefings",
   "ready",
   "testing",
   "implementing",
   "review",
   "probing",
+  "staged",
   "done",
   "blocked",
 ];
@@ -78,7 +84,7 @@ interface AnimationInfo {
 }
 
 // Helper to determine animation direction based on stage movement
-function getAnimationDirection(fromStage: Stage, toStage: Stage): CardAnimationDirection {
+export function getAnimationDirection(fromStage: Stage, toStage: Stage): CardAnimationDirection {
   const fromIndex = ALL_STAGES.indexOf(fromStage);
   const toIndex = ALL_STAGES.indexOf(toStage);
   if (fromIndex === -1 || toIndex === -1) return "none";
@@ -89,6 +95,14 @@ function getAnimationDirection(fromStage: Stage, toStage: Stage): CardAnimationD
 const DEFAULT_PROJECT_ID = "kanban-viewer";
 
 function HomeContent() {
+  // WI-792 rework (Amy's FLAG): drives which board layout renders below —
+  // the desktop column grid, or ResponsiveBoard's mobile tab UI. Previously
+  // this file had no mobile-specific rendering at all, so AC3/AC6/AC7
+  // (mobile tabs + keyboard + aria-selected) were unmet by the real app
+  // even though ResponsiveBoard itself implements and tests them correctly
+  // in isolation — it was simply never wired in here.
+  const isMobileViewport = useIsMobileViewport();
+
   // URL and routing
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -650,10 +664,19 @@ function HomeContent() {
 
   // Calculate stats dynamically from workItems to ensure UI reflects actual state
   // This fixes the bug where progress bar showed stale data when items moved via SSE
+  //
+  // WI-792: staged items must land in a bucket, not fall through uncounted.
+  // wipCurrent (above) intentionally excludes staged — it tracks WIP against
+  // wip_limits, and staged carries no WIP limit (unlimited holding pen). The
+  // stats breakdown is a different concern: per the refinement-gate decision
+  // (staged is in-progress in stats, only done is completion), staged items
+  // are folded into in_progress here so completed + in_progress + blocked +
+  // backlog always sums to total_items — before this fix, a staged item was
+  // counted in total_items but invisible in every other bucket.
   const dynamicStats = {
     total_items: workItems.length,
     completed: itemsByStage.done.length,
-    in_progress: wipCurrent,
+    in_progress: wipCurrent + itemsByStage.staged.length,
     blocked: blockedCount,
     backlog: itemsByStage.briefings.length + itemsByStage.ready.length,
   };
@@ -741,6 +764,18 @@ function HomeContent() {
                   Clear filters
                 </button>
               </div>
+            ) : isMobileViewport ? (
+              // WI-792 rework: real mobile viewport (matchMedia-detected) —
+              // reuse the already-tested ResponsiveBoard mobile tab UI
+              // instead of the desktop grid below.
+              <ResponsiveBoard
+                itemsByStage={itemsByStage}
+                wipLimits={boardMetadata.wip_limits}
+                onItemClick={(item) => setSelectedItem(item)}
+                animatingItems={animatingItems}
+                onAnimationEnd={handleAnimationEnd}
+                onWipLimitChange={handleWipLimitChange}
+              />
             ) : (
               <div className="flex-1 flex gap-2 p-4 overflow-x-auto">
                 {ALL_STAGES.map((stage) => (

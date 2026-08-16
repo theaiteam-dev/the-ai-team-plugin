@@ -1,6 +1,12 @@
 /**
  * Tests for the shared execution-contract reader (WI-775).
  *
+ * WI-799 flips the "this repo's own ateam.config.json" describe block below:
+ * once a dedicated QA dev-server script gives Frankie a fresh, isolated
+ * kanban-viewer to drive, this repo's real surfaces array declares 'web' and
+ * canFrankieDrive() must return true -- a deliberate real-file read (not a
+ * fixture) so this cannot silently regress back to an inert skip (AC8).
+ *
  * readExecutionContract() parses the `execution-contract` fields
  * (surfaces, qa.seed, qa.account.credential_env, qa.drive, testing_level,
  * evidence, review_tier) out of <cwd>/ateam.config.json and returns a
@@ -25,7 +31,8 @@
  */
 
 import fs from 'fs';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import path from 'path';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterEach } from 'vitest';
 import { readExecutionContract, canFrankieDrive, _resetQaContractCache } from '../lib/qa-contract.js';
 
 /**
@@ -318,22 +325,142 @@ describe("this repo's own ateam.config.json", () => {
     expect(typeof contract.evidence.default).toBe('string');
   });
 
-  it('declares no drivable surface, so Frankie never runs on this repo', () => {
-    // This plugin repo's missions are CLI/prose work; the one web app it
-    // contains (packages/kanban-viewer) is NOT a QA-drivable surface today:
-    // there is no isolated QA seed (the kanban-viewer `seed` script writes
-    // through DATABASE_URL to the same SQLite file the running container
-    // uses for live mission tracking, and creates zero test fixtures), and
-    // flowspec isn't installed here. Declaring `surfaces: ['web']` before
-    // those exist would make Frankie mandatory on every mission in this repo
-    // with nothing safe for him to drive -- the self-referential deadlock
-    // agents/tawnia.md's precondition exemption and agents/face.md's
-    // Project Readiness Audit exemption both describe. Flip this the day
-    // this repo grows a real isolated QA seed; both prose surfaces name
-    // this repo explicitly and must be updated with it.
+  it('declares a drivable surface (web), so Frankie can walk this repo (WI-799)', () => {
+    // Deliberately reads the REAL ateam.config.json — no fs mocking in this
+    // describe block — rather than an inline fixture. Per AC8/AC1: the
+    // drivability check must fail the moment the real config regresses to
+    // an empty (or missing) surfaces array, not just when a fixture says so.
+    //
+    // This repo previously declared surfaces: [] on purpose: the checked-in
+    // kanban-viewer dev script hardcoded port 5566 (already held by a
+    // long-running prod-copy Docker container) and ran `prisma migrate
+    // deploy` against whatever DATABASE_URL resolved to -- so making 'web'
+    // drivable would have forced every mission's Frankie walk to run against
+    // a live prod-copy database instead of a safe, isolated one. WI-799
+    // resolves that by giving Frankie a dedicated QA dev-server script that
+    // starts fresh on its own port (5567) against a scratch database, so
+    // declaring 'web' here no longer creates that hazard.
     const contract = readExecutionContract();
 
-    expect(contract.surfaces).toEqual([]);
-    expect(canFrankieDrive(contract.surfaces)).toBe(false);
+    expect(contract.surfaces).toContain('web');
+    expect(canFrankieDrive(contract.surfaces)).toBe(true);
+  });
+});
+
+// ============================================================================
+// WI-799 AC2/AC3/AC4/AC5/AC6/AC7: devServer is deliberately OUTSIDE
+// qa-contract.js's scope (see the file docstring above and the module's own
+// comment at scripts/hooks/lib/qa-contract.js line ~138), so these read the
+// real target files directly rather than going through readExecutionContract().
+// Added in response to Lynch's rejection: these ACs are testable using
+// patterns already established in this repo (real-file reads, no fixtures)
+// and should not be left uncovered.
+// ============================================================================
+
+describe("packages/kanban-viewer/package.json - 'dev:qa' script (WI-799 AC2/AC3/AC4)", () => {
+  let scripts;
+
+  beforeAll(() => {
+    const pkgPath = path.join(process.cwd(), 'packages/kanban-viewer/package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+    scripts = pkg.scripts;
+  });
+
+  it('AC2: dev:qa exists and binds port 5567, not the hardcoded 5566 the existing dev script uses', () => {
+    expect(scripts['dev:qa']).toBeDefined();
+    expect(scripts['dev:qa']).toContain('--port 5567');
+    expect(scripts['dev:qa']).not.toContain('--port 5566');
+  });
+
+  it('AC3: dev:qa resolves DATABASE_URL to a scratch qa.db, never ateam.db or prod.db', () => {
+    expect(scripts['dev:qa']).toMatch(/qa\.db/);
+    expect(scripts['dev:qa']).not.toMatch(/ateam\.db/);
+    expect(scripts['dev:qa']).not.toMatch(/prod\.db/);
+  });
+
+  it('AC3: dev:qa removes the scratch database before migrating, so each run starts fresh', () => {
+    const rmIndex = scripts['dev:qa'].indexOf('rm -f');
+    const migrateIndex = scripts['dev:qa'].indexOf('migrate deploy');
+
+    expect(rmIndex).toBeGreaterThan(-1);
+    expect(migrateIndex).toBeGreaterThan(-1);
+    expect(rmIndex).toBeLessThan(migrateIndex);
+  });
+
+  it('AC4: dev and dev:qa are constructed to never contend — disjoint ports, disjoint DATABASE_URL targets', () => {
+    // Cross-checks BOTH scripts together (not just dev:qa in isolation) so a
+    // future edit that moves `dev` off 5566, or moves `dev:qa` onto it,
+    // fails here even if each script's own AC2/AC3 assertions still pass.
+    expect(scripts['dev']).toContain('--port 5566');
+    expect(scripts['dev']).not.toContain('--port 5567');
+    expect(scripts['dev:qa']).toContain('--port 5567');
+    expect(scripts['dev:qa']).not.toContain('--port 5566');
+    expect(scripts['dev:qa']).not.toMatch(/ateam\.db|prod\.db/);
+    // NOTE: this proves non-contention by construction (disjoint port +
+    // disjoint DB target declared in the script strings). It does not start
+    // a real server alongside the standing Docker container — that would be
+    // a heavier, environment-dependent integration test; flagging as a
+    // possible follow-up rather than attempting it here.
+  });
+});
+
+describe('ateam.config.json - devServer block (WI-799 AC5)', () => {
+  it('devServer targets the QA port, invokes dev:qa, and is pipeline-managed', () => {
+    // devServer sits OUTSIDE the execution-contract block (qa-contract.js
+    // deliberately never parses it — see the module's own comment) so this
+    // reads the raw JSON directly instead of going through
+    // readExecutionContract().
+    const configPath = path.join(process.cwd(), 'ateam.config.json');
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+
+    expect(raw.devServer.url).toBe('http://localhost:5567');
+    expect(raw.devServer.start).toContain('dev:qa');
+    expect(raw.devServer.managed).toBe(true);
+  });
+});
+
+describe('agents/frankie.md - managed:true server lifecycle (WI-799 AC6)', () => {
+  let content;
+
+  beforeAll(() => {
+    content = fs.readFileSync(path.join(process.cwd(), 'agents/frankie.md'), 'utf-8');
+  });
+
+  it('branches on devServer.managed and documents the managed:true start/poll/stop lifecycle', () => {
+    expect(content).toMatch(/devServer\.managed/);
+
+    const managedTrueIndex = content.indexOf('managed: true');
+    expect(managedTrueIndex).toBeGreaterThan(-1);
+
+    // Slice to just the managed:true bullet (ends at the next top-level
+    // heading) so these assertions are scoped to that branch specifically,
+    // not satisfied by unrelated "start"/"stop" prose elsewhere in the file.
+    const nextHeadingIndex = content.indexOf('## Process', managedTrueIndex);
+    const managedTrueSection = content.slice(
+      managedTrueIndex,
+      nextHeadingIndex > -1 ? nextHeadingIndex : undefined
+    );
+
+    expect(managedTrueSection).toMatch(/start it yourself/i);
+    expect(managedTrueSection).toMatch(/devServer\.start/);
+    expect(managedTrueSection).toMatch(/poll/i);
+    expect(managedTrueSection).toMatch(/devServer\.url/);
+    expect(managedTrueSection).toMatch(/[Ss]top the server/);
+  });
+});
+
+describe('commands/setup.md and agents/amy.md - managed field documents both values (WI-799 AC7)', () => {
+  it('commands/setup.md describes both managed:false and managed:true', () => {
+    const content = fs.readFileSync(path.join(process.cwd(), 'commands/setup.md'), 'utf-8');
+
+    expect(content).toMatch(/managed.*false.*(the default|human|standing process)/is);
+    expect(content).toMatch(/managed.*true.*(pipeline owns|Frankie)/is);
+  });
+
+  it('agents/amy.md describes both managed:false and managed:true', () => {
+    const content = fs.readFileSync(path.join(process.cwd(), 'agents/amy.md'), 'utf-8');
+
+    expect(content).toMatch(/managed.*false.*(default|user manages)/is);
+    expect(content).toMatch(/managed.*true.*(pipeline owns|Frankie)/is);
   });
 });

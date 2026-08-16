@@ -1,7 +1,12 @@
 /**
  * API Route: /api/missions/[missionId]/final-review
  *
- * POST - Store a final review report on the mission record
+ * POST - Store a final review report on the mission record. When the report's
+ *        verdict is FINAL APPROVED, every item in this project sitting in the
+ *        'staged' stage is promoted to 'done' in the SAME transaction that
+ *        persists the review — a crash mid-promotion rolls back the review
+ *        write too, so an approval can never be recorded against a
+ *        half-promoted board (WI-790).
  * GET  - Return the stored final review report
  *
  * Both endpoints return 404 when the mission does not exist.
@@ -11,11 +16,23 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getAndValidateProjectId } from '@/lib/project-utils';
 import { createDatabaseError } from '@/lib/errors';
+import { parseFinalReviewVerdict } from '@/lib/final-review-verdict';
 import type { ApiError } from '@/types/api';
+import type { WorkLogAction } from '@/types/item';
 
 interface RouteContext {
   params: Promise<{ missionId: string }>;
 }
+
+// Stage IDs are plain strings on the Item model (no shared enum import here
+// to keep this route's promotion logic dependency-free of @ai-team/shared's
+// full stage graph — it only ever moves items in exactly one direction).
+const STAGED_STAGE_ID = 'staged';
+const DONE_STAGE_ID = 'done';
+
+// WorkLog.agent is a free-form string (not tied to AgentClaim) — this names
+// the system as the actor since no agent claim drives this promotion.
+const PROMOTION_AGENT = 'system';
 
 /**
  * POST /api/missions/:missionId/final-review
@@ -64,15 +81,48 @@ export async function POST(request: Request, context: RouteContext) {
       );
     }
 
-    // Safe to update by unique id now that we've confirmed the mission belongs to this project
-    await prisma.mission.update({
-      where: { id: missionId },
-      data: { finalReview },
+    const verdict = parseFinalReviewVerdict(finalReview);
+    const { projectId } = projectValidation;
+
+    // Safe to update by unique id now that we've confirmed the mission belongs to this project.
+    // The review write and the staged->done promotion share one transaction so a failure
+    // partway through promotion rolls back the review persistence too (WI-790 AC2).
+    const promotedCount = await prisma.$transaction(async (tx) => {
+      await tx.mission.update({
+        where: { id: missionId },
+        data: { finalReview },
+      });
+
+      if (verdict !== 'approved') {
+        return 0;
+      }
+
+      const stagedItems = await tx.item.findMany({
+        where: { projectId, stageId: STAGED_STAGE_ID },
+        select: { id: true },
+      });
+
+      for (const { id } of stagedItems) {
+        await tx.item.update({
+          where: { id },
+          data: { stageId: DONE_STAGE_ID },
+        });
+        await tx.workLog.create({
+          data: {
+            itemId: id,
+            agent: PROMOTION_AGENT,
+            action: 'note' as WorkLogAction,
+            summary: `Promoted to done — Stockwell's final review for mission ${missionId} was FINAL APPROVED`,
+          },
+        });
+      }
+
+      return stagedItems.length;
     });
 
     return NextResponse.json({
       success: true,
-      data: { missionId },
+      data: { missionId, promotedCount },
     });
   } catch (error) {
     console.error('POST /api/missions/[missionId]/final-review error:', error);

@@ -178,6 +178,8 @@ VERDICT: FINAL APPROVED
 The A(i)-Team got away with it this time. The code is solid.
 ```
 
+Writing an APPROVED verdict via `writeFinalReview` triggers the API to atomically promote every `staged` item to `done`, in the same transaction that persists the review (WI-790). This happens automatically, server-side — you never move, claim, or touch a board item yourself.
+
 ### FINAL REJECTED
 
 ```
@@ -209,9 +211,9 @@ When you reject:
 - Be SPECIFIC about which items (by ID) need fixes
 - Reference the specific PRD requirement violated
 - Explain the cross-cutting issue clearly
-- Items you name will return to `ready` stage for the full pipeline again — Hannibal handles redispatch
+- Items you name are moved out of `staged` by Hannibal using the earliest-flagged-stage rule — a named test gap routes to `testing`, an impl-only bug routes to `implementing` — via a real, rejection-cap-counted `board-move` (WI-794), the same mechanism Hannibal uses for a Frankie failure. You never move anything yourself.
 
-If a probing-style follow-up is needed (suspected hidden bug, fragile-feeling code), name the suspect items in the rejection with rationale; Hannibal will redispatch Amy. **Do not attempt to spawn sub-agents** — Stockwell has no Agent tool and is hook-blocked from agent dispatch.
+If a probing-style follow-up is needed (suspected hidden bug, fragile-feeling code), name the suspect items in the rejection with rationale; Hannibal routes them out of `staged` the same way, and they reach Amy again naturally once they cycle forward through review and probing. **Do not attempt to spawn sub-agents** — Stockwell has no Agent tool and is hook-blocked from agent dispatch.
 
 ## Save Full Report
 

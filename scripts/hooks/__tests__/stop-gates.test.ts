@@ -14,6 +14,28 @@
  * The URL builders are covered here as pure functions; the fact that they
  * point at *routes that actually exist* is covered end-to-end against a stub
  * HTTP server in stop-hooks-api-integration.test.ts.
+ *
+ * WI-791: staged is a holding pen between Amy's probing and the mission-tail
+ * promotion to done (WI-790). ACTIVE_STAGES deliberately does NOT gain a
+ * 'staged' entry — Sosa flagged that a plain append would be the highest
+ * silent-failure risk in the mission: countBoard's totalActive would then
+ * include staged items, so the EXISTING "totalActive > 0 → block" check in
+ * both consumer hooks would swallow an all-staged board with the wrong,
+ * generic "items still active" message instead of the correct
+ * Frankie-evidence / not-yet-promoted diagnosis — and worse, the consumer
+ * hooks' "only reached once totalActive === 0" calling convention for
+ * checkFrankieEvidence would still hold, so the message would merely be
+ * *misleading*, not absent — but ANY conflation of staged with "still
+ * active" is exactly the kind of gate this item exists to hardn against.
+ * countBoard instead reports stagedCount as an independent field alongside
+ * totalActive/doneCount, and checkFrankieEvidence is re-keyed from
+ * doneCount/doneItems to stagedCount/stagedItems (evidence now compares
+ * against the newest STAGED transition, not the newest done one — items sit
+ * in staged while awaiting the walk, not done). The "active work still in
+ * flight must be checked before checkFrankieEvidence is ever called"
+ * calling convention is unchanged and preserved by the consumer hooks
+ * (exercised end-to-end in stop-guards.test.ts); this file unit-tests
+ * stop-gates.js itself.
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
@@ -33,6 +55,7 @@ import {
   buildFinalReviewUrl,
   normalizeBoard,
   normalizeMission,
+  countBoard,
   checkFrankieEvidence,
   parseFinalReviewVerdict,
   checkFinalReviewRejection,
@@ -107,6 +130,23 @@ describe('stop-gates — normalizeBoard', () => {
   it('collapses an unrecognized payload to empty columns rather than throwing', () => {
     expect(normalizeBoard(null).columns).toEqual({});
     expect(normalizeBoard({ success: true, data: {} }).columns).toEqual({});
+  });
+
+  it('groups staged items into their own column, same as any other stage (WI-791)', () => {
+    const board = normalizeBoard({
+      columns: undefined,
+      items: undefined,
+      success: true,
+      data: {
+        items: [
+          { id: 'WI-001', stageId: 'staged' },
+          { id: 'WI-002', stageId: 'staged' },
+          { id: 'WI-003', stageId: 'done' },
+        ],
+      },
+    });
+    expect(board.columns.staged).toHaveLength(2);
+    expect(board.columns.done).toHaveLength(1);
   });
 });
 
@@ -225,9 +265,10 @@ describe('stop-gates — checkFinalReviewRejection', () => {
     expect(message, 'ADR 0004: full DoD re-walk, then Stockwell re-reviews').toMatch(
       /FULL Definition of Done/i
     );
-    expect(message, 'ADR 0005: reopening done items is a manual operator action').toMatch(
-      /manual operator action/i
-    );
+    expect(
+      message,
+      'WI-794: staged→testing|implementing is a real, rejection-cap-counted transition, not a manual reopen'
+    ).toMatch(/not a manual reopen/i);
   });
 
   it('returns null for FINAL APPROVED (falls through to the postcheck gate)', () => {
@@ -244,10 +285,66 @@ describe('stop-gates — checkFinalReviewRejection', () => {
 });
 
 // ---------------------------------------------------------------------------
+// countBoard — WI-791 AC1: stagedCount is reported alongside doneCount, and
+// staged is NOT one of the ACTIVE_STAGES (a deliberate design decision, not
+// an oversight — see the file header comment).
+// ---------------------------------------------------------------------------
+describe('stop-gates — countBoard (WI-791 AC1: stagedCount alongside doneCount)', () => {
+  it('reports stagedCount for a board whose only items are staged, with totalActive 0 and doneCount 0', () => {
+    const result = countBoard({
+      staged: [{ id: 'WI-001' }, { id: 'WI-002' }, { id: 'WI-003' }],
+    });
+    expect(result.totalActive).toBe(0);
+    expect(result.stagedCount).toBe(3);
+    expect(result.doneCount).toBe(0);
+  });
+
+  it('staged items are never counted into totalActive or activeCounts — staged is not an ACTIVE_STAGES entry', () => {
+    const result = countBoard({
+      staged: [{ id: 'WI-001' }],
+      testing: [{ id: 'WI-002' }],
+    });
+    expect(result.totalActive).toBe(1); // only the testing item
+    expect(result.activeCounts.staged).toBeUndefined();
+    expect(result.activeCounts.testing).toBe(1);
+    expect(result.stagedCount).toBe(1);
+  });
+
+  it('reports stagedCount 0 for a board with no staged column at all', () => {
+    const result = countBoard({ done: [{ id: 'WI-001' }] });
+    expect(result.stagedCount).toBe(0);
+    expect(result.doneCount).toBe(1);
+  });
+
+  it('reports stagedCount 0 for a genuinely empty board (no mission)', () => {
+    const result = countBoard({});
+    expect(result.totalActive).toBe(0);
+    expect(result.stagedCount).toBe(0);
+    expect(result.doneCount).toBe(0);
+  });
+
+  it('tracks staged and done as independent counts on a mixed board', () => {
+    const result = countBoard({
+      staged: [{ id: 'WI-001' }],
+      done: [{ id: 'WI-002' }, { id: 'WI-003' }],
+    });
+    expect(result.stagedCount).toBe(1);
+    expect(result.doneCount).toBe(2);
+    expect(result.totalActive).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // checkFrankieEvidence — returns a block message, or null to allow.
 //
-// The declared surfaces come from a real ateam.config.json written into the
-// scratch repo; the evidence path is resolved against the same cwd.
+// WI-791: re-keyed from doneCount/doneItems to stagedCount/stagedItems —
+// Frankie's evidence bundle is demanded once items sit in STAGED (the
+// mission-tail holding pen), not once they reach DONE (which now only
+// happens via WI-790's atomic promotion, gated behind Stockwell's approved
+// final review — by which point the walk has already happened and been
+// evidenced against the staged transition). The declared surfaces come from
+// a real ateam.config.json written into the scratch repo; the evidence path
+// is resolved against the same cwd.
 // ---------------------------------------------------------------------------
 describe('stop-gates — checkFrankieEvidence', () => {
   const scratchDirs: string[] = [];
@@ -283,16 +380,16 @@ describe('stop-gates — checkFrankieEvidence', () => {
     expect(
       checkFrankieEvidence({
         missionId: 'M-TEST-001',
-        doneCount: 1,
+        stagedCount: 1,
         cwd: scratch(null, { surfaces: ['hardware'] }),
       })
     ).toBeNull();
   });
 
-  it('blocks when the mission is done, the surface is drivable, and no evidence report exists', () => {
+  it('blocks when items are staged, the surface is drivable, and no evidence report exists', () => {
     const message = checkFrankieEvidence({
       missionId: 'M-TEST-001',
-      doneCount: 1,
+      stagedCount: 1,
       cwd: scratch(),
     });
     expect(message).toMatch(/frankie/i);
@@ -302,7 +399,7 @@ describe('stop-gates — checkFrankieEvidence', () => {
   it('documents the ATEAM_SKIP_FRANKIE_GATE escape hatch in the block message itself', () => {
     const message = checkFrankieEvidence({
       missionId: 'M-TEST-001',
-      doneCount: 1,
+      stagedCount: 1,
       cwd: scratch(),
     });
     expect(
@@ -314,21 +411,21 @@ describe('stop-gates — checkFrankieEvidence', () => {
   it('allows when ATEAM_SKIP_FRANKIE_GATE=1 is set (operator escape hatch)', () => {
     process.env.ATEAM_SKIP_FRANKIE_GATE = '1';
     expect(
-      checkFrankieEvidence({ missionId: 'M-TEST-001', doneCount: 1, cwd: scratch() })
+      checkFrankieEvidence({ missionId: 'M-TEST-001', stagedCount: 1, cwd: scratch() })
     ).toBeNull();
   });
 
   it('allows when ATEAM_SKIP_FRANKIE_GATE=true is set', () => {
     process.env.ATEAM_SKIP_FRANKIE_GATE = 'true';
     expect(
-      checkFrankieEvidence({ missionId: 'M-TEST-001', doneCount: 1, cwd: scratch() })
+      checkFrankieEvidence({ missionId: 'M-TEST-001', stagedCount: 1, cwd: scratch() })
     ).toBeNull();
   });
 
   it('still blocks when ATEAM_SKIP_FRANKIE_GATE is set to an empty string (unset-like values do not disable a gate)', () => {
     process.env.ATEAM_SKIP_FRANKIE_GATE = '';
     expect(
-      checkFrankieEvidence({ missionId: 'M-TEST-001', doneCount: 1, cwd: scratch() })
+      checkFrankieEvidence({ missionId: 'M-TEST-001', stagedCount: 1, cwd: scratch() })
     ).toMatch(/frankie/i);
   });
 
@@ -336,20 +433,34 @@ describe('stop-gates — checkFrankieEvidence', () => {
     expect(
       checkFrankieEvidence({
         missionId: 'M-TEST-001',
-        doneCount: 1,
+        stagedCount: 1,
         cwd: scratch('M-TEST-001'),
       })
     ).toBeNull();
   });
 
-  it('allows when no items have reached done', () => {
+  it('allows when no items have reached staged (AC3: triggers on stagedCount > 0, not doneCount > 0)', () => {
     expect(
-      checkFrankieEvidence({ missionId: 'M-TEST-001', doneCount: 0, cwd: scratch() })
+      checkFrankieEvidence({ missionId: 'M-TEST-001', stagedCount: 0, cwd: scratch() })
+    ).toBeNull();
+  });
+
+  it('allows a fully-done board with nothing staged — evidence was already gated while items were staged, done needs no re-check', () => {
+    // Directly pins AC3's re-keying: a board where everything already
+    // reached done (stagedCount 0) must NOT re-trigger the evidence gate,
+    // even though the OLD doneCount-based version would have (doneCount
+    // would be > 0 here). This is the exact regression this AC prevents.
+    expect(
+      checkFrankieEvidence({
+        missionId: 'M-TEST-001',
+        stagedCount: 0,
+        cwd: scratch(), // no evidence report written — would block under the old doneCount keying
+      })
     ).toBeNull();
   });
 
   it('allows when there is no mission id to resolve an evidence path against', () => {
-    expect(checkFrankieEvidence({ missionId: null, doneCount: 1, cwd: scratch() })).toBeNull();
+    expect(checkFrankieEvidence({ missionId: null, stagedCount: 1, cwd: scratch() })).toBeNull();
   });
 
   it('fails open (allows) when the filesystem check itself throws, rather than hard-blocking on adversity', () => {
@@ -358,7 +469,7 @@ describe('stop-gates — checkFrankieEvidence', () => {
     expect(
       checkFrankieEvidence({
         missionId: 'M-TEST-001',
-        doneCount: 1,
+        stagedCount: 1,
         cwd: 12345 as unknown as string,
       })
     ).toBeNull();
@@ -366,24 +477,25 @@ describe('stop-gates — checkFrankieEvidence', () => {
 
   // -------------------------------------------------------------------------
   // Staleness — a pre-rework report must not satisfy the gate forever. The
-  // done-transition timestamp comes from the board's done items
-  // (completedAt, falling back to updatedAt).
+  // transition timestamp now comes from the board's STAGED items
+  // (completedAt, falling back to updatedAt) — items sit in staged while
+  // awaiting the walk, so that is the meaningful "last touched" moment.
   // -------------------------------------------------------------------------
   describe('staleness (ADR 0004: evidence must reflect the final code)', () => {
     const HOUR = 60 * 60 * 1000;
 
-    /** Backdates the report so a done transition can postdate it. */
+    /** Backdates the report so a staged transition can postdate it. */
     function backdateReport(cwd: string, missionId: string, when: Date) {
       utimesSync(join(cwd, '.qa-evidence', missionId, 'report.md'), when, when);
     }
 
-    it('blocks with a re-walk message when the newest done transition postdates the report', () => {
+    it('blocks with a re-walk message when the newest staged transition postdates the report', () => {
       const cwd = scratch('M-TEST-001');
       backdateReport(cwd, 'M-TEST-001', new Date(Date.now() - 2 * HOUR));
       const message = checkFrankieEvidence({
         missionId: 'M-TEST-001',
-        doneCount: 2,
-        doneItems: [
+        stagedCount: 2,
+        stagedItems: [
           { id: 'WI-001', updatedAt: new Date(Date.now() - 3 * HOUR).toISOString() },
           { id: 'WI-002', updatedAt: new Date(Date.now() - 1 * HOUR).toISOString() },
         ],
@@ -396,13 +508,13 @@ describe('stop-gates — checkFrankieEvidence', () => {
       expect(message).toMatch(/ATEAM_SKIP_FRANKIE_GATE=1/);
     });
 
-    it('prefers completedAt over updatedAt as the done-transition record', () => {
+    it('prefers completedAt over updatedAt as the staged-transition record', () => {
       const cwd = scratch('M-TEST-001');
       backdateReport(cwd, 'M-TEST-001', new Date(Date.now() - 2 * HOUR));
       const message = checkFrankieEvidence({
         missionId: 'M-TEST-001',
-        doneCount: 1,
-        doneItems: [
+        stagedCount: 1,
+        stagedItems: [
           {
             id: 'WI-001',
             completedAt: new Date(Date.now() - 1 * HOUR).toISOString(),
@@ -414,26 +526,26 @@ describe('stop-gates — checkFrankieEvidence', () => {
       expect(message).toMatch(/STALE/i);
     });
 
-    it('passes when the report is newer than every done transition', () => {
+    it('passes when the report is newer than every staged transition', () => {
       const cwd = scratch('M-TEST-001');
       expect(
         checkFrankieEvidence({
           missionId: 'M-TEST-001',
-          doneCount: 1,
-          doneItems: [{ id: 'WI-001', updatedAt: new Date(Date.now() - 1 * HOUR).toISOString() }],
+          stagedCount: 1,
+          stagedItems: [{ id: 'WI-001', updatedAt: new Date(Date.now() - 1 * HOUR).toISOString() }],
           cwd,
         })
       ).toBeNull();
     });
 
-    it('fails open when the done items carry no usable timestamp (staleness cannot be derived)', () => {
+    it('fails open when the staged items carry no usable timestamp (staleness cannot be derived)', () => {
       const cwd = scratch('M-TEST-001');
       backdateReport(cwd, 'M-TEST-001', new Date(Date.now() - 2 * HOUR));
       expect(
         checkFrankieEvidence({
           missionId: 'M-TEST-001',
-          doneCount: 1,
-          doneItems: [{ id: 'WI-001' }, { id: 'WI-002', updatedAt: 'not-a-date' }],
+          stagedCount: 1,
+          stagedItems: [{ id: 'WI-001' }, { id: 'WI-002', updatedAt: 'not-a-date' }],
           cwd,
         })
       ).toBeNull();
@@ -446,8 +558,8 @@ describe('stop-gates — checkFrankieEvidence', () => {
       expect(
         checkFrankieEvidence({
           missionId: 'M-TEST-001',
-          doneCount: 1,
-          doneItems: [{ id: 'WI-001', updatedAt: new Date().toISOString() }],
+          stagedCount: 1,
+          stagedItems: [{ id: 'WI-001', updatedAt: new Date().toISOString() }],
           cwd,
         })
       ).toBeNull();
@@ -465,7 +577,7 @@ describe('stop-gates — checkFrankieEvidence', () => {
     it('blocks with a distinct do-not-dispatch-Stockwell message when the report contains ❌', () => {
       const message = checkFrankieEvidence({
         missionId: 'M-TEST-001',
-        doneCount: 1,
+        stagedCount: 1,
         cwd: scratch('M-TEST-001', { reportBody: FAILED_REPORT }),
       });
       expect(message).toMatch(/FAILED/);
@@ -475,13 +587,21 @@ describe('stop-gates — checkFrankieEvidence', () => {
       expect(message).toMatch(/❌/);
       expect(message).toMatch(/ATEAM_SKIP_FRANKIE_GATE=1/);
       expect(message).not.toMatch(/STALE/);
+      expect(
+        message,
+        'named items are reworked and returned to staged before Frankie re-walks'
+      ).toMatch(/back in staged/i);
+      expect(
+        message,
+        'WI-794: staged→testing|implementing is a real, rejection-cap-counted transition, not a manual reopen'
+      ).toMatch(/not a manual reopen/i);
     });
 
     it('passes a fresh, all-green report', () => {
       expect(
         checkFrankieEvidence({
           missionId: 'M-TEST-001',
-          doneCount: 1,
+          stagedCount: 1,
           cwd: scratch('M-TEST-001', { reportBody: GREEN_REPORT }),
         })
       ).toBeNull();
@@ -492,7 +612,7 @@ describe('stop-gates — checkFrankieEvidence', () => {
       expect(
         checkFrankieEvidence({
           missionId: 'M-TEST-001',
-          doneCount: 1,
+          stagedCount: 1,
           cwd: scratch('M-TEST-001', { reportBody: FAILED_REPORT }),
         })
       ).toBeNull();
@@ -504,7 +624,7 @@ describe('stop-gates — checkFrankieEvidence', () => {
       const cwd = scratch(null);
       mkdirSync(join(cwd, '.qa-evidence', 'M-TEST-001', 'report.md'), { recursive: true });
       expect(
-        checkFrankieEvidence({ missionId: 'M-TEST-001', doneCount: 1, cwd })
+        checkFrankieEvidence({ missionId: 'M-TEST-001', stagedCount: 1, cwd })
       ).toBeNull();
     });
   });

@@ -8,13 +8,14 @@ const prisma = new PrismaClient({ adapter });
 /**
  * Default stages configuration matching A-Team pipeline.
  *
- * 8 stages with individual WIP limits:
+ * 9 stages with individual WIP limits:
  * - briefings: Work items not yet started (unlimited)
  * - ready: Items ready for work (WIP 10)
  * - testing: Murdock writes tests (WIP 3)
  * - implementing: B.A. implements (WIP 3)
  * - probing: Amy investigates (WIP 3)
  * - review: Lynch reviews (WIP 3)
+ * - staged: Items awaiting Frankie's mission-tail walk (unlimited)
  * - done: Completed items (unlimited)
  * - blocked: Items needing human input (unlimited)
  */
@@ -25,8 +26,9 @@ const STAGES = [
   { id: 'implementing', name: 'Implementing', order: 3, wipLimit: 3 },
   { id: 'probing', name: 'Probing', order: 4, wipLimit: 3 },
   { id: 'review', name: 'Review', order: 5, wipLimit: 3 },
-  { id: 'done', name: 'Done', order: 6, wipLimit: null },
-  { id: 'blocked', name: 'Blocked', order: 7, wipLimit: null },
+  { id: 'staged', name: 'Staged', order: 6, wipLimit: null },
+  { id: 'done', name: 'Done', order: 7, wipLimit: null },
+  { id: 'blocked', name: 'Blocked', order: 8, wipLimit: null },
 ] as const;
 
 async function main() {

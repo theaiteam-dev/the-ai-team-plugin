@@ -35,6 +35,7 @@ import {
   normalizeMission,
   countBoard,
   checkFrankieEvidence,
+  checkStagedNotPromoted,
   checkFinalReviewRejection,
 } from './lib/stop-gates.js';
 
@@ -94,7 +95,7 @@ async function checkFinalReview() {
     }
   }
 
-  const { activeCounts, totalActive, doneCount } = countBoard(boardData.columns);
+  const { activeCounts, totalActive, doneCount, stagedCount } = countBoard(boardData.columns);
 
   // If items are still active, block stop
   if (totalActive > 0) {
@@ -123,12 +124,25 @@ async function checkFinalReview() {
   // the primary execution mode, where Hannibal runs in the main session.
   const frankieBlock = checkFrankieEvidence({
     missionId: missionData.id,
-    doneCount,
-    doneItems: boardData.columns.done,
+    stagedCount,
+    stagedItems: boardData.columns.staged,
   });
   if (frankieBlock) {
     console.log(JSON.stringify({ decision: 'block', additionalContext: frankieBlock }));
     process.exit(0);
+  }
+
+  // WI-791 AC2: Frankie's evidence clearing does not mean promotion has run
+  // — that only happens via WI-790's atomic transaction when Stockwell's
+  // review is written. An all-staged board must never be treated as an
+  // empty (no-mission) board and allowed to stop. Uses the same exit(2)+
+  // stderr mechanism as the other pre-existing gates below (this is NOT the
+  // Frankie-specific JSON-decision sub-check, so ATEAM_SKIP_FRANKIE_GATE
+  // must not suppress it).
+  const stagedBlock = checkStagedNotPromoted(stagedCount);
+  if (stagedBlock) {
+    process.stderr.write(`${stagedBlock}\n`);
+    process.exit(2);
   }
 
   // If all items done but no final review verdict, block stop

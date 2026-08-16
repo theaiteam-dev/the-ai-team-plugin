@@ -1,0 +1,13 @@
+name: staged-column-on-mission-board
+description: >
+  The mission board exposes a Staged column between Probing and Done, so an
+  operator can tell "individually complete, awaiting the mission-tail walk"
+  apart from "verified and sealed". Graduated from Frankie's DoD walk for
+  mission M-20260815-001 (staged-stage PRD, DoD statement 6).
+steps:
+  - visit: /
+  - wait_for: STAGED
+expect:
+  - visible: PROBING
+  - visible: STAGED
+  - visible: DONE

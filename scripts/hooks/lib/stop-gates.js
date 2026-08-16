@@ -178,11 +178,12 @@ export function checkFinalReviewRejection(review) {
   if (parseFinalReviewVerdict(review) !== 'rejected') return null;
   return (
     `STOP: Stockwell's Final Mission Review verdict is FINAL REJECTED. Do NOT run post-checks ` +
-    `and do NOT dispatch Tawnia. Surface the items Stockwell named to the operator — reopening a ` +
-    `done item is a manual operator action outside the pipeline (done is terminal, ADR 0005). ` +
-    `Once every named item is reworked and back in done, the mission tail RESTARTS at Frankie ` +
-    `(ADR 0004): he re-walks the FULL Definition of Done before Stockwell re-reviews, so the ` +
-    `evidence bundle always reflects the final code.`
+    `and do NOT dispatch Tawnia. For each item Stockwell named, move it out of staged to testing ` +
+    `or implementing using the earliest-flagged-stage rule (WI-794) — a real, rejection-cap-counted ` +
+    `transition, not a manual reopen (done is terminal, ADR 0005; items here are still in staged, ` +
+    `never done). Once every named item is reworked and back in staged, the mission tail RESTARTS ` +
+    `at Frankie (ADR 0004): he re-walks the FULL Definition of Done before Stockwell re-reviews, so ` +
+    `the evidence bundle always reflects the final code.`
   );
 }
 
@@ -234,7 +235,15 @@ export async function fetchMission(apiUrl, projectId) {
 /**
  * Counts items sitting in stages that mean work is still in flight.
  *
- * @returns {{ activeCounts: Record<string, number>, totalActive: number, doneCount: number }}
+ * WI-791: `staged` is deliberately NOT an ACTIVE_STAGES entry — it is a
+ * holding pen between Amy's probing and the mission-tail promotion to done
+ * (WI-790), not in-flight pipeline work. Folding it into totalActive would
+ * make the "totalActive > 0 → block" check swallow an all-staged board with
+ * the generic "items still active" message instead of the correct
+ * Frankie-evidence / not-yet-promoted diagnosis. stagedCount is reported as
+ * its own independent field instead, alongside totalActive and doneCount.
+ *
+ * @returns {{ activeCounts: Record<string, number>, totalActive: number, doneCount: number, stagedCount: number }}
  */
 export function countBoard(columns) {
   const cols = isPlainObject(columns) ? columns : {};
@@ -253,6 +262,7 @@ export function countBoard(columns) {
     activeCounts,
     totalActive,
     doneCount: Array.isArray(cols.done) ? cols.done.length : 0,
+    stagedCount: Array.isArray(cols.staged) ? cols.staged.length : 0,
   };
 }
 
@@ -282,16 +292,19 @@ function readSurfaces(cwd) {
 }
 
 /**
- * The most recent done-transition timestamp derivable from the board's done
- * column, in epoch ms. `completedAt` is the transition record when the API
- * provides it; `updatedAt` is the fallback (done is terminal per ADR 0005, so
- * a done item's last update IS its move into done). Returns null when no
- * timestamp is derivable — callers must skip the staleness check (fail open).
+ * The most recent transition timestamp derivable from a board column's item
+ * list, in epoch ms. `completedAt` is the transition record when the API
+ * provides it; `updatedAt` is the fallback. Returns null when no timestamp
+ * is derivable — callers must skip the staleness check (fail open).
+ *
+ * WI-791: used against the `staged` column now, not `done` — items sit in
+ * staged while awaiting Frankie's walk, so a staged item's last update IS
+ * its move into staged (the moment the evidence bundle needs to postdate).
  */
-function latestDoneTransition(doneItems) {
-  if (!Array.isArray(doneItems)) return null;
+function latestTransition(items) {
+  if (!Array.isArray(items)) return null;
   let latest = null;
-  for (const item of doneItems) {
+  for (const item of items) {
     if (!isPlainObject(item)) continue;
     const ts = Date.parse(item.completedAt ?? item.updatedAt ?? '');
     if (Number.isFinite(ts) && (latest === null || ts > latest)) latest = ts;
@@ -305,11 +318,17 @@ function latestDoneTransition(doneItems) {
  * bundle exists on disk — and that bundle must be trustworthy:
  *
  *   1. Missing report → block (dispatch Frankie).
- *   2. Report older than the newest done transition → block (STALE: rework
+ *   2. Report older than the newest staged transition → block (STALE: rework
  *      happened after the walk; ADR 0004 requires a FULL DoD re-walk so the
  *      evidence always reflects the final code).
  *   3. Report containing failing (❌) DoD statements → block (Frankie's walk
  *      FAILED; do not dispatch Stockwell).
+ *
+ * WI-791: keyed on `stagedCount`/`stagedItems`, not `doneCount`/`doneItems` —
+ * items sit in `staged` awaiting the walk (done now only happens via WI-790's
+ * atomic promotion, gated behind Stockwell's approved review — by which point
+ * the walk has already happened and been evidenced against the staged
+ * transition).
  *
  * Unlike every other check in these hooks, this one keys off a LOCAL
  * filesystem condition, so adversity that has nothing to do with mission
@@ -321,21 +340,21 @@ function latestDoneTransition(doneItems) {
  * staleness check additionally fails open when the board items carry no
  * usable timestamp.
  *
- * @param {{ missionId: string|null|undefined, doneCount: number, doneItems?: unknown[], cwd?: string }} args
+ * @param {{ missionId: string|null|undefined, stagedCount: number, stagedItems?: unknown[], cwd?: string }} args
  * @returns {string|null} A block message, or null to allow the stop.
  */
-export function checkFrankieEvidence({ missionId, doneCount, doneItems = [], cwd = process.cwd() }) {
+export function checkFrankieEvidence({ missionId, stagedCount, stagedItems = [], cwd = process.cwd() }) {
   try {
     const override = String(process.env.ATEAM_SKIP_FRANKIE_GATE || '')
       .trim()
       .toLowerCase();
     if (override === '1' || override === 'true') return null;
 
-    // Only reached once every item is genuinely done — callers check the
-    // active count first. No mission id means no path to check evidence
-    // against, which is itself unexpected: fail open rather than block on an
-    // unresolvable path.
-    if (!missionId || !(doneCount > 0)) return null;
+    // Only reached once every pipeline stage is genuinely empty — callers
+    // check the active count first. No mission id means no path to check
+    // evidence against, which is itself unexpected: fail open rather than
+    // block on an unresolvable path.
+    if (!missionId || !(stagedCount > 0)) return null;
 
     if (!canFrankieDrive(readSurfaces(cwd))) return null;
 
@@ -351,13 +370,13 @@ export function checkFrankieEvidence({ missionId, doneCount, doneItems = [], cwd
     }
 
     // Staleness: a pre-rework report must not satisfy the gate forever. If
-    // the newest done transition postdates the report, items were reworked
+    // the newest staged transition postdates the report, items were reworked
     // after the walk — ADR 0004 requires a full re-walk.
-    const latestDone = latestDoneTransition(doneItems);
-    if (latestDone !== null && statSync(reportPath).mtimeMs < latestDone) {
+    const latestStaged = latestTransition(stagedItems);
+    if (latestStaged !== null && statSync(reportPath).mtimeMs < latestStaged) {
       return (
         `STOP: Frankie's evidence bundle is STALE. ` +
-        `.qa-evidence/${missionId}/report.md predates the most recent done transition, so items ` +
+        `.qa-evidence/${missionId}/report.md predates the most recent staged transition, so items ` +
         `were reworked after the walk. Dispatch Frankie to re-walk the FULL Definition of Done ` +
         `(every statement, not only previous failures — ADR 0004) so the evidence reflects the ` +
         `final code before the Final Mission Review. ` +
@@ -372,10 +391,11 @@ export function checkFrankieEvidence({ missionId, doneCount, doneItems = [], cwd
       return (
         `STOP: Frankie's walk FAILED. ` +
         `.qa-evidence/${missionId}/report.md contains failing (❌) Definition of Done statements. ` +
-        `Do NOT dispatch Stockwell for the Final Mission Review. Surface the failing items to the ` +
-        `operator — reopening a done item is a manual operator action (done is terminal, ADR 0005). ` +
-        `Once the named items are reworked and back in done, dispatch Frankie to re-walk the FULL ` +
-        `Definition of Done. ` +
+        `Do NOT dispatch Stockwell for the Final Mission Review. For each failing item, move it out ` +
+        `of staged to testing or implementing using the earliest-flagged-stage rule (WI-794) — a ` +
+        `real, rejection-cap-counted transition, not a manual reopen (done is terminal, ADR 0005; ` +
+        `items here are still in staged, never done). Once the named items are reworked and back in ` +
+        `staged, dispatch Frankie to re-walk the FULL Definition of Done. ` +
         `If this gate is wrong for this environment, re-run with ATEAM_SKIP_FRANKIE_GATE=1 to override it.`
       );
     }
@@ -386,4 +406,34 @@ export function checkFrankieEvidence({ missionId, doneCount, doneItems = [], cwd
     // else — fail open, matching every other check in these hooks.
     return null;
   }
+}
+
+/**
+ * WI-791 AC2: items sitting in `staged` have not been promoted to `done`
+ * yet, and the Stop hooks themselves never promote anything — promotion
+ * only happens inside WI-790's atomic transaction, triggered when Stockwell
+ * writes a FINAL APPROVED Final Mission Review. So a mission with items
+ * still sitting in staged must not be allowed to end even once Frankie's
+ * evidence gate has cleared: an all-staged board must never be mistaken for
+ * an empty (no-mission) board.
+ *
+ * Unlike checkFrankieEvidence, this is a plain board-state fact — it has
+ * nothing to do with the local filesystem or environment, so it is
+ * unconditional on `stagedCount > 0` and is NOT covered by
+ * `ATEAM_SKIP_FRANKIE_GATE` (that override documents itself as suppressing
+ * only the Frankie-specific evidence sub-check, not the more fundamental
+ * fact that promotion hasn't run yet).
+ *
+ * @param {number} stagedCount
+ * @returns {string|null} A block message, or null when nothing is staged.
+ */
+export function checkStagedNotPromoted(stagedCount) {
+  if (!(stagedCount > 0)) return null;
+  return (
+    `STOP: ${stagedCount} item(s) remain staged, not yet promoted to done. Promotion runs ` +
+    `automatically inside the same transaction that persists Stockwell's Final Mission Review once ` +
+    `its verdict is FINAL APPROVED — dispatch Stockwell if the review has not been written yet, or ` +
+    `check the review's verdict if it has already been written. The mission cannot stop while items ` +
+    `sit in staged.`
+  );
 }

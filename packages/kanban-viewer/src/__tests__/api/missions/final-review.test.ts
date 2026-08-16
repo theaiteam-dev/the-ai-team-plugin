@@ -13,12 +13,23 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
  */
 
 // Mock Prisma client
+//
+// WI-790 note: $transaction is added here so this file keeps working once
+// the POST handler wraps mission.update (and staged->done promotion) in a
+// transaction. This uses the SAME shared-object $transaction pattern already
+// established elsewhere in this codebase (e.g. stop-advance.test.ts) — the
+// callback receives this same mockPrisma object, so a call to
+// `tx.mission.update(...)` inside the real handler's transaction callback
+// still resolves to `mockPrisma.mission.update`, and every existing
+// assertion below keeps working unchanged whether the update happens
+// directly or via `tx` inside `prisma.$transaction(...)`.
 const mockPrisma = vi.hoisted(() => ({
   mission: {
     findFirst: vi.fn(),
     findUnique: vi.fn(),
     update: vi.fn(),
   },
+  $transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback(mockPrisma)),
 }));
 
 vi.mock('@/lib/db', () => ({

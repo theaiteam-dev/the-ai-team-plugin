@@ -33,7 +33,7 @@ var itemsListItemsCmd = &cobra.Command{
 		if cmd.Flags().Changed("priority") { queryParams["priority"] = itemsListItemsCmd_priority }
 		if cmd.Flags().Changed("agent")    { queryParams["agent"] = itemsListItemsCmd_agent }
 		queryParams["includeArchived"] = strconv.FormatBool(itemsListItemsCmd_includeArchived)
-		if cmd.Flags().Changed("stage") { if err := validate.Enum("stage", itemsListItemsCmd_stage, []string{"briefings", "ready", "testing", "implementing", "review", "probing", "done", "blocked"}); err != nil { return err } }
+		if cmd.Flags().Changed("stage") { if err := validate.Enum("stage", itemsListItemsCmd_stage, []string{"briefings", "ready", "testing", "implementing", "review", "probing", "staged", "done", "blocked"}); err != nil { return err } }
 		if cmd.Flags().Changed("type") { if err := validate.Enum("type", itemsListItemsCmd_type, []string{"feature", "bug", "enhancement", "task"}); err != nil { return err } }
 		if cmd.Flags().Changed("priority") { if err := validate.Enum("priority", itemsListItemsCmd_priority, []string{"critical", "high", "medium", "low"}); err != nil { return err } }
 		resp, err := c.Do("GET", "/api/items", pathParams, queryParams, nil)
@@ -55,9 +55,9 @@ var itemsListItemsCmd = &cobra.Command{
 
 func init() {
 	itemsCmd.AddCommand(itemsListItemsCmd)
-	itemsListItemsCmd.Flags().StringVar(&itemsListItemsCmd_stage, "stage", "", "(briefings|ready|testing|implementing|review|probing|done|blocked)")
+	itemsListItemsCmd.Flags().StringVar(&itemsListItemsCmd_stage, "stage", "", "(briefings|ready|testing|implementing|review|probing|staged|done|blocked)")
 	itemsListItemsCmd.RegisterFlagCompletionFunc("stage", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return []string{"briefings", "ready", "testing", "implementing", "review", "probing", "done", "blocked"}, cobra.ShellCompDirectiveNoFileComp
+		return []string{"briefings", "ready", "testing", "implementing", "review", "probing", "staged", "done", "blocked"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	itemsListItemsCmd.Flags().StringVar(&itemsListItemsCmd_type, "type", "", "(feature|bug|enhancement|task)")
 	itemsListItemsCmd.RegisterFlagCompletionFunc("type", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {

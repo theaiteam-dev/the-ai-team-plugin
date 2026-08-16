@@ -20,8 +20,12 @@ import {
 import { isValidTransition, checkWipLimit } from '@/lib/validation';
 import { getAndValidateProjectId } from '@/lib/project-utils';
 import { transformItemToResponse } from '@/lib/item-transform';
+import { getRejectionEscalationThreshold } from '@/app/api/agents/stop/route';
 import type { StageId } from '@/types/board';
 import type { MoveItemRequest, MoveItemResponse } from '@/types/api';
+import type { WorkLogAction } from '@/types/item';
+
+const TAIL_REWORK_AGENT = 'Hannibal';
 
 /** Typed error for WIP limit exceeded within a transaction. */
 class WipLimitError extends Error {
@@ -41,6 +45,7 @@ const VALID_STAGES: StageId[] = [
   'implementing',
   'probing',
   'review',
+  'staged',
   'done',
   'blocked',
 ];
@@ -116,33 +121,61 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const fromStage = item.stageId as StageId;
 
-    // Validate stage transition
+    // Validate stage transition (against the originally requested toStage —
+    // an escalation override to 'blocked' below bypasses this check the
+    // same way agentStop's rejection branch does, since 'blocked' is always
+    // a legal landing spot for an item that hit the rejection cap).
     if (!isValidTransition(fromStage, toStage)) {
       const error = createInvalidTransitionError(fromStage, toStage);
       return NextResponse.json(error.toResponse(), { status: 400 });
     }
 
-    // Get target stage configuration for WIP limit check
+    // WI-794: a move out of 'staged' to 'testing' or 'implementing' is
+    // Hannibal executing Frankie/Stockwell's tail rework decision — no
+    // agent holds a claim on the item by tail time, so agentStop's
+    // rejection path is unavailable (adr/0005). This counts against the
+    // SAME rejection cap Lynch/Amy rejections use, and escalates to
+    // 'blocked' at the cap exactly like agentStop's rejection branch —
+    // computed here, before the WIP check, so an escalation's WIP
+    // evaluation runs against the RESOLVED destination ('blocked', always
+    // unlimited), not the originally-requested stage the item never lands in.
+    //
+    // Deliberately narrower than "anything but the promotion to done":
+    // staged->ready is the manual-operator-recovery transition (structurally
+    // identical to probing->ready, which CLAUDE.md documents as existing
+    // "for manual operator recovery... but no pipeline agent uses it as a
+    // rejection target") — it must NOT count against the cap, or a healthy
+    // item repeatedly re-decomposed via that recovery path would eventually
+    // escalate to blocked purely from operator recovery actions.
+    const isTailRework = fromStage === 'staged' && (toStage === 'testing' || toStage === 'implementing');
+    const newRejectionCount = isTailRework ? item.rejectionCount + 1 : item.rejectionCount;
+    const escalated = isTailRework && newRejectionCount >= getRejectionEscalationThreshold();
+    const resolvedStage: StageId = escalated ? 'blocked' : toStage;
+
+    // Get resolved-stage configuration for WIP limit check
     const targetStage = await prisma.stage.findUnique({
-      where: { id: toStage },
+      where: { id: resolvedStage },
     });
 
     const wipLimit = targetStage?.wipLimit ?? null;
 
-    // Wrap WIP limit check and update in a transaction to prevent race conditions
-    // where two concurrent requests both pass the WIP check then both execute updates
+    // Wrap WIP limit check and update (+ tail-rework counting) in a
+    // transaction to prevent race conditions where two concurrent requests
+    // both pass the WIP check then both execute updates, and so a WIP
+    // failure can never leave a counted rejection with the item still in
+    // staged (AC6).
     let updatedItem;
     let newCount: number;
     try {
       const result = await prisma.$transaction(async (tx) => {
-        // Count items currently in target stage (for this project only)
+        // Count items currently in the resolved target stage (for this project only)
         const currentCount = await tx.item.count({
-          where: { stageId: toStage, projectId, archivedAt: null },
+          where: { stageId: resolvedStage, projectId, archivedAt: null },
         });
 
         // Check WIP limit unless force flag is set
         if (!force) {
-          const wipCheck = checkWipLimit(toStage, currentCount, wipLimit);
+          const wipCheck = checkWipLimit(resolvedStage, currentCount, wipLimit);
           if (!wipCheck.allowed) {
             throw new WipLimitError(wipLimit!, currentCount);
           }
@@ -152,10 +185,27 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const item = await tx.item.update({
           where: { id: itemId },
           data: {
-            stageId: toStage,
+            stageId: resolvedStage,
             updatedAt: new Date(),
+            ...(isTailRework && { rejectionCount: { increment: 1 } }),
           },
         });
+
+        // Distinct from the generic Lynch/Amy 'rejected' work_log shape —
+        // deliberate refinement-gate decision so retros can measure
+        // found-by-the-tail independently from found-in-per-item-review.
+        if (isTailRework) {
+          await tx.workLog.create({
+            data: {
+              agent: TAIL_REWORK_AGENT,
+              action: 'tail_rework' as WorkLogAction,
+              summary: `Tail rework: moved from staged to ${resolvedStage}${
+                escalated ? ' (rejection cap reached)' : ''
+              }`,
+              itemId,
+            },
+          });
+        }
 
         return { item, newCount: currentCount + 1 };
       });
@@ -165,7 +215,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     } catch (dbError) {
       // Check if this is a WIP limit exceeded error from the transaction
       if (dbError instanceof WipLimitError) {
-        const error = createWipLimitExceededError(toStage, dbError.limit, dbError.current);
+        const error = createWipLimitExceededError(resolvedStage, dbError.limit, dbError.current);
         return NextResponse.json(error.toResponse(), { status: 400 });
       }
 
@@ -182,7 +232,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         item: transformItemToResponse(updatedItem),
         previousStage: fromStage,
         wipStatus: {
-          stageId: toStage,
+          stageId: resolvedStage,
           limit: wipLimit,
           current: newCount,
           available,

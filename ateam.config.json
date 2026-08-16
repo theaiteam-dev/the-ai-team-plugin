@@ -3,18 +3,18 @@
   "packageManager": "bun",
   "checks": {
     "lint": null,
-    "unit": null,
+    "unit": "bun run test",
     "e2e": null
   },
   "precheck": ["lint", "unit"],
   "postcheck": ["lint", "unit"],
   "devServer": {
-    "url": "http://localhost:5566",
-    "start": "cd packages/kanban-viewer && npm run dev",
-    "restart": "docker compose restart",
-    "managed": false
+    "url": "http://localhost:5567",
+    "start": "cd packages/kanban-viewer && npm run dev:qa",
+    "restart": "cd packages/kanban-viewer && npm run dev:qa",
+    "managed": true
   },
-  "surfaces": [],
+  "surfaces": ["web"],
   "qa": {
     "seed": null,
     "account": { "credential_env": null },

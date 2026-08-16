@@ -39,7 +39,7 @@ components:
     # ── Enums ──────────────────────────────────────────────────────────────────
     StageId:
       type: string
-      enum: [briefings, ready, testing, implementing, review, probing, done, blocked]
+      enum: [briefings, ready, testing, implementing, review, probing, staged, done, blocked]
 
     ItemType:
       type: string

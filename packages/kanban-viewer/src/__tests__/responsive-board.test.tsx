@@ -28,6 +28,7 @@ const createEmptyItemsByStage = (): Record<Stage, WorkItem[]> => ({
   implementing: [],
   review: [],
   probing: [],
+  staged: [],
   done: [],
   blocked: [],
 });
@@ -43,6 +44,7 @@ const createItemsByStage = (): Record<Stage, WorkItem[]> => ({
   implementing: [],
   review: [createWorkItem({ id: '005', title: 'Review Item', stage: 'review' })],
   probing: [],
+  staged: [],
   done: [],
   blocked: [],
 });
@@ -70,9 +72,30 @@ describe('ResponsiveBoard', () => {
       const desktopBoard = screen.getByTestId('desktop-board');
       expect(desktopBoard).toBeInTheDocument();
 
-      // All 8 stages should be present (including probing)
+      // All 9 stages should be present (including probing and staged)
       const columns = within(desktopBoard).getAllByTestId('board-column');
-      expect(columns).toHaveLength(8);
+      expect(columns).toHaveLength(9);
+    });
+
+    it('renders a Staged column positioned between Probing and Done (WI-792)', () => {
+      render(
+        <ResponsiveBoard
+          itemsByStage={createEmptyItemsByStage()}
+          wipLimits={{}}
+        />
+      );
+
+      const desktopBoard = screen.getByTestId('desktop-board');
+      const columns = within(desktopBoard).getAllByTestId('board-column');
+      const columnLabels = columns.map((c) => c.textContent ?? '');
+
+      const probingIdx = columnLabels.findIndex((t) => /probing/i.test(t));
+      const stagedIdx = columnLabels.findIndex((t) => /staged/i.test(t));
+      const doneIdx = columnLabels.findIndex((t) => /^done|\bdone\b/i.test(t));
+
+      expect(stagedIdx).toBeGreaterThan(-1);
+      expect(stagedIdx).toBe(probingIdx + 1);
+      expect(doneIdx).toBe(stagedIdx + 1);
     });
   });
 
@@ -149,6 +172,86 @@ describe('ResponsiveBoard', () => {
       // Testing content should be visible
       const testingContent = screen.getByTestId('stage-content-testing');
       expect(testingContent).toHaveAttribute('data-state', 'active');
+    });
+
+    // WI-792: mobile stage tabs — Staged tab must be reachable and operable
+    // the same way every other tab already is (focusable in column order,
+    // Enter/Space activates it), and must expose its selected state to
+    // assistive technology.
+    it('the Staged tab is focusable and Enter activates it, selecting the Staged column (WI-792)', () => {
+      const itemsByStage = createItemsByStage();
+      render(
+        <ResponsiveBoard
+          itemsByStage={itemsByStage}
+          wipLimits={{}}
+        />
+      );
+
+      const stagedTab = screen.getByTestId('stage-tab-staged');
+      stagedTab.focus();
+      expect(document.activeElement).toBe(stagedTab);
+
+      fireEvent.keyDown(stagedTab, { key: 'Enter' });
+
+      const stagedContent = screen.getByTestId('stage-content-staged');
+      expect(stagedContent).toHaveAttribute('data-state', 'active');
+    });
+
+    it('the Staged tab is activated by Space as well as Enter (WI-792)', () => {
+      const itemsByStage = createItemsByStage();
+      render(
+        <ResponsiveBoard
+          itemsByStage={itemsByStage}
+          wipLimits={{}}
+        />
+      );
+
+      const stagedTab = screen.getByTestId('stage-tab-staged');
+      stagedTab.focus();
+      fireEvent.keyDown(stagedTab, { key: ' ' });
+
+      const stagedContent = screen.getByTestId('stage-content-staged');
+      expect(stagedContent).toHaveAttribute('data-state', 'active');
+    });
+
+    it('the Staged tab exposes its selected state to assistive technology via aria-selected (WI-792)', () => {
+      const itemsByStage = createItemsByStage();
+      render(
+        <ResponsiveBoard
+          itemsByStage={itemsByStage}
+          wipLimits={{}}
+        />
+      );
+
+      const stagedTab = screen.getByTestId('stage-tab-staged');
+
+      // Not yet selected by default (briefings is the default active tab).
+      expect(stagedTab).toHaveAttribute('aria-selected', 'false');
+
+      stagedTab.focus();
+      fireEvent.keyDown(stagedTab, { key: 'Enter' });
+
+      expect(stagedTab).toHaveAttribute('aria-selected', 'true');
+    });
+
+    it('tabs remain reachable in column order (staged sits between probing and done)', () => {
+      render(
+        <ResponsiveBoard
+          itemsByStage={createEmptyItemsByStage()}
+          wipLimits={{}}
+        />
+      );
+
+      const tabsContainer = screen.getByTestId('mobile-stage-tabs');
+      const tabs = within(tabsContainer).getAllByRole('tab');
+      const tabTestIds = tabs.map((t) => t.getAttribute('data-testid'));
+
+      const probingIdx = tabTestIds.indexOf('stage-tab-probing');
+      const stagedIdx = tabTestIds.indexOf('stage-tab-staged');
+      const doneIdx = tabTestIds.indexOf('stage-tab-done');
+
+      expect(stagedIdx).toBe(probingIdx + 1);
+      expect(doneIdx).toBe(stagedIdx + 1);
     });
   });
 
@@ -311,18 +414,26 @@ describe('ResponsiveBoard', () => {
   });
 
   describe('constants exports', () => {
-    it('should export ALL_STAGES with 8 stages', () => {
-      expect(ALL_STAGES).toHaveLength(8);
+    it('should export ALL_STAGES with 9 stages, staged positioned between probing and done', () => {
+      expect(ALL_STAGES).toHaveLength(9);
       expect(ALL_STAGES).toContain('briefings');
       expect(ALL_STAGES).toContain('probing');
+      expect(ALL_STAGES).toContain('staged');
       expect(ALL_STAGES).toContain('done');
       expect(ALL_STAGES).toContain('blocked');
+
+      const probingIdx = ALL_STAGES.indexOf('probing');
+      const stagedIdx = ALL_STAGES.indexOf('staged');
+      const doneIdx = ALL_STAGES.indexOf('done');
+      expect(stagedIdx).toBe(probingIdx + 1);
+      expect(doneIdx).toBe(stagedIdx + 1);
     });
 
     it('should export STAGE_LABELS with correct labels', () => {
       expect(STAGE_LABELS.briefings).toBe('Briefings');
       expect(STAGE_LABELS.implementing).toBe('Implementing');
       expect(STAGE_LABELS.blocked).toBe('Blocked');
+      expect(STAGE_LABELS.staged).toBe('Staged');
     });
   });
 });

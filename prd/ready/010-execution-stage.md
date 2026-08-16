@@ -236,13 +236,17 @@ items complete, before Tawnia's final commit**:
 - **On failure:** bounce the offending item back to B.A. **in-mission**,
   with the repro. B.A. still has full context; no post-merge rework, no
   stale fix branches.
-  > **Deferred (2026-08-15):** the in-mission bounce is **not implemented
-  > by the implementation mission.** `done` is terminal
-  > (`adr/0005-done-is-terminal-no-in-mission-rework.md`; see also the
-  > §3 scope ruling): Frankie reports the failing item to Hannibal with
-  > the repro, the mission tail halts, and reopening the item is a
-  > manual operator action — the bounce is reported, not automated. The
-  > same applies to the §2 timeline diagram's "bounce to B.A.
+  > **Deferral lifted (2026-08-16):** the in-mission bounce this section
+  > originally deferred (2026-08-15, `done` being terminal per
+  > `adr/0005-done-is-terminal-no-in-mission-rework.md`) is now implemented
+  > — see `prd/ready/staged-stage.md`. A `staged` stage sits between
+  > `probing` and `done` as the per-item pipeline's real terminal stage;
+  > Frankie and Stockwell run against `staged` items, and a Frankie failure
+  > or Stockwell rejection is a real, automated move (Hannibal executes
+  > `ateam board-move moveItem`, earliest-flagged-stage rule) rather than a
+  > manual operator action. `done` itself is still reached only via the
+  > mission tail's atomic promotion once Stockwell's review is APPROVED.
+  > The same applies to the §2 timeline diagram's "bounce to B.A.
   > in-mission" arrow.
 - **On green:** write the evidence bundle and graduated specs (§2.5);
   both ride Tawnia's final commit.
@@ -363,10 +367,12 @@ with criteria instead of a drift.
 > judged on **items 1–4 only**. Items 5–8 describe *pilot-mission
 > outcomes* — they can only be observed by running a real mission on
 > joshowens.dev with Frankie in the loop, not by the mission that builds
-> the machinery. They are validated by the next real mission, and item 5's
-> in-mission bounce is knowingly shipped incomplete (see the ADR on `done`
-> being terminal: Frankie reports the integration miss, but reopening the
-> item is a manual operator action rather than an automatic bounce).
+> the machinery. They are validated by the next real mission. Item 5's
+> in-mission bounce, originally shipped incomplete (see the ADR on `done`
+> being terminal), is now implemented — see `prd/ready/staged-stage.md`:
+> Frankie reports the integration miss, and Hannibal executes a real,
+> automated move (earliest-flagged-stage rule) rather than requiring a
+> manual operator action to reopen the item.
 
 1. Running `/ai-team:setup` on a repo asks about (or auto-detects)
    surfaces, QA recipe (incl. `drive`), `testing_level`, evidence policy,

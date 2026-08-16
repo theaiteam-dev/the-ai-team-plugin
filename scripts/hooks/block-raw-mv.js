@@ -55,7 +55,7 @@ try {
     process.stderr.write('  - WIP limits are enforced\n');
     process.stderr.write('  - Activity is logged\n');
     process.stderr.write('\n');
-    process.stderr.write('Available stages: briefings, ready, testing, implementing, review, probing, done, blocked\n');
+    process.stderr.write('Available stages: briefings, ready, testing, implementing, review, probing, staged, done, blocked\n');
     process.exit(2);
   }
 

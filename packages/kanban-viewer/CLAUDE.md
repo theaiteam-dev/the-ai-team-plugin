@@ -59,7 +59,7 @@ mission/
 └── archive/             # Archived missions
 ```
 
-**Stages:** briefings → ready → testing → implementing → review → probing → done (or blocked)
+**Stages:** briefings → ready → testing → implementing → review → probing → staged → done (or blocked) — `staged` is the per-item pipeline's real terminal stage; an item reaches `done` only when the mission tail's Final Mission Review is APPROVED and the API atomically promotes every `staged` item (see `adr/0005-done-is-terminal-no-in-mission-rework.md`'s 2026-08-16 amendment).
 
 ### Key Layers
 
@@ -94,7 +94,7 @@ mission/
 ### Core Types
 
 ```typescript
-type Stage = 'briefings' | 'ready' | 'probing' | 'testing' | 'implementing' | 'review' | 'done' | 'blocked';
+type Stage = 'briefings' | 'ready' | 'probing' | 'testing' | 'implementing' | 'review' | 'staged' | 'done' | 'blocked';
 type AgentName = 'Hannibal' | 'Face' | 'Murdock' | 'B.A.' | 'Lynch' | 'Amy' | 'Frankie' | 'Tawnia' | 'Stockwell';
 type BoardEventType = 'item-added' | 'item-moved' | 'item-updated' | 'item-deleted' | 'board-updated' | 'activity-entry-added';
 

@@ -90,7 +90,9 @@ From the data, extract:
 **Amy investigation findings** — work logs from Amy with `action: "completed"`:
 - Bugs found vs verified-clean
 - Probe areas (security, edge cases, concurrency)
-- Items that were sent back to `ready` from `probing`
+- Items that were sent back to `testing` or `implementing` from `probing` (FLAG routing, earliest-flagged-stage rule)
+
+**Tail-triggered rework** — work logs with `action: "tail_rework"` (WI-794): a Frankie failure or a Stockwell FINAL REJECTED verdict moved an item out of `staged` back to `testing` or `implementing`. This is a DISTINCT signal from the per-item Rejections/Amy findings above — it means a defect survived the ENTIRE per-item pipeline (Murdock, B.A., Lynch, AND Amy) and was only caught at the mission tail. Track these separately so retros can measure found-by-the-tail independently from found-in-per-item-review; a mission with zero per-item rejections but repeated tail rework is a worse signal than the reverse, not a clean pass.
 
 **Stockwell final review** — the persisted report from `getFinalReview` is the source of truth; the Stockwell work log summary is a secondary cross-check, not a replacement:
 - FINAL APPROVED or FINAL REJECTED
@@ -144,6 +146,7 @@ Compare each candidate against the returned top-50 `{fingerprint, pattern, title
 - A bug Amy should have probed for but a pattern of missed probe categories → `amy` (`probing`)
 - A cross-cutting/process issue only visible at Final Mission Review scope → `stockwell`
 - An orchestration or dispatch issue (wrong agent dispatched, WIP mishandling, stuck pipeline) → `hannibal`
+- Tail-triggered rework (`action: "tail_rework"`) → attribute by the SAME earliest-flagged-stage convention as a per-item rejection, based on whether the tail rework named a test gap or an impl bug — the distinguishing fact worth its own row is that it survived the ENTIRE per-item pipeline including Amy, not just which stage it lands on
 
 **c. Emit the row:**
 

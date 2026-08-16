@@ -507,6 +507,14 @@ describe('enforce-final-review — Frankie evidence-bundle gate', () => {
     }
   });
 
+  // WI-791: checkFrankieEvidence triggers on stagedCount, not doneCount —
+  // items sit in staged awaiting the walk. MOCK_BOARD_ONE_DONE is kept for
+  // the two scenarios that legitimately represent the fully-promoted end
+  // state (items already in done, nothing staged); every other fixture
+  // below uses MOCK_BOARD_ONE_STAGED so the Frankie gate actually fires.
+  const MOCK_BOARD_ONE_STAGED = JSON.stringify({
+    columns: { staged: [{ id: 'WI-001' }] },
+  });
   const MOCK_BOARD_ONE_DONE = JSON.stringify({
     columns: { done: [{ id: 'WI-001' }] },
   });
@@ -537,7 +545,7 @@ describe('enforce-final-review — Frankie evidence-bundle gate', () => {
     const result = runHook(
       HOOK,
       {},
-      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: missionWithId() },
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_STAGED, __TEST_MOCK_MISSION__: missionWithId() },
       dir
     );
     expect(result.exitCode, 'Frankie gate blocks via JSON, exit 0 — never a nonzero exit code (AC8)').toBe(0);
@@ -552,12 +560,13 @@ describe('enforce-final-review — Frankie evidence-bundle gate', () => {
     const result = runHook(
       HOOK,
       {},
-      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: missionWithId() },
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_STAGED, __TEST_MOCK_MISSION__: missionWithId() },
       dir
     );
     expect(result.exitCode).toBe(0);
     const output = parseStopOutput(result.stdout);
     expect(output.decision).toBe('block');
+    expect(output.additionalContext).toMatch(/frankie/i);
   });
 
   it('blocks on Frankie even when the final review verdict is already set (Frankie is checked first, unconditionally — adversarial ordering)', () => {
@@ -566,7 +575,7 @@ describe('enforce-final-review — Frankie evidence-bundle gate', () => {
       HOOK,
       {},
       {
-        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE,
+        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_STAGED,
         __TEST_MOCK_MISSION__: missionWithId({ final_review_verdict: 'FINAL APPROVED', postcheck: { passed: true } }),
       },
       dir
@@ -574,6 +583,7 @@ describe('enforce-final-review — Frankie evidence-bundle gate', () => {
     expect(result.exitCode).toBe(0);
     const output = parseStopOutput(result.stdout);
     expect(output.decision).toBe('block');
+    expect(output.additionalContext).toMatch(/frankie/i);
   });
 
   it('blocks when surfaces mix a drivable value with non-drivable ones (integration check — full matrix lives in qa-contract.test.js)', () => {
@@ -581,12 +591,13 @@ describe('enforce-final-review — Frankie evidence-bundle gate', () => {
     const result = runHook(
       HOOK,
       {},
-      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: missionWithId() },
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_STAGED, __TEST_MOCK_MISSION__: missionWithId() },
       dir
     );
     expect(result.exitCode).toBe(0);
     const output = parseStopOutput(result.stdout);
     expect(output.decision).toBe('block');
+    expect(output.additionalContext).toMatch(/frankie/i);
   });
 
   // ---------------------------------------------------------------------------
@@ -620,6 +631,19 @@ describe('enforce-final-review — Frankie evidence-bundle gate', () => {
     expect(output.decision).not.toBe('block');
   });
 
+  // ---------------------------------------------------------------------------
+  // WI-791 note: the tests below (AC3/AC7) intentionally keep MOCK_BOARD_ONE_DONE
+  // rather than switching to MOCK_BOARD_ONE_STAGED. With stagedCount 0 they
+  // remain correct post-re-key (checkFrankieEvidence short-circuits on
+  // `!(stagedCount > 0)` before ever reaching drivability/config-read logic,
+  // same as pre-re-key with doneCount), but they no longer exercise the
+  // drivability/config-fail-open branches specifically THROUGH the staged
+  // path — that exact coverage lives directly in stop-gates.test.ts's
+  // checkFrankieEvidence unit tests (called with stagedCount > 0). Left
+  // unchanged here rather than guessed, since it's not yet confirmed whether
+  // enforce-final-review.js will express the new "staged, not promoted"
+  // block via this hook's exit(2)/stderr convention or the Frankie-style
+  // JSON mechanism — flagged for Lynch/B.A. to close if meaningful.
   // ---------------------------------------------------------------------------
   // AC3 — no drivable surface (hardware-only, or surfaces absent entirely):
   // never blocks on Frankie's account, evidence bundle notwithstanding.
@@ -871,7 +895,13 @@ describe('enforce-orchestrator-stop — Frankie evidence-bundle gate', () => {
     return dir;
   }
 
-  const MOCK_BOARD_ONE_DONE = JSON.stringify({ columns: { done: [{ id: 'WI-001' }] } });
+  // WI-791: checkFrankieEvidence is re-keyed to trigger on stagedCount, not
+  // doneCount — items sit in staged awaiting the walk, not done (done now
+  // only happens via WI-790's atomic promotion, gated behind Stockwell's
+  // approved review). A board fixture with only `done` items no longer
+  // exercises the Frankie gate at all post-re-key, so every fixture below
+  // uses `staged` instead.
+  const MOCK_BOARD_ONE_STAGED = JSON.stringify({ columns: { staged: [{ id: 'WI-001' }] } });
 
   function missionMock(overrides: Record<string, unknown> = {}) {
     return JSON.stringify({
@@ -888,12 +918,12 @@ describe('enforce-orchestrator-stop — Frankie evidence-bundle gate', () => {
     postcheck: { passed: true },
   });
 
-  it('blocks the main session when all items are done, the surface is drivable, and no evidence bundle exists', () => {
+  it('blocks the main session when items are staged, the surface is drivable, and no evidence bundle exists', () => {
     const dir = makeScratchRepo({ surfaces: ['web'], evidence: false });
     const result = runHook(
       HOOK,
       { session_id: 'main-session-123' },
-      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: missionMock() },
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_STAGED, __TEST_MOCK_MISSION__: missionMock() },
       dir
     );
     expect(result.exitCode).toBe(0);
@@ -905,12 +935,12 @@ describe('enforce-orchestrator-stop — Frankie evidence-bundle gate', () => {
     );
   });
 
-  it('blocks on Frankie before the final-review gate, even when the verdict is already recorded', () => {
+  it('blocks on Frankie before any other staged-related gate, even when the verdict is already recorded', () => {
     const dir = makeScratchRepo({ surfaces: ['web'], evidence: false });
     const result = runHook(
       HOOK,
       {},
-      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: MISSION_FULLY_COMPLETE },
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_STAGED, __TEST_MOCK_MISSION__: MISSION_FULLY_COMPLETE },
       dir
     );
     const output = parseStopOutput(result.stdout);
@@ -918,35 +948,47 @@ describe('enforce-orchestrator-stop — Frankie evidence-bundle gate', () => {
     expect(String(output.additionalContext)).toMatch(/frankie/i);
   });
 
-  it('does not block on Frankie once the evidence report exists (pre-existing final-review gate still applies)', () => {
+  it('does not block on Frankie once the evidence report exists, but STILL blocks — items remain staged, not promoted (AC2)', () => {
+    // AC2: the orchestrator must not treat an all-staged board as an empty
+    // board and allow the stop. Promotion to done only happens via WI-790's
+    // atomic transaction when Stockwell's review is written — the Stop hook
+    // itself never promotes anything, so once Frankie's evidence clears, the
+    // mission is STILL blocked until that promotion has actually run.
     const dir = makeScratchRepo({ surfaces: ['web'], evidence: true });
     const result = runHook(
       HOOK,
       {},
-      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: missionMock() },
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_STAGED, __TEST_MOCK_MISSION__: missionMock() },
       dir
     );
     const output = parseStopOutput(result.stdout);
     expect(output.decision).toBe('block');
-    expect(String(output.additionalContext)).toMatch(/Final Mission Review/i);
-    expect(String(output.additionalContext), 'the Final Mission Review belongs to Stockwell').toMatch(
-      /Stockwell/
-    );
-    expect(String(output.additionalContext)).not.toMatch(/Lynch/);
+    expect(String(output.additionalContext)).toMatch(/staged/i);
+    expect(
+      String(output.additionalContext),
+      'must tell the operator promotion has not happened yet'
+    ).toMatch(/promot/i);
     expect(String(output.additionalContext)).not.toMatch(/frankie/i);
   });
 
-  it('does not block on Frankie for a repo with no drivable surface', () => {
+  it('still blocks (staged, not promoted) for a repo with no drivable surface — that only silences the Frankie-specific sub-check', () => {
+    // AC2's "not promoted" block is unconditional on stagedCount > 0: it has
+    // nothing to do with whether Frankie can walk this repo. A non-drivable
+    // surface means checkFrankieEvidence itself returns null (nothing to
+    // evidence-check), but the more fundamental fact — items are sitting in
+    // staged and nothing has promoted them — still holds and must still block.
     const dir = makeScratchRepo({ surfaces: ['hardware'], evidence: false });
     const result = runHook(
       HOOK,
       {},
-      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: MISSION_FULLY_COMPLETE },
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_STAGED, __TEST_MOCK_MISSION__: MISSION_FULLY_COMPLETE },
       dir
     );
     expect(result.exitCode).toBe(0);
     const output = parseStopOutput(result.stdout);
-    expect(output.decision).not.toBe('block');
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).not.toMatch(/frankie/i);
+    expect(String(output.additionalContext)).toMatch(/staged/i);
   });
 
   it('does not evaluate the Frankie condition for a subagent session', () => {
@@ -954,12 +996,47 @@ describe('enforce-orchestrator-stop — Frankie evidence-bundle gate', () => {
     const result = runHook(
       HOOK,
       { agent_type: 'tawnia' },
-      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE, __TEST_MOCK_MISSION__: missionMock() },
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_STAGED, __TEST_MOCK_MISSION__: missionMock() },
       dir
     );
     expect(result.exitCode).toBe(0);
     const output = parseStopOutput(result.stdout);
     expect(output.decision).not.toBe('block');
+  });
+
+  // -------------------------------------------------------------------------
+  // WI-791 AC2/AC3 core distinction (Sosa's highest silent-failure-risk flag):
+  // Frankie's evidence gate — and the "staged, not promoted" block — must
+  // fire ONLY once the pipeline stages are genuinely empty. A board where
+  // some items are staged but OTHERS are still mid-pipeline must block with
+  // the existing "items still active" message, not a staged/Frankie message
+  // — that would misdiagnose an in-flight mission as merely "awaiting
+  // promotion". This is exactly the failure mode a plain ACTIVE_STAGES
+  // append would risk: staged must never be folded into totalActive.
+  // -------------------------------------------------------------------------
+  it('blocks with the generic "items still active" message — NOT a Frankie/staged message — when pipeline stages are non-empty even though some items are already staged', () => {
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: false });
+    const result = runHook(
+      HOOK,
+      { session_id: 'main-session-456' },
+      {
+        __TEST_MOCK_BOARD__: JSON.stringify({
+          columns: {
+            testing: [{ id: 'WI-002' }], // pipeline work still in flight
+            staged: [{ id: 'WI-001' }], // AND some item already staged
+          },
+        }),
+      },
+      dir
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(
+      String(output.additionalContext),
+      'must not prematurely surface the Frankie/promotion message while other items are still mid-pipeline'
+    ).not.toMatch(/frankie/i);
+    expect(String(output.additionalContext)).toMatch(/still active/i);
   });
 });
 
@@ -995,7 +1072,8 @@ describe('Frankie evidence gate — ATEAM_SKIP_FRANKIE_GATE escape hatch', () =>
     return dir;
   }
 
-  const MOCK_BOARD_ONE_DONE = JSON.stringify({ columns: { done: [{ id: 'WI-001' }] } });
+  // WI-791: staged (not done) is what makes the Frankie gate fire post-re-key.
+  const MOCK_BOARD_ONE_STAGED = JSON.stringify({ columns: { staged: [{ id: 'WI-001' }] } });
   const MISSION_FULLY_COMPLETE = JSON.stringify({
     id: MISSION_ID,
     status: 'active',
@@ -1008,7 +1086,7 @@ describe('Frankie evidence gate — ATEAM_SKIP_FRANKIE_GATE escape hatch', () =>
       hookPath('enforce-final-review.js'),
       {},
       {
-        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE,
+        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_STAGED,
         __TEST_MOCK_MISSION__: MISSION_FULLY_COMPLETE,
       },
       drivableRepoWithoutEvidence()
@@ -1018,20 +1096,34 @@ describe('Frankie evidence gate — ATEAM_SKIP_FRANKIE_GATE escape hatch', () =>
     expect(String(output.additionalContext)).toMatch(/ATEAM_SKIP_FRANKIE_GATE=1/);
   });
 
-  it('enforce-final-review: allows the stop when ATEAM_SKIP_FRANKIE_GATE=1', () => {
+  // WI-791 design note: ATEAM_SKIP_FRANKIE_GATE is documented (stop-gates.js
+  // header) as an escape hatch for LOCAL FILESYSTEM/environment adversity
+  // that has nothing to do with mission progress (no Playwright, no
+  // flowspec, dev server down) — it suppresses checkFrankieEvidence's own
+  // block. It was never meant to let a mission stop with items still
+  // unpromoted, which is an independent, board-state fact the override does
+  // not (and must not) touch. So with the override set, the Frankie-specific
+  // message goes away, but the mission still cannot stop while items sit in
+  // staged — AC2's "not promoted" block still fires. This is a deliberate
+  // interpretation of an item the PRD itself flagged as having an open
+  // question for Sosa; confirm this reading holds before relying on it.
+  it('enforce-final-review: ATEAM_SKIP_FRANKIE_GATE=1 suppresses the Frankie-specific message, but the mission still cannot stop while items remain staged', () => {
     const result = runHook(
       hookPath('enforce-final-review.js'),
       {},
       {
-        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE,
+        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_STAGED,
         __TEST_MOCK_MISSION__: MISSION_FULLY_COMPLETE,
         ATEAM_SKIP_FRANKIE_GATE: '1',
       },
       drivableRepoWithoutEvidence()
     );
-    expect(result.exitCode).toBe(0);
-    const output = parseStopOutput(result.stdout);
-    expect(output.decision).not.toBe('block');
+    // enforce-final-review.js exits 2 on block (unlike
+    // enforce-orchestrator-stop.js's JSON-decision contract) — assert via
+    // stderr, matching this file's other enforce-final-review assertions.
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).not.toMatch(/frankie/i);
+    expect(result.stderr).toMatch(/staged/i);
   });
 
   it('enforce-orchestrator-stop: names the override in the block message', () => {
@@ -1039,7 +1131,7 @@ describe('Frankie evidence gate — ATEAM_SKIP_FRANKIE_GATE escape hatch', () =>
       hookPath('enforce-orchestrator-stop.js'),
       {},
       {
-        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE,
+        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_STAGED,
         __TEST_MOCK_MISSION__: MISSION_FULLY_COMPLETE,
       },
       drivableRepoWithoutEvidence()
@@ -1049,12 +1141,12 @@ describe('Frankie evidence gate — ATEAM_SKIP_FRANKIE_GATE escape hatch', () =>
     expect(String(output.additionalContext)).toMatch(/ATEAM_SKIP_FRANKIE_GATE=1/);
   });
 
-  it('enforce-orchestrator-stop: allows the stop when ATEAM_SKIP_FRANKIE_GATE=1', () => {
+  it('enforce-orchestrator-stop: ATEAM_SKIP_FRANKIE_GATE=1 suppresses the Frankie-specific message, but the mission still cannot stop while items remain staged', () => {
     const result = runHook(
       hookPath('enforce-orchestrator-stop.js'),
       {},
       {
-        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_DONE,
+        __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_STAGED,
         __TEST_MOCK_MISSION__: MISSION_FULLY_COMPLETE,
         ATEAM_SKIP_FRANKIE_GATE: '1',
       },
@@ -1062,7 +1154,9 @@ describe('Frankie evidence gate — ATEAM_SKIP_FRANKIE_GATE escape hatch', () =>
     );
     expect(result.exitCode).toBe(0);
     const output = parseStopOutput(result.stdout);
-    expect(output.decision).not.toBe('block');
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).not.toMatch(/frankie/i);
+    expect(String(output.additionalContext)).toMatch(/staged/i);
   });
 });
 
@@ -1292,7 +1386,11 @@ describe('enforce-orchestrator-stop — Frankie evidence quality gates', () => {
 
   const HOUR = 60 * 60 * 1000;
 
-  it('blocks with a STALE re-walk message when a done transition postdates the report (post-rework evidence)', () => {
+  // WI-791: staleness now compares against the newest STAGED transition, not
+  // the newest done one — items sit in staged awaiting the walk. Board
+  // fixtures below use `staged`, not `done`.
+
+  it('blocks with a STALE re-walk message when a staged transition postdates the report (post-rework evidence)', () => {
     const dir = repoWithReport('# Evidence\n\n- ✅ Login works\n', new Date(Date.now() - 2 * HOUR));
     const result = runHook(
       hookPath('enforce-orchestrator-stop.js'),
@@ -1300,7 +1398,7 @@ describe('enforce-orchestrator-stop — Frankie evidence quality gates', () => {
       {
         __TEST_MOCK_BOARD__: JSON.stringify({
           columns: {
-            done: [{ id: 'WI-001', updatedAt: new Date(Date.now() - 1 * HOUR).toISOString() }],
+            staged: [{ id: 'WI-001', updatedAt: new Date(Date.now() - 1 * HOUR).toISOString() }],
           },
         }),
         __TEST_MOCK_MISSION__: missionMock(),
@@ -1320,7 +1418,7 @@ describe('enforce-orchestrator-stop — Frankie evidence quality gates', () => {
       hookPath('enforce-orchestrator-stop.js'),
       {},
       {
-        __TEST_MOCK_BOARD__: JSON.stringify({ columns: { done: [{ id: 'WI-001' }] } }),
+        __TEST_MOCK_BOARD__: JSON.stringify({ columns: { staged: [{ id: 'WI-001' }] } }),
         __TEST_MOCK_MISSION__: missionMock(),
       },
       dir
@@ -1332,7 +1430,7 @@ describe('enforce-orchestrator-stop — Frankie evidence quality gates', () => {
     expect(String(output.additionalContext)).not.toMatch(/STALE/);
   });
 
-  it('passes a fresh all-green report through to the next gate (Final Mission Review)', () => {
+  it('passes a fresh all-green report through to the next gate — items are still staged, not promoted (AC2)', () => {
     const dir = repoWithReport('# Evidence\n\n- ✅ Login works\n');
     const result = runHook(
       hookPath('enforce-orchestrator-stop.js'),
@@ -1340,7 +1438,7 @@ describe('enforce-orchestrator-stop — Frankie evidence quality gates', () => {
       {
         __TEST_MOCK_BOARD__: JSON.stringify({
           columns: {
-            done: [{ id: 'WI-001', updatedAt: new Date(Date.now() - 1 * HOUR).toISOString() }],
+            staged: [{ id: 'WI-001', updatedAt: new Date(Date.now() - 1 * HOUR).toISOString() }],
           },
         }),
         __TEST_MOCK_MISSION__: missionMock(),
@@ -1349,7 +1447,10 @@ describe('enforce-orchestrator-stop — Frankie evidence quality gates', () => {
     );
     const output = parseStopOutput(result.stdout);
     expect(output.decision).toBe('block');
-    expect(String(output.additionalContext)).toMatch(/Final Mission Review/i);
+    // Frankie's quality checks passed (fresh, all-green) — the mission
+    // still blocks, but now on the "staged, not promoted" gate (AC2), not
+    // on Frankie himself.
     expect(String(output.additionalContext)).not.toMatch(/frankie/i);
+    expect(String(output.additionalContext)).toMatch(/staged/i);
   });
 });

@@ -53,4 +53,12 @@ That is a deliberate cost, paid to keep "the PR is born with evidence" true
 rather than approximately true.
 
 Because `done` is terminal (see ADR 0005), the "rework" that triggers a
-restart is currently a manual operator action, not an automatic bounce.
+restart was originally a manual operator action, not an automatic bounce.
+
+> **Amendment (2026-08-16):** the mission tail now runs against `staged`,
+> not `done` (WI-786/787) — see the amendment to ADR 0005. The rework this
+> paragraph describes is a real, automated `board-move` (earliest-flagged-
+> stage rule, WI-794), not a manual operator action. The ordering rule
+> above ("anything that can send items backward runs before the review
+> that reads the final diff") and the full-re-walk rule are unaffected —
+> they are exactly why `staged` sits before the tail rather than after it.

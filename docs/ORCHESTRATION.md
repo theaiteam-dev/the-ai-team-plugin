@@ -183,7 +183,7 @@ Stockwell's Final Mission Review is stored in the database on the Mission row (`
 
 Stockwell writes the review as its last step before post-checks run; Tawnia reads it when drafting release notes and the final commit message.
 
-**Frankie's evidence, by contrast, is filesystem-based** — his walk runs BEFORE Stockwell (once all items reach `done`), and his evidence bundle (`.qa-evidence/<mission>/report.md`) and any graduated `specs/` files land in the repo itself rather than the database, so Stockwell's diff review already includes them and Tawnia commits them alongside the feature work.
+**Frankie's evidence, by contrast, is filesystem-based** — his walk runs BEFORE Stockwell (once all items reach `staged`, the per-item pipeline's real terminal stage — WI-786/787, not `done`), and his evidence bundle (`.qa-evidence/<mission>/report.md`) and any graduated `specs/` files land in the repo itself rather than the database, so Stockwell's diff review already includes them and Tawnia commits them alongside the feature work.
 
 ## Plugin Commands
 
@@ -222,8 +222,8 @@ Model selection is defined in each agent's frontmatter (`agents/*.md`) — do NO
 In native teams mode each of the four pipeline roles is spawned as **N parallel instances** (`murdock-1`..`murdock-N`, `ba-1`..`ba-N`, etc.), sized by `ateam scaling compute`. The `name:` passed to `Task` is the instance name (e.g. `murdock-2`), and agents pass the same instance name to `agentStart` / `agentStop` so pool slot accounting stays consistent. When N=1 the base names (`murdock`, `ba`, `lynch`, `amy`) are used.
 
 **Mission Completion (MANDATORY):**
-- Frankie: `subagent_type: "ai-team:frankie"` → mission-tail QA walk against the running app, once all items reach `done` and BEFORE Stockwell. A fresh, non-pre-warmed agent; a failure halts the tail and surfaces to the operator (manual reopening — no automated bounce). Any rework restarts the tail at Frankie, who re-walks the FULL Definition of Done.
-- Stockwell: `subagent_type: "ai-team:stockwell"` → Final Mission Review (PRD+diff scoped), persisted via `missions-final-review writeFinalReview`. Runs only after Frankie's walk succeeds; a Stockwell rejection restarts the tail at Frankie once the named items are back in `done`.
+- Frankie: `subagent_type: "ai-team:frankie"` → mission-tail QA walk against the running app, once all items reach `staged` and BEFORE Stockwell. A fresh, non-pre-warmed agent; a failure halts the tail — Hannibal moves each named item out of `staged` to `testing` or `implementing` via a real, rejection-cap-counted `board-move` (earliest-flagged-stage rule, WI-794), not a manual reopen. Any rework restarts the tail at Frankie, who re-walks the FULL Definition of Done.
+- Stockwell: `subagent_type: "ai-team:stockwell"` → Final Mission Review (PRD+diff scoped), persisted via `missions-final-review writeFinalReview`. Runs only after Frankie's walk succeeds; an APPROVED verdict atomically promotes every `staged` item to `done` (WI-790); a Stockwell rejection restarts the tail at Frankie once the named items are back in `staged`.
 - Tawnia: `subagent_type: "ai-team:tawnia"` → after post-checks pass
 
 ## Background Agent Permissions

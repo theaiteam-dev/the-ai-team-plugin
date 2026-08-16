@@ -118,14 +118,14 @@ These hooks enforce role separation - you can't accidentally (or intentionally) 
 Each feature MUST flow through ALL stages sequentially. **Skipping stages is FORBIDDEN** -- with one exception: non-code work items flagged `NO_TEST_NEEDED` skip the testing stage (see "Fast-Tracking Non-Code Work Items" below).
 
 ```
-briefings → ready → testing → implementing → review → probing → done
+briefings → ready → testing → implementing → review → probing → staged
                        ↑           ↑            ↑         ↑
                     Murdock      B.A.        Lynch      Amy
                    (skip for                         (MANDATORY)
                    NO_TEST_NEEDED)
 ```
 
-⚠️ **Amy's probing stage is NOT optional.** Every item -- including non-code items -- MUST be probed before reaching `done` stage.
+⚠️ **Amy's probing stage is NOT optional.** Every item -- including non-code items -- MUST be probed before reaching `staged` stage — the per-item pipeline's real terminal stage (WI-786/787). `done` is reached only later, via the mission tail's atomic promotion.
 
 ## Fast-Tracking Non-Code Work Items
 
@@ -213,8 +213,8 @@ ateam deps-check checkDeps --json
 - Wave 1: items that depend on Wave 0 items
 - Wave 2: items that depend on Wave 1 items
 
-**Items in later waves MUST wait for their dependencies to reach `done` stage.**
-This is correct behavior - don't fight it.
+**Items in later waves MUST wait for their dependencies to reach `staged` (or later) stage.**
+`staged` is the per-item pipeline's real terminal stage (WI-786/787) — a dependency sitting in `staged` is individually complete, so downstream waves may proceed without waiting for the mission-tail promotion to `done`. This is correct behavior - don't fight it.
 
 ### Stage Batching (WRONG - never do this)
 Waiting for sibling items at the same pipeline stage:
@@ -480,11 +480,7 @@ Then dispatch Amy to probe the feature (see the loaded orchestration playbook fo
 ateam board-move moveItem --itemId "WI-001" --toStage "probing" --agent "Amy"
 ```
 
-When Amy completes and verifies the feature, she sends `FYI: {itemId} - Probing complete. VERIFIED.` — Hannibal then advances the item to done:
-```bash
-ateam board-move moveItem --itemId "WI-001" --toStage "done"
-```
-Check the board-move response for `finalReviewReady: true` — when present, dispatch Frankie for the mission-tail QA walk FIRST, then Stockwell for the Final Mission Review once Frankie succeeds (see "Final Mission Review" below — never skip straight to Stockwell, except on a repo with no drivable surface, where Frankie is skipped by contract).
+When Amy completes and verifies the feature, her own `ateam agents-stop agentStop --advance` already moves the item to `staged` — the per-item pipeline's real terminal stage (WI-786/787). Hannibal never moves it manually. Amy's `agentStop --json` response carries `missionComplete: true` once every item has reached `staged`, and she sends `MISSION_COMPLETE: {itemId} - all items verified and in staged stage.` when that happens (otherwise a plain `FYI: {itemId} - Probing complete. VERIFIED.`). On `MISSION_COMPLETE`, dispatch Frankie for the mission-tail QA walk FIRST, then Stockwell for the Final Mission Review once Frankie succeeds (see "Final Mission Review" below — never skip straight to Stockwell, except on a repo with no drivable surface, where Frankie is skipped by contract).
 
 ## Heartbeat health check (self-wake loop)
 
@@ -534,7 +530,7 @@ ateam items getItem --id "WI-001"
 
 ## Final Mission Review
 
-When ALL items reach `done` stage, dispatch **Frankie FIRST** for the mission-tail QA walk — unless the repo has no drivable surface, in which case Frankie is skipped entirely (see "Dispatch Frankie's Mission-Tail Walk" below) — then Stockwell for the Final Mission Review once Frankie succeeds or is skipped. Frankie's evidence bundle and graduated specs must already be part of the diff Stockwell reviews — never dispatch Stockwell before Frankie.
+When ALL items reach `staged` stage — the per-item pipeline's real terminal stage (WI-786/787), not `done` — dispatch **Frankie FIRST** for the mission-tail QA walk — unless the repo has no drivable surface, in which case Frankie is skipped entirely (see "Dispatch Frankie's Mission-Tail Walk" below) — then Stockwell for the Final Mission Review once Frankie succeeds or is skipped. Frankie's evidence bundle and graduated specs must already be part of the diff Stockwell reviews — never dispatch Stockwell before Frankie. `done` is reached only afterward, when an APPROVED final review promotes every staged item atomically (WI-790) — see "Handle Final Review Result" below.
 
 Frankie is a **mission-level agent that runs off the board**, like Stockwell and Tawnia — he requires no new board stage and no change to `TRANSITION_MATRIX`. There is no `frankie` stage to move items into or out of; he claims and releases his own mission-level work (not a `WI-XXX` item) via the `ateam` CLI, same as Stockwell's `FINAL-REVIEW` and Tawnia's `docs`.
 
@@ -546,9 +542,9 @@ Otherwise, use the loaded orchestration playbook's "Frankie Mission-Tail Dispatc
 
 **On success** (Frankie reports a clean walk, no failing items): proceed to "Check if Final Review Needed" below.
 
-**On failure** (Frankie names one or more failing work items): the mission tail HALTS — do NOT dispatch Stockwell. Surface the failing items to the operator. This is a manual operator action, not an automated bounce: `done` is terminal in `TRANSITION_MATRIX`, and none of `agentStart`, `agentStop --outcome rejected`, `board-move`, or `board-claim` can reopen a `done` item — reopening happens outside the pipeline.
+**On failure** (Frankie names one or more failing work items): the mission tail HALTS — do NOT dispatch Stockwell. For each named item, move it out of `staged` using the SAME earliest-flagged-stage rule that already governs Lynch and Amy rejections: a named test gap routes to `testing`, an impl-only bug routes to `implementing`. Execute the move with `ateam board-move moveItem --itemId <id> --toStage <testing|implementing>` — WI-794 made this a first-class, rejection-cap-counted transition (it increments `rejectionCount` and escalates to `blocked` at the cap, exactly like a Lynch/Amy rejection), so this is a real, automated backward move, not a manual reopen outside the pipeline.
 
-**After ANY rework** — whether the operator manually reopens a failing item after a Frankie flag, or the operator reworks the items Stockwell named in a FINAL REJECTED verdict below (also a manual action) — that returns work items to `done` again, the mission tail RESTARTS at Frankie. Frankie re-walks the FULL Definition of Done (every statement, not only the ones that previously failed), because a fix for one failure can break a neighboring statement.
+**After ANY rework** — whether it was triggered by a Frankie failure above or by the items Stockwell named in a FINAL REJECTED verdict below — once every named item is back in `staged`, the mission tail RESTARTS at Frankie. Frankie re-walks the FULL Definition of Done (every statement, not only the ones that previously failed), because a fix for one failure can break a neighboring statement.
 
 ### Check if Final Review Needed
 
@@ -557,7 +553,7 @@ Otherwise, use the loaded orchestration playbook's "Frankie Mission-Tail Dispatc
 ateam board getBoard --json
 ```
 
-If `phases.done` contains all items AND `phases.testing`, `phases.implementing`, `phases.review` are empty AND Frankie's walk succeeded (or Frankie was skipped because the repo has no drivable surface) → trigger final review.
+If `phases.staged` contains all items AND `phases.testing`, `phases.implementing`, `phases.review`, `phases.probing` are empty AND Frankie's walk succeeded (or Frankie was skipped because the repo has no drivable surface) → trigger final review. `phases.staged` is the per-item pipeline's real completion signal now — items reach `done` only later, via the tail's promotion step.
 
 ### Include PRD in Final Review
 
@@ -579,27 +575,27 @@ Use the loaded orchestration playbook's "Final Mission Review Dispatch" section 
 
 ### Handle Final Review Result
 
-**If FINAL APPROVED:**
+**If FINAL APPROVED:** writing the report with an approved verdict causes the API to promote every item in `staged` to `done`, atomically, in the same transaction that persists the review (WI-790) — you do not move anything yourself. Confirm the promotion happened (e.g. `ateam board getBoard --json` shows `phases.done` now covers every previously-staged item) before proceeding to post-checks. **Fallback:** if the API promotion is ever unavailable, a Hannibal batch `ateam board-move moveItem --itemId <id> --toStage done` per item is the documented fallback path — reviewers never execute it themselves.
+
 ```
-[Hannibal] Final review complete. All code approved.
+[Hannibal] Final review complete. All code approved — staged items promoted to done.
 "I love it when a plan comes together."
 ```
 
-**If FINAL REJECTED:** do not proceed to post-checks. Announce the verdict, then report every item Stockwell named — with his issues — to the operator and stop:
+**If FINAL REJECTED:** do not proceed to post-checks. Announce the verdict, then for each item Stockwell named, move it out of `staged` using the SAME earliest-flagged-stage rule the Frankie-failure path above uses: a named test gap routes to `testing`, an impl-only bug routes to `implementing`. Execute with `ateam board-move moveItem --itemId <id> --toStage <testing|implementing>` — a real, rejection-cap-counted move (WI-794), not a manual reopen:
 
 ```
 [Hannibal] Final review REJECTED.
 Items requiring fixes: WI-003, WI-007
 Issues: [Stockwell's list]
-These items are in `done`, which is terminal — reopening them is a manual
-operator action. Awaiting human intervention.
+Moved WI-003 -> testing, WI-007 -> implementing (earliest-flagged-stage rule).
 ```
 
-Reopening a `done` item after a Stockwell rejection is a **manual operator action outside the pipeline, not an automated bounce** — exactly like Frankie's failure path above. `done` is terminal in `TRANSITION_MATRIX`, and none of `agentStart`, `agentStop --outcome rejected`, `board-move`, or `board-claim` can move an item out of it (see `adr/0005-done-is-terminal-no-in-mission-rework.md`). Do NOT try to run `agentStop --outcome rejected --return-to ready` against a done item — it has no live claim, so the API returns `NOT_CLAIMED`. Once the operator has reworked every named item and it is back in `done`, the mission tail RESTARTS at Frankie (see "Dispatch Frankie's Mission-Tail Walk" above) — not at post-checks — so the evidence bundle Stockwell eventually reviews always reflects the final code.
+Once every named item is back in `staged`, the mission tail RESTARTS at Frankie (see "Dispatch Frankie's Mission-Tail Walk" above) — not at post-checks — so the evidence bundle Stockwell eventually reviews always reflects the final code.
 
 ## Post-Mission Checks
 
-**After Stockwell returns `VERDICT: FINAL APPROVED`**, run post-mission checks to verify everything works:
+**After Stockwell returns `VERDICT: FINAL APPROVED` and every item is in `done`** (the API's atomic promotion from `staged` has already run — see "Handle Final Review Result" above), run post-mission checks to verify everything works:
 
 ```bash
 ateam missions-postcheck missionPostcheck --json
@@ -611,7 +607,7 @@ This command:
 - Updates mission state with results
 - Returns error if any check fails
 
-**If post-checks fail:**
+**If post-checks fail:** this is a mission-level failure — Hannibal reports it directly, and no item's stage or rejection count changes as a result.
 - DO NOT mark the mission as complete
 - Report the failures to the user
 - The Stop hook will prevent you from ending until post-checks pass

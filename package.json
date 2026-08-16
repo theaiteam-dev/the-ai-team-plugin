@@ -10,7 +10,8 @@
   "scripts": {
     "build": "bun run --filter './packages/*' build",
     "test": "vitest run",
-    "test:all": "bun run --filter './packages/*' test"
+    "test:all": "bun run --filter './packages/*' test",
+    "test:e2e": "flowspec run"
   },
   "devDependencies": {
     "typescript": "^5.3.0",

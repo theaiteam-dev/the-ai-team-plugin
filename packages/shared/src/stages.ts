@@ -5,6 +5,7 @@ export const ALL_STAGES = [
   'implementing',
   'review',
   'probing',
+  'staged',
   'done',
   'blocked',
 ] as const;
@@ -16,8 +17,9 @@ export const TRANSITION_MATRIX: Record<StageId, readonly StageId[]> = {
   ready: ['testing', 'implementing', 'probing', 'blocked', 'briefings'],
   testing: ['implementing', 'blocked'],
   implementing: ['review', 'blocked'],
-  probing: ['ready', 'done', 'blocked'],
+  probing: ['ready', 'staged', 'blocked'],
   review: ['testing', 'implementing', 'probing', 'blocked'],
+  staged: ['done', 'testing', 'implementing', 'ready', 'blocked'],
   done: [],
   blocked: ['ready'],
 };
@@ -28,6 +30,27 @@ export function isValidTransition(from: StageId, to: StageId): boolean {
 
 export function getValidNextStages(from: StageId): readonly StageId[] {
   return TRANSITION_MATRIX[from];
+}
+
+/**
+ * Terminal stages that satisfy a dependency: a dependent item is unblocked
+ * once every dependency reaches one of these stages.
+ *
+ * 'staged' counts alongside 'done' because the per-item pipeline now ends
+ * at 'staged' — nothing reaches 'done' until Frankie's mission-tail walk
+ * promotes it, so gating dependency waves on 'done' alone would deadlock
+ * every multi-wave mission. See adr/0005-done-is-terminal-no-in-mission-rework.md.
+ */
+const DEPENDENCY_SATISFYING_STAGES: readonly StageId[] = ['staged', 'done'];
+
+/**
+ * Answers "is a dependency in this stage satisfied?" — true for 'staged'
+ * and 'done', false for every other stage. Use this everywhere dependency
+ * completion is checked instead of comparing against 'done' directly, so
+ * every call site stays in lockstep (see WI-788).
+ */
+export function isDependencySatisfied(stageId: StageId): boolean {
+  return DEPENDENCY_SATISFYING_STAGES.includes(stageId);
 }
 
 /**
@@ -71,7 +94,7 @@ export const PIPELINE_STAGES: Partial<Record<StageId, PipelineStageInfo>> = {
   probing: {
     agent: 'amy',
     agentDisplay: 'Amy',
-    nextStage: 'done',
+    nextStage: 'staged',
     description: 'investigates for bugs beyond test coverage',
   },
 };

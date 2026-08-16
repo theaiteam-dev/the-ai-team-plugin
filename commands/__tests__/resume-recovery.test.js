@@ -26,11 +26,14 @@ const RESUME_MD_PATH = path.resolve(__dirname, '..', 'resume.md');
 const VALID_TRANSITIONS = TRANSITION_MATRIX;
 
 /**
- * All active pipeline stages that could be interrupted mid-work.
- * These are stages where an agent is actively working when a session
- * is interrupted, and thus need recovery rules.
+ * All active pipeline stages that could be interrupted mid-work, or that
+ * otherwise need explicit recovery guidance on resume.
+ * Most of these (testing/implementing/review/probing) are stages where an
+ * agent is actively working when a session is interrupted. 'staged' is the
+ * exception (WI-787): no agent owns it, but items can still be sitting there
+ * when a session resumes, so it needs its own documented recovery rule too.
  */
-const ACTIVE_PIPELINE_STAGES = ['testing', 'implementing', 'review', 'probing'];
+const ACTIVE_PIPELINE_STAGES = ['testing', 'implementing', 'review', 'probing', 'staged'];
 
 /**
  * Parse recovery rules from resume.md.
@@ -270,5 +273,111 @@ describe('Resume command recovery strategy consistency', () => {
     }
 
     expect(invalidMoves).toEqual([]);
+  });
+});
+
+/**
+ * WI-798: deepen the `staged` stub (added by WI-787 as a plain "Stay in
+ * `staged`") into the real approved-review-vs-no-review-vs-rejected
+ * recovery logic. The three generic tests above only check that SOME
+ * single recovery action exists per stage and that Behavior/Recovery Rules
+ * agree on it — they cannot express a 3-way conditional (staged's crash
+ * window can land in three genuinely different states: an approved review
+ * already exists and promotion just needs finishing; no review exists yet
+ * and the tail must restart at Frankie; or a FINAL REJECTED review exists
+ * and the named items need surfacing, not silent action). These tests read
+ * the raw "### Items in `staged` stage" section content directly, the same
+ * "extract a stable structural anchor, assert on its content" approach
+ * playbooks/__tests__/mission-tail-order.test.js uses for WI-796.
+ *
+ * Also verified directly (see /tmp debug harness during authoring, not
+ * checked in): the existing `behaviorSection` map is EMPTY for every stage
+ * against the current file — Behavior step 3's prose ("for item in testing
+ * stage: ... dispatch Murdock on item") doesn't match either of the
+ * parser's two recognized Behavior-section patterns, so today's
+ * no-contradictions test passes vacuously for every stage, not just
+ * staged. AC4 asks for `staged` specifically to be phrased so it lands in
+ * BOTH maps, making that check non-vacuous for at least this one stage.
+ */
+
+function extractStagedRecoveryRuleSection(content) {
+  const headingMatch = content.match(/### Items in `staged` stage\n/);
+  if (!headingMatch) return null;
+  const start = headingMatch.index + headingMatch[0].length;
+  const rest = content.slice(start);
+  const endMatch = rest.match(/\n#{2,3} /);
+  return endMatch ? rest.slice(0, endMatch.index) : rest;
+}
+
+describe('staged-stage recovery: approved-review vs. no-review vs. FINAL REJECTED branching (WI-798)', () => {
+  let content;
+  let stagedSection;
+
+  beforeAll(() => {
+    content = fs.readFileSync(RESUME_MD_PATH, 'utf-8');
+    stagedSection = extractStagedRecoveryRuleSection(content);
+  });
+
+  test('the staged recovery rule is phrased so the parser recognizes it in BOTH the Behavior section and the Recovery Rules section (AC4)', () => {
+    const { behaviorSection, recoveryRulesSection } = parseRecoveryRules(content);
+    expect(behaviorSection.has('staged'), 'expected the Behavior section (step 3) to include a parser-recognized staged case').toBe(true);
+    expect(recoveryRulesSection.has('staged'), 'expected the Recovery Rules section to include a parser-recognized staged case').toBe(true);
+  });
+
+  test('when an approved final review already exists, resume completes the promotion without re-running Frankie or Stockwell (AC1)', () => {
+    expect(stagedSection, 'expected a "### Items in `staged` stage" section').not.toBeNull();
+    const approvedBranch = stagedSection.match(/approved[\s\S]{0,400}/i);
+    expect(approvedBranch, 'expected an "approved final review already exists" branch').not.toBeNull();
+    expect(approvedBranch[0]).toMatch(/promot(?:es?|ion|ing)/i);
+    expect(approvedBranch[0]).toMatch(/without re-running|does not re-run|never re-runs?|skip(?:s|ping)?/i);
+    expect(approvedBranch[0]).toMatch(/frankie/i);
+    expect(approvedBranch[0]).toMatch(/stockwell/i);
+  });
+
+  test('when no approved final review exists, resume re-enters the mission tail at Frankie for a full Definition of Done re-walk (AC2)', () => {
+    expect(stagedSection).not.toBeNull();
+    const noReviewBranch = stagedSection.match(/no (?:approved )?(?:final )?review[\s\S]{0,400}/i);
+    expect(noReviewBranch, 'expected a "no approved final review exists" branch').not.toBeNull();
+    expect(noReviewBranch[0]).toMatch(/frankie/i);
+    expect(noReviewBranch[0]).toMatch(/full\s+(?:definition of done|dod)/i);
+  });
+
+  test('when a FINAL REJECTED review exists, resume surfaces the named items to the operator instead of silently promoting or re-walking (AC3)', () => {
+    expect(stagedSection).not.toBeNull();
+    const rejectedBranch = stagedSection.match(/rejected[\s\S]{0,400}/i);
+    expect(rejectedBranch, 'expected a "FINAL REJECTED" branch').not.toBeNull();
+    expect(rejectedBranch[0]).toMatch(/operator/i);
+    // The REJECTED branch's own text must not itself claim to promote or
+    // silently re-walk — that's exactly what AC3 rules out.
+    expect(rejectedBranch[0]).not.toMatch(/promot(?:es?|ion|ing)/i);
+  });
+});
+
+// =============================================================================
+// AC5: the resume status template (step 6's "Display recovery summary")
+// reports a Staged count alongside Briefings, Ready, Done, Blocked. Also
+// pins the worked "## Example" section's output block to the same template
+// — WI-796's rework cycle found that a second, unpinned narrative copy of
+// the same content is exactly how self-contradicting staleness survives a
+// large doc item, so this file checks both copies rather than just the one
+// the AC sentence names.
+// =============================================================================
+describe('resume status template includes a Staged count (WI-798 AC5)', () => {
+  let content;
+
+  beforeAll(() => {
+    content = fs.readFileSync(RESUME_MD_PATH, 'utf-8');
+  });
+
+  test('the "Display recovery summary" step 6 template reports Staged alongside Briefings, Ready, Done, Blocked', () => {
+    const section = content.match(/Display recovery summary[\s\S]{0,700}/i);
+    expect(section, 'expected a "Display recovery summary" step').not.toBeNull();
+    expect(section[0]).toMatch(/-\s*Staged:/i);
+  });
+
+  test('the worked "## Example" output block also reports Staged, matching the template (no stale second copy)', () => {
+    const exampleSection = content.match(/## Example[\s\S]{0,1200}/i);
+    expect(exampleSection, 'expected an "## Example" section').not.toBeNull();
+    expect(exampleSection[0]).toMatch(/-\s*Staged:/i);
   });
 });

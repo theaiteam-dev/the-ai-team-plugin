@@ -460,7 +460,7 @@ Dependencies control which wave an item belongs to:
 - Wave 1: items that depend on Wave 0 items
 - Wave 2: items that depend on Wave 1 items
 
-**Important:** Within a wave, items flow through pipeline stages independently. Wave 1 items wait for their specific dependencies to reach `done` — they do NOT wait for all Wave 0 items.
+**Important:** Within a wave, items flow through pipeline stages independently. Wave 1 items wait for their specific dependencies to reach `staged` (or later) — the per-item pipeline's real terminal stage (WI-786/787) — they do NOT wait for all Wave 0 items.
 
 **BAD (stage batching — never do this):**
 ```
@@ -491,7 +491,7 @@ Items can be in the same wave (no declared dependencies between them) when:
 
 After drafting items, review the dep graph shape. **Wider is better** — more items per wave means more pipeline parallelism. If the graph is deep and narrow, look for bottleneck items that can be folded into scaffold.
 
-**Bottleneck item:** A non-scaffold item depended on by 2+ other items. Every downstream item must wait for the bottleneck to reach `done` before entering the pipeline — this serializes work.
+**Bottleneck item:** A non-scaffold item depended on by 2+ other items. Every downstream item must wait for the bottleneck to reach `staged` (or later) before entering the pipeline — this serializes work.
 
 **Fix:** If the bottleneck is thin infrastructure (types, fetch wrappers, config, utility modules without business logic), fold it into the scaffold/foundation item. All its dependents now depend on scaffold instead, and they fan out in the same wave.
 

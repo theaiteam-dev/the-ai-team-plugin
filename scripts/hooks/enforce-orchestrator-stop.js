@@ -42,6 +42,7 @@ import {
   normalizeMission,
   countBoard,
   checkFrankieEvidence,
+  checkStagedNotPromoted,
   checkFinalReviewRejection,
 } from './lib/stop-gates.js';
 
@@ -109,10 +110,13 @@ async function checkCompletion() {
     }
   }
 
-  const { activeCounts, totalActive, doneCount } = countBoard(boardData.columns);
+  const { activeCounts, totalActive, doneCount, stagedCount } = countBoard(boardData.columns);
 
-  // No items at all — no mission, allow stop
-  if (totalActive === 0 && doneCount === 0) {
+  // No items at all — no mission, allow stop. WI-791: a board with only
+  // staged items must NOT take this path (it must proceed to the
+  // Frankie-evidence / not-yet-promoted gates below), so stagedCount is
+  // part of the "genuinely empty" test.
+  if (totalActive === 0 && doneCount === 0 && stagedCount === 0) {
     console.log(JSON.stringify({}));
     process.exit(0);
   }
@@ -149,13 +153,25 @@ async function checkCompletion() {
 
   // Frankie's mission-tail walk precedes Stockwell's Final Mission Review —
   // same gate enforce-final-review.js applies, shared via lib/stop-gates.js.
+  // WI-791: keyed on stagedCount/stagedItems — items sit in staged awaiting
+  // the walk, not done (done now only happens via WI-790's atomic promotion).
   const frankieBlock = checkFrankieEvidence({
     missionId: missionData.id,
-    doneCount,
-    doneItems: boardData.columns.done,
+    stagedCount,
+    stagedItems: boardData.columns.staged,
   });
   if (frankieBlock) {
     console.log(JSON.stringify({ decision: 'block', additionalContext: frankieBlock }));
+    process.exit(0);
+  }
+
+  // WI-791 AC2: Frankie's evidence clearing does not mean promotion has run
+  // — that only happens via WI-790's atomic transaction when Stockwell's
+  // review is written. An all-staged board must never be treated as an
+  // empty (no-mission) board and allowed to stop.
+  const stagedBlock = checkStagedNotPromoted(stagedCount);
+  if (stagedBlock) {
+    console.log(JSON.stringify({ decision: 'block', additionalContext: stagedBlock }));
     process.exit(0);
   }
 

@@ -169,7 +169,7 @@ git submodule update --remote .claude/ai-team
 The dashboard provides two views:
 
 ### Mission Board View
-- **Kanban board** with columns for each pipeline stage (briefings, ready, testing, implementing, review, probing, done)
+- **Kanban board** with columns for each pipeline stage (briefings, ready, testing, implementing, review, probing, staged, done)
 - **Work item cards** showing title, type, assigned agent, and status
 - **Live updates** via Server-Sent Events (SSE) as items move through stages
 - **Activity feed** with timestamped agent actions
@@ -249,7 +249,7 @@ The scaling decision (instance count, binding constraint, rationale) is visible 
 Each feature flows through stages sequentially:
 
 ```
-briefings → ready → testing → implementing → review → probing → done
+briefings → ready → testing → implementing → review → probing → staged
                        ↑           ↑            ↑         ↑       │
                     Murdock      B.A.        Lynch      Amy       │
                                           (per-feature)           │
@@ -265,6 +265,13 @@ briefings → ready → testing → implementing → review → probing → done
                                                         │  (Stockwell -   │
                                                         │   all code at   │
                                                         │      once)      │
+                                                        └────────┬────────┘
+                                                                 │ FINAL APPROVED
+                                                                 ▼
+                                                        ┌─────────────────┐
+                                                        │ Promote staged  │
+                                                        │  items → done   │
+                                                        │   (API, WI-790) │
                                                         └────────┬────────┘
                                                                  │
                                                                  ▼
@@ -285,23 +292,24 @@ briefings → ready → testing → implementing → review → probing → done
 2. `testing → implementing`: B.A. implements to pass tests
 3. `implementing → review`: Lynch reviews ALL outputs together
 4. `review → probing`: Amy probes for bugs beyond tests (APPROVED)
-5. `probing → done`: Feature complete (VERIFIED), or back to ready (FLAG)
-6. `all done → Frankie's mission-tail walk → final review`: Frankie walks the mission's full Definition of Done against the running app first (a fresh, non-pre-warmed agent). A failure halts the tail and surfaces to the operator — reopening a `done` item is a manual operator action, not an automated bounce. Once Frankie's walk is clean, Stockwell reviews entire codebase holistically (including Frankie's evidence bundle and graduated specs). Any rework that returns items to `done` — from a Frankie failure or a Stockwell rejection — restarts the tail at Frankie, who re-walks the FULL Definition of Done.
-7. `final review → post-checks`: Run `ateam missions-postcheck missionPostcheck` (lint, unit, e2e)
-8. `post-checks → documentation`: Tawnia updates CHANGELOG, README, docs/
-9. `documentation → complete`: Tawnia creates final commit with all co-authors
+5. `probing → staged`: Feature individually complete (VERIFIED), or back to ready (FLAG) — `staged` is the per-item pipeline's real terminal stage (WI-786/787), a holding pen awaiting mission-tail verification
+6. `all staged → Frankie's mission-tail walk → final review`: Frankie walks the mission's full Definition of Done against the running app first (a fresh, non-pre-warmed agent). A failure halts the tail: Hannibal moves each named item out of `staged` to `testing` or `implementing` using the earliest-flagged-stage rule, via a real `board-move` (WI-794, rejection-cap-counted) — not a manual bounce. Once Frankie's walk is clean, Stockwell reviews the entire codebase holistically (including Frankie's evidence bundle and graduated specs). Any rework — from a Frankie failure or a Stockwell rejection — moves the named items the same way; once they're back in `staged`, the tail restarts at Frankie, who re-walks the FULL Definition of Done.
+7. `final review APPROVED → promotion`: the API atomically promotes every `staged` item to `done` (WI-790) as part of persisting the review — a Hannibal batch `board-move` is the documented fallback only.
+8. `done → post-checks`: Run `ateam missions-postcheck missionPostcheck` (lint, unit, e2e)
+9. `post-checks → documentation`: Tawnia updates CHANGELOG, README, docs/
+10. `documentation → complete`: Tawnia creates final commit with all co-authors
 
 ## Pipeline Parallelism
 
 Different features can be at different stages simultaneously:
 
 ```
-Feature 001: [implementing] ─→ [review]       ─→ done
+Feature 001: [implementing] ─→ [review]       ─→ staged
 Feature 002:    [testing]   ─→ [implementing] ─→ ...
 Feature 003:                   [testing]      ─→ ...
 ```
 
-WIP limit controls how many features are in-flight (not in briefings, ready, or done stages).
+WIP limit controls how many features are in-flight (not in briefings, ready, staged, or done stages).
 
 ### Multi-Instance Agent Pools
 
@@ -371,14 +379,14 @@ Each feature flows: **Murdock → B.A. → Lynch → Amy**
 
 ### Final Mission Review
 
-When ALL features reach `done`, Frankie walks the mission's full Definition of Done against the running app first (a fresh, non-pre-warmed agent) and produces an evidence bundle. A failure halts the tail and surfaces to the operator — reopening a `done` item is manual, not an automated bounce. Once Frankie's walk is clean, Stockwell performs a holistic review of the entire codebase, including Frankie's evidence bundle and graduated specs:
+When ALL features reach `staged` — the per-item pipeline's real terminal stage (WI-786/787), not `done` — Frankie walks the mission's full Definition of Done against the running app first (a fresh, non-pre-warmed agent) and produces an evidence bundle. A failure halts the tail: Hannibal moves each named item out of `staged` to `testing` or `implementing` using the earliest-flagged-stage rule, via a real, rejection-cap-counted `board-move` (WI-794) — not a manual reopen. Once Frankie's walk is clean, Stockwell performs a holistic review of the entire codebase, including Frankie's evidence bundle and graduated specs:
 - **Readability & consistency** across all files
 - **Race conditions & async issues** in concurrent code
 - **Security vulnerabilities** (injection, auth gaps, input validation)
 - **Code quality** (DRY violations, coupling, performance)
 - **Integration issues** between modules
 
-If issues are found, specific items return to the pipeline for fixes; once they're back in `done`, the mission tail restarts at Frankie, not at post-checks.
+If issues are found, specific items are moved out of `staged` the same automated way; once they're back in `staged`, the mission tail restarts at Frankie, not at post-checks. An APPROVED verdict atomically promotes every `staged` item to `done` (WI-790) — post-checks and Tawnia run only after that.
 
 ### Mission Lifecycle Checks
 
