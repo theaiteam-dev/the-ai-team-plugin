@@ -188,45 +188,78 @@ export function checkFinalReviewRejection(review) {
 }
 
 /**
- * Fetches and normalizes the board. Returns null when the API is unreachable
- * or answers non-2xx — callers must treat null as "allow the stop".
+ * Fetches JSON from `url` with a hard timeout — the single place every
+ * board/mission/final-review request in this module routes through, so an
+ * unreachable or merely slow API fails open (resolves null) instead of
+ * stalling the Stop hook indefinitely or rejecting out from under its
+ * caller (fetch() alone has no timeout and, without a catch, an unreachable
+ * host either hangs the hook or crashes it — the opposite of the documented
+ * fail-open contract every gate in this module relies on).
+ *
+ * Returns null — never throws — on a non-2xx response, a timeout, a
+ * connection error, or a body that isn't valid JSON.
+ *
+ * @param {string} url
+ * @param {RequestInit} [opts] - Forwarded to fetch() verbatim (headers,
+ *   etc.); `signal` is added internally and must not be passed by the
+ *   caller.
+ * @param {number} [timeoutMs]
+ * @returns {Promise<unknown|null>}
+ */
+async function fetchJsonOrNull(url, opts = {}, timeoutMs = 5000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...opts, signal: controller.signal });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Fetches and normalizes the board. Returns null when the API is unreachable,
+ * times out, or answers non-2xx — callers must treat null as "allow the
+ * stop".
  */
 export async function fetchBoard(apiUrl, projectId) {
-  const response = await fetch(buildBoardUrl(apiUrl), {
+  const payload = await fetchJsonOrNull(buildBoardUrl(apiUrl), {
     headers: { 'X-Project-ID': projectId },
   });
-  if (!response.ok) return null;
-  return normalizeBoard(await response.json());
+  if (!payload) return null;
+  return normalizeBoard(payload);
 }
 
 /**
  * Fetches and normalizes the current mission, backfilling the final review
  * report from its own route (the current-mission payload omits it).
- * Returns null when there is no active mission or the API answers non-2xx.
+ * Returns null when there is no active mission or the API is unreachable,
+ * times out, or answers non-2xx.
  */
 export async function fetchMission(apiUrl, projectId) {
-  const response = await fetch(buildMissionUrl(apiUrl), {
+  const payload = await fetchJsonOrNull(buildMissionUrl(apiUrl), {
     headers: { 'X-Project-ID': projectId },
   });
-  if (!response.ok) return null;
+  if (!payload) return null;
 
-  const mission = normalizeMission(await response.json());
+  const mission = normalizeMission(payload);
   if (!mission || !mission.id || mission.final_review_verdict) return mission;
 
-  try {
-    const reviewResponse = await fetch(buildFinalReviewUrl(apiUrl, mission.id), {
-      headers: { 'X-Project-ID': projectId },
-    });
-    if (reviewResponse.ok) {
-      const body = unwrapEnvelope(await reviewResponse.json());
-      if (isPlainObject(body) && body.finalReview) {
-        mission.final_review_verdict = body.finalReview;
-      }
+  // Review lookup is best-effort — fetchJsonOrNull's own fail-open (null on
+  // timeout/error/non-2xx/bad JSON) leaves the verdict unset, which blocks
+  // with an actionable "dispatch Stockwell" message rather than hanging or
+  // crashing the hook.
+  const reviewPayload = await fetchJsonOrNull(buildFinalReviewUrl(apiUrl, mission.id), {
+    headers: { 'X-Project-ID': projectId },
+  });
+  if (reviewPayload) {
+    const body = unwrapEnvelope(reviewPayload);
+    if (isPlainObject(body) && body.finalReview) {
+      mission.final_review_verdict = body.finalReview;
     }
-  } catch {
-    // Review lookup is best-effort — a failure leaves the verdict unset,
-    // which blocks with an actionable "dispatch Stockwell" message rather
-    // than crashing the hook.
   }
 
   return mission;
@@ -267,9 +300,11 @@ export function countBoard(columns) {
 }
 
 /**
- * Reads the declared `surfaces` from `<cwd>/ateam.config.json`, applying the
- * same guard as qa-contract.js's readExecutionContract() (an array of strings,
- * anything else collapses to `[]`).
+ * Reads the declared `surfaces` and `qa.drive` from `<cwd>/ateam.config.json`,
+ * applying the same guards as qa-contract.js's readExecutionContract():
+ * `surfaces` is an array of strings or it collapses to `[]`; `drive` is a
+ * declared string or it collapses to `undefined` (canFrankieDrive() treats
+ * an undefined drive as the DEFAULT_CONTRACT.qa.drive default, 'flowspec').
  *
  * readExecutionContract() is bound to process.cwd() (and cached per process),
  * but the Frankie gate resolves its evidence path against the caller-supplied
@@ -278,16 +313,20 @@ export function countBoard(columns) {
  * now resolves against the same `cwd`. Drivability itself still comes from the
  * real canFrankieDrive() in qa-contract.js.
  */
-function readSurfaces(cwd) {
+function readSurfacesAndDrive(cwd) {
   try {
     const raw = JSON.parse(readFileSync(join(cwd, 'ateam.config.json'), 'utf-8'));
-    const surfaces = isPlainObject(raw) ? raw.surfaces : undefined;
-    return Array.isArray(surfaces) && surfaces.every((s) => typeof s === 'string')
-      ? surfaces
-      : [];
+    const rawSurfaces = isPlainObject(raw) ? raw.surfaces : undefined;
+    const surfaces =
+      Array.isArray(rawSurfaces) && rawSurfaces.every((s) => typeof s === 'string')
+        ? rawSurfaces
+        : [];
+    const qaRaw = isPlainObject(raw) && isPlainObject(raw.qa) ? raw.qa : {};
+    const drive = typeof qaRaw.drive === 'string' ? qaRaw.drive : undefined;
+    return { surfaces, drive };
   } catch {
     // Missing or malformed config — no declared surfaces, gate stays inert.
-    return [];
+    return { surfaces: [], drive: undefined };
   }
 }
 
@@ -296,6 +335,13 @@ function readSurfaces(cwd) {
  * list, in epoch ms. `completedAt` is the transition record when the API
  * provides it; `updatedAt` is the fallback. Returns null when no timestamp
  * is derivable — callers must skip the staleness check (fail open).
+ *
+ * Picks the first NON-EMPTY string of `completedAt`/`updatedAt` rather than
+ * `completedAt ?? item.updatedAt` — `??` only falls back on null/undefined,
+ * so an item with `completedAt: ''` (falsy but not nullish) would resolve to
+ * `''`, which Date.parse() turns into NaN, silently skipping that item's
+ * timestamp instead of falling back to its (possibly fresh) `updatedAt` —
+ * letting a stale pre-rework evidence report satisfy the staleness check.
  *
  * WI-791: used against the `staged` column now, not `done` — items sit in
  * staged while awaiting Frankie's walk, so a staged item's last update IS
@@ -306,7 +352,10 @@ function latestTransition(items) {
   let latest = null;
   for (const item of items) {
     if (!isPlainObject(item)) continue;
-    const ts = Date.parse(item.completedAt ?? item.updatedAt ?? '');
+    const raw = [item.completedAt, item.updatedAt].find(
+      (value) => typeof value === 'string' && value !== ''
+    );
+    const ts = Date.parse(raw ?? '');
     if (Number.isFinite(ts) && (latest === null || ts > latest)) latest = ts;
   }
   return latest;
@@ -356,7 +405,8 @@ export function checkFrankieEvidence({ missionId, stagedCount, stagedItems = [],
     // block on an unresolvable path.
     if (!missionId || !(stagedCount > 0)) return null;
 
-    if (!canFrankieDrive(readSurfaces(cwd))) return null;
+    const { surfaces, drive } = readSurfacesAndDrive(cwd);
+    if (!canFrankieDrive(surfaces, drive)) return null;
 
     const reportPath = join(cwd, '.qa-evidence', missionId, 'report.md');
     if (!existsSync(reportPath)) {

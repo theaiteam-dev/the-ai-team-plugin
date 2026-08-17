@@ -22,16 +22,26 @@
  *     ("immutable" — graduated specs cannot be altered, only added to)
  *   - Everything else (implementation, tests, and any other path) —
  *     Frankie's job is to report, not to fix; the failure bounces to B.A.
+ *   - Bash commands whose recognized write-shaped operation (redirection,
+ *     tee, mv/cp destination, rm/rmdir, sed -i, touch, truncate, dd of=)
+ *     targets a protected path. This is best-effort defense-in-depth, NOT
+ *     a shell sandbox — arbitrary shell syntax can defeat the pattern scan
+ *     — but every path it DOES recognize is checked against the exact same
+ *     allow/block rule as Write/Edit above.
  *
  * Fail-closed: if session_id is missing, malformed, or the snapshot can't
  * be written or read, the check falls back to the strict at-call-time
- * existsSync behavior — an error path never weakens the guard.
+ * existsSync behavior — an error path never weakens the guard. Similarly,
+ * the Bash scanner fails OPEN on a command it cannot parse into a
+ * recognized write op (this is pattern-matching, not parsing a shell
+ * grammar), but fails CLOSED the instant it does recognize one targeting a
+ * protected path.
  *
  * Claude Code sends hook context via stdin JSON (tool_name, tool_input,
  * session_id).
  */
 
-import { readFileSync, existsSync, mkdirSync, writeFileSync, readdirSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, readdirSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { resolveAgent } from './lib/resolve-agent.js';
@@ -81,7 +91,10 @@ function isUnderDir(filePath, dirName) {
 /**
  * Where session snapshots of specs/ live. One JSON file per session_id,
  * self-contained in this hook (mirrors lib/observer.js's tmpdir()-keyed
- * ateam-agent-map convention).
+ * ateam-agent-map convention). The directory is created 0o700 (owner-only)
+ * because it sits under the world-writable system tmpdir — any other local
+ * process could otherwise pre-create it (or a snapshot file inside it) and
+ * feed Frankie's hook a forged "nothing existed yet" snapshot.
  */
 const SNAPSHOT_DIR = path.join(tmpdir(), 'ateam-frankie-spec-snapshot');
 
@@ -116,34 +129,252 @@ function listFilesUnder(dir) {
 }
 
 /**
+ * Ensures SNAPSHOT_DIR exists and is trustworthy: owner-only permissions
+ * (no group/other access) and, when the platform exposes uids, owned by
+ * this process. If the directory doesn't exist yet, it is created with
+ * mode 0o700. If it already exists with looser permissions or a different
+ * owner — e.g. another local process raced to pre-create it under the
+ * shared, world-writable tmpdir — it is treated as UNUSABLE: every snapshot
+ * read/write for this invocation is skipped and callers fall back to the
+ * strict at-call-time check. Never widen an existing directory's
+ * permissions; only refuse to trust it.
+ */
+function ensureTrustedSnapshotDir() {
+  try {
+    if (!existsSync(SNAPSHOT_DIR)) {
+      mkdirSync(SNAPSHOT_DIR, { recursive: true, mode: 0o700 });
+      return true;
+    }
+    const stat = statSync(SNAPSHOT_DIR);
+    if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) {
+      return false;
+    }
+    // Reject if group or other has any permission bit set.
+    if ((stat.mode & 0o077) !== 0) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Returns the Set of absolute paths that existed under <cwd>/specs/ at the
  * start of this session (taking the snapshot now if this is the first
  * invocation for the session), or null when no snapshot can be used —
- * missing/unsafe session_id, unreadable or corrupt snapshot file, or a
- * failed write. Callers treat null as "fall back to strict existsSync",
- * so every error path here fails CLOSED, never open.
+ * missing/unsafe session_id, an untrustworthy SNAPSHOT_DIR, an unreadable
+ * or corrupt snapshot file, a snapshot recorded under a different cwd, or a
+ * failed write. Callers treat null as "fall back to strict existsSync", so
+ * every error path here fails CLOSED, never open.
+ *
+ * The on-disk payload is `{ cwd, specs }`, not a bare array: keying the
+ * snapshot to the cwd it was taken under means a snapshot recorded while
+ * running from a different working directory can never be silently reused
+ * to (mis)judge "new" for a different project root. A legacy bare-array
+ * payload (or anything else that doesn't match this shape) is rejected
+ * outright — never partially trusted — so a pre-seeded `[]` cannot be used
+ * to make every pre-existing graduated spec look new.
  */
 function loadOrTakeSpecSnapshot(sessionId) {
   const snapshotPath = snapshotPathFor(sessionId);
   if (!snapshotPath) {
     return null;
   }
+  if (!ensureTrustedSnapshotDir()) {
+    return null;
+  }
   try {
     if (existsSync(snapshotPath)) {
       const parsed = JSON.parse(readFileSync(snapshotPath, 'utf8'));
-      if (!Array.isArray(parsed) || !parsed.every((p) => typeof p === 'string')) {
+      if (
+        parsed === null ||
+        typeof parsed !== 'object' ||
+        Array.isArray(parsed) ||
+        typeof parsed.cwd !== 'string' ||
+        !Array.isArray(parsed.specs) ||
+        !parsed.specs.every((p) => typeof p === 'string')
+      ) {
         return null;
       }
-      return new Set(parsed);
+      if (parsed.cwd !== process.cwd()) {
+        return null;
+      }
+      return new Set(parsed.specs);
     }
     const specsRoot = path.join(process.cwd(), 'specs');
     const files = existsSync(specsRoot) ? listFilesUnder(specsRoot) : [];
-    mkdirSync(SNAPSHOT_DIR, { recursive: true });
-    writeFileSync(snapshotPath, JSON.stringify(files));
+    writeFileSync(snapshotPath, JSON.stringify({ cwd: process.cwd(), specs: files }), { mode: 0o600 });
     return new Set(files);
   } catch {
     return null;
   }
+}
+
+/**
+ * Classifies a single candidate path against Frankie's write rules — the
+ * one choke point both the Write/Edit branch and the Bash pattern-scan
+ * branch feed through, so the two enforcement paths can never drift apart.
+ *
+ * Returns:
+ *   - { blocked: false } — under .qa-evidence/, or a NEW file under specs/
+ *     (not present in the session snapshot / not on disk under strict
+ *     fallback)
+ *   - { blocked: true, reason: 'spec-immutable' } — an existing (graduated)
+ *     file under specs/
+ *   - { blocked: true, reason: 'other' } — everything else: implementation,
+ *     tests, or any other path. Frankie has no legitimate write target
+ *     outside .qa-evidence/ and new specs/ files.
+ */
+function classifyFrankiePath(filePath, specSnapshot) {
+  if (isUnderDir(filePath, '.qa-evidence')) {
+    return { blocked: false };
+  }
+  if (isUnderDir(filePath, 'specs')) {
+    const abs = path.resolve(process.cwd(), filePath);
+    const isImmutable = specSnapshot !== null ? specSnapshot.has(abs) : existsSync(abs);
+    return isImmutable ? { blocked: true, reason: 'spec-immutable' } : { blocked: false };
+  }
+  return { blocked: true, reason: 'other' };
+}
+
+/**
+ * Strips a single layer of matching double- or single-quotes from a token,
+ * if present. Best-effort — this is not a shell tokenizer.
+ */
+function stripQuotes(token) {
+  if (token.length >= 2) {
+    const first = token[0];
+    const last = token[token.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      return token.slice(1, -1);
+    }
+  }
+  return token;
+}
+
+/**
+ * Replaces the contents of double- or single-quoted spans with spaces of
+ * equal length, preserving the string's length/positions so a delimiter
+ * search against the masked string still lines up with the original. Used
+ * so a shell metacharacter (`;`, `|`, `>`) that appears INSIDE a quoted
+ * argument — e.g. `ateam ... --summary "found bug; needs fix"` — is never
+ * mistaken for an actual statement separator or redirect.
+ */
+function maskQuotedSpans(s) {
+  return s.replace(/"[^"]*"|'[^']*'/g, (m) => ' '.repeat(m.length));
+}
+
+/**
+ * Splits a compound Bash command into independent statements on the
+ * command separators that matter for this scan: &&, ||, ;, |, and
+ * newlines. `||` and `&&` MUST be tested before the single-character `|`
+ * alternative so a `||` is consumed whole rather than as two `|` splits.
+ * Delimiter POSITIONS are found in a quote-masked copy of the command, but
+ * the returned statements are sliced from the ORIGINAL string, so quoting
+ * is preserved within each statement and a delimiter inside quotes never
+ * splits the command.
+ */
+function splitBashStatements(command) {
+  const masked = maskQuotedSpans(command);
+  const delimiterRe = /&&|\|\||[;\n]|\|/g;
+  const statements = [];
+  let lastIndex = 0;
+  let match;
+  while ((match = delimiterRe.exec(masked))) {
+    statements.push(command.slice(lastIndex, match.index));
+    lastIndex = delimiterRe.lastIndex;
+  }
+  statements.push(command.slice(lastIndex));
+  return statements.map((s) => s.trim()).filter(Boolean);
+}
+
+/** fd-duplication targets (`2>&1`, `>&2`, ...) and stream-discard sinks —
+ * shell idioms for merging/silencing output streams, never a path a spec,
+ * implementation, or test file could live at. Excluded from targets so
+ * the extremely common `... > /dev/null 2>&1` pattern doesn't false-block.
+ */
+function isBenignRedirectSink(target) {
+  return target === '/dev/null' || target === '/dev/stdout' || target === '/dev/stderr' || /^&\d+$/.test(target);
+}
+
+const REDIRECT_OPERATOR_RE = /^(?:\d*>>?|&>>?)$/;
+const REDIRECT_PREFIX_RE = /^(\d*>>?|&>>?)(.+)$/;
+
+/**
+ * Best-effort extraction of write-shaped operations' target paths from a
+ * single Bash statement (already split on &&/||/;/|/newline by
+ * splitBashStatements). This is NOT a shell parser — variable expansion,
+ * subshells, and command substitution can all defeat it. It exists as
+ * defense-in-depth on top of the Write/Edit guard above (mirrors
+ * block-ba-bash-restrictions.js's regex-based approach), not as a sandbox:
+ * a statement this function doesn't recognize simply yields no targets,
+ * and the caller allows it through (fail open on the unparseable case;
+ * fail closed on the recognized one).
+ *
+ * Tokenizes the statement respecting quotes (a quoted argument, e.g.
+ * "a > b", is one opaque token — its contents are never mistaken for a
+ * redirect operator or a statement's command/args), then recognizes:
+ * output redirection (`>`, `>>`, and fd-qualified variants like `2>`,
+ * whether the operator is its own token or glued to the target, e.g.
+ * `>file`), `tee [-a]`, `mv`/`cp` (destination = last non-flag arg),
+ * `rm`/`rmdir`/`touch`/`truncate` (every non-flag arg is a target), `sed
+ * -i` (target = last non-flag arg), and `dd of=`.
+ */
+function extractBashWriteTargets(statement) {
+  const targets = [];
+  const rawTokens = statement.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+  if (rawTokens.length === 0) {
+    return targets;
+  }
+
+  const pushTarget = (raw) => {
+    if (!raw) return;
+    const target = stripQuotes(raw);
+    if (target && !isBenignRedirectSink(target)) {
+      targets.push(target);
+    }
+  };
+
+  for (let i = 0; i < rawTokens.length; i++) {
+    const token = rawTokens[i];
+    if (REDIRECT_OPERATOR_RE.test(token)) {
+      // Operator is its own token (`echo x > file`) — target is next token.
+      pushTarget(rawTokens[i + 1]);
+      continue;
+    }
+    const prefixMatch = token.match(REDIRECT_PREFIX_RE);
+    if (prefixMatch) {
+      // Operator glued to target (`echo x >file`).
+      pushTarget(prefixMatch[2]);
+    }
+  }
+
+  const ofToken = rawTokens.find((t) => /^of=/.test(stripQuotes(t)));
+  if (ofToken) {
+    pushTarget(stripQuotes(ofToken).slice('of='.length));
+  }
+
+  const cmd = stripQuotes(rawTokens[0]).split('/').pop();
+  const nonFlagArgs = rawTokens
+    .slice(1)
+    .map(stripQuotes)
+    .filter((w) => w.length > 0 && !w.startsWith('-') && !/[>|;&]/.test(w));
+
+  if (cmd === 'rm' || cmd === 'rmdir' || cmd === 'touch' || cmd === 'truncate' || cmd === 'tee') {
+    nonFlagArgs.forEach(pushTarget);
+  } else if (cmd === 'mv' || cmd === 'cp') {
+    if (nonFlagArgs.length > 0) {
+      pushTarget(nonFlagArgs[nonFlagArgs.length - 1]);
+    }
+  } else if (cmd === 'sed') {
+    const hasInPlace = rawTokens.some((w) => /^-i/.test(stripQuotes(w)));
+    if (hasInPlace && nonFlagArgs.length > 0) {
+      pushTarget(nonFlagArgs[nonFlagArgs.length - 1]);
+    }
+  }
+
+  return targets;
 }
 
 let hookInput = {};
@@ -171,38 +402,62 @@ try {
 
   const toolName = hookInput.tool_name || '';
   const toolInput = hookInput.tool_input || {};
-  const filePath = toolInput.file_path || toolInput.notebook_path || '';
 
-  // Only gate write-capable tools. Reads, browser driving, and execs are
-  // unrelated to this hook's intent.
+  // Bash: full shell interdiction is impossible (arbitrary syntax can
+  // always defeat a pattern scan), so this is best-effort defense-in-depth
+  // on top of the Write/Edit guard, not a sandbox. Scan each statement for
+  // a recognized write-shaped op and classify its target with the exact
+  // same rule Write/Edit uses below.
+  if (toolName === 'Bash') {
+    const command = toolInput.command || '';
+    for (const statement of splitBashStatements(command)) {
+      for (const target of extractBashWriteTargets(statement)) {
+        const verdict = classifyFrankiePath(target, specSnapshot);
+        if (!verdict.blocked) {
+          continue;
+        }
+
+        if (verdict.reason === 'spec-immutable') {
+          const reason = `BLOCKED: Frankie's Bash command writes to an existing spec file: ${target}. Graduated specs are immutable.`;
+          sendDeniedEvent({ agentName: agent, toolName, reason });
+          process.stderr.write(`BLOCKED: Frankie's Bash command targets an existing spec file: ${target}\n`);
+          process.stderr.write('Graduated specs under specs/ are immutable by design (FlowSpec protection).\n');
+          process.stderr.write('You may ADD new flow files only — never edit one that already exists, including via shell redirection or in-place tools.\n');
+          process.stderr.write(`Command: ${command}\n`);
+          process.exit(2);
+        }
+
+        const reason = `BLOCKED: Frankie's Bash command writes to implementation/test territory: ${target}. Bounce to B.A. with repro steps instead.`;
+        sendDeniedEvent({ agentName: agent, toolName, reason });
+        process.stderr.write(`BLOCKED: Frankie's Bash command targets implementation/test territory: ${target}\n`);
+        process.stderr.write('Frankie never fixes the code (see Hard rules in agents/frankie.md).\n');
+        process.stderr.write('Record exact repro steps and the failing screenshot in report.md, then bounce the failure to B.A. instead.\n');
+        process.stderr.write(`Command: ${command}\n`);
+        process.exit(2);
+      }
+    }
+    // No recognized write op targeted a protected path — allow.
+    process.exit(0);
+  }
+
+  // Only gate write-capable tools beyond this point. Reads, browser
+  // driving, and other execs are unrelated to this hook's intent.
   const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
   if (!WRITE_TOOLS.has(toolName)) {
     process.exit(0);
   }
 
+  const filePath = toolInput.file_path || toolInput.notebook_path || '';
   if (!filePath) {
     process.exit(0);
   }
 
-  // Allow the evidence bundle, anywhere under .qa-evidence/
-  if (isUnderDir(filePath, '.qa-evidence')) {
+  const verdict = classifyFrankiePath(filePath, specSnapshot);
+  if (!verdict.blocked) {
     process.exit(0);
   }
 
-  // specs/ has two cases: a flow file Frankie authored this session is
-  // fine (including follow-up Edits to it); a spec that pre-dates the
-  // session is a GRADUATED spec and immutable.
-  if (isUnderDir(filePath, 'specs')) {
-    // Resolve against the same root isUnderDir anchored to, so the
-    // immutability check can never look at a different file than the one
-    // just allowlisted. With a snapshot, "immutable" = present at session
-    // start; without one (strict fallback), "immutable" = exists right now.
-    const abs = path.resolve(process.cwd(), filePath);
-    const isImmutable = specSnapshot !== null ? specSnapshot.has(abs) : existsSync(abs);
-    if (!isImmutable) {
-      process.exit(0);
-    }
-
+  if (verdict.reason === 'spec-immutable') {
     const reason = `BLOCKED: Frankie cannot edit an existing spec file: ${filePath}. Graduated specs are immutable.`;
     sendDeniedEvent({ agentName: agent, toolName, reason });
     process.stderr.write(`BLOCKED: Frankie cannot edit an existing spec file: ${filePath}\n`);

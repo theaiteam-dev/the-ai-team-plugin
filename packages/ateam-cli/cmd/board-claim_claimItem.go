@@ -41,9 +41,25 @@ var boardClaimClaimItemCmd = &cobra.Command{
 			if !json.Valid([]byte(boardClaimClaimItemCmdBody)) {
 				return fmt.Errorf("--body does not contain valid JSON")
 			}
-			var bodyObj interface{}
-			_ = json.Unmarshal([]byte(boardClaimClaimItemCmdBody), &bodyObj)
-			resp, err := c.Do("POST", "/api/board/claim", pathParams, queryParams, bodyObj)
+			var bodyFields map[string]interface{}
+			if err := json.Unmarshal([]byte(boardClaimClaimItemCmdBody), &bodyFields); err != nil {
+				return fmt.Errorf("--body must be a JSON object: %w", err)
+			}
+			agentVal, ok := bodyFields["agent"].(string)
+			if !ok || agentVal == "" {
+				return fmt.Errorf("--body must include a string \"agent\" field")
+			}
+			// Same allowed-agent validation as the flag path below (Frankie and
+			// Sosa deliberately excluded — see the boundary comment there). The
+			// raw-body branch must never reach c.Do with an agent outside this
+			// list; do not widen without widening the flag path's enum too.
+			if err := validate.Enum("agent", agentVal, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Tawnia"}); err != nil {
+				return err
+			}
+			// Send the original bytes unmodified (json.RawMessage's MarshalJSON
+			// returns itself) rather than re-marshaling bodyFields, so a valid
+			// body reaches the server byte-identical to what the caller passed.
+			resp, err := c.Do("POST", "/api/board/claim", pathParams, queryParams, json.RawMessage(boardClaimClaimItemCmdBody))
 			if err != nil {
 				return err
 			}

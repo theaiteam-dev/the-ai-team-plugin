@@ -307,13 +307,14 @@ AskUserQuestion({
     header: "Review tier",
     options: [
       { label: "hands-on (Recommended to start)", description: "Review evidence, then personally drive the feature ~5 min before merge — the safe starting tier for any repo" },
-      { label: "evidence-only", description: "Review the bundle; merge on its strength; hands never touch it — for repos with objectively-checkable output (golden-pair diffs, fixture runs)" },
-      { label: "auto", description: "Green mission merges unattended. NEVER select this at setup — auto is earned via the promotion ladder (PRD 010 §2.6), not granted upfront." }
+      { label: "evidence-only", description: "Review the bundle; merge on its strength; hands never touch it — for repos with objectively-checkable output (golden-pair diffs, fixture runs)" }
     ],
     multiSelect: false
   }]
 })
 ```
+
+`auto` exists as a `review_tier` value but is never offered as a selectable option here — it's earned via the promotion ladder (PRD 010 §2.6), not granted at setup. If a user asks for `auto` at setup time, record `hands-on` and tell them the ladder path: a repo is promoted once its Frankie-accumulated CI specs cover its critical paths at its `testing_level` and its bug-found-at-Josh's-gate scoreboard has been zero for an agreed stretch.
 
 **`review_tier: "auto"` is never granted at setup — earned only.** Setup must not offer it as a default and should discourage picking it cold; a repo reaches `auto` via the promotion ladder (PRD 010 §2.6): its Frankie-accumulated CI specs cover its critical paths at its `testing_level`, and its bug-found-at-Josh's-gate scoreboard has been zero for an agreed stretch. Every repo starts at `hands-on` or `evidence-only`.
 

@@ -38,7 +38,7 @@
  * stop-gates.js itself.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { join } from 'path';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'fs';
 import { tmpdir } from 'os';
@@ -59,6 +59,8 @@ import {
   checkFrankieEvidence,
   parseFinalReviewVerdict,
   checkFinalReviewRejection,
+  fetchBoard,
+  fetchMission,
 } from '../lib/stop-gates.js';
 
 // ---------------------------------------------------------------------------
@@ -94,6 +96,86 @@ describe('stop-gates — URL builders', () => {
     expect(buildMissionUrl('http://localhost:3000///')).toBe(
       'http://localhost:3000/api/missions/current'
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fetchBoard / fetchMission — must fail open (resolve null) on a rejected
+// fetch AND on a fetch that never resolves at all, rather than hanging the
+// Stop hook or rejecting out from under its caller (CodeRabbit PR #55: the
+// board/mission fetch calls previously had no timeout, and the review
+// sub-fetch was the only one with a catch).
+// ---------------------------------------------------------------------------
+describe('stop-gates — fetchBoard/fetchMission fail-open on unbounded fetch', () => {
+  const API = 'http://localhost:3000';
+  const PROJECT_ID = 'test-project';
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('fetchBoard resolves null (not a rejected promise) when fetch rejects with a network error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+    await expect(fetchBoard(API, PROJECT_ID)).resolves.toBeNull();
+  });
+
+  it('fetchMission resolves null (not a rejected promise) when fetch rejects with a network error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+    await expect(fetchMission(API, PROJECT_ID)).resolves.toBeNull();
+  });
+
+  it('fetchBoard resolves null once the request exceeds its timeout, instead of hanging forever on a stuck API', async () => {
+    vi.useFakeTimers();
+    // Simulates a hung connection: the fetch promise only ever settles when
+    // its AbortSignal fires — exactly what fetchJsonOrNull's internal
+    // timeout must trigger.
+    const hangingFetch = vi.fn((_url: string, opts: { signal?: AbortSignal }) => {
+      return new Promise((_resolve, reject) => {
+        opts.signal?.addEventListener('abort', () => {
+          const err = new Error('The operation was aborted');
+          err.name = 'AbortError';
+          reject(err);
+        });
+      });
+    });
+    vi.stubGlobal('fetch', hangingFetch);
+
+    const resultPromise = fetchBoard(API, PROJECT_ID);
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(await resultPromise).toBeNull();
+  });
+
+  it('fetchMission resolves null once the request exceeds its timeout, instead of hanging forever on a stuck API', async () => {
+    vi.useFakeTimers();
+    const hangingFetch = vi.fn((_url: string, opts: { signal?: AbortSignal }) => {
+      return new Promise((_resolve, reject) => {
+        opts.signal?.addEventListener('abort', () => {
+          const err = new Error('The operation was aborted');
+          err.name = 'AbortError';
+          reject(err);
+        });
+      });
+    });
+    vi.stubGlobal('fetch', hangingFetch);
+
+    const resultPromise = fetchMission(API, PROJECT_ID);
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(await resultPromise).toBeNull();
+  });
+
+  it('fetchBoard forwards the X-Project-ID header and parses a 2xx JSON body normally (happy path unaffected by the timeout wiring)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ columns: { done: [{ id: 'WI-001' }] } }),
+      })
+    );
+    const board = await fetchBoard(API, PROJECT_ID);
+    expect(board?.columns.done).toHaveLength(1);
   });
 });
 
@@ -519,6 +601,29 @@ describe('stop-gates — checkFrankieEvidence', () => {
             id: 'WI-001',
             completedAt: new Date(Date.now() - 1 * HOUR).toISOString(),
             updatedAt: new Date(Date.now() - 3 * HOUR).toISOString(),
+          },
+        ],
+        cwd,
+      });
+      expect(message).toMatch(/STALE/i);
+    });
+
+    it('falls back to updatedAt when completedAt is an empty string, rather than treating the item as timestamp-less (CodeRabbit PR #55: ?? does not fall back on "")', () => {
+      // completedAt: '' is falsy but NOT nullish, so `completedAt ?? updatedAt`
+      // resolves to '' (Date.parse('') is NaN) and the item's timestamp is
+      // silently dropped from the staleness comparison — letting a stale
+      // pre-rework report satisfy the gate. The fresh updatedAt here must be
+      // picked up instead, still triggering STALE against the backdated report.
+      const cwd = scratch('M-TEST-001');
+      backdateReport(cwd, 'M-TEST-001', new Date(Date.now() - 2 * HOUR));
+      const message = checkFrankieEvidence({
+        missionId: 'M-TEST-001',
+        stagedCount: 1,
+        stagedItems: [
+          {
+            id: 'WI-001',
+            completedAt: '',
+            updatedAt: new Date(Date.now() - 1 * HOUR).toISOString(),
           },
         ],
         cwd,

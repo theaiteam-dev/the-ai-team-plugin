@@ -114,6 +114,7 @@ If the PRD names concrete code touchpoints (files, enum locations, schemas, spec
 | **Key dependencies** | Check package.json for libraries the PRD work requires | Create "Install dependencies" item |
 | **Build tooling** | build script in package.json; framework config (next.config, vite.config) | Note in summary; may need setup item |
 | **QA contract** | Mission includes user-facing work, the repo declares — or detectably has — a drivable surface (see Exemption below), and `ateam.config.json`'s `qa` block is missing or stale (see "Missing or Stale" below) | Create "Establish QA contract" item |
+| **FlowSpec install** | `ateam.config.json`'s `qa.drive` is `"flowspec"` (the default) and `surfaces` declares a drivable surface — check `package.json` dependencies/devDependencies for `flowspec` and Glob for `flowspec.config.*` or an existing `specs/` directory (see "FlowSpec drive prerequisite" below) | Create "Install FlowSpec" item, made a Wave-0 dependency of every drivable-surface feature item |
 
 **How to check:** Read `package.json` (dependencies, devDependencies, scripts). Glob for config files (`*config*`, `tsconfig*`, `.eslintrc*`). This takes 2-3 tool calls.
 
@@ -124,6 +125,14 @@ The QA-contract check uses the same field shape as `scripts/hooks/lib/qa-contrac
 - **Exemption:** a repo that genuinely has no drivable surface never triggers this check. Only `web` is drivable today (matches `qa-contract.js`'s `canFrankieDrive()`) — `api`, `fixture-flow`, `golden-pair`, `cli`, and `hardware` are not. Frankie can't walk a non-drivable repo regardless of the `qa` block, so scaffolding one is wasted work. This is why the check must not trip on this very plugin repo's own CLI-only missions. **An absent or empty `surfaces` list is NOT automatically exempt** — a config that predates the execution-contract fields looks identical to a genuinely non-drivable repo, so check the target repo before exempting (see Stale below). And when the exemption does apply, it must be visible, never silent: state it explicitly in your readiness report (e.g. "Execution stage exempt: no drivable surface declared") so the call surfaces at the human gate instead of quietly disabling the mission's Frankie walk.
 - **Missing:** no `qa` block in `ateam.config.json` at all.
 - **Stale:** a `qa` block is present but lacks a pointer the mission's user-facing work needs — `qa.seed` absent when the work implies pre-seeded or existing data, `qa.account.credential_env` absent when the work implies an authenticated flow, or `qa.drive` absent entirely (every drivable repo needs a declared driver, even the default `flowspec`). **Also stale:** `surfaces` is absent or empty but your audit detects a web framework or dev-server entrypoint in the target repo (`next.config.*`, `vite.config.*`, `astro.config.*`, `nuxt.config.*`, or a `dev`/`start` script that boots an HTTP server) — treat this exactly like a missing `qa` block, and the Wave-0 scaffolding item must propose `surfaces` (detected from the repo, ratified by the operator, per PRD 010 §2.1's detect-and-ratify rule) in addition to the qa recipe. A `qa` block that already has everything this mission's DoD statements will need to walk — even if terse — is NOT stale; don't manufacture scaffolding for pointers nothing in this mission requires.
+
+**FlowSpec drive prerequisite — check and missing:**
+
+The QA contract check above tells you *whether* the repo has declared a drive recipe; this check tells you whether the tooling that recipe names is actually installed. When `ateam.config.json`'s `qa.drive` is `"flowspec"` (the default) and `surfaces` declares a drivable surface, Frankie's graduated specs depend on the `flowspec@0.1.2` package being present in the target repo — its `flowspec init` installs the PreToolUse hook that protects `specs/` from agent edits, which is what makes Frankie's specs a trust guarantee rather than something B.A. can quietly patch around (see `commands/setup.md`'s "Prerequisite: flowspec" note).
+
+- **Missing:** `package.json` has no `flowspec` in dependencies or devDependencies, and there is no `flowspec.config.*` or existing `specs/` directory in the target repo.
+- **If missing:** create a Wave-0 "Install FlowSpec" item (`type: "task"`) and make every drivable-surface feature item depend on it — those items can't safely reach `staged` (Frankie can't graduate specs) until it lands.
+- **If present**, skip scaffolding — note it in the readiness report like any other passing check.
 
 **When to create scaffolding items:**
 
@@ -145,26 +154,45 @@ ateam items createItem \
 
 Same shape for the QA contract: if the mission includes user-facing work, the repo declares — or detectably has — a drivable surface, and the `qa` block is missing or stale (see above) → create an "Establish QA contract" item. Make it a dependency of the first item exercising the drivable surface (or all Wave-0 items that do).
 
-Example:
+Example — worked for a mission whose DoD needs an authenticated flow but no pre-seeded fixtures (criteria derive from what this mission actually needs; unused pointers are left explicitly `null`, never manufactured):
 ```bash
 ateam items createItem \
   --title "Establish QA contract for web surface" \
   --type task \
   --description "ateam.config.json's qa block is missing or stale — this mission's user-facing work needs pointers Frankie can walk. Wave-0 blocker." \
-  --objective "ateam.config.json declares a qa block with the seed, account, and drive pointers this mission's DoD needs to walk" \
-  --acceptance "ateam.config.json's qa.seed names a command that seeds known test data" \
-  --acceptance "ateam.config.json's qa.account.credential_env names the env var holding the QA login credential (only if this mission's work requires an authenticated flow)" \
+  --objective "ateam.config.json declares a qa block with the pointers this mission's DoD actually needs to walk — surfaces and qa.drive always; qa.seed and qa.account.credential_env only where this mission's work requires them, explicitly null otherwise" \
   --acceptance "ateam.config.json's qa.drive is set (default 'flowspec' if no repo-specific driver applies)" \
   --acceptance "ateam.config.json's surfaces declares the repo's drivable surface(s), proposed from the detected framework and ratified by the operator (only if surfaces was absent or empty — see Stale above)" \
-  --context "No qa block (or missing seed/account/drive) in ateam.config.json. This is a Wave-0 dependency for Frankie's mission-completion walk. Field shape must match scripts/hooks/lib/qa-contract.js exactly." \
-  --outputs.test "<target project's convention for a config-loads test>" \
+  --acceptance "ateam.config.json's qa.account.credential_env names the env var holding the QA login credential — this mission's checkout flow requires an authenticated session" \
+  --acceptance "ateam.config.json's qa.seed is explicitly null — this mission's DoD only exercises data the app creates during the walk itself, no pre-seeded fixtures needed" \
+  --context "No qa block (or missing account/drive) in ateam.config.json. This is a Wave-0 dependency for Frankie's mission-completion walk. Field shape must match scripts/hooks/lib/qa-contract.js exactly." \
+  --outputs.test "src/__tests__/ateam-config.test.ts" \
   --outputs.impl "ateam.config.json" \
   --priority critical
 ```
+Before running `createItem`, inspect the target project's actual test layout (existing `__tests__/` or `*.test.*` conventions) and substitute a real, concrete `--outputs.test` path Murdock can create — never pass a prose placeholder.
+
+For a mission whose DoD instead needs pre-seeded fixtures but no authenticated flow, swap which acceptance criterion carries the real pointer and which is explicitly `null` — `qa.seed` gets the command, `qa.account.credential_env` gets the `null` acceptance. Never populate both, or either, unconditionally: derive it from what this mission's DoD statements actually require (see "Stale" above).
 
 This item is NOT `NO_TEST_NEEDED` — `ateam.config.json` is loaded at runtime by `qa-contract.js`, so per the `work-breakdown` skill it gets the minimal "config loads and works" test, not a skip.
 
 **Output flags are dotted, not camelCase:** `--outputs.test`, `--outputs.impl`, `--outputs.types`. Do NOT write `--outputImpl`, `--outputTest`, or `--output-test` — the CLI rejects them with `Error: unknown flag`.
+
+Same shape for the FlowSpec prerequisite: if `qa.drive` is `"flowspec"`, `surfaces` declares a drivable surface, and the package isn't installed (see "FlowSpec drive prerequisite" above) → create an "Install FlowSpec" item. Make it a dependency of every drivable-surface feature item.
+
+Example:
+```bash
+ateam items createItem \
+  --title "Install FlowSpec" \
+  --type task \
+  --description "flowspec is not installed in the target project — Frankie's graduated specs and their protective PreToolUse hook depend on it. Wave-0 blocker for every drivable-surface item." \
+  --objective "The flowspec@0.1.2 package is installed and flowspec init has run, installing the specs/-protecting PreToolUse hook" \
+  --acceptance "package.json lists flowspec in dependencies or devDependencies" \
+  --acceptance "Running 'flowspec init' completes and a specs/ directory exists" \
+  --context "No flowspec in package.json and no specs/ or flowspec.config.* found. This is a Wave-0 dependency for every item exercising the mission's drivable surface — Frankie's mission-tail walk needs it to graduate specs." \
+  --outputs.impl "package.json" \
+  --priority critical
+```
 
 Then reference its ID in dependencies for items that need tests.
 
@@ -194,12 +222,14 @@ After Sosa reviews and humans answer questions:
 8. Items WITH dependencies stay in `briefings` stage for Hannibal
 9. Report summary — including AC-ceiling flags (if any), the ADR outcome (see ADR Recording below), and the DoD outcome (statement count + PRD path revised) — and exit
 
+**Narrow carve-out — Sosa-prescribed items:** Second pass may create a new work item ONLY when Sosa's refinement report explicitly prescribes it as a concrete item spec (title, objective, outputs — e.g. a missing seed/stub/QA recipe flagged under her drivability standard). Transcribe her prescription directly: use her proposed title and objective, quote her prescription verbatim in the item's `context` field so the rationale is traceable back to the report, and move it to `ready` stage in Wave 0 like any other dependency-free scaffolding item (step 7 above). This is the ONLY circumstance under which second pass creates a new item — a report recommendation that isn't phrased as a concrete item spec is a question for the human, not license to invent one.
+
 **FORBIDDEN on second pass:**
 - Using Glob for anything other than finding the next ADR number
 - Using Grep or Search tools
 - Exploring any codebase
-- Creating new items (only update existing)
-- Writing or editing anything other than: new `adr/NNNN-*.md` files, and the mission PRD file's `## Definition of Done` section — every other write target stays forbidden
+- Creating new items on your own initiative (only update existing items — the sole exception is transcribing a Sosa-prescribed item verbatim, see the carve-out above)
+- Writing or editing anything other than: new `adr/NNNN-*.md` files, and the mission PRD file's `## Definition of Done` section — every other write target stays forbidden (the one Sosa-prescribed item above is created via `ateam items createItem`, not a file write, so it isn't an exception to this bullet)
 
 **Second pass output**: Refined items (consolidated if needed), Wave 0 in `ready` stage, ADR outcome stated explicitly either way (files written, or exactly `ADR Candidates: none.` — the same canonical marker Sosa uses, so the outcome passes uniform validation), and the DoD outcome (statement count + PRD path revised).
 

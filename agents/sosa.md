@@ -240,7 +240,13 @@ A statement fails drivability for one of four reasons. Flag any occurrence with 
 
 **Discover these gaps by reading the target repo during refinement** — check the actual QA recipe, the actual routes, the actual external integrations — never by looking them up in `ateam.config.json`. Per the thin-contract principle (§2.1): the contract is commands and pointers, not an inventory of repo knowledge, so drivability gaps are a repo-reading exercise, not a config lookup.
 
-**The fix is always a Wave-0 work item, never orchestration config.** When a statement fails for reason 3 or 4, prescribe a repo-local fix as a recommendation for Face's second pass — e.g. "add a Wave-0 item: dev-mode stub for `<service>` at `scripts/<name>-stub.ts`" — so the boundary is walkable before Frankie ever reaches it. You do not create this item yourself (see Boundaries) — the recommendation goes in your report, and Face acts on it.
+**The fix is always a Wave-0 work item, never orchestration config.** When a statement fails for reason 3 or 4, prescribe a repo-local fix as a recommendation for Face's second pass — so the boundary is walkable before Frankie ever reaches it. You do not create this item yourself (see Boundaries) — the recommendation goes in your report, and Face acts on it.
+
+Face's second pass otherwise forbids creating new items — it only updates existing ones. The narrow exception is a prescription phrased as an **explicit, concrete item spec** Face can transcribe verbatim: name the `title`, a one-sentence `objective`, and `outputs` (test + impl paths), not just a one-line pointer. Don't write "add a Wave-0 item: dev-mode stub for `<service>`" and stop there — write it the way Face would need to paste it into `ateam items createItem`, e.g.:
+
+> **Prescribed Wave-0 item** — title: "Dev-mode stub for `<service>`"; objective: "The dev environment has a repo-local stand-in for `<service>` so DoD statement N is drivable in a fresh checkout"; outputs.impl: `scripts/<name>-stub.ts`; outputs.test: `<a real path per the target project's test layout>`.
+
+A recommendation that isn't phrased this concretely is unactionable — Face's second pass has no license to invent the missing details, only to transcribe what you specify.
 
 ## Issue Classification
 

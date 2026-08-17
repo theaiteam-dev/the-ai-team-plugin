@@ -1866,6 +1866,328 @@ describe('block-frankie-writes — agent guards', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Snapshot trust hardening (CodeRabbit PR #55, FIX 6). Two fail-OPEN
+  // inversions of the fail-closed contract above:
+  //   (a) SNAPSHOT_DIR sits under the world-writable system tmpdir with
+  //       default mkdirSync perms — any other local process could pre-create
+  //       <tmpdir>/ateam-frankie-spec-snapshot/<session_id>.json containing a
+  //       bare `[]`, making every pre-existing graduated spec look "new" and
+  //       therefore editable.
+  //   (b) the payload was a bare array of paths with no cwd binding, so a
+  //       snapshot taken from a different working directory could be reused
+  //       to (mis)judge "new" for this one.
+  // Fixed by writing `{ cwd, specs }` (0o600) into a 0o700 SNAPSHOT_DIR, and
+  // by rejecting (→ strict existsSync fallback) any payload that is the
+  // legacy bare-array shape, is malformed, or whose cwd doesn't match.
+  // ---------------------------------------------------------------------------
+  describe('snapshot trust hardening: forged/foreign snapshots fall back to strict (finding FIX 6)', () => {
+    const RUN_TAG_B6 = `${process.pid}-${Date.now()}-b6`;
+    const SNAPSHOT_DIR = join(tmpdir(), 'ateam-frankie-spec-snapshot');
+
+    afterAll(() => {
+      for (const name of ['legacy-array', 'foreign-cwd', 'own-draft']) {
+        rmSync(join(SNAPSHOT_DIR, `frankie-b6-${name}-${RUN_TAG_B6}.json`), { force: true });
+      }
+      rmSync(join(SPECS_DIR, 'b6-own-draft.flow.yaml'), { force: true });
+    });
+
+    it('a pre-seeded legacy bare-array snapshot ([]) no longer permits editing an existing graduated spec (exit 2, immutable)', () => {
+      const sessionId = `frankie-b6-legacy-array-${RUN_TAG_B6}`;
+      // Simulate a hostile/pre-existing process planting the OLD shape before
+      // Frankie's hook ever runs for this session — an empty legacy array
+      // claims "nothing existed at session start", which would make the
+      // real, pre-existing checkout.flow.yaml look new under the old code.
+      mkdirSync(SNAPSHOT_DIR, { recursive: true, mode: 0o700 });
+      writeFileSync(join(SNAPSHOT_DIR, `${sessionId}.json`), JSON.stringify([]), { mode: 0o600 });
+
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        session_id: sessionId,
+        tool_name: 'Edit',
+        tool_input: { file_path: 'specs/checkout.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
+    it('a snapshot recorded under a different cwd falls back to strict (existing spec stays immutable, exit 2)', () => {
+      const sessionId = `frankie-b6-foreign-cwd-${RUN_TAG_B6}`;
+      mkdirSync(SNAPSHOT_DIR, { recursive: true, mode: 0o700 });
+      // A well-formed { cwd, specs } payload, but cwd points somewhere else —
+      // e.g. a snapshot taken while running from a different working
+      // directory. Its claim that specs/checkout.flow.yaml "didn't exist"
+      // must not be trusted for THIS process's cwd.
+      writeFileSync(
+        join(SNAPSHOT_DIR, `${sessionId}.json`),
+        JSON.stringify({ cwd: '/nonexistent/other-project', specs: [] }),
+        { mode: 0o600 }
+      );
+
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        session_id: sessionId,
+        tool_name: 'Edit',
+        tool_input: { file_path: 'specs/checkout.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
+    it('happy path still works: Frankie can create and then edit HIS OWN new flow file within a session (exit 0)', () => {
+      const sessionId = `frankie-b6-own-draft-${RUN_TAG_B6}`;
+
+      // First invocation of the session takes the real snapshot (freezes
+      // "graduated" = whatever's on disk right now, which does not include
+      // the file below).
+      const warmup = runHook(HOOK, {
+        agent_type: 'frankie',
+        session_id: sessionId,
+        tool_name: 'Write',
+        tool_input: { file_path: 'specs/b6-own-draft.flow.yaml' },
+      });
+      expect(warmup.exitCode).toBe(0);
+
+      // Simulate the Write actually landing on disk, then Frankie editing
+      // his own fresh draft in the same session.
+      writeFileSync(join(SPECS_DIR, 'b6-own-draft.flow.yaml'), 'name: b6 own draft\nsteps: []\n');
+
+      const edit = runHook(HOOK, {
+        agent_type: 'frankie',
+        session_id: sessionId,
+        tool_name: 'Edit',
+        tool_input: { file_path: 'specs/b6-own-draft.flow.yaml' },
+      });
+      expect(edit.exitCode).toBe(0);
+
+      // Sanity: the on-disk snapshot for this session is the new shape, not
+      // the legacy bare array.
+      const raw = readFileSync(join(SNAPSHOT_DIR, `${sessionId}.json`), 'utf8');
+      const parsed = JSON.parse(raw);
+      expect(Array.isArray(parsed)).toBe(false);
+      expect(parsed.cwd).toBe(REPO_ROOT);
+      expect(Array.isArray(parsed.specs)).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Bash bypass (CodeRabbit PR #55, FIX 7). Write/Edit tool gating alone
+  // doesn't stop Frankie from using Bash to write into a protected path
+  // (`bash -c 'echo x > specs/foo.flow.yaml'`). Full shell interdiction is
+  // impossible — this is a best-effort pattern scan (mirrors
+  // block-ba-bash-restrictions.js), not a sandbox: it recognizes common
+  // write-shaped ops (redirection, tee, mv/cp destinations, rm/rmdir, sed
+  // -i, touch, truncate, dd of=) and classifies their target path with the
+  // exact same allow/block rule Write/Edit uses. Unrecognized syntax fails
+  // open; a recognized op targeting a protected path fails closed.
+  // ---------------------------------------------------------------------------
+  describe('Bash bypass: write-shaped shell commands into protected paths (finding FIX 7)', () => {
+    it('blocks a redirect into an existing graduated spec (exit 2, immutable)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'echo "hacked" > specs/checkout.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
+    it('blocks a redirect appending into an existing graduated spec via >> (exit 2, immutable)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'echo "extra step" >> specs/checkout.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
+    it('blocks `sed -i` on an implementation file (exit 2, bounce to B.A.)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: "sed -i 's/foo/bar/' src/services/order.ts" },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/B\.A\./i);
+    });
+
+    it('blocks `rm` on a test file (exit 2, bounce to B.A.)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'rm src/__tests__/order.test.ts' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/B\.A\./i);
+    });
+
+    it('blocks `mv` whose destination is an implementation file (exit 2, bounce to B.A.)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'mv /tmp/scratch.ts src/services/order.ts' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+    });
+
+    it('blocks `tee` writing into an implementation file (exit 2, bounce to B.A.)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'echo "x" | tee src/services/order.ts' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+    });
+
+    it('blocks `dd of=` targeting a test file (exit 2, bounce to B.A.)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'dd if=/dev/zero of=src/__tests__/order.test.ts bs=1 count=0' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+    });
+
+    it('allows a redirect into .qa-evidence/<mission>/report.md (exit 0)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'echo "walk complete" > .qa-evidence/M-20260817-001/report.md' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('allows `touch` on a brand-new specs/ flow file (exit 0, consistent with Write/Edit rules)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'touch specs/bash-new-flow.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('allows plain `ls` (exit 0, no write op recognized)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'ls -la specs/' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('allows plain `grep` (exit 0, no write op recognized)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'grep -r "checkout" src/' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('allows a plain `ateam` CLI invocation (exit 0, no write op recognized)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'ateam board-move moveItem --itemId WI-100 --toStage testing' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('blocks a protected write buried after a benign command via && (exit 2)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'ls specs/ && echo "hacked" > specs/checkout.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+    });
+
+    it('allows non-target agent ba to run the same write-shaped Bash command (exit 0, no interference)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'ba',
+        tool_name: 'Bash',
+        tool_input: { command: 'echo "fine" > src/services/order.ts' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('exits 0 when tool_input.command is missing (exit 0, fail-open)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: {},
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // -------------------------------------------------------------------------
+    // False-positive guards: naive redirect scanning would otherwise treat
+    // extremely common, benign shell idioms as protected-path writes.
+    // -------------------------------------------------------------------------
+    it('does not block fd-duplication (`2>&1`) as a write to a path named "&1" (exit 0)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'npx playwright test 2>&1 | tee .qa-evidence/M-1/run.log' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('does not block redirecting to /dev/null (exit 0)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'some-noisy-command > /dev/null 2>&1' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('does not mis-split on a shell metacharacter INSIDE a quoted argument (exit 0)', () => {
+      // A literal ";" inside a quoted --summary must not be treated as a
+      // statement separator that then exposes "needs fix\"" as a bogus
+      // write target.
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: {
+          command: 'ateam agents-stop agentStop --itemId WI-1 --agent frankie --outcome completed --summary "found bug; needs fix"',
+        },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('does not treat ">" INSIDE a quoted argument as a redirect operator (exit 0)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'ateam items updateItem --id WI-1 --description "before > after"' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('still blocks a real redirect that FOLLOWS a quoted argument containing metacharacters (exit 2)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'echo "before > after; still one statement" > specs/checkout.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // MultiEdit / NotebookEdit path-extraction coverage (finding D2).
   // MultiEdit uses file_path (same as Write/Edit); NotebookEdit uses
   // notebook_path. Both are in the hook's WRITE_TOOLS set and must hit the

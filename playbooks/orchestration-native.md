@@ -937,7 +937,7 @@ Agent(
 
   Execute the Raptor Protocol. Respond with VERIFIED or FLAG.
 
-  When done, run `ateam agents-stop agentStop --json --itemId {itemId} --agent \"amy-2\" --outcome completed --summary \"...\"`. Amy is terminal — no downstream handoff. Send FYI to Hannibal with verdict. For FLAG, use --outcome rejected --return-to implementing --advance=false, then send START to B.A. with bug details."
+  When done, run `ateam agents-stop agentStop --json --itemId {itemId} --agent \"amy-2\" --outcome completed --summary \"...\"`. Amy is terminal — no downstream handoff. Send FYI to team-lead (the orchestrator's address — never 'hannibal', which silently bounces; if team-lead errors as an invalid address in headless/print mode, resend to main and use main from then on) with verdict. For FLAG, use --outcome rejected --return-to implementing --advance=false, then send START to B.A. with bug details."
 )
 ```
 
@@ -958,7 +958,7 @@ Agent(
 
   Update documentation and create the final commit.
 
-  When done, run `ateam agents-stop agentStop --json`, then send DONE to Hannibal with commit hash."
+  When done, run `ateam agents-stop agentStop --json`, then send DONE to team-lead (the orchestrator's address — never 'hannibal', which silently bounces; if team-lead errors as an invalid address in headless/print mode, resend to main and use main from then on) with commit hash."
 )
 ```
 
@@ -979,7 +979,7 @@ Agent(
   produce the structured markdown report, and persist it via:
     ateam missions-retro writeRetro --missionId {missionId} --report \"...\"
 
-  When done, run `ateam agents-stop agentStop --json`, then send DONE to Hannibal."
+  When done, run `ateam agents-stop agentStop --json`, then send DONE to team-lead (the orchestrator's address — never 'hannibal', which silently bounces; if team-lead errors as an invalid address in headless/print mode, resend to main and use main from then on)."
 )
 ```
 
@@ -1232,7 +1232,7 @@ Agent(
 
   Read the mission's DoD from the PRD and the execution contract from ateam.config.json. Walk every DoD statement from the user's front door, write the evidence bundle, and graduate specs per the contract's testing_level.
 
-  When done, send your terminal message to Hannibal with the checklist result, the evidence bundle path, and any failing work item IDs."
+  When done, send DONE to team-lead (the orchestrator's address — never 'hannibal', which silently bounces; if team-lead errors as an invalid address in headless/print mode, resend to main and use main from then on) with the checklist result, the evidence bundle path, and any failing work item IDs."
 )
 ```
 
@@ -1265,7 +1265,7 @@ Agent(
   2. The mission's commits — correct, consistent, secure?
   3. Integration — do changes wire into the existing codebase?
 
-  When done, run `ateam missions-final-review writeFinalReview --missionId {missionId} --report \"...\"` to persist the review, then send DONE to Hannibal with verdict."
+  When done, run `ateam missions-final-review writeFinalReview --missionId {missionId} --report \"...\"` to persist the review, then send DONE to team-lead (the orchestrator's address — never 'hannibal', which silently bounces; if team-lead errors as an invalid address in headless/print mode, resend to main and use main from then on) with verdict."
 )
 ```
 

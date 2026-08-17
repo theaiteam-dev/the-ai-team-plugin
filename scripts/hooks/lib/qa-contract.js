@@ -29,6 +29,15 @@ const DRIVABLE_SURFACES = ['web'];
  * case-sensitive to the PRD's lowercase spelling — "Web" is NOT "web". */
 const SURFACE_VALUES = ['web', 'api', 'fixture-flow', 'golden-pair', 'hardware', 'cli'];
 
+/** Drivers Frankie can actually run today. `qa.drive` is free-text (any
+ * declared string passes normalizeContract() unvalidated — see
+ * normalizeContract()'s docstring), but Frankie only ever executes FlowSpec
+ * — an unrecognized custom driver must not arm the mission-completion gate,
+ * since nobody could produce the FlowSpec evidence it would demand. Widen
+ * this the day Frankie gains another driver — this constant is the single
+ * place that decision lives. */
+const SUPPORTED_DRIVERS = ['flowspec'];
+
 const TESTING_LEVEL_VALUES = ['smoke', 'critical-path', 'full-dod'];
 const REVIEW_TIER_VALUES = ['hands-on', 'evidence-only', 'auto'];
 
@@ -82,12 +91,17 @@ function normalizeContract(raw) {
   const root = isPlainObject(raw) ? raw : {};
 
   let surfaces = DEFAULT_CONTRACT.surfaces;
-  if (Array.isArray(root.surfaces) && root.surfaces.every((s) => typeof s === 'string')) {
+  if (Array.isArray(root.surfaces)) {
     // Unknown values are DROPPED (fail-inert: canFrankieDrive() stays false
     // rather than the gate firing on a surface nobody can drive), but never
     // silently — a typo like "Web" would otherwise disable the mission gate
     // with no diagnostic at all. The warning names each rejected value and
-    // the valid set, so a case mistake is obvious at a glance.
+    // the valid set, so a case mistake is obvious at a glance. This applies
+    // regardless of the rejected entry's type — SURFACE_VALUES.includes()
+    // is false (not a throw) for a non-string entry like `42`, so a mixed
+    // list e.g. ["web", 42] keeps the valid `web` and warns about `42`
+    // instead of dropping the whole array because one sibling was the wrong
+    // type.
     const rejected = root.surfaces.filter((s) => !SURFACE_VALUES.includes(s));
     if (rejected.length > 0) {
       process.stderr.write(
@@ -172,19 +186,39 @@ export function readExecutionContract() {
 /**
  * Answers "does this repo have a surface Frankie can drive today?"
  *
- * Deliberately narrow: FlowSpec (the default `qa.drive`) only runs `web`
- * today (PRD 010 §2.5) — `cli`, `conduit`, and `api` adapters are roadmap
- * issues (queso/FlowSpec #6/#7/#8). Any surface FlowSpec can't drive yet
- * returns false, so the mission-completion gate stays inert on those repos
- * instead of deadlocking them. This is the single place to widen when an
- * adapter ships.
+ * Deliberately narrow on TWO axes, both of which must hold:
+ *
+ *   1. Surface: FlowSpec (the default `qa.drive`) only runs `web` today
+ *      (PRD 010 §2.5) — `cli`, `conduit`, and `api` adapters are roadmap
+ *      issues (queso/FlowSpec #6/#7/#8).
+ *   2. Driver: `qa.drive` is free-text — normalizeContract() lets any
+ *      declared string through unvalidated — but Frankie only ever runs
+ *      FlowSpec. An unrecognized custom driver (e.g. "selenium-custom")
+ *      must not arm the mission-completion gate, since nobody could
+ *      produce the FlowSpec evidence it would then demand.
+ *
+ * A missing/undefined `drive` is treated as DEFAULT_CONTRACT.qa.drive
+ * ('flowspec') — every real caller passes the normalized contract's
+ * `qa.drive`, which is never actually undefined (normalizeContract()
+ * defaults it), so this only matters for callers that omit the argument
+ * entirely. Either axis failing returns false, so the mission-completion
+ * gate stays inert on those repos instead of deadlocking them. This is the
+ * single place to widen when an adapter ships or another driver is
+ * supported.
  *
  * @param {string[]|undefined} surfaces - A contract's `surfaces` array
  *   (e.g. from `readExecutionContract().surfaces`).
- * @returns {boolean} true iff `surfaces` contains 'web'.
+ * @param {string|undefined} drive - A contract's `qa.drive` string (e.g.
+ *   from `readExecutionContract().qa.drive`). Callers should pass this
+ *   explicitly rather than relying on the undefined-defaults-to-flowspec
+ *   fallback.
+ * @returns {boolean} true iff `surfaces` contains 'web' AND `drive` is a
+ *   supported driver.
  */
-export function canFrankieDrive(surfaces) {
-  return Array.isArray(surfaces) && surfaces.some((s) => DRIVABLE_SURFACES.includes(s));
+export function canFrankieDrive(surfaces, drive) {
+  const hasDrivableSurface = Array.isArray(surfaces) && surfaces.some((s) => DRIVABLE_SURFACES.includes(s));
+  const resolvedDrive = drive === undefined ? DEFAULT_CONTRACT.qa.drive : drive;
+  return hasDrivableSurface && SUPPORTED_DRIVERS.includes(resolvedDrive);
 }
 
 /**

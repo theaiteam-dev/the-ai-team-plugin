@@ -41,6 +41,12 @@ import { readExecutionContract, canFrankieDrive, _resetQaContractCache } from '.
  * absent (ENOENT). All other paths delegate to the real fs.
  */
 function mockConfigFile(content) {
+  // Captured BEFORE vi.spyOn installs the mock — the fallback branch below
+  // must call this real implementation, not `fs.readFileSync` (which, once
+  // spied, IS the mock itself; calling it from inside its own implementation
+  // re-enters the spy and recurses to a stack overflow for any non-config
+  // read).
+  const originalReadFileSync = fs.readFileSync;
   vi.spyOn(fs, 'readFileSync').mockImplementation((filePath, ...rest) => {
     if (typeof filePath === 'string' && filePath.endsWith('ateam.config.json')) {
       if (content === null) {
@@ -49,9 +55,27 @@ function mockConfigFile(content) {
       }
       return content;
     }
-    return fs.readFileSync(filePath, ...rest);
+    return originalReadFileSync(filePath, ...rest);
   });
 }
+
+describe('mockConfigFile() test helper - fallback recursion (CodeRabbit PR #55)', () => {
+  it('delegates non-config reads to the real fs.readFileSync instead of recursing into the spy', () => {
+    mockConfigFile(JSON.stringify({ surfaces: ['web'] }));
+
+    // Any file that does NOT end in ateam.config.json exercises the
+    // fallback branch. Before the fix, the fallback called `fs.readFileSync`
+    // — which, once spied, IS the mock — recursing until the stack blew
+    // (RangeError: Maximum call stack size exceeded) instead of returning
+    // the file's real content.
+    const targetPath = path.join(process.cwd(), 'package.json');
+    expect(() => fs.readFileSync(targetPath, 'utf-8')).not.toThrow();
+
+    const content = fs.readFileSync(targetPath, 'utf-8');
+    expect(typeof content).toBe('string');
+    expect(content.length).toBeGreaterThan(0);
+  });
+});
 
 const ALL_DEFAULTS = {
   surfaces: [],
@@ -256,7 +280,31 @@ describe('readExecutionContract() - surfaces enum validation (PRD 010 section 2.
     const contract = readExecutionContract();
 
     expect(contract.surfaces).toEqual([]);
-    expect(canFrankieDrive(contract.surfaces)).toBe(false);
+    expect(canFrankieDrive(contract.surfaces, 'flowspec')).toBe(false);
+  });
+
+  it('keeps a valid string surface and drops a non-string entry from a mixed-type list, warning naming the non-string value (CodeRabbit: mixed types must not be silently dropped)', () => {
+    const stderrSpy = spyStderr();
+    mockConfigFile(JSON.stringify({ surfaces: ['web', 42] }));
+
+    const contract = readExecutionContract();
+
+    expect(contract.surfaces).toEqual(['web']);
+    expect(stderrSpy).toHaveBeenCalledTimes(1);
+    const warning = stderrSpy.mock.calls[0][0];
+    expect(warning).toMatch(/42/);
+  });
+
+  it('drops an all-non-string list to [] (not the whole-array-skip the old .every() guard produced), still warning', () => {
+    const stderrSpy = spyStderr();
+    mockConfigFile(JSON.stringify({ surfaces: [42] }));
+
+    const contract = readExecutionContract();
+
+    expect(contract.surfaces).toEqual([]);
+    expect(stderrSpy).toHaveBeenCalledTimes(1);
+    const warning = stderrSpy.mock.calls[0][0];
+    expect(warning).toMatch(/42/);
   });
 });
 
@@ -288,20 +336,39 @@ describe('canFrankieDrive() - drivability per surface (PRD 010 section 2.5: web-
     ['golden-pair', false],
     ['hardware', false],
     ['cli', false],
-  ])('surfaces=[%s] -> %s', (surface, expected) => {
-    expect(canFrankieDrive([surface])).toBe(expected);
+  ])('surfaces=[%s], drive=flowspec -> %s', (surface, expected) => {
+    expect(canFrankieDrive([surface], 'flowspec')).toBe(expected);
   });
 
   it('returns false for an empty surfaces list', () => {
-    expect(canFrankieDrive([])).toBe(false);
+    expect(canFrankieDrive([], 'flowspec')).toBe(false);
   });
 
   it('returns false for an absent surfaces list', () => {
-    expect(canFrankieDrive(undefined)).toBe(false);
+    expect(canFrankieDrive(undefined, 'flowspec')).toBe(false);
   });
 
   it('returns true when web is present alongside other surfaces', () => {
-    expect(canFrankieDrive(['api', 'web', 'cli'])).toBe(true);
+    expect(canFrankieDrive(['api', 'web', 'cli'], 'flowspec')).toBe(true);
+  });
+});
+
+describe('canFrankieDrive() - driver support (CodeRabbit PR #55: qa.drive must be a SUPPORTED driver, not just any string)', () => {
+  it('returns true for a drivable surface with the supported flowspec driver', () => {
+    expect(canFrankieDrive(['web'], 'flowspec')).toBe(true);
+  });
+
+  it('returns false for a drivable surface paired with an unsupported custom driver', () => {
+    expect(canFrankieDrive(['web'], 'selenium-custom')).toBe(false);
+  });
+
+  it('returns false for a non-drivable surface even with the supported driver', () => {
+    expect(canFrankieDrive(['api'], 'flowspec')).toBe(false);
+  });
+
+  it('treats a missing/undefined drive as the DEFAULT_CONTRACT.qa.drive default (flowspec)', () => {
+    expect(canFrankieDrive(['web'], undefined)).toBe(true);
+    expect(canFrankieDrive(['web'])).toBe(true);
   });
 });
 
@@ -343,7 +410,7 @@ describe("this repo's own ateam.config.json", () => {
     const contract = readExecutionContract();
 
     expect(contract.surfaces).toContain('web');
-    expect(canFrankieDrive(contract.surfaces)).toBe(true);
+    expect(canFrankieDrive(contract.surfaces, contract.qa.drive)).toBe(true);
   });
 });
 
