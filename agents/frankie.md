@@ -29,10 +29,12 @@ hooks:
       hooks:
         - type: command
           command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/block-worker-board-claim.js"
-    - matcher: "Write|Edit"
-      hooks:
-        - type: command
-          command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/block-frankie-writes.js"
+    # block-frankie-writes.js is deliberately NOT registered here: the
+    # plugin-level registration in hooks/hooks.json is matcher-less, so it
+    # already fires for EVERY tool call — including the Bash branch that
+    # catches `echo x > specs/foo.flow.yaml`, which a "Write|Edit" matcher
+    # here would miss. Registering it in both places spawned the hook twice
+    # per Write/Edit for identical verdicts.
     - hooks:
         - type: command
           command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/observe-pre-tool-use.js frankie"
@@ -320,9 +322,36 @@ and before Tawnia's final commit — a terminal, once-per-mission agent like
 Stockwell and Tawnia, not a pooled pipeline agent. No pool-handoff skill,
 no instance suffix, no forward handoff to another worker.
 
-1. **Start work:** `ateam agents-start agentStart --itemId "FRANKIE-WALK" --agent "frankie"` (a special item ID, mirroring Stockwell's `"FINAL-REVIEW"` and Tawnia's `"docs"` — not a `WI-XXX` item).
-2. **Log progress** via `ateam activity createActivityEntry` at meaningful checkpoints (server verified, each DoD statement walked, evidence bundle written, specs graduated) — follow the `agent-lifecycle` skill.
-3. **Complete:** `ateam agents-stop agentStop --itemId "FRANKIE-WALK" --agent "frankie" --outcome completed --summary "..."` — summary leads with the checklist result (e.g. "8/8 PASS" or "6/8 PASS, 2 FLAGGED") and the evidence bundle path.
+1. **Start work (attempt once, non-fatal):**
+   `ateam agents-start agentStart --itemId "FRANKIE-WALK" --agent "frankie"`
+   — a sentinel item ID, mirroring Stockwell's `"FINAL-REVIEW"` and
+   Tawnia's `"docs"`, not a `WI-XXX` item. **This call currently fails
+   with `ITEM_NOT_FOUND` (404), and that failure is KNOWN and expected.**
+   The API only models item-scoped lifecycles today, so there is no
+   `FRANKIE-WALK` row to claim (see
+   `prd/drafts/mission-phase-lifecycle.md`). Run it exactly **once**,
+   treat the error as non-fatal, and continue immediately to the walk.
+   Never retry it, never loop on it, never wait on it, and never report
+   it as a blocker — the call stays in the sequence so the claim and its
+   telemetry land automatically the day the mission-phase lifecycle
+   endpoint ships.
+2. **Log progress** via `ateam activity createActivityEntry` at meaningful
+   checkpoints (server verified, each DoD statement walked, evidence
+   bundle written, specs graduated) — follow the `agent-lifecycle` skill.
+   **This is your reliable telemetry path.** Unlike the sentinel-scoped
+   lifecycle calls above and below, activity entries are not item-scoped
+   and land every time, so anything a human or Hannibal needs to see
+   about the walk as it happens goes here.
+3. **Complete (attempt once, non-fatal):**
+   `ateam agents-stop agentStop --itemId "FRANKIE-WALK" --agent "frankie" --outcome completed --summary "..."`
+   — summary leads with the checklist result (e.g. "8/8 PASS" or
+   "6/8 PASS, 2 FLAGGED") and the evidence bundle path. Because the
+   `agentStart` above never claimed anything, **this call currently fails
+   with `NOT_CLAIMED` (400) — likewise KNOWN and expected.** Same rule:
+   run it once, treat the error as non-fatal, go straight to step 4. Your
+   walk is not incomplete because this errored — your completion gate is
+   the evidence bundle on disk (`.qa-evidence/<mission>/report.md`), and
+   your report to Hannibal is step 4.
 4. **Report to Hannibal:** send a `DONE` message (per the `teams-messaging` skill) carrying the checklist summary, the evidence bundle path, every failing item ID (per Failure Path above) with a one-line reason each, any dev-env gaps flagged (per Environment Failures above), and which specs graduated. This is your only outbound message — you do not START another agent.
 
 ## Boundaries

@@ -218,6 +218,7 @@ When you reject:
 - Be SPECIFIC about which items (by ID) need fixes
 - Reference the specific PRD requirement violated
 - Explain the cross-cutting issue clearly
+- Record the rejection in the report you pass to `writeFinalReview` — that persisted report *is* the verdict. Do not try to express it through `agentStop --outcome rejected` (see "Logging Progress and Handoff" below)
 - Items you name are moved out of `staged` by Hannibal using the earliest-flagged-stage rule — a named test gap routes to `testing`, an impl-only bug routes to `implementing` — via a real, rejection-cap-counted `board-move` (WI-794), the same mechanism Hannibal uses for a Frankie failure. You never move anything yourself.
 
 If a probing-style follow-up is needed (suspected hidden bug, fragile-feeling code), name the suspect items in the rejection with rationale; Hannibal routes them out of `staged` the same way, and they reach Amy again naturally once they cycle forward through review and probing. **Do not attempt to spawn sub-agents** — Stockwell has no Agent tool and is hook-blocked from agent dispatch.
@@ -238,7 +239,9 @@ Get the mission ID from `ateam missions-current getCurrentMission --json`. This 
 
 Follow the `ai-team:agent-lifecycle` skill for activity-log milestone messages and the `ai-team:teams-messaging` skill for the DONE message format. Both are loaded in Step 0.
 
-Stockwell is a terminal pre-Tawnia agent. After `agentStop` (with `--outcome completed --summary "FINAL APPROVED ..."` or `--outcome rejected --summary "FINAL REJECTED ..."`) and `writeFinalReview`, send DONE to Hannibal carrying the verdict.
+Stockwell is a terminal pre-Tawnia agent. After `agentStop` (always `--outcome completed`, with `--summary "FINAL APPROVED ..."` or `--summary "FINAL REJECTED ..."`) and `writeFinalReview`, send DONE to Hannibal carrying the verdict.
+
+**Never pass `--outcome rejected`.** The API requires `--return-to <stage>` whenever `outcome=rejected` and returns a 400 without it, and you have no `--return-to` target to give: by final-review time no agent holds a claim on the mission's items, and routing them is Hannibal's job, not yours. Your rejection verdict lives in the report persisted by `writeFinalReview` (and is echoed in your `agentStop --summary` and DONE message) — Hannibal reads it and executes the `board-move` for each named item. `--outcome completed` here means "my review finished", not "the mission passed".
 
 ## Mindset
 
