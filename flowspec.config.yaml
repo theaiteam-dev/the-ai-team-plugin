@@ -1,3 +1,6 @@
-baseUrl: http://localhost:3000
+# baseUrl must match ateam.config.json -> devServer.url (the `dev:qa` server
+# Frankie drives). FlowSpec's config loader does no env interpolation
+# (js-yaml + zod, plain strings), so this is hardcoded — keep the two in sync.
+baseUrl: http://localhost:5567
 timeout: 10000
 specsDir: specs/
