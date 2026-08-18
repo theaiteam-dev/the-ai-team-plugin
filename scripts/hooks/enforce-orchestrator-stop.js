@@ -26,6 +26,7 @@
  *   ATEAM_API_URL - Base URL for the A(i)-Team API
  *   ATEAM_PROJECT_ID - Project identifier
  *   ATEAM_SKIP_FRANKIE_GATE - Set to 1 to override the Frankie evidence gate
+ *   ATEAM_SKIP_PROMOTION_GATE - Set to 1 to override the staged-not-promoted gate
  *
  * For testing:
  *   __TEST_MOCK_BOARD__ - JSON string for fake board response
@@ -47,6 +48,18 @@ import {
 } from './lib/stop-gates.js';
 
 const hookInput = readHookInput();
+
+// --- Re-entry Guard ---
+// Claude Code sets stop_hook_active when the session is stopping BECAUSE a
+// Stop hook already blocked once. Every gate below is a "keep orchestrating"
+// instruction, so re-blocking here is how a mission-tail gate that cannot be
+// satisfied (an API predating WI-790's promotion, a verdict that parses as
+// 'unknown') turns into an infinite Hannibal loop. Allow the stop and let the
+// operator act on the message the first block already delivered.
+if (hookInput && hookInput.stop_hook_active === true) {
+  console.log(JSON.stringify({}));
+  process.exit(0);
+}
 
 // --- Agent Detection ---
 
@@ -169,7 +182,9 @@ async function checkCompletion() {
   // — that only happens via WI-790's atomic transaction when Stockwell's
   // review is written. An all-staged board must never be treated as an
   // empty (no-mission) board and allowed to stop.
-  const stagedBlock = checkStagedNotPromoted(stagedCount);
+  const stagedBlock = checkStagedNotPromoted(stagedCount, {
+    finalReview: missionData.final_review_verdict,
+  });
   if (stagedBlock) {
     console.log(JSON.stringify({ decision: 'block', additionalContext: stagedBlock }));
     process.exit(0);

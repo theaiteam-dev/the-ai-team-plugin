@@ -59,6 +59,7 @@ import {
   checkFrankieEvidence,
   parseFinalReviewVerdict,
   checkFinalReviewRejection,
+  checkStagedNotPromoted,
   fetchBoard,
   fetchMission,
 } from '../lib/stop-gates.js';
@@ -541,6 +542,30 @@ describe('stop-gates — checkFrankieEvidence', () => {
     ).toBeNull();
   });
 
+  it('keeps a valid surface when a sibling entry is the wrong type — one parse rule, shared with qa-contract.js', () => {
+    // This module used to hand-roll a stricter parser: a single non-string
+    // entry collapsed the WHOLE surfaces array to [], silently disarming the
+    // gate on a config that genuinely declares a drivable web surface.
+    // normalizeContract() drops only the bad entry (and warns on stderr).
+    const message = checkFrankieEvidence({
+      missionId: 'M-TEST-001',
+      stagedCount: 1,
+      cwd: scratch(null, { surfaces: ['web', 42 as unknown as string] }),
+    });
+    expect(message, 'the declared web surface must still arm the gate').toMatch(/frankie/i);
+  });
+
+  it('drops unknown surfaces values (case-sensitive) exactly as qa-contract.js does', () => {
+    expect(
+      checkFrankieEvidence({
+        missionId: 'M-TEST-001',
+        stagedCount: 1,
+        cwd: scratch(null, { surfaces: ['Web'] }),
+      }),
+      '"Web" is not "web" — the gate stays inert rather than firing on a surface nobody can drive'
+    ).toBeNull();
+  });
+
   it('allows when there is no mission id to resolve an evidence path against', () => {
     expect(checkFrankieEvidence({ missionId: null, stagedCount: 1, cwd: scratch() })).toBeNull();
   });
@@ -656,6 +681,174 @@ describe('stop-gates — checkFrankieEvidence', () => {
       ).toBeNull();
     });
 
+    // ---------------------------------------------------------------------
+    // Finding #18: `updatedAt` is @updatedAt — Prisma stamps it on EVERY
+    // write, so a title edit or an assignedAgent clear after a clean walk
+    // used to read as "items were reworked", forcing a full DoD re-walk for
+    // nothing. The transition INTO staged is recorded as a work-log entry
+    // (Amy's 'completed' entry advances probing → staged in the same
+    // transaction), so that is what the evidence must postdate.
+    // ---------------------------------------------------------------------
+    describe('transition timestamp comes from the work log, not @updatedAt', () => {
+      it('does NOT flag STALE when only updatedAt moved after the walk (an incidental touch, not a rework)', () => {
+        const cwd = scratch('M-TEST-001');
+        backdateReport(cwd, 'M-TEST-001', new Date(Date.now() - 2 * HOUR));
+        expect(
+          checkFrankieEvidence({
+            missionId: 'M-TEST-001',
+            stagedCount: 1,
+            stagedItems: [
+              {
+                id: 'WI-001',
+                // Entered staged BEFORE the walk...
+                workLogs: [
+                  {
+                    agent: 'Amy',
+                    action: 'completed',
+                    summary: 'Probing complete',
+                    timestamp: new Date(Date.now() - 3 * HOUR).toISOString(),
+                  },
+                ],
+                // ...but something touched the row afterwards (title edit,
+                // assignedAgent clear, any write at all).
+                updatedAt: new Date(Date.now() - 1 * HOUR).toISOString(),
+              },
+            ],
+            cwd,
+          })
+        ).toBeNull();
+      });
+
+      it('DOES flag STALE when the work log shows the item re-entered staged after the walk (a real rework)', () => {
+        const cwd = scratch('M-TEST-001');
+        backdateReport(cwd, 'M-TEST-001', new Date(Date.now() - 2 * HOUR));
+        const message = checkFrankieEvidence({
+          missionId: 'M-TEST-001',
+          stagedCount: 1,
+          stagedItems: [
+            {
+              id: 'WI-001',
+              workLogs: [
+                {
+                  agent: 'Amy',
+                  action: 'completed',
+                  summary: 'Probing complete (first pass)',
+                  timestamp: new Date(Date.now() - 4 * HOUR).toISOString(),
+                },
+                {
+                  agent: 'Hannibal',
+                  action: 'tail_rework',
+                  summary: 'Tail rework: moved from staged to implementing',
+                  timestamp: new Date(Date.now() - 3 * HOUR).toISOString(),
+                },
+                {
+                  agent: 'Amy',
+                  action: 'completed',
+                  summary: 'Probing complete (after rework)',
+                  timestamp: new Date(Date.now() - 1 * HOUR).toISOString(),
+                },
+              ],
+              updatedAt: new Date(Date.now() - 1 * HOUR).toISOString(),
+            },
+          ],
+          cwd,
+        });
+        expect(message).toMatch(/STALE/i);
+      });
+
+      it('ignores non-transition work-log entries (tail_rework / note) when deriving the staged transition', () => {
+        const cwd = scratch('M-TEST-001');
+        backdateReport(cwd, 'M-TEST-001', new Date(Date.now() - 2 * HOUR));
+        expect(
+          checkFrankieEvidence({
+            missionId: 'M-TEST-001',
+            stagedCount: 1,
+            stagedItems: [
+              {
+                id: 'WI-001',
+                workLogs: [
+                  {
+                    agent: 'Amy',
+                    action: 'completed',
+                    summary: 'Probing complete',
+                    timestamp: new Date(Date.now() - 3 * HOUR).toISOString(),
+                  },
+                  {
+                    agent: 'system',
+                    action: 'note',
+                    summary: 'Someone annotated the item after the walk',
+                    timestamp: new Date(Date.now() - 1 * HOUR).toISOString(),
+                  },
+                ],
+              },
+            ],
+            cwd,
+          })
+        ).toBeNull();
+      });
+
+      it('accepts the snake_case work_log key too (CLAUDE.md/CLI spelling of the same relation)', () => {
+        const cwd = scratch('M-TEST-001');
+        backdateReport(cwd, 'M-TEST-001', new Date(Date.now() - 2 * HOUR));
+        expect(
+          checkFrankieEvidence({
+            missionId: 'M-TEST-001',
+            stagedCount: 1,
+            stagedItems: [
+              {
+                id: 'WI-001',
+                work_log: [
+                  {
+                    agent: 'Amy',
+                    action: 'completed',
+                    summary: 'Probing complete',
+                    timestamp: new Date(Date.now() - 3 * HOUR).toISOString(),
+                  },
+                ],
+                updatedAt: new Date(Date.now() - 1 * HOUR).toISOString(),
+              },
+            ],
+            cwd,
+          })
+        ).toBeNull();
+      });
+
+      it('falls back to completedAt/updatedAt for an item whose payload carries no work log at all', () => {
+        const cwd = scratch('M-TEST-001');
+        backdateReport(cwd, 'M-TEST-001', new Date(Date.now() - 2 * HOUR));
+        expect(
+          checkFrankieEvidence({
+            missionId: 'M-TEST-001',
+            stagedCount: 1,
+            stagedItems: [
+              { id: 'WI-001', workLogs: [], updatedAt: new Date(Date.now() - 1 * HOUR).toISOString() },
+            ],
+            cwd,
+          })
+        ).toMatch(/STALE/i);
+      });
+
+      it('accepts Date objects as well as ISO strings on work-log timestamps', () => {
+        const cwd = scratch('M-TEST-001');
+        backdateReport(cwd, 'M-TEST-001', new Date(Date.now() - 2 * HOUR));
+        expect(
+          checkFrankieEvidence({
+            missionId: 'M-TEST-001',
+            stagedCount: 1,
+            stagedItems: [
+              {
+                id: 'WI-001',
+                workLogs: [
+                  { agent: 'Amy', action: 'completed', summary: 'x', timestamp: new Date(Date.now() - 1 * HOUR) },
+                ],
+              },
+            ],
+            cwd,
+          })
+        ).toMatch(/STALE/i);
+      });
+    });
+
     it('honors the ATEAM_SKIP_FRANKIE_GATE escape valve for the staleness check', () => {
       process.env.ATEAM_SKIP_FRANKIE_GATE = '1';
       const cwd = scratch('M-TEST-001');
@@ -731,6 +924,94 @@ describe('stop-gates — checkFrankieEvidence', () => {
       expect(
         checkFrankieEvidence({ missionId: 'M-TEST-001', stagedCount: 1, cwd })
       ).toBeNull();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkStagedNotPromoted — items in staged mean promotion (WI-790) has not
+// run. Unlike every other gate here it used to have NO override at all, so an
+// API server predating WI-790 (or a verdict that parses as 'unknown') left
+// Hannibal blocked forever with no way out.
+// ---------------------------------------------------------------------------
+describe('stop-gates — checkStagedNotPromoted', () => {
+  afterEach(() => {
+    delete process.env.ATEAM_SKIP_PROMOTION_GATE;
+    delete process.env.ATEAM_SKIP_FRANKIE_GATE;
+  });
+
+  it('allows the stop when nothing is staged', () => {
+    expect(checkStagedNotPromoted(0)).toBeNull();
+  });
+
+  it('blocks with the promotion diagnosis when items are staged and no review has been written', () => {
+    const message = checkStagedNotPromoted(3);
+    expect(message).toMatch(/3 item\(s\)/);
+    expect(message).toMatch(/promot/i);
+    expect(message).toMatch(/Stockwell/);
+  });
+
+  it('names its own ATEAM_SKIP_PROMOTION_GATE override inside the block message', () => {
+    expect(
+      checkStagedNotPromoted(1),
+      'an operator trapped by this gate must see the way out without reading the source'
+    ).toMatch(/ATEAM_SKIP_PROMOTION_GATE=1/);
+  });
+
+  it('never names ATEAM_SKIP_FRANKIE_GATE — the two overrides are deliberately separate decisions', () => {
+    expect(checkStagedNotPromoted(1)).not.toMatch(/ATEAM_SKIP_FRANKIE_GATE/);
+  });
+
+  it('allows the stop when ATEAM_SKIP_PROMOTION_GATE=1 / =true is set', () => {
+    process.env.ATEAM_SKIP_PROMOTION_GATE = '1';
+    expect(checkStagedNotPromoted(2)).toBeNull();
+    process.env.ATEAM_SKIP_PROMOTION_GATE = 'true';
+    expect(checkStagedNotPromoted(2)).toBeNull();
+  });
+
+  it('still blocks when ATEAM_SKIP_PROMOTION_GATE is an empty string (unset-like values do not disable a gate)', () => {
+    process.env.ATEAM_SKIP_PROMOTION_GATE = '';
+    expect(checkStagedNotPromoted(2)).toMatch(/staged/i);
+  });
+
+  it('is NOT suppressed by ATEAM_SKIP_FRANKIE_GATE — that override covers only the Frankie evidence sub-check', () => {
+    process.env.ATEAM_SKIP_FRANKIE_GATE = '1';
+    expect(checkStagedNotPromoted(2)).toMatch(/staged/i);
+  });
+
+  describe('a review already exists but nothing was promoted', () => {
+    it('diagnoses the APPROVED-but-unpromoted case (an API predating WI-790) and names both ways out', () => {
+      const message = checkStagedNotPromoted(2, {
+        finalReview: '# Final Mission Review\n\nVERDICT: FINAL APPROVED\n',
+      });
+      expect(message).toMatch(/APPROVED/);
+      expect(message).toMatch(/2 item\(s\) are still staged/);
+      expect(message).toMatch(/WI-790/);
+      expect(message, 'the operator can re-POST the review...').toMatch(/writeFinalReview/);
+      expect(message, '...or override the gate').toMatch(/ATEAM_SKIP_PROMOTION_GATE=1/);
+    });
+
+    it('does not mention Frankie in the approved-but-unpromoted message — nothing here is about the walk', () => {
+      expect(
+        checkStagedNotPromoted(1, { finalReview: 'VERDICT: FINAL APPROVED' })
+      ).not.toMatch(/frankie/i);
+    });
+
+    it('diagnoses a FINAL REJECTED review as rework-then-restart, never "re-POST the review"', () => {
+      const message = checkStagedNotPromoted(1, { finalReview: 'VERDICT: FINAL REJECTED' });
+      expect(message).toMatch(/REJECTED/);
+      expect(message).toMatch(/rework/i);
+      expect(message).not.toMatch(/writeFinalReview/);
+    });
+
+    it('diagnoses an unparseable verdict — promotion only ever runs on FINAL APPROVED', () => {
+      const message = checkStagedNotPromoted(1, { finalReview: 'Looks good, shipping it.' });
+      expect(message).toMatch(/verdict could not be parsed/i);
+      expect(message).toMatch(/ATEAM_SKIP_PROMOTION_GATE=1/);
+    });
+
+    it('treats a blank review string as no review at all (falls back to the dispatch-Stockwell message)', () => {
+      expect(checkStagedNotPromoted(1, { finalReview: '   ' })).toMatch(/Stockwell/);
     });
   });
 });

@@ -305,7 +305,7 @@ describe('enforce-handoff — Amy terminal handoff', () => {
         name: 'SendMessage',
         input: {
           to: 'hannibal',
-          content: 'MISSION_COMPLETE: WI-003 - all items verified and in done stage. Ready for final review.',
+          content: 'MISSION_COMPLETE: WI-003 - all items verified and in staged stage. Ready for final review.',
         },
       },
     ]);
@@ -351,7 +351,7 @@ describe('enforce-handoff — Amy terminal handoff', () => {
         name: 'SendMessage',
         input: {
           to: 'hannibal',
-          content: 'MISSION_COMPLETE: WI-003 - all items verified and in done stage. Ready for final review.',
+          content: 'MISSION_COMPLETE: WI-003 - all items verified and in staged stage. Ready for final review.',
         },
       },
     ]);

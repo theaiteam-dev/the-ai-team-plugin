@@ -19,7 +19,7 @@
 
 import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
-import { sendDeniedEvent } from './lib/send-denied-event.js';
+import { denyAndExit } from './lib/send-denied-event.js';
 
 let hookInput = {};
 try {
@@ -96,11 +96,10 @@ try {
 
   // Block everything else — this is implementation territory
   const reason = `BLOCKED: Murdock cannot write implementation files: ${filePath}. Implementation is B.A.'s job.`;
-  sendDeniedEvent({ agentName: agent, toolName, reason });
   process.stderr.write(`BLOCKED: Murdock cannot write implementation files: ${filePath}\n`);
   process.stderr.write('Implementation is B.A.\'s job. Murdock writes tests and type definitions ONLY.\n');
   process.stderr.write('If you need a type, create a .d.ts file or place it in a /types/ directory.\n');
-  process.exit(2);
+  await denyAndExit({ agentName: agent, toolName, reason });
 } catch {
   // Fail open on any unexpected error
   process.exit(0);

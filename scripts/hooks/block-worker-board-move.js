@@ -13,7 +13,7 @@
 
 import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
-import { sendDeniedEvent } from './lib/send-denied-event.js';
+import { denyAndExit } from './lib/send-denied-event.js';
 
 let hookInput = {};
 try {
@@ -39,14 +39,10 @@ try {
 
   // Check for ateam board-move CLI calls via Bash
   if (toolName === 'Bash' && command.includes('ateam') && command.includes('board-move')) {
-    try {
-      sendDeniedEvent({ agentName: agent, toolName, reason: 'BLOCKED: Working agents cannot call ateam board-move. Use ateam agents-stop agentStop to complete work; the --advance=false flag skips the stage transition if needed.' });
-    } finally {
-      process.stderr.write('BLOCKED: Working agents cannot call ateam board-move.\n');
-      process.stderr.write('Use ateam agents-stop agentStop to complete work.\n');
-      process.stderr.write('If the next stage is at WIP capacity, use --advance=false to release the claim without moving stages.\n');
-      process.exit(2);
-    }
+    process.stderr.write('BLOCKED: Working agents cannot call ateam board-move.\n');
+    process.stderr.write('Use ateam agents-stop agentStop to complete work.\n');
+    process.stderr.write('If the next stage is at WIP capacity, use --advance=false to release the claim without moving stages.\n');
+    await denyAndExit({ agentName: agent, toolName, reason: 'BLOCKED: Working agents cannot call ateam board-move. Use ateam agents-stop agentStop to complete work; the --advance=false flag skips the stage transition if needed.' });
   }
 
   // Allow other tools

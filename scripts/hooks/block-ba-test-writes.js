@@ -11,7 +11,7 @@
 
 import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
-import { sendDeniedEvent } from './lib/send-denied-event.js';
+import { denyAndExit } from './lib/send-denied-event.js';
 
 let hookInput = {};
 try {
@@ -41,11 +41,10 @@ try {
   // Block writes to test/spec files
   if (filePath.match(/\.(test|spec)\.(ts|js|tsx|jsx)$/)) {
     const reason = `BLOCKED: B.A. cannot modify test files: ${filePath}. Tests are Murdock's responsibility.`;
-    sendDeniedEvent({ agentName: agent, toolName, reason });
     process.stderr.write(`BLOCKED: B.A. cannot modify test files: ${filePath}\n`);
     process.stderr.write('Tests are Murdock\'s responsibility. Implement code that passes the existing tests.\n');
     process.stderr.write('If a test is genuinely broken, message Hannibal to have Murdock fix it.\n');
-    process.exit(2);
+    await denyAndExit({ agentName: agent, toolName, reason });
   }
 
   // Allow vitest.setup.ts, jest.setup.ts etc. — these are infrastructure, not tests

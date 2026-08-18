@@ -145,6 +145,36 @@ function normalizeContract(raw) {
 
 /**
  * Reads and normalizes the execution contract from
+ * `<cwd>/ateam.config.json` — the cwd-parameterized reader every caller
+ * that resolves the contract against a directory OTHER than process.cwd()
+ * must use (scripts/hooks/lib/stop-gates.js's Frankie gate resolves both
+ * the contract and the evidence path against a caller-supplied cwd).
+ *
+ * Sharing normalizeContract() is the point: a second hand-rolled parser
+ * would inevitably drift from this one's rules (it did — the gate's private
+ * reader collapsed the WHOLE surfaces array to [] on a single non-string
+ * entry, silently disarming the mission-completion gate where this one drops
+ * the bad entry, warns on stderr, and keeps its valid siblings).
+ *
+ * Never throws and is NOT cached — each call re-reads the file, since the
+ * cwd can differ between calls. Use readExecutionContract() for the cached,
+ * process.cwd()-bound read.
+ *
+ * @param {string} cwd - Directory containing ateam.config.json.
+ * @returns {ReturnType<typeof normalizeContract>}
+ */
+export function readExecutionContractFrom(cwd) {
+  try {
+    const configPath = path.join(cwd, 'ateam.config.json');
+    const raw = fs.readFileSync(configPath, 'utf-8');
+    return normalizeContract(JSON.parse(raw));
+  } catch {
+    return normalizeContract(null);
+  }
+}
+
+/**
+ * Reads and normalizes the execution contract from
  * <process.cwd()>/ateam.config.json.
  *
  * Never throws — a missing file, malformed JSON, or a non-object JSON
@@ -171,14 +201,7 @@ export function readExecutionContract() {
     return _cachedContract;
   }
 
-  try {
-    const configPath = path.join(process.cwd(), 'ateam.config.json');
-    const raw = fs.readFileSync(configPath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    _cachedContract = normalizeContract(parsed);
-  } catch {
-    _cachedContract = normalizeContract(null);
-  }
+  _cachedContract = readExecutionContractFrom(process.cwd());
 
   return _cachedContract;
 }

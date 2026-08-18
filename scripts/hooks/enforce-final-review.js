@@ -19,6 +19,7 @@
  *   ATEAM_API_URL - Base URL for the A(i)-Team API
  *   ATEAM_PROJECT_ID - Project identifier
  *   ATEAM_SKIP_FRANKIE_GATE - Set to 1 to override the Frankie evidence gate
+ *   ATEAM_SKIP_PROMOTION_GATE - Set to 1 to override the staged-not-promoted gate
  *
  * For testing:
  *   __TEST_MOCK_BOARD__ - JSON string for fake board response
@@ -48,6 +49,16 @@ try {
   }
 } catch {
   // Can't read stdin — assume main session (Hannibal), continue enforcing
+}
+
+// Re-entry guard: Claude Code sets stop_hook_active when the session is
+// stopping BECAUSE a Stop hook already blocked once. Every gate below is a
+// "keep orchestrating" instruction, so re-blocking here is how a mission-tail
+// gate that cannot be satisfied (an API predating WI-790's promotion, a
+// verdict that parses as 'unknown') turns into an infinite Hannibal loop.
+// Allow the stop and let the operator act on the first block's message.
+if (hookInput && hookInput.stop_hook_active === true) {
+  process.exit(0);
 }
 
 // Only enforce for Hannibal (main session). Known non-hannibal agents pass through.
@@ -139,7 +150,9 @@ async function checkFinalReview() {
   // stderr mechanism as the other pre-existing gates below (this is NOT the
   // Frankie-specific JSON-decision sub-check, so ATEAM_SKIP_FRANKIE_GATE
   // must not suppress it).
-  const stagedBlock = checkStagedNotPromoted(stagedCount);
+  const stagedBlock = checkStagedNotPromoted(stagedCount, {
+    finalReview: missionData.final_review_verdict,
+  });
   if (stagedBlock) {
     process.stderr.write(`${stagedBlock}\n`);
     process.exit(2);

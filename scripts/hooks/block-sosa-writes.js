@@ -11,7 +11,7 @@
 
 import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
-import { sendDeniedEvent } from './lib/send-denied-event.js';
+import { denyAndExit } from './lib/send-denied-event.js';
 
 let hookInput = {};
 try {
@@ -33,12 +33,11 @@ try {
   const toolName = hookInput.tool_name || '';
 
   if (toolName === 'Write' || toolName === 'Edit') {
-    sendDeniedEvent({ agentName: agent, toolName, reason: 'BLOCKED: Sosa cannot write or edit files.' });
     process.stderr.write('BLOCKED: Sosa cannot write or edit files.\n');
     process.stderr.write('Sosa reviews Face\'s decomposition and provides recommendations.\n');
     process.stderr.write('Put your findings in your review report (as text output).\n');
     process.stderr.write('Face will use your recommendations to refine the work items.\n');
-    process.exit(2);
+    await denyAndExit({ agentName: agent, toolName, reason: 'BLOCKED: Sosa cannot write or edit files.' });
   }
 
   // Allow other tools

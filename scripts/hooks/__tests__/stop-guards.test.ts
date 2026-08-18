@@ -57,6 +57,9 @@ function runHook(
   if (!('ATEAM_SKIP_FRANKIE_GATE' in env)) {
     delete fullEnv.ATEAM_SKIP_FRANKIE_GATE;
   }
+  if (!('ATEAM_SKIP_PROMOTION_GATE' in env)) {
+    delete fullEnv.ATEAM_SKIP_PROMOTION_GATE;
+  }
   const options: Record<string, unknown> = {
     env: fullEnv,
     encoding: 'utf8',
@@ -1452,5 +1455,151 @@ describe('enforce-orchestrator-stop — Frankie evidence quality gates', () => {
     // on Frankie himself.
     expect(String(output.additionalContext)).not.toMatch(/frankie/i);
     expect(String(output.additionalContext)).toMatch(/staged/i);
+  });
+});
+
+// =============================================================================
+// stop_hook_active re-entry guard + ATEAM_SKIP_PROMOTION_GATE.
+//
+// Every mission-tail gate blocks with a "keep orchestrating" instruction. When
+// the condition CANNOT be satisfied — an API server predating WI-790's
+// staged→done promotion, or a review whose verdict parses as 'unknown' — that
+// is an infinite Hannibal loop: block, resume, block, resume. Claude Code sets
+// stop_hook_active on a stop that is itself the consequence of a previous
+// block, which is the harness-level way out; ATEAM_SKIP_PROMOTION_GATE=1 is
+// the operator-level one, deliberately separate from ATEAM_SKIP_FRANKIE_GATE
+// (skipping a walk nobody can drive is a different decision from declaring a
+// mission finished with items the API never promoted).
+// =============================================================================
+describe('Stop hooks — stop_hook_active re-entry guard and the promotion-gate override', () => {
+  const MISSION_ID = 'M-TEST-REENTRY';
+  const scratchDirs: string[] = [];
+
+  beforeAll(() => setMissionMarker());
+  afterAll(() => {
+    clearMissionMarker();
+    for (const dir of scratchDirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup
+      }
+    }
+  });
+
+  /** Non-drivable repo: only the staged/promotion gate can fire here. */
+  function repo() {
+    const dir = mkdtempSync(join(tmpdir(), 'ateam-reentry-'));
+    scratchDirs.push(dir);
+    writeFileSync(join(dir, 'ateam.config.json'), JSON.stringify({ surfaces: ['hardware'] }));
+    return dir;
+  }
+
+  const BOARD_ONE_STAGED = JSON.stringify({ columns: { staged: [{ id: 'WI-001' }] } });
+  const MISSION_APPROVED = JSON.stringify({
+    id: MISSION_ID,
+    status: 'active',
+    final_review_verdict: 'VERDICT: FINAL APPROVED',
+    postcheck: { passed: true },
+  });
+
+  it('enforce-orchestrator-stop: allows the stop when stop_hook_active is true, instead of re-blocking forever', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      { session_id: 'main-session-reentry', stop_hook_active: true },
+      { __TEST_MOCK_BOARD__: BOARD_ONE_STAGED, __TEST_MOCK_MISSION__: MISSION_APPROVED },
+      repo()
+    );
+    expect(result.exitCode).toBe(0);
+    expect(parseStopOutput(result.stdout).decision).not.toBe('block');
+  });
+
+  it('enforce-orchestrator-stop: still blocks on the same input when stop_hook_active is false (the guard is not a blanket bypass)', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      { session_id: 'main-session-reentry', stop_hook_active: false },
+      { __TEST_MOCK_BOARD__: BOARD_ONE_STAGED, __TEST_MOCK_MISSION__: MISSION_APPROVED },
+      repo()
+    );
+    expect(parseStopOutput(result.stdout).decision).toBe('block');
+  });
+
+  it('enforce-final-review: allows the stop when stop_hook_active is true', () => {
+    const result = runHook(
+      hookPath('enforce-final-review.js'),
+      { stop_hook_active: true },
+      { __TEST_MOCK_BOARD__: BOARD_ONE_STAGED, __TEST_MOCK_MISSION__: MISSION_APPROVED },
+      repo()
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe('');
+  });
+
+  it('enforce-final-review: still blocks on the same input without the flag', () => {
+    const result = runHook(
+      hookPath('enforce-final-review.js'),
+      {},
+      { __TEST_MOCK_BOARD__: BOARD_ONE_STAGED, __TEST_MOCK_MISSION__: MISSION_APPROVED },
+      repo()
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/staged/i);
+  });
+
+  it('names the APPROVED-but-unpromoted situation — the exact state an API predating WI-790 leaves behind', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      { __TEST_MOCK_BOARD__: BOARD_ONE_STAGED, __TEST_MOCK_MISSION__: MISSION_APPROVED },
+      repo()
+    );
+    const context = String(parseStopOutput(result.stdout).additionalContext);
+    expect(context).toMatch(/APPROVED/);
+    expect(context).toMatch(/still staged/i);
+    expect(context).toMatch(/WI-790/);
+    expect(context).toMatch(/ATEAM_SKIP_PROMOTION_GATE=1/);
+  });
+
+  it('enforce-orchestrator-stop: ATEAM_SKIP_PROMOTION_GATE=1 releases the staged gate', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: BOARD_ONE_STAGED,
+        __TEST_MOCK_MISSION__: MISSION_APPROVED,
+        ATEAM_SKIP_PROMOTION_GATE: '1',
+      },
+      repo()
+    );
+    expect(result.exitCode).toBe(0);
+    expect(parseStopOutput(result.stdout).decision).not.toBe('block');
+  });
+
+  it('enforce-final-review: ATEAM_SKIP_PROMOTION_GATE=1 releases the staged gate', () => {
+    const result = runHook(
+      hookPath('enforce-final-review.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: BOARD_ONE_STAGED,
+        __TEST_MOCK_MISSION__: MISSION_APPROVED,
+        ATEAM_SKIP_PROMOTION_GATE: '1',
+      },
+      repo()
+    );
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('ATEAM_SKIP_FRANKIE_GATE does NOT release the promotion gate — the two overrides stay separate', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: BOARD_ONE_STAGED,
+        __TEST_MOCK_MISSION__: MISSION_APPROVED,
+        ATEAM_SKIP_FRANKIE_GATE: '1',
+      },
+      repo()
+    );
+    expect(parseStopOutput(result.stdout).decision).toBe('block');
   });
 });

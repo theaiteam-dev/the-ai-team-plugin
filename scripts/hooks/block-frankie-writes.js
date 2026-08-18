@@ -23,7 +23,7 @@
  *   - Everything else (implementation, tests, and any other path) —
  *     Frankie's job is to report, not to fix; the failure bounces to B.A.
  *   - Bash commands whose recognized write-shaped operation (redirection,
- *     tee, mv/cp destination, rm/rmdir, sed -i, touch, truncate, dd of=)
+ *     tee, mv/cp destination, rm/rmdir, ln, sed -i, touch, truncate, dd of=)
  *     targets a protected path. This is best-effort defense-in-depth, NOT
  *     a shell sandbox — arbitrary shell syntax can defeat the pattern scan
  *     — but every path it DOES recognize is checked against the exact same
@@ -41,11 +41,20 @@
  * session_id).
  */
 
-import { readFileSync, existsSync, mkdirSync, writeFileSync, readdirSync, statSync } from 'fs';
+import {
+  readFileSync,
+  existsSync,
+  mkdirSync,
+  writeFileSync,
+  readdirSync,
+  statSync,
+  lstatSync,
+  realpathSync,
+} from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { resolveAgent } from './lib/resolve-agent.js';
-import { sendDeniedEvent } from './lib/send-denied-event.js';
+import { denyAndExit } from './lib/send-denied-event.js';
 
 /**
  * True if any path segment of filePath is EXACTLY ".." — a traversal
@@ -85,7 +94,95 @@ function isUnderDir(filePath, dirName) {
   const root = process.cwd();
   const abs = path.resolve(root, filePath);
   const base = path.join(root, dirName);
-  return abs === base || abs.startsWith(base + path.sep);
+  // Cheap lexical gate first — anything that isn't even textually under the
+  // allowed root can be rejected without touching the filesystem.
+  if (!isWithin(abs, base)) {
+    return false;
+  }
+
+  // Lexical containment is not enough: path.resolve() never follows symlinks,
+  // so `.qa-evidence/M-1/x -> ../../src/services/order.ts` (or an
+  // `.qa-evidence -> /` link planted before the directory exists) would be
+  // "under" the allowed root textually while every write through it lands in
+  // implementation code. Compare CANONICAL paths instead, and fail CLOSED if
+  // canonicalization is impossible (dangling link, permission error).
+  const canonicalRoot = canonicalizePath(root);
+  const canonicalBase = canonicalizePath(base);
+  const canonicalTarget = canonicalizePath(abs);
+  if (canonicalRoot === null || canonicalBase === null || canonicalTarget === null) {
+    return false;
+  }
+  // The allowed directory itself must still live inside the project root. A
+  // symlinked `.qa-evidence -> /` would otherwise "contain" the entire
+  // filesystem, turning the allowlist into a universal permit.
+  if (canonicalBase === canonicalRoot || !isWithin(canonicalBase, canonicalRoot)) {
+    return false;
+  }
+  return isWithin(canonicalTarget, canonicalBase);
+}
+
+/**
+ * True if `child` is `parent` itself or lives underneath it. Compares whole
+ * path SEGMENTS (parent + separator), so a sibling whose name merely starts
+ * with the parent's name — `specs-backup/` vs `specs/` — is never "within".
+ */
+function isWithin(child, parent) {
+  if (child === parent) {
+    return true;
+  }
+  const prefix = parent.endsWith(path.sep) ? parent : parent + path.sep;
+  return child.startsWith(prefix);
+}
+
+/**
+ * True if `p` names an existing directory entry, INCLUDING a dangling
+ * symlink. lstatSync (not existsSync) on purpose: existsSync follows links
+ * and therefore reports `false` for a symlink whose target doesn't exist yet
+ * — but writing through such a link still creates the link's target, so it
+ * must be canonicalized (and, being dangling, denied) rather than treated as
+ * a plain not-yet-existing file.
+ */
+function pathEntryExists(p) {
+  try {
+    lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Canonical absolute form of `abs` with every symlink resolved, for paths
+ * that may not exist yet: walks up to the deepest EXISTING ancestor,
+ * realpath()s that, and re-appends the not-yet-existing tail.
+ *
+ * Returns null when the path cannot be canonicalized — a dangling symlink, a
+ * permission error, or an ancestor walk that runs off the top of the
+ * filesystem. Callers treat null as "deny": an unresolvable path must never
+ * be judged to be inside an allowlisted directory.
+ */
+function canonicalizePath(abs) {
+  const tail = [];
+  let current = abs;
+  // Bounded purely as a runaway guard; path.dirname() reaches the root in a
+  // handful of steps for any real path.
+  for (let depth = 0; depth < 4096; depth++) {
+    if (pathEntryExists(current)) {
+      try {
+        const real = realpathSync(current);
+        return tail.length > 0 ? path.join(real, ...tail) : real;
+      } catch {
+        return null;
+      }
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    tail.unshift(path.basename(current));
+    current = parent;
+  }
+  return null;
 }
 
 /**
@@ -302,6 +399,81 @@ const REDIRECT_OPERATOR_RE = /^(?:\d*>>?|&>>?)$/;
 const REDIRECT_PREFIX_RE = /^(\d*>>?|&>>?)(.+)$/;
 
 /**
+ * Surrounds every UNQUOTED output-redirection operator with spaces so the
+ * quote-aware tokenizer below always sees the operator and its target as
+ * separate tokens.
+ *
+ * Without this, the tokenizer (`(?:[^\s"']+|"[^"]*"|'[^']*')+`) glues a
+ * redirect onto whatever precedes it — `echo hi>specs/x.flow.yaml` becomes
+ * the single token `hi>specs/x.flow.yaml`, which matches neither the
+ * "operator is its own token" nor the "operator starts the token" case, so
+ * ZERO targets were extracted and the write sailed through while the spaced
+ * form `echo hi > specs/x.flow.yaml` was blocked. Bash itself treats the two
+ * identically, and so must this scan.
+ *
+ * Hand-rolled rather than a regex because the fd prefix must be peeled off
+ * correctly: `2>file` is fd 2 redirected to `file`, but `hi2>file` is the
+ * word `hi2` followed by `>file` (a digit run counts as an fd only when it
+ * forms its own word). Quoted spans are copied through untouched, so a `>`
+ * inside `--description "before > after"` is never treated as an operator.
+ * fd-duplication targets stay recognizable: `2>&1` becomes `2> &1`, and
+ * `&1` is filtered out downstream by isBenignRedirectSink().
+ */
+function padRedirectOperators(statement) {
+  let out = '';
+  let quote = null;
+
+  for (let i = 0; i < statement.length; i++) {
+    const ch = statement[i];
+
+    if (quote) {
+      out += ch;
+      if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      out += ch;
+      continue;
+    }
+    if (ch !== '>') {
+      out += ch;
+      continue;
+    }
+
+    // Peel any fd prefix already emitted so the whole operator (`2>`, `&>>`)
+    // re-emerges as one whitespace-delimited token.
+    let prefix = '';
+    if (out.endsWith('&') && (out.length === 1 || /\s/.test(out[out.length - 2]))) {
+      prefix = '&';
+      out = out.slice(0, -1);
+    } else {
+      let cut = out.length;
+      while (cut > 0 && out[cut - 1] >= '0' && out[cut - 1] <= '9') {
+        cut--;
+      }
+      // Trailing digits are an fd number only when they are a word of their
+      // own (start of statement or preceded by whitespace).
+      if (cut < out.length && (cut === 0 || /\s/.test(out[cut - 1]))) {
+        prefix = out.slice(cut);
+        out = out.slice(0, cut);
+      }
+    }
+
+    let operator = `${prefix}>`;
+    if (statement[i + 1] === '>') {
+      operator += '>';
+      i++;
+    }
+    out += ` ${operator} `;
+  }
+
+  return out;
+}
+
+/**
  * Best-effort extraction of write-shaped operations' target paths from a
  * single Bash statement (already split on &&/||/;/|/newline by
  * splitBashStatements). This is NOT a shell parser — variable expansion,
@@ -316,14 +488,15 @@ const REDIRECT_PREFIX_RE = /^(\d*>>?|&>>?)(.+)$/;
  * "a > b", is one opaque token — its contents are never mistaken for a
  * redirect operator or a statement's command/args), then recognizes:
  * output redirection (`>`, `>>`, and fd-qualified variants like `2>`,
- * whether the operator is its own token or glued to the target, e.g.
- * `>file`), `tee [-a]`, `mv`/`cp` (destination = last non-flag arg),
- * `rm`/`rmdir`/`touch`/`truncate` (every non-flag arg is a target), `sed
- * -i` (target = last non-flag arg), and `dd of=`.
+ * whether the operator stands alone, is glued to the target (`>file`), or is
+ * glued to the PRECEDING token (`echo hi>file`) — padRedirectOperators()
+ * normalizes all three), `tee [-a]`, `mv`/`cp` (destination = last non-flag
+ * arg), `rm`/`rmdir`/`touch`/`truncate`/`ln` (every non-flag arg is a
+ * target), `sed -i` (target = last non-flag arg), and `dd of=`.
  */
 function extractBashWriteTargets(statement) {
   const targets = [];
-  const rawTokens = statement.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+  const rawTokens = padRedirectOperators(statement).match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
   if (rawTokens.length === 0) {
     return targets;
   }
@@ -361,7 +534,19 @@ function extractBashWriteTargets(statement) {
     .map(stripQuotes)
     .filter((w) => w.length > 0 && !w.startsWith('-') && !/[>|;&]/.test(w));
 
-  if (cmd === 'rm' || cmd === 'rmdir' || cmd === 'touch' || cmd === 'truncate' || cmd === 'tee') {
+  // `ln` is a write op in BOTH directions: the link name is a new path being
+  // created, and the link TARGET is the file every later write through that
+  // link actually lands in. `ln -s ../src/services/order.ts .qa-evidence/x`
+  // would otherwise be a two-step laundering of an implementation-file write
+  // past this guard, so every non-flag arg is classified.
+  if (
+    cmd === 'rm' ||
+    cmd === 'rmdir' ||
+    cmd === 'touch' ||
+    cmd === 'truncate' ||
+    cmd === 'tee' ||
+    cmd === 'ln'
+  ) {
     nonFlagArgs.forEach(pushTarget);
   } else if (cmd === 'mv' || cmd === 'cp') {
     if (nonFlagArgs.length > 0) {
@@ -394,14 +579,27 @@ try {
     process.exit(0);
   }
 
-  // Take (or load) the session's specs/ snapshot on EVERY Frankie
-  // invocation, not just specs/-targeting ones — the first hook fire of the
-  // session (whatever it targets) freezes the "graduated" set before any
-  // Frankie write can land. null = strict fallback (see loadOrTakeSpecSnapshot).
-  const specSnapshot = loadOrTakeSpecSnapshot(hookInput.session_id);
-
   const toolName = hookInput.tool_name || '';
   const toolInput = hookInput.tool_input || {};
+
+  // Only Bash (best-effort shell scan) and the write-capable tools can put
+  // bytes on disk. Everything else — reads, browser driving, other execs — is
+  // unrelated to this hook's intent, so it returns BEFORE any filesystem work
+  // (the specs/ snapshot below walks specs/ and touches tmpdir). Gating first
+  // keeps the common read-only tool call at near-zero cost.
+  const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+  if (toolName !== 'Bash' && !WRITE_TOOLS.has(toolName)) {
+    process.exit(0);
+  }
+
+  // Take (or load) the session's specs/ snapshot on every write-capable
+  // Frankie invocation — the first one of the session freezes the
+  // "graduated" set before any Frankie write can land. Taking it here rather
+  // than on literally every tool call only ever makes the snapshot LARGER
+  // (more files counted as pre-existing → more files immutable), so the
+  // reorder is strictly on the fail-closed side. null = strict fallback
+  // (see loadOrTakeSpecSnapshot).
+  const specSnapshot = loadOrTakeSpecSnapshot(hookInput.session_id);
 
   // Bash: full shell interdiction is impossible (arbitrary syntax can
   // always defeat a pattern scan), so this is best-effort defense-in-depth
@@ -419,31 +617,26 @@ try {
 
         if (verdict.reason === 'spec-immutable') {
           const reason = `BLOCKED: Frankie's Bash command writes to an existing spec file: ${target}. Graduated specs are immutable.`;
-          sendDeniedEvent({ agentName: agent, toolName, reason });
-          process.stderr.write(`BLOCKED: Frankie's Bash command targets an existing spec file: ${target}\n`);
-          process.stderr.write('Graduated specs under specs/ are immutable by design (FlowSpec protection).\n');
-          process.stderr.write('You may ADD new flow files only — never edit one that already exists, including via shell redirection or in-place tools.\n');
-          process.stderr.write(`Command: ${command}\n`);
-          process.exit(2);
+          await denyAndExit(
+            { agentName: agent, toolName, reason },
+            `BLOCKED: Frankie's Bash command targets an existing spec file: ${target}\n` +
+              'Graduated specs under specs/ are immutable by design (FlowSpec protection).\n' +
+              'You may ADD new flow files only — never edit one that already exists, including via shell redirection or in-place tools.\n' +
+              `Command: ${command}\n`
+          );
         }
 
         const reason = `BLOCKED: Frankie's Bash command writes to implementation/test territory: ${target}. Bounce to B.A. with repro steps instead.`;
-        sendDeniedEvent({ agentName: agent, toolName, reason });
-        process.stderr.write(`BLOCKED: Frankie's Bash command targets implementation/test territory: ${target}\n`);
-        process.stderr.write('Frankie never fixes the code (see Hard rules in agents/frankie.md).\n');
-        process.stderr.write('Record exact repro steps and the failing screenshot in report.md, then bounce the failure to B.A. instead.\n');
-        process.stderr.write(`Command: ${command}\n`);
-        process.exit(2);
+        await denyAndExit(
+          { agentName: agent, toolName, reason },
+          `BLOCKED: Frankie's Bash command targets implementation/test territory: ${target}\n` +
+            'Frankie never fixes the code (see Hard rules in agents/frankie.md).\n' +
+            'Record exact repro steps and the failing screenshot in report.md, then bounce the failure to B.A. instead.\n' +
+            `Command: ${command}\n`
+        );
       }
     }
     // No recognized write op targeted a protected path — allow.
-    process.exit(0);
-  }
-
-  // Only gate write-capable tools beyond this point. Reads, browser
-  // driving, and other execs are unrelated to this hook's intent.
-  const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
-  if (!WRITE_TOOLS.has(toolName)) {
     process.exit(0);
   }
 
@@ -459,21 +652,23 @@ try {
 
   if (verdict.reason === 'spec-immutable') {
     const reason = `BLOCKED: Frankie cannot edit an existing spec file: ${filePath}. Graduated specs are immutable.`;
-    sendDeniedEvent({ agentName: agent, toolName, reason });
-    process.stderr.write(`BLOCKED: Frankie cannot edit an existing spec file: ${filePath}\n`);
-    process.stderr.write('Graduated specs under specs/ are immutable by design (FlowSpec protection).\n');
-    process.stderr.write('You may ADD new flow files only — never edit one that already exists.\n');
-    process.exit(2);
+    await denyAndExit(
+      { agentName: agent, toolName, reason },
+      `BLOCKED: Frankie cannot edit an existing spec file: ${filePath}\n` +
+        'Graduated specs under specs/ are immutable by design (FlowSpec protection).\n' +
+        'You may ADD new flow files only — never edit one that already exists.\n'
+    );
   }
 
   // Everything else is implementation/test territory — Frankie reports,
   // he never fixes.
   const reason = `BLOCKED: Frankie cannot write or edit implementation/test files: ${filePath}. Bounce to B.A. with repro steps instead.`;
-  sendDeniedEvent({ agentName: agent, toolName, reason });
-  process.stderr.write(`BLOCKED: Frankie cannot write or edit implementation/test files: ${filePath}\n`);
-  process.stderr.write('Frankie never fixes the code (see Hard rules in agents/frankie.md).\n');
-  process.stderr.write('Record exact repro steps and the failing screenshot in report.md, then bounce the failure to B.A. instead.\n');
-  process.exit(2);
+  await denyAndExit(
+    { agentName: agent, toolName, reason },
+    `BLOCKED: Frankie cannot write or edit implementation/test files: ${filePath}\n` +
+      'Frankie never fixes the code (see Hard rules in agents/frankie.md).\n' +
+      'Record exact repro steps and the failing screenshot in report.md, then bounce the failure to B.A. instead.\n'
+  );
 } catch {
   // Fail open on any unexpected error
   process.exit(0);

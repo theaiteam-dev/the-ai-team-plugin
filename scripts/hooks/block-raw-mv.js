@@ -14,7 +14,7 @@
 
 import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
-import { sendDeniedEvent } from './lib/send-denied-event.js';
+import { denyAndExit } from './lib/send-denied-event.js';
 
 let hookInput = {};
 try {
@@ -42,7 +42,6 @@ try {
   const targetsMission = command.includes('mission/') || command.includes('/mission/');
 
   if (isMvCommand && targetsMission) {
-    sendDeniedEvent({ agentName: agent, toolName, reason: 'BLOCKED: Do not use raw `mv` to move mission files. Use the board_move MCP tool instead.' });
     process.stderr.write('BLOCKED: Do not use raw `mv` to move mission files.\n');
     process.stderr.write('\n');
     process.stderr.write('Use the board_move MCP tool instead:\n');
@@ -56,7 +55,7 @@ try {
     process.stderr.write('  - Activity is logged\n');
     process.stderr.write('\n');
     process.stderr.write('Available stages: briefings, ready, testing, implementing, review, probing, staged, done, blocked\n');
-    process.exit(2);
+    await denyAndExit({ agentName: agent, toolName, reason: 'BLOCKED: Do not use raw `mv` to move mission files. Use the board_move MCP tool instead.' });
   }
 
   // Allow other bash commands

@@ -19,7 +19,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'child_process';
 import { join } from 'path';
-import { readFileSync, mkdirSync, writeFileSync, rmSync, rmdirSync } from 'fs';
+import { readFileSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync, rmSync, rmdirSync } from 'fs';
 import { tmpdir } from 'os';
 
 const HOOKS_DIR = join(__dirname, '..');
@@ -2185,6 +2185,272 @@ describe('block-frankie-writes — agent guards', () => {
       expect(result.stderr).toMatch(/BLOCKED/i);
       expect(result.stderr).toMatch(/immutable/i);
     });
+
+    // -------------------------------------------------------------------------
+    // Redirect glued to the PRECEDING token (sweep finding #1). The tokenizer
+    // treats `hi>specs/x.flow.yaml` as one opaque word, so an operator that
+    // does not start its own token used to extract ZERO targets — every
+    // `echo hi>file` form sailed through while the byte-identical spaced form
+    // `echo hi > file` was blocked. Bash makes no such distinction, and
+    // neither may this scan. padRedirectOperators() normalizes the spacing
+    // before tokenizing.
+    // -------------------------------------------------------------------------
+    it('blocks a redirect glued to the preceding token into an existing graduated spec (exit 2, immutable)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'echo hi>specs/checkout.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
+    it('blocks a redirect glued to a QUOTED preceding token into an implementation file (exit 2, bounce to B.A.)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'echo "hi">src/app.ts' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/src\/app\.ts/);
+      expect(result.stderr).toMatch(/B\.A\./i);
+    });
+
+    it('blocks a glued APPEND redirect (>>) into an existing graduated spec (exit 2, immutable)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'cat file>>specs/checkout.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
+    it('blocks a glued fd-qualified redirect (2>) into an implementation file (exit 2)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'some-command 2>src/services/order.ts' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+    });
+
+    it('regression: the spaced forms of the same redirects are still blocked (exit 2)', () => {
+      for (const command of [
+        'echo hi > specs/checkout.flow.yaml',
+        'echo "hi" > src/app.ts',
+        'cat file >> specs/checkout.flow.yaml',
+      ]) {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(2);
+        expect(result.stderr).toMatch(/BLOCKED/i);
+      }
+    });
+
+    it('regression: glued redirects into allowed paths are still allowed (exit 0)', () => {
+      for (const command of [
+        'echo "walk complete">.qa-evidence/M-20260817-001/report.md',
+        'echo "new flow">>specs/glued-new-flow.flow.yaml',
+        'noisy-command>/dev/null 2>&1',
+      ]) {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(0);
+      }
+    });
+
+    it('regression: a digit run that is part of a WORD is not mistaken for an fd prefix (exit 2, target still extracted)', () => {
+      // `hi2>file` is the word "hi2" followed by `>file` — not fd 2. Either
+      // reading must still surface `src/app.ts` as the write target.
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'echo hi2>src/app.ts' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/src\/app\.ts/);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Symlink escapes (sweep finding #2). path.resolve() never follows symlinks,
+  // so a lexical prefix match answers "is this path spelled like it is under
+  // .qa-evidence/?" — not "does writing here land under .qa-evidence/?". Two
+  // escapes follow: a link INSIDE an allowed dir pointing at implementation
+  // code (`ln -s ../../src/services/order.ts .qa-evidence/M-1/x`, then Write
+  // to that path), and the allowed dir ITSELF being a link planted before it
+  // exists (`ln -s / .qa-evidence`, which would make the entire filesystem
+  // "allowed"). Both are closed by canonicalizing through realpath and
+  // re-checking containment, and `ln` is now a recognized write command so the
+  // Bash half is caught at link-creation time too.
+  //
+  // These run in a throwaway sandbox project rather than the repo root: the
+  // vectors require planting symlinks at fixed names (.qa-evidence, specs/)
+  // that other tests — and other agents working in this tree — depend on.
+  // ---------------------------------------------------------------------------
+  describe('adversarial: symlinks must not launder a write out of an allowlisted directory', () => {
+    const SANDBOXES: string[] = [];
+
+    /** Same contract as runHook(), but with an explicit cwd (the hook anchors its allowlist on process.cwd()). */
+    function runHookIn(cwd: string, stdin: object) {
+      try {
+        const stdout = execFileSync('node', [HOOK], {
+          cwd,
+          env: { ...process.env, ATEAM_API_URL: 'http://localhost:3000', ATEAM_PROJECT_ID: 'test-project' },
+          encoding: 'utf8',
+          timeout: 5000,
+          input: JSON.stringify(stdin),
+        });
+        return { stdout: stdout.trim(), stderr: '', exitCode: 0 };
+      } catch (err: any) {
+        return { stdout: (err.stdout || '').trim(), stderr: (err.stderr || '').trim(), exitCode: err.status ?? 1 };
+      }
+    }
+
+    function newSandbox() {
+      const dir = mkdtempSync(join(tmpdir(), 'ateam-frankie-symlink-'));
+      SANDBOXES.push(dir);
+      return dir;
+    }
+
+    afterAll(() => {
+      for (const dir of SANDBOXES) {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('blocks a Write through a symlink inside .qa-evidence/ that points at implementation code (exit 2)', () => {
+      const proj = newSandbox();
+      mkdirSync(join(proj, 'src', 'services'), { recursive: true });
+      writeFileSync(join(proj, 'src', 'services', 'order.ts'), 'export const order = 1;\n');
+      mkdirSync(join(proj, '.qa-evidence', 'M-1'), { recursive: true });
+      symlinkSync(join('..', '..', 'src', 'services', 'order.ts'), join(proj, '.qa-evidence', 'M-1', 'escape'));
+
+      const result = runHookIn(proj, {
+        agent_type: 'frankie',
+        tool_name: 'Write',
+        tool_input: { file_path: '.qa-evidence/M-1/escape' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+    });
+
+    it('blocks an Edit through a symlink inside specs/ that points at implementation code (exit 2)', () => {
+      const proj = newSandbox();
+      mkdirSync(join(proj, 'src'), { recursive: true });
+      writeFileSync(join(proj, 'src', 'order.ts'), 'export const order = 1;\n');
+      mkdirSync(join(proj, 'specs'), { recursive: true });
+      symlinkSync(join('..', 'src', 'order.ts'), join(proj, 'specs', 'linked.flow.yaml'));
+
+      const result = runHookIn(proj, {
+        agent_type: 'frankie',
+        tool_name: 'Edit',
+        tool_input: { file_path: 'specs/linked.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+    });
+
+    it('blocks a Write when .qa-evidence/ ITSELF is a symlink pointing outside the project (exit 2)', () => {
+      const proj = newSandbox();
+      const outside = newSandbox();
+      symlinkSync(outside, join(proj, '.qa-evidence'));
+
+      const result = runHookIn(proj, {
+        agent_type: 'frankie',
+        tool_name: 'Write',
+        tool_input: { file_path: '.qa-evidence/report.md' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+    });
+
+    it('blocks a Write under .qa-evidence/ when a nested directory is a symlink out of the project (exit 2)', () => {
+      const proj = newSandbox();
+      mkdirSync(join(proj, '.qa-evidence'), { recursive: true });
+      symlinkSync('/etc', join(proj, '.qa-evidence', 'etclink'));
+
+      const result = runHookIn(proj, {
+        agent_type: 'frankie',
+        tool_name: 'Write',
+        tool_input: { file_path: '.qa-evidence/etclink/pwn.conf' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+    });
+
+    it('blocks a Write through a DANGLING symlink inside .qa-evidence/ (unresolvable → fail closed, exit 2)', () => {
+      const proj = newSandbox();
+      mkdirSync(join(proj, '.qa-evidence', 'M-1'), { recursive: true });
+      symlinkSync('/nonexistent-target-for-frankie-test', join(proj, '.qa-evidence', 'M-1', 'dangling'));
+
+      const result = runHookIn(proj, {
+        agent_type: 'frankie',
+        tool_name: 'Write',
+        tool_input: { file_path: '.qa-evidence/M-1/dangling' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+    });
+
+    it('blocks `ln -s` whose link TARGET is implementation code, even when the link name is inside .qa-evidence/ (exit 2)', () => {
+      const proj = newSandbox();
+      mkdirSync(join(proj, 'src', 'services'), { recursive: true });
+      writeFileSync(join(proj, 'src', 'services', 'order.ts'), 'export const order = 1;\n');
+      mkdirSync(join(proj, '.qa-evidence', 'M-1'), { recursive: true });
+
+      const result = runHookIn(proj, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: `ln -s ${join(proj, 'src', 'services', 'order.ts')} .qa-evidence/M-1/x` },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+    });
+
+    it('regression: ordinary writes inside a genuinely-real .qa-evidence/ and specs/ are still allowed (exit 0)', () => {
+      const proj = newSandbox();
+      mkdirSync(join(proj, '.qa-evidence', 'M-1', 'screenshots'), { recursive: true });
+      mkdirSync(join(proj, 'specs'), { recursive: true });
+
+      for (const filePath of [
+        '.qa-evidence/M-1/report.md',
+        '.qa-evidence/M-1/screenshots/step1.png',
+        '.qa-evidence/M-2/brand-new/report.md',
+        'specs/brand-new.flow.yaml',
+      ]) {
+        const result = runHookIn(proj, {
+          agent_type: 'frankie',
+          tool_name: 'Write',
+          tool_input: { file_path: filePath },
+        });
+        expect(result.exitCode, `file_path=${filePath}`).toBe(0);
+      }
+    });
+
+    it('regression: a real `ln` into .qa-evidence/ whose target is also inside .qa-evidence/ is allowed (exit 0)', () => {
+      const proj = newSandbox();
+      mkdirSync(join(proj, '.qa-evidence', 'M-1'), { recursive: true });
+      writeFileSync(join(proj, '.qa-evidence', 'M-1', 'report.md'), '# report\n');
+
+      const result = runHookIn(proj, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'ln -s .qa-evidence/M-1/report.md .qa-evidence/M-1/latest.md' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -2295,59 +2561,74 @@ describe('block-frankie-writes — agent guards', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Telemetry: the fetch inside sendDeniedEvent races process.exit(2) in every
-  // hook using this fire-and-forget pattern (see block-murdock-impl-writes.js),
-  // so a live-network behavioral assertion here would be genuinely flaky, not
-  // just slow. Verified statically instead, matching the resolveAgent() check
-  // convention already established above for all thirteen other PreToolUse
-  // guard hooks.
+  // Telemetry: a live-network behavioral assertion here would need a stub API
+  // server per denial, so the wiring is verified statically instead, matching
+  // the resolveAgent() check convention already established above for all
+  // thirteen other PreToolUse guard hooks.
+  //
+  // The call MUST be denyAndExit(), not a bare sendDeniedEvent(): the latter
+  // is fire-and-forget, and every one of these hooks calls process.exit(2) on
+  // the very next line, tearing the process down before the POST's socket work
+  // ever runs — the denial telemetry was silently never delivered. denyAndExit
+  // awaits the POST (bounded by a short timeout) and only then exits.
   // ---------------------------------------------------------------------------
-  it('reports the denial via sendDeniedEvent with agent name, tool name, and reason before exiting 2 (static wiring check)', () => {
+  it('reports the denial via denyAndExit with agent name, tool name, and reason before exiting 2 (static wiring check)', () => {
     const source = readFileSync(HOOK, 'utf8');
     expect(source).toMatch(/resolveAgent/);
     expect(source).toMatch(/resolve-agent/);
-    expect(source).toMatch(/sendDeniedEvent/);
+    expect(source).toMatch(/denyAndExit/);
     expect(source).toMatch(/send-denied-event/);
 
-    const callMatch = source.match(/sendDeniedEvent\(([\s\S]*?)\)/);
-    expect(callMatch, 'expected a sendDeniedEvent({...}) call in the hook source').not.toBeNull();
+    const callMatch = source.match(/denyAndExit\(([\s\S]*?)\)/);
+    expect(callMatch, 'expected a denyAndExit({...}) call in the hook source').not.toBeNull();
     const callArgs = callMatch![1];
     expect(callArgs).toMatch(/agentName/);
     expect(callArgs).toMatch(/toolName/);
     expect(callArgs).toMatch(/reason/);
+
+    // Fire-and-forget denial telemetry must not creep back in.
+    expect(source).not.toMatch(/\bsendDeniedEvent\(/);
+    // Every denial must be awaited before the exit.
+    expect((source.match(/await denyAndExit\(/g) || []).length).toBe(
+      (source.match(/denyAndExit\(/g) || []).length
+    );
   });
 
   // ---------------------------------------------------------------------------
-  // Dual registration, half two: agents/frankie.md's own hooks block (the
-  // hooks.json half is covered by "registers block-frankie-writes.js in
-  // PreToolUse" above). WI-778 reserves this slot in agents/frankie.md by
-  // comment; this item is the one that actually fills it in with a Write|Edit
-  // matcher, per the item's context notes.
+  // Single registration (sweep finding #19). The hook used to be registered
+  // TWICE — matcher-less in hooks/hooks.json AND with a "Write|Edit" matcher
+  // in agents/frankie.md's own frontmatter — so Claude Code spawned two
+  // identical node processes for every Write/Edit Frankie attempted, each
+  // re-reading stdin, re-taking the specs/ snapshot, and reaching the same
+  // verdict. The hooks.json registration is the load-bearing one: being
+  // matcher-less, it also fires for Bash, which is what catches
+  // `echo x > specs/foo.flow.yaml`. A "Write|Edit" matcher would never fire
+  // for Bash at all, so removing the frontmatter copy loses no coverage.
   // ---------------------------------------------------------------------------
-  it('is registered in agents/frankie.md under a Write|Edit PreToolUse matcher', () => {
+  it('is registered ONLY in hooks/hooks.json, not a second time in agents/frankie.md frontmatter', () => {
     const frankieMdPath = join(REPO_ROOT, 'agents', 'frankie.md');
     const content = readFileSync(frankieMdPath, 'utf8');
     const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
     expect(frontmatterMatch, 'expected agents/frankie.md to have parseable frontmatter').not.toBeNull();
     const frontmatter = frontmatterMatch![1];
 
-    const sectionMatch = frontmatter.match(/^  PreToolUse:\n((?:(?:    |\n).*\n?)*)/m);
-    expect(sectionMatch, 'expected a PreToolUse section in agents/frankie.md frontmatter').not.toBeNull();
-    const sectionLines = sectionMatch![1].split('\n');
-    const preToolUseText: string[] = [];
-    for (const line of sectionLines) {
-      if (/^  \S/.test(line)) break;
-      preToolUseText.push(line);
-    }
-    const preToolUse = preToolUseText.join('\n');
-
-    const blocks = preToolUse.split(/^    - /m).filter(Boolean);
-    const hasWriteEditGuard = blocks.some(
-      (block) => block.includes('matcher: "Write|Edit"') && block.includes('block-frankie-writes.js')
-    );
+    // Only a YAML comment may mention the hook here — never a command line
+    // that would re-register it.
+    const registrationLines = frontmatter
+      .split('\n')
+      .filter((line) => line.includes('block-frankie-writes.js') && !line.trim().startsWith('#'));
     expect(
-      hasWriteEditGuard,
-      'expected a "- matcher: \\"Write|Edit\\"" block containing block-frankie-writes.js in agents/frankie.md PreToolUse'
-    ).toBe(true);
+      registrationLines,
+      'block-frankie-writes.js must be registered once, in hooks/hooks.json only'
+    ).toEqual([]);
+
+    // The load-bearing registration is still matcher-less in hooks.json, so it
+    // covers Bash as well as the write tools.
+    const hooksJson = JSON.parse(readFileSync(HOOKS_JSON_PATH, 'utf8'));
+    const entries: any[] = (hooksJson.hooks.PreToolUse || []).filter((entry: any) =>
+      (entry.hooks || []).some((hook: any) => (hook.command || '').includes('block-frankie-writes.js'))
+    );
+    expect(entries).toHaveLength(1);
+    expect(entries[0].matcher).toBeUndefined();
   });
 });

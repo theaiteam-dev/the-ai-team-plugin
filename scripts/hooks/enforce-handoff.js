@@ -36,7 +36,9 @@
  *   - FYI → hannibal when the item advances but no next peer exists
  *     (Amy on non-final items)
  *   - MISSION_COMPLETE → hannibal when Amy's agentStop response
- *     reports missionComplete:true
+ *     reports missionComplete:true (every item has reached `staged`,
+ *     the per-item pipeline's terminal stage — `done` is only reached
+ *     later, at mission-tail promotion)
  *
  * Input (stdin JSON):
  *   { session_id, hook_event_name, transcript_path, last_assistant_message, ... }
@@ -66,7 +68,7 @@ const HANDOFF_TARGETS = {
 // Earliest-flagged-stage principle: when a single rejection implicates
 // failures at multiple pipeline stages, route to the EARLIEST flagged
 // stage. The pipeline only flows forward (testing → implementing →
-// review → probing), so routing to the earliest gap lets the rework
+// review → probing → staged), so routing to the earliest gap lets the rework
 // flow through in one cycle (Murdock writes the failing test → B.A.
 // fills impl in pass-through → Lynch reviews → Amy verifies). Routing
 // to a later stage when an earlier-stage gap also exists costs an extra
@@ -136,7 +138,7 @@ let instanceName = null;
 let agentStopOutcome = null;
 let agentStopReturnTo = null;
 let claimedNext = null; // Extracted from agentStop JSON response in transcript
-let missionComplete = false; // True when agentStop response indicates all items done
+let missionComplete = false; // True when agentStop response indicates all items reached `staged`
 
 for (const line of lines) {
   let entry;
@@ -183,7 +185,7 @@ for (const line of lines) {
       const target = HANDOFF_TARGETS[resolvedAgent];
 
       if (resolvedAgent === 'amy') {
-        // Amy sends MISSION_COMPLETE when all items are done, FYI otherwise
+        // Amy sends MISSION_COMPLETE when all items have reached `staged`, FYI otherwise
         if (recipient === 'hannibal') {
           if (missionComplete && content.includes('MISSION_COMPLETE')) {
             foundHandoff = true;
@@ -251,9 +253,9 @@ if (!foundHandoff) {
   if (resolvedAgent === 'amy') {
     if (missionComplete) {
       missing.push(
-        `${missing.length + 1}. Your agentStop response contains missionComplete: true — ALL items are done!\n` +
+        `${missing.length + 1}. Your agentStop response contains missionComplete: true — ALL items have reached the staged stage!\n` +
         `   Send MISSION_COMPLETE to Hannibal (not FYI):\n` +
-        `   SendMessage to "hannibal" with content: "MISSION_COMPLETE: <itemId> - all items verified and in done stage. Ready for final review."`
+        `   SendMessage to "hannibal" with content: "MISSION_COMPLETE: <itemId> - all items verified and in staged stage. Ready for final review."`
       );
     } else {
       missing.push(

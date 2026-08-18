@@ -13,7 +13,7 @@
 
 import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
-import { sendDeniedEvent } from './lib/send-denied-event.js';
+import { denyAndExit } from './lib/send-denied-event.js';
 
 let hookInput = {};
 try {
@@ -39,13 +39,9 @@ try {
 
   // Check for ateam board-claim CLI calls via Bash
   if (toolName === 'Bash' && command.includes('ateam') && command.includes('board-claim')) {
-    try {
-      sendDeniedEvent({ agentName: agent, toolName, reason: 'BLOCKED: Working agents cannot call ateam board-claim directly. Use ateam agents-start instead.' });
-    } finally {
-      process.stderr.write('BLOCKED: Working agents cannot call ateam board-claim directly.\n');
-      process.stderr.write('Use ateam agents-start to claim items — it handles both the board claim and metadata.\n');
-      process.exit(2);
-    }
+    process.stderr.write('BLOCKED: Working agents cannot call ateam board-claim directly.\n');
+    process.stderr.write('Use ateam agents-start to claim items — it handles both the board claim and metadata.\n');
+    await denyAndExit({ agentName: agent, toolName, reason: 'BLOCKED: Working agents cannot call ateam board-claim directly. Use ateam agents-start instead.' });
   }
 
   // Allow other tools

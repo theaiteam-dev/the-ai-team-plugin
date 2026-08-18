@@ -11,7 +11,7 @@
 
 import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
-import { sendDeniedEvent } from './lib/send-denied-event.js';
+import { denyAndExit } from './lib/send-denied-event.js';
 
 try {
   let hookInput = {};
@@ -45,11 +45,10 @@ try {
     process.exit(0);
   }
 
-  sendDeniedEvent({ agentName: agent, toolName, reason: `BLOCKED: reviewers (Lynch/Stockwell) cannot write or edit project files: ${filePath}` });
   process.stderr.write('BLOCKED: reviewers (Lynch/Stockwell) cannot write or edit project files.\n');
   process.stderr.write('Reviewers review code statically. Browser investigation belongs to Amy.\n');
   process.stderr.write('Put your findings in the review report (as text output).\n');
-  process.exit(2);
+  await denyAndExit({ agentName: agent, toolName, reason: `BLOCKED: reviewers (Lynch/Stockwell) cannot write or edit project files: ${filePath}` });
 } catch {
   // Fail open on any unexpected error
   process.exit(0);

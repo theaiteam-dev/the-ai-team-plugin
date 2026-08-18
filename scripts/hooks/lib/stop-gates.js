@@ -30,7 +30,7 @@
 
 import { existsSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
-import { canFrankieDrive } from './qa-contract.js';
+import { canFrankieDrive, readExecutionContractFrom } from './qa-contract.js';
 
 /** Stages that mean a mission still has work in flight. */
 export const ACTIVE_STAGES = [
@@ -300,63 +300,114 @@ export function countBoard(columns) {
 }
 
 /**
- * Reads the declared `surfaces` and `qa.drive` from `<cwd>/ateam.config.json`,
- * applying the same guards as qa-contract.js's readExecutionContract():
- * `surfaces` is an array of strings or it collapses to `[]`; `drive` is a
- * declared string or it collapses to `undefined` (canFrankieDrive() treats
- * an undefined drive as the DEFAULT_CONTRACT.qa.drive default, 'flowspec').
+ * Reads the declared `surfaces` and `qa.drive` for the Frankie gate.
  *
- * readExecutionContract() is bound to process.cwd() (and cached per process),
- * but the Frankie gate resolves its evidence path against the caller-supplied
- * `cwd` — resolving the contract against a DIFFERENT directory made the gate
- * incoherent (and forced tests to stub the reader). Everything the gate reads
- * now resolves against the same `cwd`. Drivability itself still comes from the
- * real canFrankieDrive() in qa-contract.js.
+ * Delegates to qa-contract.js's readExecutionContractFrom(cwd) so there is
+ * EXACTLY ONE parse rule for ateam.config.json's execution-contract block.
+ * This module used to hand-roll a second, stricter parser here: a single
+ * non-string entry (`["web", 42]`) collapsed the whole `surfaces` array to
+ * `[]` with no diagnostic, which silently disarmed the mission-completion
+ * gate — while normalizeContract() drops only the bad entry, warns on
+ * stderr, and keeps the valid siblings. Two parsers meant two answers to
+ * the same question; there is now one.
+ *
+ * readExecutionContract() is bound to process.cwd() (and cached per
+ * process), but the Frankie gate resolves its evidence path against the
+ * caller-supplied `cwd` — resolving the contract against a DIFFERENT
+ * directory made the gate incoherent (and forced tests to stub the reader),
+ * which is why the cwd-parameterized reader exists. Everything the gate
+ * reads resolves against the same `cwd`. Drivability itself still comes
+ * from the real canFrankieDrive() in qa-contract.js.
  */
 function readSurfacesAndDrive(cwd) {
-  try {
-    const raw = JSON.parse(readFileSync(join(cwd, 'ateam.config.json'), 'utf-8'));
-    const rawSurfaces = isPlainObject(raw) ? raw.surfaces : undefined;
-    const surfaces =
-      Array.isArray(rawSurfaces) && rawSurfaces.every((s) => typeof s === 'string')
-        ? rawSurfaces
-        : [];
-    const qaRaw = isPlainObject(raw) && isPlainObject(raw.qa) ? raw.qa : {};
-    const drive = typeof qaRaw.drive === 'string' ? qaRaw.drive : undefined;
-    return { surfaces, drive };
-  } catch {
-    // Missing or malformed config — no declared surfaces, gate stays inert.
-    return { surfaces: [], drive: undefined };
-  }
+  const contract = readExecutionContractFrom(cwd);
+  return { surfaces: contract.surfaces, drive: contract.qa.drive };
 }
 
 /**
- * The most recent transition timestamp derivable from a board column's item
- * list, in epoch ms. `completedAt` is the transition record when the API
- * provides it; `updatedAt` is the fallback. Returns null when no timestamp
- * is derivable — callers must skip the staleness check (fail open).
+ * Coerces a timestamp field (ISO string, epoch number, or Date) to epoch ms,
+ * or null when it carries no usable value. Empty strings are rejected here
+ * rather than by the caller: `completedAt ?? updatedAt` only falls back on
+ * null/undefined, so an item with `completedAt: ''` would otherwise resolve
+ * to `''` — Date.parse('') is NaN — silently dropping that item's timestamp
+ * instead of falling back to its (possibly fresh) `updatedAt`, letting a
+ * stale pre-rework evidence report satisfy the staleness check.
+ */
+function toEpochMs(value) {
+  if (value instanceof Date) {
+    const ms = value.getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string' || value === '') return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * A board item's work-log entries, under whichever key the payload uses:
+ * the API's ItemWithRelations shape says `workLogs`, CLAUDE.md's work-item
+ * documentation (and the CLI's rendering) says `work_log`.
+ */
+function workLogEntries(item) {
+  for (const key of ['workLogs', 'work_log', 'workLog']) {
+    if (Array.isArray(item[key])) return item[key];
+  }
+  return [];
+}
+
+/**
+ * The moment an item TRANSITIONED INTO `staged`, in epoch ms, or null when
+ * no work-log entry records it.
  *
- * Picks the first NON-EMPTY string of `completedAt`/`updatedAt` rather than
- * `completedAt ?? item.updatedAt` — `??` only falls back on null/undefined,
- * so an item with `completedAt: ''` (falsy but not nullish) would resolve to
- * `''`, which Date.parse() turns into NaN, silently skipping that item's
- * timestamp instead of falling back to its (possibly fresh) `updatedAt` —
- * letting a stale pre-rework evidence report satisfy the staleness check.
+ * `updatedAt` is NOT that moment: Prisma stamps it via `@updatedAt` on every
+ * write, so any incidental touch after the walk (a title edit, an
+ * assignedAgent clear, a work-log-less board-move) would postdate a
+ * perfectly valid evidence bundle and force a full DoD re-walk. The stage
+ * change itself is recorded as a work-log entry — Amy's `completed` entry is
+ * what advances probing → staged (POST /api/agents/stop writes the entry in
+ * the same transaction as the stage update), so the newest `completed` entry
+ * on an item currently sitting in staged IS its transition into staged.
+ * Entries that move an item OUT of staged (`tail_rework`) or annotate it
+ * (`note`) are deliberately ignored.
+ */
+function stagedTransitionAt(item) {
+  let latest = null;
+  for (const entry of workLogEntries(item)) {
+    if (!isPlainObject(entry)) continue;
+    if (typeof entry.action !== 'string' || entry.action.toLowerCase() !== 'completed') continue;
+    const ts = toEpochMs(entry.timestamp);
+    if (ts !== null && (latest === null || ts > latest)) latest = ts;
+  }
+  return latest;
+}
+
+/**
+ * The most recent transition-into-staged timestamp derivable from a board
+ * column's item list, in epoch ms. Returns null when no timestamp is
+ * derivable — callers must skip the staleness check (fail open).
+ *
+ * Per item, the work-log-derived transition wins; `completedAt`/`updatedAt`
+ * are the fallback for items whose payload carries no work log at all (a
+ * board fetched without relations, or an item whose stage change predates
+ * work-log recording). Picks the first NON-EMPTY of `completedAt`/`updatedAt`
+ * rather than `completedAt ?? item.updatedAt` — see toEpochMs().
  *
  * WI-791: used against the `staged` column now, not `done` — items sit in
- * staged while awaiting Frankie's walk, so a staged item's last update IS
- * its move into staged (the moment the evidence bundle needs to postdate).
+ * staged while awaiting Frankie's walk, so the moment they entered staged is
+ * what the evidence bundle needs to postdate.
  */
 function latestTransition(items) {
   if (!Array.isArray(items)) return null;
   let latest = null;
   for (const item of items) {
     if (!isPlainObject(item)) continue;
-    const raw = [item.completedAt, item.updatedAt].find(
-      (value) => typeof value === 'string' && value !== ''
-    );
-    const ts = Date.parse(raw ?? '');
-    if (Number.isFinite(ts) && (latest === null || ts > latest)) latest = ts;
+    const fromWorkLog = stagedTransitionAt(item);
+    const ts =
+      fromWorkLog !== null
+        ? fromWorkLog
+        : [item.completedAt, item.updatedAt].map(toEpochMs).find((value) => value !== null) ?? null;
+    if (ts !== null && (latest === null || ts > latest)) latest = ts;
   }
   return latest;
 }
@@ -472,18 +523,76 @@ export function checkFrankieEvidence({ missionId, stagedCount, stagedItems = [],
  * unconditional on `stagedCount > 0` and is NOT covered by
  * `ATEAM_SKIP_FRANKIE_GATE` (that override documents itself as suppressing
  * only the Frankie-specific evidence sub-check, not the more fundamental
- * fact that promotion hasn't run yet).
+ * fact that promotion hasn't run yet). It has its OWN override,
+ * `ATEAM_SKIP_PROMOTION_GATE=1`, and the separation is deliberate: skipping
+ * a walk nobody can drive is a different decision from declaring a mission
+ * finished with items the API never promoted.
+ *
+ * The override exists because this gate CAN otherwise trap an operator
+ * forever: an API server that predates WI-790's promotion transaction (or a
+ * review whose verdict marker parses as 'unknown') leaves items in staged
+ * permanently, and no amount of orchestration will clear them. The message
+ * names the override and, when a review has already been written, the exact
+ * situation the operator is in — so the way out is visible from inside the
+ * trap, exactly as checkFrankieEvidence does.
  *
  * @param {number} stagedCount
+ * @param {{ finalReview?: unknown }} [options] - The mission's stored final
+ *   review text (`final_review_verdict` on the normalized mission), used to
+ *   diagnose the "review written but nothing promoted" case.
  * @returns {string|null} A block message, or null when nothing is staged.
  */
-export function checkStagedNotPromoted(stagedCount) {
+export function checkStagedNotPromoted(stagedCount, options = {}) {
   if (!(stagedCount > 0)) return null;
+
+  const override = String(process.env.ATEAM_SKIP_PROMOTION_GATE || '')
+    .trim()
+    .toLowerCase();
+  if (override === '1' || override === 'true') return null;
+
+  const review = options.finalReview;
+  const hasReview = typeof review === 'string' && review.trim() !== '';
+  const escape =
+    `If promotion cannot run in this environment, re-run with ATEAM_SKIP_PROMOTION_GATE=1 to ` +
+    `override this gate.`;
+
+  if (hasReview) {
+    const verdict = parseFinalReviewVerdict(review);
+
+    if (verdict === 'approved') {
+      return (
+        `STOP: an APPROVED final review exists but ${stagedCount} item(s) are still staged — your ` +
+        `API may predate WI-790 promotion (promotion runs inside the same transaction that ` +
+        `persists a FINAL APPROVED review, so an approved review should have left nothing in ` +
+        `staged). Re-POST the final review (ateam missions-final-review writeFinalReview) to ` +
+        `trigger promotion, or set ATEAM_SKIP_PROMOTION_GATE=1 to override this gate. The mission ` +
+        `cannot stop while items sit in staged.`
+      );
+    }
+
+    if (verdict === 'rejected') {
+      return (
+        `STOP: the final review is FINAL REJECTED and ${stagedCount} item(s) are still staged, so ` +
+        `nothing was promoted to done. Rework the items the review named (move each out of staged ` +
+        `to testing or implementing, earliest-flagged-stage rule, WI-794), then restart the ` +
+        `mission tail. The mission cannot stop while items sit in staged. ${escape}`
+      );
+    }
+
+    return (
+      `STOP: a final review has been written but its verdict could not be parsed, and ` +
+      `${stagedCount} item(s) are still staged — promotion only runs on a FINAL APPROVED verdict ` +
+      `(WI-790). Re-POST the review with a standard "VERDICT: FINAL APPROVED" / "VERDICT: FINAL ` +
+      `REJECTED" line (ateam missions-final-review writeFinalReview). The mission cannot stop ` +
+      `while items sit in staged. ${escape}`
+    );
+  }
+
   return (
     `STOP: ${stagedCount} item(s) remain staged, not yet promoted to done. Promotion runs ` +
     `automatically inside the same transaction that persists Stockwell's Final Mission Review once ` +
     `its verdict is FINAL APPROVED — dispatch Stockwell if the review has not been written yet, or ` +
     `check the review's verdict if it has already been written. The mission cannot stop while items ` +
-    `sit in staged.`
+    `sit in staged. ${escape}`
   );
 }
