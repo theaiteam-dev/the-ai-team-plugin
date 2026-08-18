@@ -20,17 +20,42 @@ function parseLintErrors(stdout: string, stderr: string): number {
   return 0;
 }
 
+const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*m/g;
+
 /**
  * Parses test output to extract pass/fail counts.
- * Looks for Vitest output patterns.
+ * Looks for Vitest/Jest output patterns.
+ *
+ * A single check command may chain several test invocations (e.g. ateam.config.json's
+ * `"unit-full": "bun run test && (cd client && bun run test)"`), producing one summary
+ * line per invocation in the same stdout — every "Tests" line must be summed, and
+ * Vitest's "Test Files  N passed" line must not be mistaken for a test count.
  */
 function parseTestResults(stdout: string, stderr: string): { passed: number; failed: number } {
-  const combined = `${stdout} ${stderr}`;
+  const combined = `${stdout}\n${stderr}`.replace(ANSI_ESCAPE_RE, '');
 
   let passed = 0;
   let failed = 0;
 
-  // Match patterns like "8 passed" or "Tests: 8 passed, 2 failed"
+  // Sum every per-invocation summary line: Vitest's "Tests  79 passed (79)" /
+  // "Tests  1 failed | 78 passed (79)", Jest's "Tests: 2 failed, 8 passed, 10 total".
+  // "Test Files  6 passed (6)" does not match \bTests\b and is ignored.
+  const summaryLines = combined.split('\n').filter((line) => /^\s*Tests\b/.test(line));
+  for (const line of summaryLines) {
+    const passedMatch = line.match(/(\d+)\s+passed/i);
+    if (passedMatch) {
+      passed += parseInt(passedMatch[1], 10);
+    }
+    const failedMatch = line.match(/(\d+)\s+failed/i);
+    if (failedMatch) {
+      failed += parseInt(failedMatch[1], 10);
+    }
+  }
+  if (summaryLines.length > 0) {
+    return { passed, failed };
+  }
+
+  // Fallback for runners without a "Tests" summary line (e.g. pytest's "8 passed in 1.2s").
   const passedMatch = combined.match(/(\d+)\s+passed/i);
   if (passedMatch) {
     passed = parseInt(passedMatch[1], 10);

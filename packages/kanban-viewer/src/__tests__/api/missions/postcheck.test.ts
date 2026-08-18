@@ -233,6 +233,114 @@ describe('POST /api/missions/postcheck', () => {
       expect(data.data.unitTestsFailed).toBe(2);
     });
 
+    it('should sum test counts across chained vitest invocations in one check output', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+      mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'completed' });
+
+      // Shape produced by e.g. "bun run test && (cd client && bun run test)":
+      // two complete vitest summaries in a single stdout. The regression this
+      // guards: only the first invocation was counted — and via its
+      // "Test Files" line, so the reported count was the file count (2).
+      const chainedStdout = [
+        ' ✓ src/__tests__/api.test.ts  (4 tests) 12ms',
+        '',
+        ' Test Files  2 passed (2)',
+        '      Tests  7 passed (7)',
+        '   Duration  1.02s',
+        '',
+        ' ✓ src/App.test.tsx  (15 tests) 210ms',
+        '',
+        ' Test Files  6 passed (6)',
+        '      Tests  79 passed (79)',
+        '   Duration  3.41s',
+      ].join('\n');
+
+      const body = {
+        passed: true,
+        blockers: [],
+        output: {
+          'unit-full': { stdout: chainedStdout, stderr: '', timedOut: false },
+        },
+      };
+
+      const response = await POST(makeRequest(body));
+      const data: PostcheckResponse = await response.json();
+
+      expect(data.data.unitTestsPassed).toBe(86);
+      expect(data.data.unitTestsFailed).toBe(0);
+    });
+
+    it("should parse vitest's failure-form summary line and ignore the Test Files line", async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+      mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'failed' });
+
+      const body = {
+        passed: false,
+        blockers: ['unit tests failing'],
+        output: {
+          unit: {
+            stdout: [
+              ' Test Files  1 failed | 5 passed (6)',
+              '      Tests  2 failed | 77 passed (79)',
+            ].join('\n'),
+            stderr: '',
+            timedOut: false,
+          },
+        },
+      };
+
+      const response = await POST(makeRequest(body));
+      const data: PostcheckResponse = await response.json();
+
+      expect(data.data.unitTestsPassed).toBe(77);
+      expect(data.data.unitTestsFailed).toBe(2);
+    });
+
+    it('should parse ANSI-colored vitest summary lines', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+      mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'completed' });
+
+      const esc = '\u001b';
+      const body = {
+        passed: true,
+        blockers: [],
+        output: {
+          unit: {
+            stdout: [
+              `${esc}[2m Test Files ${esc}[22m ${esc}[1m${esc}[32m6 passed${esc}[39m${esc}[22m${esc}[90m (6)${esc}[39m`,
+              `${esc}[2m      Tests ${esc}[22m ${esc}[1m${esc}[32m79 passed${esc}[39m${esc}[22m${esc}[90m (79)${esc}[39m`,
+            ].join('\n'),
+            stderr: '',
+            timedOut: false,
+          },
+        },
+      };
+
+      const response = await POST(makeRequest(body));
+      const data: PostcheckResponse = await response.json();
+
+      expect(data.data.unitTestsPassed).toBe(79);
+    });
+
+    it('should still parse runners without a "Tests" summary line (pytest-style fallback)', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+      mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'completed' });
+
+      const body = {
+        passed: true,
+        blockers: [],
+        output: {
+          unit: { stdout: '======== 8 passed in 1.24s ========', stderr: '', timedOut: false },
+        },
+      };
+
+      const response = await POST(makeRequest(body));
+      const data: PostcheckResponse = await response.json();
+
+      expect(data.data.unitTestsPassed).toBe(8);
+      expect(data.data.unitTestsFailed).toBe(0);
+    });
+
     it('should parse e2eTestsPassed and e2eTestsFailed from output.e2e', async () => {
       mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
       mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'failed' });
