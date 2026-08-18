@@ -2337,6 +2337,10 @@ paths:
           schema:
             type: integer
             default: 100
+            minimum: 1
+          description: >-
+            Maximum entries to return. Non-positive or non-numeric values fall
+            back to the default rather than returning an empty set.
         - name: missionId
           in: query
           schema:

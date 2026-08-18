@@ -24,7 +24,12 @@ var activityListActivityCmd = &cobra.Command{
 		c := client.NewClient(baseURL, token)
 		pathParams := map[string]string{}
 		queryParams := map[string]string{}
-		queryParams["limit"] = strconv.Itoa(activityListActivityCmd_limit)
+		// Only send limit when the flag was explicitly set: the int zero-value
+		// would otherwise serialize as limit=0, which the API used to honor
+		// literally, silently returning an empty feed (M-20260812-001 retro).
+		if cmd.Flags().Changed("limit") {
+			queryParams["limit"] = strconv.Itoa(activityListActivityCmd_limit)
+		}
 		queryParams["missionId"] = activityListActivityCmd_missionId
 		resp, err := c.Do("GET", "/api/activity", pathParams, queryParams, nil)
 		if err != nil {
@@ -45,6 +50,6 @@ var activityListActivityCmd = &cobra.Command{
 
 func init() {
 	activityCmd.AddCommand(activityListActivityCmd)
-	activityListActivityCmd.Flags().IntVar(&activityListActivityCmd_limit, "limit", 0, "")
+	activityListActivityCmd.Flags().IntVar(&activityListActivityCmd_limit, "limit", 0, "Maximum entries to return (server default: 100)")
 	activityListActivityCmd.Flags().StringVar(&activityListActivityCmd_missionId, "missionId", "", "Filter to a specific mission (defaults to current mission)")
 }

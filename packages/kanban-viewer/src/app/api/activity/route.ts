@@ -42,10 +42,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     const projectId = projectValidation.projectId;
 
-    // Parse limit parameter (default 100)
+    // Parse limit parameter (default 100). Non-positive and non-numeric values
+    // also fall back to the default: the Go CLI's unset int flag serializes as
+    // limit=0, and honoring that literally returned a silently empty feed
+    // indistinguishable from "no data" (found by the M-20260812-001 retro).
     const { searchParams } = new URL(request.url);
     const limitParam = searchParams.get('limit');
-    const limit = limitParam ? parseInt(limitParam, 10) : 100;
+    const parsedLimit = limitParam === null ? NaN : parseInt(limitParam, 10);
+    const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 100;
 
     // Parse missionId parameter
     const missionIdParam = searchParams.get('missionId');
