@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useRef, useEffect, useMemo } from "react";
+import { AGENT_DISPLAY_NAMES, type AgentId } from "@ai-team/shared";
 import { cn } from "@/lib/utils";
 import type { HookEventSummary } from "@/types/hook-event";
 
@@ -9,21 +10,27 @@ export interface RawAgentViewProps {
   events: HookEventSummary[];
 }
 
-// Agent display name mapping
-const AGENT_DISPLAY_NAMES: Record<string, string> = {
-  hannibal: "Hannibal",
-  face: "Face",
-  murdock: "Murdock",
-  ba: "B.A.",
-  amy: "Amy",
-  lynch: "Lynch",
-  frankie: "Frankie",
-  tawnia: "Tawnia",
-  stockwell: "Stockwell",
-};
-
-// Canonical agent order for swim lanes
-const AGENT_ORDER = ["hannibal", "face", "murdock", "ba", "amy", "lynch", "frankie", "stockwell", "tawnia"];
+/**
+ * Swim-lane order for the raw agent view, in pipeline order (planning →
+ * execution → mission tail per ADR 0004: Frankie → Stockwell → Tawnia) —
+ * the same ordering the raw-view agent filter uses. Typed against the shared
+ * registry so an id typo fails to compile; the agent-list-completeness test
+ * asserts every registry agent appears here, so a new agent can never fall
+ * through to the unordered fallback. Lane labels come from the shared
+ * AGENT_DISPLAY_NAMES rather than a local copy.
+ */
+export const RAW_AGENT_LANE_ORDER: readonly AgentId[] = [
+  "hannibal",
+  "face",
+  "sosa",
+  "murdock",
+  "ba",
+  "amy",
+  "lynch",
+  "frankie",
+  "stockwell",
+  "tawnia",
+];
 
 // Status color mapping
 function getStatusColor(status: string): string {
@@ -133,7 +140,7 @@ interface SwimLaneProps {
 }
 
 const SwimLane = React.memo(({ agentName, events }: SwimLaneProps) => {
-  const displayName = AGENT_DISPLAY_NAMES[agentName] || agentName;
+  const displayName = AGENT_DISPLAY_NAMES[agentName as AgentId] || agentName;
 
   return (
     <div
@@ -184,9 +191,9 @@ export function RawAgentView({ events }: RawAgentViewProps) {
     });
 
     // Get agents in canonical order, then append any unmatched agents
-    const sorted = AGENT_ORDER.filter((agent) => grouped[agent]);
+    const sorted: string[] = RAW_AGENT_LANE_ORDER.filter((agent) => grouped[agent]);
     const unmatched = Object.keys(grouped).filter(
-      (agent) => !AGENT_ORDER.includes(agent)
+      (agent) => !RAW_AGENT_LANE_ORDER.includes(agent as AgentId)
     );
     sorted.push(...unmatched);
 

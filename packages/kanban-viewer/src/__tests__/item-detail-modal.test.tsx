@@ -410,6 +410,13 @@ describe('ItemDetailModal', () => {
             summary: 'Additional notes',
             timestamp: new Date('2026-01-15T13:00:00Z'),
           },
+          {
+            id: 5,
+            agent: 'Hannibal',
+            action: 'tail_rework',
+            summary: 'Frankie walk failed: checkout total wrong',
+            timestamp: new Date('2026-01-15T14:00:00Z'),
+          },
         ],
       });
       render(<ItemDetailModal isOpen={true} onClose={() => {}} item={item} />);
@@ -418,6 +425,28 @@ describe('ItemDetailModal', () => {
       expect(screen.getByText('Completed')).toBeInTheDocument();
       expect(screen.getByText('Rejected')).toBeInTheDocument();
       expect(screen.getByText('Note')).toBeInTheDocument();
+      expect(screen.getByText('Tail rework')).toBeInTheDocument();
+    });
+
+    it('should render tail_rework entries with a friendly label, not the raw action string', () => {
+      const item = createWorkItem({
+        work_logs: [
+          {
+            id: 1,
+            agent: 'Hannibal',
+            action: 'tail_rework',
+            summary: 'Stockwell rejected: WI-500 returned to implementing',
+            timestamp: new Date('2026-01-15T10:00:00Z'),
+          },
+        ],
+      });
+      render(<ItemDetailModal isOpen={true} onClose={() => {}} item={item} />);
+
+      expect(screen.getByText('Tail rework')).toBeInTheDocument();
+      expect(screen.queryByText('tail_rework')).not.toBeInTheDocument();
+      expect(
+        screen.getByText('Stockwell rejected: WI-500 returned to implementing')
+      ).toBeInTheDocument();
     });
 
     it('should render multiple work log entries in order', () => {

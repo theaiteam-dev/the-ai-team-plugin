@@ -34,8 +34,19 @@ export function useIsMobileViewport(): boolean {
     setIsMobile(mediaQueryList.matches);
 
     const handleChange = (event: MediaQueryListEvent) => setIsMobile(event.matches);
-    mediaQueryList.addEventListener("change", handleChange);
-    return () => mediaQueryList.removeEventListener("change", handleChange);
+
+    // Safari < 14 (and other older WebKit builds) shipped MediaQueryList
+    // without addEventListener/removeEventListener — only the deprecated
+    // addListener/removeListener pair. Feature-detect the modern API and
+    // fall back, keeping subscribe and cleanup symmetric so the listener is
+    // always removed through the same API it was added with.
+    if (typeof mediaQueryList.addEventListener === "function") {
+      mediaQueryList.addEventListener("change", handleChange);
+      return () => mediaQueryList.removeEventListener("change", handleChange);
+    }
+
+    mediaQueryList.addListener(handleChange);
+    return () => mediaQueryList.removeListener(handleChange);
   }, []);
 
   return isMobile;

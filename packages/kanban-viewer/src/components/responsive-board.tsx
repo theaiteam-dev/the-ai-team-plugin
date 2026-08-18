@@ -68,6 +68,31 @@ export function ResponsiveBoard({
   // Mobile stage selector state
   const [selectedStage, setSelectedStage] = useState<Stage>("briefings");
 
+  // DELIBERATE DOUBLE RENDER — read before "optimizing" this away.
+  //
+  // Both layouts below are always in the DOM; only CSS (`md:hidden` on the
+  // mobile subtree, `hidden md:flex` on the desktop one) decides which is
+  // visible. The switch therefore happens at paint time, with no JS: the
+  // server-rendered HTML is already correct at every viewport, there is no
+  // hydration mismatch, and no post-hydration layout flash.
+  //
+  // Rendering only one subtree via useIsMobileViewport() would NOT be
+  // equivalent: that hook is a matchMedia effect, so it necessarily returns
+  // `false` (desktop) during SSR and on the first client render, then flips
+  // after mount. A mobile visitor would get a frame of the desktop column
+  // grid before the tabs appeared. page.tsx uses that hook one level up for
+  // a different decision (desktop grid vs. this component), where a single
+  // post-mount switch is acceptable; inside this component the CSS approach
+  // is the one that stays correct on the first paint.
+  //
+  // The cost, accepted knowingly: every visible card exists twice in the DOM
+  // with duplicate data-testids (one copy CSS-hidden). Radix Tabs only
+  // mounts the ACTIVE TabsContent, so the duplication is limited to the
+  // currently selected stage's cards — but it is real. Tests and any other
+  // DOM queries must therefore scope to a subtree
+  // (`within(screen.getByTestId('desktop-board'))` or
+  // `within(screen.getByTestId('stage-content-<stage>'))`) or use getAllBy*
+  // rather than getBy*, which would throw on the duplicates.
   return (
     <div data-testid="responsive-board" className="flex flex-1 overflow-hidden">
       {/* Mobile view: Stage tabs with single column */}

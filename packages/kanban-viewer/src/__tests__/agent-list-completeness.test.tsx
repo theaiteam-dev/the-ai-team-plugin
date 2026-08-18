@@ -4,7 +4,7 @@ import { VALID_AGENTS, AGENT_DISPLAY_NAMES, type AgentId } from '@ai-team/shared
 import { AGENT_NAMES } from '../components/agent-status-bar';
 import { AGENT_OPTIONS } from '../components/filter-bar';
 import { RAW_AGENT_FILTER_AGENTS } from '../components/raw-agent-filters';
-import { RawAgentView } from '../components/raw-agent-view';
+import { RawAgentView, RAW_AGENT_LANE_ORDER } from '../components/raw-agent-view';
 import { AgentBadge } from '../components/agent-badge';
 import type { AgentName } from '@/types';
 import type { HookEventSummary } from '@/types/hook-event';
@@ -36,14 +36,6 @@ import type { HookEventSummary } from '@/types/hook-event';
  */
 const VIEWER_AGENT_NAME_EXCLUSIONS: readonly AgentId[] = ['sosa'];
 
-/**
- * Agents deliberately absent from raw-agent-view's AGENT_ORDER and its local
- * display-name map. Sosa still gets a swim lane via the unmatched-agent
- * fallback (appended after canonical lanes, raw lowercase header), so hook
- * events from her are visible — just not canonically ordered or prettified.
- */
-const RAW_AGENT_VIEW_EXCLUSIONS: readonly AgentId[] = ['sosa'];
-
 const CANONICAL_AGENT_IDS = [...VALID_AGENTS];
 
 function displayNamesExcept(exclusions: readonly AgentId[]): string[] {
@@ -68,7 +60,7 @@ function createHookEvent(overrides: Partial<HookEventSummary> = {}): HookEventSu
 describe('agent-list completeness against the shared registry', () => {
   it('allowlisted exclusions must themselves be registry agents', () => {
     // Guards the guard: a typo'd or removed exclusion id should fail loudly.
-    for (const id of [...VIEWER_AGENT_NAME_EXCLUSIONS, ...RAW_AGENT_VIEW_EXCLUSIONS]) {
+    for (const id of VIEWER_AGENT_NAME_EXCLUSIONS) {
       expect(CANONICAL_AGENT_IDS).toContain(id);
     }
   });
@@ -104,22 +96,30 @@ describe('agent-list completeness against the shared registry', () => {
     });
   });
 
-  describe('raw-agent-view AGENT_ORDER and display names', () => {
-    // AGENT_ORDER is not exported, so membership is asserted via rendering:
-    // agents in AGENT_ORDER render in canonical order FIRST; unmatched agents
-    // are appended in event-insertion order. Feeding the excluded agent's
-    // event first means any registry agent missing from AGENT_ORDER would be
-    // appended AFTER her lane — tripping the ordering assertion below.
-    const firstExcluded = RAW_AGENT_VIEW_EXCLUSIONS[0];
-    const orderedIds = [
-      firstExcluded,
-      ...CANONICAL_AGENT_IDS.filter((id) => id !== firstExcluded),
-    ];
-    const events = orderedIds.map((agentId, index) =>
-      createHookEvent({ id: index + 1, agentName: agentId })
-    );
+  describe('raw-agent-view RAW_AGENT_LANE_ORDER and display names', () => {
+    // Hook events are emitted by every agent (including planning agents), so
+    // the swim-lane order deliberately excludes nobody. Lane labels come from
+    // the shared AGENT_DISPLAY_NAMES, so there is no local map to drift.
+    it('covers the full registry with no exclusions', () => {
+      expect([...RAW_AGENT_LANE_ORDER].sort()).toEqual(
+        [...CANONICAL_AGENT_IDS].sort()
+      );
+    });
 
-    it('renders a swim lane for every registry agent (fallback included)', () => {
+    it('matches the raw-view filter list, so every filterable agent has a lane', () => {
+      expect([...RAW_AGENT_LANE_ORDER].sort()).toEqual(
+        [...RAW_AGENT_FILTER_AGENTS].sort()
+      );
+    });
+
+    // Feed events in reverse lane order: anything missing from
+    // RAW_AGENT_LANE_ORDER falls through to the unmatched-agent fallback,
+    // which appends in event-insertion order and trips the assertions below.
+    const events = [...RAW_AGENT_LANE_ORDER]
+      .reverse()
+      .map((agentId, index) => createHookEvent({ id: index + 1, agentName: agentId }));
+
+    it('renders a swim lane for every registry agent', () => {
       render(<RawAgentView events={events} />);
 
       for (const id of CANONICAL_AGENT_IDS) {
@@ -127,33 +127,44 @@ describe('agent-list completeness against the shared registry', () => {
       }
     });
 
-    it('shows the canonical display name for every non-excluded agent', () => {
+    it('shows the canonical display name for every registry agent', () => {
       render(<RawAgentView events={events} />);
 
       for (const id of CANONICAL_AGENT_IDS) {
-        if (RAW_AGENT_VIEW_EXCLUSIONS.includes(id)) continue;
         const lane = screen.getByTestId(`swim-lane-${id}`);
         // A raw lowercase header means the agent fell through to the
-        // unknown-agent fallback — add them to AGENT_DISPLAY_NAMES there.
+        // unknown-agent fallback — add them to RAW_AGENT_LANE_ORDER.
         expect(within(lane).getByText(AGENT_DISPLAY_NAMES[id])).toBeInTheDocument();
       }
     });
 
-    it('lanes every non-excluded agent canonically, before fallback lanes', () => {
+    it('lanes every registry agent in canonical order', () => {
       render(<RawAgentView events={events} />);
 
       const lanes = Array.from(
         document.querySelectorAll('[data-testid^="swim-lane-"]')
       ).map((el) => el.getAttribute('data-testid'));
-      const excludedIndex = lanes.indexOf(`swim-lane-${firstExcluded}`);
 
-      expect(excludedIndex).toBeGreaterThan(-1);
-      for (const id of CANONICAL_AGENT_IDS) {
-        if (RAW_AGENT_VIEW_EXCLUSIONS.includes(id)) continue;
-        // An agent laned AFTER the first-fed excluded agent is not in
-        // AGENT_ORDER (fallback lanes preserve insertion order).
-        expect(lanes.indexOf(`swim-lane-${id}`)).toBeLessThan(excludedIndex);
-      }
+      expect(lanes).toEqual(
+        RAW_AGENT_LANE_ORDER.map((id) => `swim-lane-${id}`)
+      );
+    });
+
+    it('appends unknown agents after the canonical lanes', () => {
+      render(
+        <RawAgentView
+          events={[
+            createHookEvent({ id: 100, agentName: 'ghost-agent' }),
+            createHookEvent({ id: 101, agentName: 'hannibal' }),
+          ]}
+        />
+      );
+
+      const lanes = Array.from(
+        document.querySelectorAll('[data-testid^="swim-lane-"]')
+      ).map((el) => el.getAttribute('data-testid'));
+
+      expect(lanes).toEqual(['swim-lane-hannibal', 'swim-lane-ghost-agent']);
     });
   });
 

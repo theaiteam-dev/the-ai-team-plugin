@@ -373,10 +373,19 @@ describe('ResponsiveBoard', () => {
         />
       );
 
-      // Items appear in both mobile and desktop views, so use getAllByText
-      expect(screen.getAllByText('Brief Item').length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByText('Ready Item 1').length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByText('Testing Item').length).toBeGreaterThanOrEqual(1);
+      // ResponsiveBoard deliberately renders BOTH the mobile and the desktop
+      // subtree (only CSS hides one — see the comment in the component), so
+      // an unscoped getByText is ambiguous for any item the mobile view also
+      // shows. Scope each assertion to the subtree it is really about.
+      const desktopBoard = screen.getByTestId('desktop-board');
+      expect(within(desktopBoard).getByText('Brief Item')).toBeInTheDocument();
+      expect(within(desktopBoard).getByText('Ready Item 1')).toBeInTheDocument();
+      expect(within(desktopBoard).getByText('Testing Item')).toBeInTheDocument();
+
+      // Mobile view renders only the ACTIVE tab's content (briefings by
+      // default), which is the only place the duplicate copy exists.
+      const mobileBriefings = screen.getByTestId('stage-content-briefings');
+      expect(within(mobileBriefings).getByText('Brief Item')).toBeInTheDocument();
     });
 
     it('should call onItemClick when an item is clicked', () => {
@@ -390,11 +399,25 @@ describe('ResponsiveBoard', () => {
         />
       );
 
-      // Click on a work item card
-      const cards = screen.getAllByTestId('work-item-card');
-      fireEvent.click(cards[0]);
+      // Every card exists twice (mobile + desktop subtree), so pick the copy
+      // explicitly instead of relying on DOM order of getAllByTestId.
+      const desktopCards = within(screen.getByTestId('desktop-board')).getAllByTestId(
+        'work-item-card'
+      );
+      fireEvent.click(desktopCards[0]);
+      expect(onItemClick).toHaveBeenCalledWith(
+        expect.objectContaining({ id: '001', title: 'Brief Item' })
+      );
 
-      expect(onItemClick).toHaveBeenCalled();
+      // The mobile copy of the same card is wired to the same callback.
+      onItemClick.mockClear();
+      const mobileCard = within(screen.getByTestId('stage-content-briefings')).getByTestId(
+        'work-item-card'
+      );
+      fireEvent.click(mobileCard);
+      expect(onItemClick).toHaveBeenCalledWith(
+        expect.objectContaining({ id: '001', title: 'Brief Item' })
+      );
     });
   });
 

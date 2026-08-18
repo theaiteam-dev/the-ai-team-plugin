@@ -68,6 +68,51 @@ function uninstallMatchMedia() {
   delete window.matchMedia;
 }
 
+/** A legacy MediaQueryList mock: Safari < 14 (and other older WebKit
+ * builds) never shipped addEventListener on MediaQueryList — only the
+ * deprecated addListener/removeListener pair. `addEventListener` is
+ * deliberately absent here so the hook's feature detection has to take the
+ * fallback branch. */
+function installLegacyMatchMediaMock(initialMatches: boolean) {
+  let matches = initialMatches;
+  let changeListener: Listener | null = null;
+  const removeListener = vi.fn();
+
+  const mql = {
+    get matches() {
+      return matches;
+    },
+    media: '(max-width: 767px)',
+    addListener: vi.fn((listener: Listener) => {
+      changeListener = listener;
+    }),
+    removeListener,
+  };
+
+  const matchMediaFn = vi.fn().mockReturnValue(mql);
+  vi.stubGlobal('matchMedia', matchMediaFn);
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: matchMediaFn,
+  });
+
+  return {
+    fireChange: (nextMatches: boolean) => {
+      matches = nextMatches;
+      if (!changeListener) {
+        throw new Error('no change listener was registered — hook did not call addListener');
+      }
+      const listener = changeListener as Listener;
+      act(() => {
+        listener({ matches: nextMatches } as MediaQueryListEvent);
+      });
+    },
+    removeListener,
+    addListener: mql.addListener,
+  };
+}
+
 describe('useIsMobileViewport', () => {
   afterEach(() => {
     uninstallMatchMedia();
@@ -113,5 +158,37 @@ describe('useIsMobileViewport', () => {
     unmount();
 
     expect(removeEventListener).toHaveBeenCalledWith('change', expect.any(Function));
+  });
+
+  describe('legacy MediaQueryList (Safari < 14, no addEventListener)', () => {
+    it('subscribes via the deprecated addListener when addEventListener is unavailable', () => {
+      const { addListener } = installLegacyMatchMediaMock(true);
+
+      const { result } = renderHook(() => useIsMobileViewport());
+
+      expect(result.current).toBe(true);
+      expect(addListener).toHaveBeenCalledWith(expect.any(Function));
+    });
+
+    it('still updates on change events delivered through the legacy listener', () => {
+      const { fireChange } = installLegacyMatchMediaMock(false);
+
+      const { result } = renderHook(() => useIsMobileViewport());
+      expect(result.current).toBe(false);
+
+      fireChange(true);
+      expect(result.current).toBe(true);
+    });
+
+    it('removes the legacy listener on unmount (symmetric cleanup)', () => {
+      const { removeListener } = installLegacyMatchMediaMock(false);
+
+      const { unmount } = renderHook(() => useIsMobileViewport());
+      expect(removeListener).not.toHaveBeenCalled();
+
+      unmount();
+
+      expect(removeListener).toHaveBeenCalledWith(expect.any(Function));
+    });
   });
 });
