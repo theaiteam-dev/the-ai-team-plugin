@@ -16,6 +16,7 @@ jobs:
     name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
+      root: ${{ steps.filter.outputs.root }}
       shared: ${{ steps.filter.outputs.shared }}
       mcp-server: ${{ steps.filter.outputs.mcp-server }}
       kanban-viewer: ${{ steps.filter.outputs.kanban-viewer }}
@@ -26,6 +27,18 @@ jobs:
         id: filter
         with:
           filters: |
+            root:
+              - 'scripts/**'
+              - 'playbooks/**'
+              - 'agents/**'
+              - 'commands/**'
+              - 'hooks/**'
+              - 'src/**'
+              - 'packages/shared/**'
+              - 'vitest.config.ts'
+              - 'package.json'
+              - 'bun.lock'
+              - '.github/workflows/**'
             shared:
               - 'packages/shared/**'
               - 'package.json'
@@ -46,6 +59,17 @@ jobs:
             ateam-cli:
               - 'packages/ateam-cli/**'
               - '.github/workflows/**'
+
+  root:
+    name: Root Test Suite
+    needs: [changes]
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.root == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: bunx vitest run
 
   mcp-server:
     name: MCP Server
@@ -80,6 +104,7 @@ jobs:
       - run: bun install
         working-directory: .
       - run: bunx tsc --noEmit
+      - run: bun run test
 
   dist-freshness-check:
     name: dist freshness check
