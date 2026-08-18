@@ -163,6 +163,7 @@ interface Columns {
   implementing: string[];
   review: string[];
   probing: string[];
+  staged: string[];
   done: string[];
   blocked: string[];
 }

@@ -58,6 +58,21 @@ describe('Shared Package', () => {
       expect(isValidTransition('probing', 'done')).toBe(false);
     });
 
+    it('answers false — never throws — for an origin stage that is not in the matrix', () => {
+      // Item.stageId is a plain String column, so `from` is unvalidated DB
+      // data at every real call site: a legacy or typo'd stage id used to
+      // index the matrix to `undefined` and throw a TypeError inside
+      // POST /api/board/move, turning a bad request into a 500. An
+      // unrecognized origin stage has no legal transitions — it answers
+      // false, and the route can return its clean 400.
+      expect(() =>
+        isValidTransition('nonexistent' as StageId, 'done')
+      ).not.toThrow();
+      expect(isValidTransition('nonexistent' as StageId, 'done')).toBe(false);
+      expect(isValidTransition('' as StageId, 'ready')).toBe(false);
+      expect(isValidTransition(undefined as unknown as StageId, 'ready')).toBe(false);
+    });
+
     it('done has no outbound transitions to any stage (terminal)', () => {
       for (const target of ALL_STAGES) {
         expect(isValidTransition('done', target)).toBe(false);

@@ -235,11 +235,8 @@ describe('POST /api/missions/[missionId]/final-review — staged-to-done promoti
     expect(item?.stageId).toBe('done');
   });
 
-  it('AC6: items in blocked or any pipeline stage are never promoted; items already done are untouched', async () => {
+  it('AC6: only staged items are promoted; items already done are untouched', async () => {
     await seedItem('WI-P06', 'staged');
-    await seedItem('WI-P07', 'blocked');
-    await seedItem('WI-P08', 'review');
-    await seedItem('WI-P09', 'probing');
     await seedItem('WI-P10', 'done');
 
     const response = await POST(makeRequest({ finalReview: APPROVED_REPORT }), routeParams);
@@ -249,16 +246,121 @@ describe('POST /api/missions/[missionId]/final-review — staged-to-done promoti
     expect(data.data.promotedCount).toBe(1); // only WI-P06 was staged
 
     const p06 = await prisma.item.findUnique({ where: { id: 'WI-P06' } });
-    const p07 = await prisma.item.findUnique({ where: { id: 'WI-P07' } });
-    const p08 = await prisma.item.findUnique({ where: { id: 'WI-P08' } });
-    const p09 = await prisma.item.findUnique({ where: { id: 'WI-P09' } });
     const p10 = await prisma.item.findUnique({ where: { id: 'WI-P10' } });
 
     expect(p06?.stageId).toBe('done'); // promoted
-    expect(p07?.stageId).toBe('blocked'); // untouched
-    expect(p08?.stageId).toBe('review'); // untouched
-    expect(p09?.stageId).toBe('probing'); // untouched
     expect(p10?.stageId).toBe('done'); // was already done, untouched (not re-promoted/re-logged)
+    expect(await prisma.workLog.findMany({ where: { itemId: 'WI-P10' } })).toHaveLength(0);
+  });
+
+  it('refuses an APPROVED review with 409 MISSION_NOT_READY while any of the mission\'s items is still mid-pipeline, and persists nothing', async () => {
+    await seedItem('WI-P06a', 'staged');
+    await seedItem('WI-P08', 'review');
+    await seedItem('WI-P09', 'probing');
+    await seedItem('WI-P10a', 'done');
+
+    const response = await POST(makeRequest({ finalReview: APPROVED_REPORT }), routeParams);
+    const data = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(data.success).toBe(false);
+    expect(data.error.code).toBe('MISSION_NOT_READY');
+    expect(data.error.details.pendingItemIds.sort()).toEqual(['WI-P08', 'WI-P09']);
+
+    // Neither the promotion nor the review write survives the refusal.
+    expect((await prisma.item.findUnique({ where: { id: 'WI-P06a' } }))?.stageId).toBe('staged');
+    expect((await prisma.item.findUnique({ where: { id: 'WI-P08' } }))?.stageId).toBe('review');
+    expect((await prisma.mission.findUnique({ where: { id: MISSION_ID } }))?.finalReview).toBeNull();
+    expect(await prisma.workLog.findMany({ where: { itemId: 'WI-P06a' } })).toHaveLength(0);
+  });
+
+  it('treats a blocked item as unfinished — an APPROVED review over a blocked mission is refused', async () => {
+    await seedItem('WI-P07', 'blocked');
+    await seedItem('WI-P07b', 'staged');
+
+    const response = await POST(makeRequest({ finalReview: APPROVED_REPORT }), routeParams);
+    const data = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(data.error.details.pendingItemIds).toEqual(['WI-P07']);
+    expect((await prisma.item.findUnique({ where: { id: 'WI-P07' } }))?.stageId).toBe('blocked');
+    expect((await prisma.item.findUnique({ where: { id: 'WI-P07b' } }))?.stageId).toBe('staged');
+    expect((await prisma.mission.findUnique({ where: { id: MISSION_ID } }))?.finalReview).toBeNull();
+  });
+
+  it('a NON-approved verdict is stored even while items are mid-pipeline — the readiness gate guards promotion only', async () => {
+    await seedItem('WI-P18', 'implementing');
+
+    const response = await POST(makeRequest({ finalReview: REJECTED_REPORT }), routeParams);
+
+    expect(response.status).toBe(200);
+    expect((await prisma.mission.findUnique({ where: { id: MISSION_ID } }))?.finalReview).toBe(REJECTED_REPORT);
+    expect((await prisma.item.findUnique({ where: { id: 'WI-P18' } }))?.stageId).toBe('implementing');
+  });
+
+  it('unfinished items in ANOTHER mission never block this mission\'s approval', async () => {
+    await seedItem('WI-P19', 'staged');
+    await seedItem('WI-OTHER-WIP', 'implementing', { missionId: OTHER_MISSION_ID });
+
+    const response = await POST(makeRequest({ finalReview: APPROVED_REPORT }), routeParams);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.data.promotedCount).toBe(1);
+    expect((await prisma.item.findUnique({ where: { id: 'WI-OTHER-WIP' } }))?.stageId).toBe('implementing');
+  });
+
+  it('an archived unfinished item does not block approval — a soft-deleted item is out of the mission population', async () => {
+    await seedItem('WI-P20', 'staged');
+    await seedItem('WI-P21-ARCHIVED', 'implementing', { archivedAt: new Date() });
+
+    const response = await POST(makeRequest({ finalReview: APPROVED_REPORT }), routeParams);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.data.promotedCount).toBe(1);
+    expect((await prisma.item.findUnique({ where: { id: 'WI-P21-ARCHIVED' } }))?.stageId).toBe('implementing');
+  });
+
+  it('batch promotion still writes exactly one work log row per promoted item', async () => {
+    const ids = ['WI-B01', 'WI-B02', 'WI-B03', 'WI-B04', 'WI-B05'];
+    for (const id of ids) {
+      await seedItem(id, 'staged');
+    }
+
+    const response = await POST(makeRequest({ finalReview: APPROVED_REPORT }), routeParams);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.data.promotedCount).toBe(5);
+
+    for (const id of ids) {
+      expect((await prisma.item.findUnique({ where: { id } }))?.stageId).toBe('done');
+      const logs = await prisma.workLog.findMany({ where: { itemId: id } });
+      expect(logs).toHaveLength(1);
+      expect(logs[0].agent).toBe('system');
+      expect(logs[0].action).toBe('note');
+      expect(logs[0].summary).toMatch(/final review/i);
+      expect(logs[0].summary).toContain(MISSION_ID);
+    }
+  });
+
+  it('returns 400 VALIDATION_ERROR (not a 500) when the request body is not valid JSON', async () => {
+    const response = await POST(
+      new Request(`http://localhost:3000/api/missions/${MISSION_ID}/final-review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Project-ID': PROJECT_ID },
+        body: '{ not json at all',
+      }),
+      routeParams
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.success).toBe(false);
+    expect(data.error.code).toBe('VALIDATION_ERROR');
+    expect(data.error.message).toMatch(/invalid json/i);
+    expect((await prisma.mission.findUnique({ where: { id: MISSION_ID } }))?.finalReview).toBeNull();
   });
 
   it('AC7: promotion writes a log entry per promoted item naming the final review as the cause', async () => {

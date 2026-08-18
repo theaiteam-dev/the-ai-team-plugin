@@ -20,8 +20,18 @@ export const TRANSITION_MATRIX = {
     done: [],
     blocked: ['ready'],
 };
+/**
+ * Answers "may an item move from `from` to `to`?".
+ *
+ * `from` is typed as StageId but in practice arrives as unvalidated DB data
+ * (Item.stageId is a plain String column, not an enum), so an unknown or
+ * legacy stage id would index the matrix to `undefined` and throw a
+ * TypeError — surfacing as a 500 from POST /api/board/move instead of a
+ * clean "invalid transition" 400. An unrecognized origin stage has no legal
+ * transitions, so it answers false.
+ */
 export function isValidTransition(from, to) {
-    return TRANSITION_MATRIX[from].includes(to);
+    return TRANSITION_MATRIX[from]?.includes(to) ?? false;
 }
 export function getValidNextStages(from) {
     return TRANSITION_MATRIX[from];

@@ -31,14 +31,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const txMock = vi.hoisted(() => ({
   mission: { update: vi.fn() },
   item: { findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
-  workLog: { create: vi.fn() },
+  workLog: { create: vi.fn(), createMany: vi.fn() },
   activityLog: { create: vi.fn() },
 }));
 
 const mockPrisma = vi.hoisted(() => ({
   mission: { findFirst: vi.fn(), update: vi.fn() }, // .update must NEVER be called directly if properly wrapped
   item: { findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn() }, // same
-  workLog: { create: vi.fn() },
+  workLog: { create: vi.fn(), createMany: vi.fn() },
   activityLog: { create: vi.fn() },
   $transaction: vi.fn(),
 }));
@@ -77,10 +77,10 @@ describe('POST /api/missions/[missionId]/final-review — AC2 transaction atomic
   });
 
   it('dispatches both the review write and the item promotion through the transaction-scoped client, never the top-level client directly', async () => {
-    txMock.item.findMany.mockResolvedValue([{ id: 'WI-001' }]);
-    txMock.item.update.mockResolvedValue({ id: 'WI-001', stageId: 'done' });
+    txMock.item.findMany.mockResolvedValue([{ id: 'WI-001', stageId: 'staged' }]);
+    txMock.item.updateMany.mockResolvedValue({ count: 1 });
     txMock.mission.update.mockResolvedValue({ ...mockMission, finalReview: APPROVED_REPORT });
-    txMock.workLog.create.mockResolvedValue({});
+    txMock.workLog.createMany.mockResolvedValue({ count: 1 });
 
     const req = buildRequest('project-a', { finalReview: APPROVED_REPORT });
     const res = await POST(req, buildContext('M-001'));
@@ -90,16 +90,19 @@ describe('POST /api/missions/[missionId]/final-review — AC2 transaction atomic
 
     // The actual persistence must go through tx...
     expect(txMock.mission.update).toHaveBeenCalled();
+    expect(txMock.item.updateMany).toHaveBeenCalled();
 
     // ...and the top-level (non-transactional) client must NEVER perform
     // either write directly — that's exactly the bug this AC prevents.
     expect(mockPrisma.mission.update).not.toHaveBeenCalled();
     expect(mockPrisma.item.update).not.toHaveBeenCalled();
+    expect(mockPrisma.item.updateMany).not.toHaveBeenCalled();
   });
 
   it('if the transaction callback throws partway through, the route surfaces an error and the top-level client never persists anything as a fallback', async () => {
-    txMock.item.findMany.mockResolvedValue([{ id: 'WI-001' }]);
-    txMock.item.update.mockRejectedValue(new Error('simulated mid-promotion failure'));
+    txMock.item.findMany.mockResolvedValue([{ id: 'WI-001', stageId: 'staged' }]);
+    txMock.mission.update.mockResolvedValue({ ...mockMission, finalReview: APPROVED_REPORT });
+    txMock.item.updateMany.mockRejectedValue(new Error('simulated mid-promotion failure'));
 
     const req = buildRequest('project-a', { finalReview: APPROVED_REPORT });
     const res = await POST(req, buildContext('M-001'));
@@ -120,6 +123,10 @@ describe('POST /api/missions/[missionId]/final-review — AC2 transaction atomic
     // the mission-scoped one, so the scoping can never be silently dropped
     // back to a project-wide sweep (which promoted other missions' leftover
     // staged items and credited this review in their work logs).
+    //
+    // The query deliberately does NOT filter on stageId: the route reads the
+    // mission's whole non-archived population in one round-trip so it can BOTH
+    // enforce the all-items-finished precondition and pick the staged subset.
     txMock.item.findMany.mockResolvedValue([]);
     txMock.mission.update.mockResolvedValue({ ...mockMission, finalReview: APPROVED_REPORT });
 
@@ -130,7 +137,6 @@ describe('POST /api/missions/[missionId]/final-review — AC2 transaction atomic
     const [{ where }] = txMock.item.findMany.mock.calls[0] as [{ where: Record<string, unknown> }];
     expect(where).toMatchObject({
       projectId: 'project-a',
-      stageId: 'staged',
       archivedAt: null,
       missionItems: { some: { missionId: 'M-001' } },
     });
@@ -150,5 +156,109 @@ describe('POST /api/missions/[missionId]/final-review — AC2 transaction atomic
     // No promotion machinery should fire for a rejected verdict.
     expect(txMock.item.findMany).not.toHaveBeenCalled();
     expect(txMock.item.update).not.toHaveBeenCalled();
+    expect(txMock.item.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/missions/[missionId]/final-review — batching and transaction budget (mocked)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.mission.findFirst.mockResolvedValue(mockMission);
+    mockPrisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof txMock) => Promise<unknown>) => callback(txMock)
+    );
+    txMock.mission.update.mockResolvedValue({ ...mockMission, finalReview: APPROVED_REPORT });
+    txMock.item.updateMany.mockResolvedValue({ count: 0 });
+    txMock.workLog.createMany.mockResolvedValue({ count: 0 });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('promotes N items with ONE updateMany and ONE createMany, not 2N serialized queries', async () => {
+    const ids = Array.from({ length: 40 }, (_, i) => `WI-${String(i + 1).padStart(3, '0')}`);
+    txMock.item.findMany.mockResolvedValue(ids.map((id) => ({ id, stageId: 'staged' })));
+
+    const res = await POST(buildRequest('project-a', { finalReview: APPROVED_REPORT }), buildContext('M-001'));
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.data.promotedCount).toBe(40);
+
+    // Batched, not looped — a per-item loop is what blows the transaction budget.
+    expect(txMock.item.update).not.toHaveBeenCalled();
+    expect(txMock.workLog.create).not.toHaveBeenCalled();
+    expect(txMock.item.updateMany).toHaveBeenCalledTimes(1);
+    expect(txMock.workLog.createMany).toHaveBeenCalledTimes(1);
+
+    const [updateArgs] = txMock.item.updateMany.mock.calls[0] as [
+      { where: { id: { in: string[] } }; data: { stageId: string } },
+    ];
+    expect(updateArgs.where.id.in).toEqual(ids);
+    expect(updateArgs.data).toEqual({ stageId: 'done' });
+
+    // Same work-log row shape the per-item creates used to write, one per item.
+    const [createArgs] = txMock.workLog.createMany.mock.calls[0] as [
+      { data: Array<{ itemId: string; agent: string; action: string; summary: string }> },
+    ];
+    expect(createArgs.data).toHaveLength(40);
+    expect(createArgs.data.map((row) => row.itemId)).toEqual(ids);
+    for (const row of createArgs.data) {
+      expect(row.agent).toBe('system');
+      expect(row.action).toBe('note');
+      expect(row.summary).toContain('M-001');
+      expect(row.summary).toMatch(/final review/i);
+    }
+  });
+
+  it('raises the interactive-transaction timeout above Prisma\'s 5s default so a large promotion cannot roll the review back', async () => {
+    txMock.item.findMany.mockResolvedValue([]);
+
+    await POST(buildRequest('project-a', { finalReview: APPROVED_REPORT }), buildContext('M-001'));
+
+    const [, options] = mockPrisma.$transaction.mock.calls[0] as [unknown, { timeout?: number } | undefined];
+    expect(options?.timeout).toBeGreaterThanOrEqual(15_000);
+  });
+
+  it('writes nothing at all when the mission still has unfinished items — 409 MISSION_NOT_READY', async () => {
+    txMock.item.findMany.mockResolvedValue([
+      { id: 'WI-001', stageId: 'staged' },
+      { id: 'WI-002', stageId: 'implementing' },
+      { id: 'WI-003', stageId: 'blocked' },
+      { id: 'WI-004', stageId: 'done' },
+    ]);
+
+    const res = await POST(buildRequest('project-a', { finalReview: APPROVED_REPORT }), buildContext('M-001'));
+    const data = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(data.success).toBe(false);
+    expect(data.error.code).toBe('MISSION_NOT_READY');
+    expect(data.error.details.pendingItemIds).toEqual(['WI-002', 'WI-003']);
+
+    // The review write is refused too — an approval must never be recorded
+    // against a half-finished mission, in the transaction or outside it.
+    expect(txMock.mission.update).not.toHaveBeenCalled();
+    expect(mockPrisma.mission.update).not.toHaveBeenCalled();
+    expect(txMock.item.updateMany).not.toHaveBeenCalled();
+    expect(txMock.workLog.createMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed JSON body with 400 VALIDATION_ERROR instead of a 500 database error', async () => {
+    const req = new Request('http://localhost:3000/api/missions/M-001/final-review', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Project-ID': 'project-a' },
+      body: '{ "finalReview": ',
+    });
+
+    const res = await POST(req, buildContext('M-001'));
+    const data = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(data.success).toBe(false);
+    expect(data.error.code).toBe('VALIDATION_ERROR');
+    expect(data.error.message).toMatch(/invalid json/i);
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   });
 });

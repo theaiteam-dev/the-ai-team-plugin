@@ -16,11 +16,13 @@ import {
   createInvalidTransitionError,
   createWipLimitExceededError,
   createDatabaseError,
+  createConflictError,
 } from '@/lib/errors';
 import { isValidTransition, checkWipLimit } from '@/lib/validation';
 import { getAndValidateProjectId } from '@/lib/project-utils';
 import { transformItemToResponse } from '@/lib/item-transform';
 import { getRejectionEscalationThreshold } from '@/lib/rejection-cap';
+import { parseFinalReviewVerdict } from '@/lib/final-review-verdict';
 import type { StageId } from '@/types/board';
 import type { MoveItemRequest, MoveItemResponse } from '@/types/api';
 import type { WorkLogAction } from '@/types/item';
@@ -132,6 +134,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json(error.toResponse(), { status: 404 });
     }
 
+    // `stageId` is a plain String column, so the stored value is unvalidated
+    // data from the API's perspective — a legacy or hand-edited stage id used
+    // to index the transition matrix to `undefined` and throw, turning a bad
+    // row into a 500. Reject it here with the same clean 400 an unknown
+    // `toStage` gets.
+    if (!isValidStageId(item.stageId)) {
+      const error = createValidationError(`Invalid stage: ${item.stageId}`);
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
     const fromStage = item.stageId as StageId;
 
     // Validate stage transition (against the originally requested toStage —
@@ -141,6 +153,44 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (!isValidTransition(fromStage, toStage)) {
       const error = createInvalidTransitionError(fromStage, toStage);
       return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
+    // The staged -> done promotion is the API's job, not the operator's: it
+    // runs inside the same transaction that persists a FINAL APPROVED final
+    // review (WI-790). This route keeps the transition LEGAL because the
+    // documented fallback (a Hannibal batch board-move, agents/hannibal.md)
+    // must still work when that promotion is unavailable — but only AFTER an
+    // approved review exists. Run early, the batch move empties `staged`, and
+    // both mission-tail Stop gates (checkFrankieEvidence and
+    // checkStagedNotPromoted, scripts/hooks/lib/stop-gates.js) key on
+    // stagedCount > 0 — so a premature promotion silently disarms Frankie's
+    // walk AND the not-yet-promoted gate, letting a mission end unreviewed.
+    //
+    // Scoped through the same MissionItem join the final-review route's
+    // promotion uses. An item that belongs to no active mission has no
+    // mission tail to protect, so it is left alone (manual board use outside
+    // a mission stays unaffected).
+    if (fromStage === 'staged' && toStage === 'done') {
+      const mission = await prisma.mission.findFirst({
+        where: {
+          projectId,
+          archivedAt: null,
+          items: { some: { itemId } },
+        },
+        orderBy: { startedAt: 'desc' },
+      });
+
+      if (mission && parseFinalReviewVerdict(mission.finalReview) !== 'approved') {
+        const error = createConflictError(
+          `Cannot promote ${itemId} from staged to done: mission ${mission.id} has no FINAL ` +
+            `APPROVED final review. Promotion runs automatically inside the transaction that ` +
+            `persists an approved review — write it with ateam missions-final-review ` +
+            `writeFinalReview (POST /api/missions/${mission.id}/final-review). Moving items to ` +
+            `done first empties the staged column and disarms the mission-tail Stop gates.`,
+          { itemId, missionId: mission.id, verdict: parseFinalReviewVerdict(mission.finalReview) }
+        );
+        return NextResponse.json(error.toResponse(), { status: 409 });
+      }
     }
 
     // WI-794: a move out of 'staged' to 'testing' or 'implementing' is

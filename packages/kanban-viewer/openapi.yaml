@@ -362,6 +362,7 @@ components:
                 - MISSION_NOT_FOUND
                 - NO_ACTIVE_MISSION
                 - INVALID_MISSION_STATE
+                - MISSION_NOT_READY
                 - PROJECT_NOT_FOUND
                 - STAGE_NOT_FOUND
                 - CONFLICT
@@ -2134,10 +2135,18 @@ paths:
         be read or overwritten across project boundaries.
 
         When the report's verdict is FINAL APPROVED, the same transaction
-        that persists the review also promotes every `staged` item in the
-        project to `done` (WI-790) — the write and the promotion succeed or
-        roll back together, so a crash mid-promotion never leaves a stored
-        review beside a half-promoted board.
+        that persists the review also promotes every non-archived item
+        belonging to THIS mission that sits in `staged` to `done` (WI-790) —
+        the write and the promotion succeed or roll back together, so a crash
+        mid-promotion never leaves a stored review beside a half-promoted
+        board. Items belonging to other missions (or to no mission) are never
+        touched.
+
+        A FINAL APPROVED verdict is only accepted once the whole mission has
+        finished the per-item pipeline: if any non-archived item of the
+        mission is still in a stage other than `staged` or `done` (including
+        `blocked`), the call is rejected with 409 MISSION_NOT_READY, the
+        review is NOT stored, and nothing is promoted.
       tags: [missions]
       requestBody:
         required: true
@@ -2176,13 +2185,25 @@ paths:
                           as part of the same transaction (WI-790). Always `0`
                           when the review's verdict is not FINAL APPROVED.
         '400':
-          description: VALIDATION_ERROR — finalReview body field is required
+          description: |
+            VALIDATION_ERROR — the request body is not valid JSON, or the
+            finalReview field is missing/not a string
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
           description: MISSION_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: |
+            MISSION_NOT_READY — a FINAL APPROVED verdict was submitted while
+            the mission still has non-archived items short of `staged`/`done`.
+            Neither the review nor the promotion is persisted.
+            `error.details.pendingItemIds` lists the offending item IDs.
           content:
             application/json:
               schema:

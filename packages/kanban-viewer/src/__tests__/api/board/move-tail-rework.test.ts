@@ -69,6 +69,9 @@ const mockPrisma = vi.hoisted(() => ({
   item: { findFirst: vi.fn(), update: vi.fn() }, // .update must NEVER be hit directly — only via txMock
   stage: { findUnique: vi.fn() },
   workLog: { create: vi.fn() }, // must NEVER be hit directly — only via txMock
+  // Finding #17: staged -> done is gated on an APPROVED final review for the
+  // item's active mission, so the promotion path now reads the mission row.
+  mission: { findFirst: vi.fn() },
   $transaction: vi.fn(),
 }));
 
@@ -143,6 +146,15 @@ describe('POST /api/board/move — WI-794: tail-triggered rework counts against 
     txMock.item.findFirst.mockImplementation((...args: unknown[]) =>
       mockPrisma.item.findFirst(...args)
     );
+    // Default: this project's active mission already carries an APPROVED
+    // final review, so the staged -> done promotion fallback is permitted
+    // (Finding #17). Tests that exercise the gate itself override this.
+    mockPrisma.mission.findFirst.mockResolvedValue({
+      id: 'M-TEST-001',
+      projectId: 'test-project',
+      archivedAt: null,
+      finalReview: '# Final Mission Review\n\nVERDICT: FINAL APPROVED\n',
+    });
   });
 
   afterEach(() => {
@@ -524,6 +536,105 @@ describe('POST /api/board/move — WI-794: tail-triggered rework counts against 
       expect(txMock.workLog.create).not.toHaveBeenCalled();
     });
   });
+
+  // ---------------------------------------------------------------------
+  // Finding #17: the documented manual fallback (a Hannibal batch
+  // `board-move --toStage done`, agents/hannibal.md) empties the `staged`
+  // column. Both mission-tail Stop gates — checkFrankieEvidence and
+  // checkStagedNotPromoted in scripts/hooks/lib/stop-gates.js — key on
+  // stagedCount > 0, so running that batch BEFORE Stockwell's review
+  // silently disarms Frankie's walk and the not-yet-promoted gate, letting a
+  // mission end unreviewed. The transition stays LEGAL in the matrix (the
+  // fallback must still work once the review is approved); the API refuses
+  // it until an approved final review exists for the item's mission.
+  // ---------------------------------------------------------------------
+  describe('staged -> done requires an APPROVED final review', () => {
+    it('rejects the promotion with a 4xx when the mission has no final review at all', async () => {
+      mockPrisma.mission.findFirst.mockResolvedValue({
+        id: 'M-TEST-001',
+        projectId: 'test-project',
+        archivedAt: null,
+        finalReview: null,
+      });
+      mockPrisma.item.findFirst.mockResolvedValue(baseItem({ rejectionCount: 0 }));
+
+      const res = await callMove({ itemId: 'WI-500', toStage: 'done' as MoveItemRequest['toStage'] });
+      const data = await res.json();
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(res.status).toBeLessThan(500);
+      expect(data.success).toBe(false);
+      // The operator must be pointed at the command that actually promotes.
+      expect(data.error.message).toMatch(/writeFinalReview/);
+      // Nothing may be written — the item stays in staged, gates stay armed.
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      expect(txMock.item.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects the promotion when the stored review is FINAL REJECTED', async () => {
+      mockPrisma.mission.findFirst.mockResolvedValue({
+        id: 'M-TEST-001',
+        projectId: 'test-project',
+        archivedAt: null,
+        finalReview: '# Final Mission Review\n\nVERDICT: FINAL REJECTED\n',
+      });
+      mockPrisma.item.findFirst.mockResolvedValue(baseItem({ rejectionCount: 0 }));
+
+      const res = await callMove({ itemId: 'WI-500', toStage: 'done' as MoveItemRequest['toStage'] });
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(res.status).toBeLessThan(500);
+      expect(txMock.item.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects the promotion when the review exists but its verdict is unparseable (never guess an approval)', async () => {
+      mockPrisma.mission.findFirst.mockResolvedValue({
+        id: 'M-TEST-001',
+        projectId: 'test-project',
+        archivedAt: null,
+        finalReview: 'Looks good to me, shipping it.',
+      });
+      mockPrisma.item.findFirst.mockResolvedValue(baseItem({ rejectionCount: 0 }));
+
+      const res = await callMove({ itemId: 'WI-500', toStage: 'done' as MoveItemRequest['toStage'] });
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(res.status).toBeLessThan(500);
+      expect(txMock.item.update).not.toHaveBeenCalled();
+    });
+
+    it('allows the promotion once an APPROVED final review is persisted — the fallback still works post-approval', async () => {
+      mockPrisma.item.findFirst.mockResolvedValue(baseItem({ rejectionCount: 0 }));
+      txMock.item.update.mockResolvedValue(baseItem({ stageId: 'done', rejectionCount: 0 }));
+
+      const res = await callMove({ itemId: 'WI-500', toStage: 'done' as MoveItemRequest['toStage'] });
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.data.item.stageId).toBe('done');
+    });
+
+    it('leaves items that belong to no active mission alone — manual board use outside a mission is unaffected', async () => {
+      mockPrisma.mission.findFirst.mockResolvedValue(null);
+      mockPrisma.item.findFirst.mockResolvedValue(baseItem({ rejectionCount: 0 }));
+      txMock.item.update.mockResolvedValue(baseItem({ stageId: 'done', rejectionCount: 0 }));
+
+      const res = await callMove({ itemId: 'WI-500', toStage: 'done' as MoveItemRequest['toStage'] });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('does not consult the final review for tail-rework moves out of staged — only the promotion to done is gated', async () => {
+      mockPrisma.item.findFirst.mockResolvedValue(baseItem({ rejectionCount: 0 }));
+      txMock.item.update.mockResolvedValue(baseItem({ stageId: 'testing', rejectionCount: 1 }));
+      txMock.workLog.create.mockResolvedValue({ id: 1, agent: 'Hannibal', action: 'tail_rework', summary: 'x' });
+
+      const res = await callMove({ itemId: 'WI-500', toStage: 'testing' as MoveItemRequest['toStage'] });
+
+      expect(res.status).toBe(200);
+      expect(mockPrisma.mission.findFirst).not.toHaveBeenCalled();
+    });
+  });
 });
 
 async function callMove(body: MoveItemRequest) {
@@ -569,4 +680,6 @@ describe('openapi.yaml — WorkLogAction enum matches the TS union', () => {
     expect(unionValues).toContain('tail_rework'); // guard against an empty parse passing vacuously
     expect(specWorkLogActions()).toEqual(unionValues);
   });
+
+
 });
