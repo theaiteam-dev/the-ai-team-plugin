@@ -305,7 +305,7 @@ The `/ai-team:setup` command **auto-detects** project settings and creates `atea
 
 1. **CLAUDE.md** - Scans for: package manager mentions, test/lint commands, dev server URLs, Docker commands
 2. **package.json** - Checks `scripts` for: `test`, `test:unit`, `test:e2e`, `lint`, `dev`, `start`, and a seed-shaped script for `qa.seed`
-3. **Lock files** - Detects package manager: `package-lock.json` → npm, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, `bun.lockb` → bun
+3. **Lock files** - Detects package manager: `package-lock.json` → npm, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, `bun.lock` (or legacy binary `bun.lockb`) → bun
 4. **`.env.example`** - Scans for a QA/test credential env-var name (never its value) for `qa.account.credential_env`
 5. **Framework config / entrypoints** - Detects drivable `surfaces` (web framework config, CLI entrypoints)
 

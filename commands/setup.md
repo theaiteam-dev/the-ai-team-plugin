@@ -90,7 +90,7 @@ AskUserQuestion({
 
 2. **Read package.json** (if exists)
    - Check `scripts` for: `test`, `test:unit`, `test:e2e`, `lint`, `dev`, `start`
-   - Detect package manager from lock files: `package-lock.json` → npm, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, `bun.lockb` → bun
+   - Detect package manager from lock files: `package-lock.json` → npm, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, `bun.lock` (or legacy binary `bun.lockb`) → bun
    - Check `scripts` for a seed-shaped entry (`seed`, `seed:test`, `db:seed`, or any script whose command matches `/seed/i`) — propose it as `qa.seed`
 
 3. **Detect drivable surfaces** from framework config and entrypoints

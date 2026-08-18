@@ -39,7 +39,7 @@ The `@ai-team/shared` package provides TypeScript types and constants used by th
 ai-team/
 ├── .claude-plugin/plugin.json  # Plugin configuration
 ├── package.json             # Bun workspaces root (run `bun install`)
-├── bun.lockb                # Bun lock file
+├── bun.lock                 # Bun lock file
 ├── docker-compose.yml       # Docker setup for kanban-viewer
 ├── packages/                # Monorepo packages
 │   ├── shared/              # @ai-team/shared - Shared types and constants
