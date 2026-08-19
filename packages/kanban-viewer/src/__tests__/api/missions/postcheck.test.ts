@@ -362,6 +362,57 @@ describe('POST /api/missions/postcheck', () => {
       expect(data.data.e2eTestsFailed).toBe(1);
     });
 
+    it('logs a warn-level "unmeasured" message when passed=true with no check output, instead of a false 0-count', async () => {
+      // Regression (M-20260819-001): a body without output closed the mission
+      // logging "Postcheck passed: 0 unit tests..." — false data that
+      // propagated into the retro as a parser bug.
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+
+      const response = await POST(makeRequest({ passed: true, blockers: [], output: {} }));
+      expect(response.status).toBe(200);
+
+      const resultLog = mockPrismaClient.activityLog.create.mock.calls
+        .map((c) => c[0].data)
+        .find((d) => d.message.startsWith('Postcheck passed'));
+      expect(resultLog).toBeTruthy();
+      expect(resultLog.message).toContain('unmeasured');
+      expect(resultLog.message).not.toContain('0 unit tests,');
+      expect(resultLog.level).toBe('warn');
+    });
+
+    it('logs a warn-level parse warning when non-lint output is submitted but yields zero test counts', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+
+      const body = {
+        passed: true,
+        blockers: [],
+        output: {
+          unit: { stdout: 'some runner output with no recognizable summary', stderr: '', timedOut: false },
+        },
+      };
+      const response = await POST(makeRequest(body));
+      expect(response.status).toBe(200);
+
+      const resultLog = mockPrismaClient.activityLog.create.mock.calls
+        .map((c) => c[0].data)
+        .find((d) => d.message.startsWith('Postcheck passed'));
+      expect(resultLog.message).toContain('no parsable test counts');
+      expect(resultLog.level).toBe('warn');
+    });
+
+    it('logs the normal info-level message when real test counts are parsed', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+
+      const response = await POST(makeRequest(passingBody));
+      expect(response.status).toBe(200);
+
+      const resultLog = mockPrismaClient.activityLog.create.mock.calls
+        .map((c) => c[0].data)
+        .find((d) => d.message.startsWith('Postcheck passed'));
+      expect(resultLog.message).toBe('Postcheck passed: 10 unit tests, 0 e2e tests passing, 0 lint errors');
+      expect(resultLog.level).toBe('info');
+    });
+
     it('should handle missing output keys gracefully with zero counts', async () => {
       mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
 

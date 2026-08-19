@@ -601,17 +601,34 @@ Once every named item is back in `staged`, the mission tail RESTARTS at Frankie 
 
 ## Post-Mission Checks
 
-**After Stockwell returns `VERDICT: FINAL APPROVED` and every item is in `done`** (the API's atomic promotion from `staged` has already run — see "Handle Final Review Result" above), run post-mission checks to verify everything works:
+**After Stockwell returns `VERDICT: FINAL APPROVED` and every item is in `done`** (the API's atomic promotion from `staged` has already run — see "Handle Final Review Result" above), run post-mission checks to verify everything works.
+
+**YOU run the checks; the API only records them.** `missionPostcheck` does not execute anything — it POSTs a pre-computed result body, and the API parses test counts out of the check output you include. A body without `output` closes the mission reporting "0 unit tests passing" no matter how many really passed (this corrupted M-20260819-001's metrics — the retro had to reconstruct the real count from Stockwell's report).
+
+1. Read `ateam.config.json`: the `postcheck` array names which checks to run, and `checks` maps each name to its command (a `null` command means that check is not configured — skip it, do not invent one).
+2. Run each configured check via Bash in the target project, capturing stdout and stderr separately. A non-zero exit means the check failed.
+3. Build the result body — one `output` entry PER CHECK, keyed by the check name, carrying the CAPTURED output verbatim (do not summarize or truncate it; the API's parser reads the runner's own summary lines):
 
 ```bash
-ateam missions-postcheck missionPostcheck --json
+cat > /tmp/postcheck-body.json <<'EOF'
+{
+  "passed": true,
+  "blockers": [],
+  "output": {
+    "unit-full": { "stdout": "<captured stdout>", "stderr": "<captured stderr>", "timedOut": false },
+    "typecheck-full": { "stdout": "<captured stdout>", "stderr": "", "timedOut": false }
+  }
+}
+EOF
+ateam missions-postcheck missionPostcheck --body-file /tmp/postcheck-body.json --json
 ```
 
-This command:
-- Reads `ateam.config.json` to determine which checks to run (lint, unit, e2e)
-- Runs the configured post-checks
+(Write the body with a real JSON serializer or careful quoting — captured test output contains quotes and newlines. `passed` is `false` when any configured check failed, with one human-readable string per failure in `blockers`.)
+
+The API:
+- Parses pass/fail counts per check from the `output` you submitted
 - Updates mission state with results
-- Returns error if any check fails
+- Logs `Postcheck passed: N unit tests, ...` — if that log line says `unmeasured`, you submitted no usable output; fix the body and re-run rather than letting a false zero into the retro
 
 **If post-checks fail:** this is a mission-level failure — Hannibal reports it directly, and no item's stage or rejection count changes as a result.
 - DO NOT mark the mission as complete

@@ -251,16 +251,35 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       },
     });
 
+    // A passing result with no measurable output must SAY so — "0 unit tests
+    // passing" read as real data in M-20260819-001's retro when the caller had
+    // simply omitted `output`. A 0/0 gate result must be distinguishable from
+    // "nothing was measured".
+    const outputEntries = Object.entries(output as Record<string, CheckOutput>);
+    const hasContent = ([, o]: [string, CheckOutput]): boolean =>
+      (o.stdout ?? '').trim() !== '' || (o.stderr ?? '').trim() !== '';
+    const hasSubmittedOutput = outputEntries.some(hasContent);
+    const hasNonLintOutput = outputEntries.filter(([name]) => !name.includes('lint')).some(hasContent);
+    const totalTestCounts = unitTestsPassed + unitTestsFailed + e2eTestsPassed + e2eTestsFailed;
+    const unmeasured = passed && !hasSubmittedOutput;
+    const unparsed = passed && hasNonLintOutput && totalTestCounts === 0;
+
+    let passedMessage = `Postcheck passed: ${unitTestsPassed} unit tests, ${e2eTestsPassed} e2e tests passing, ${lintErrors} lint errors`;
+    if (unmeasured) {
+      passedMessage =
+        'Postcheck passed: no check output submitted — test counts unmeasured (caller must run the configured checks and include their captured output)';
+    } else if (unparsed) {
+      passedMessage += ' — warning: submitted check output contained no parsable test counts';
+    }
+
     // Log postcheck results
     await prisma.activityLog.create({
       data: {
         projectId,
         missionId: mission.id,
         agent: null,
-        message: passed
-          ? `Postcheck passed: ${unitTestsPassed} unit tests, ${e2eTestsPassed} e2e tests passing, ${lintErrors} lint errors`
-          : `Postcheck failed: ${blockers.join(', ')}`,
-        level: passed ? 'info' : 'error',
+        message: passed ? passedMessage : `Postcheck failed: ${blockers.join(', ')}`,
+        level: passed ? (unmeasured || unparsed ? 'warn' : 'info') : 'error',
       },
     });
 
