@@ -2752,6 +2752,31 @@ describe('block-frankie-writes — agent guards', () => {
       expect(result.stderr).toMatch(/immutable/i);
     });
 
+    // Regression: an ABSOLUTE spec-root path spelled through a SYMLINK ALIAS of
+    // the project root. process.cwd() reports the canonical path, so the command
+    // path (aliased) and the derived spec root (canonical) disagree textually —
+    // exactly macOS's /var/folders (alias) vs /private/var/folders (canonical),
+    // where the test's own mkdtemp fixtures and CI sandboxes live. isUnderDir's
+    // old lexical pre-gate rejected the aliased path and misrouted the block to
+    // the generic impl-territory message. Reproduced on Linux by aliasing the
+    // real project dir; the canonical comparison must recognize it as the spec
+    // root and say "immutable".
+    it('blocks an ABSOLUTE spec-root path through a symlink-aliased root (exit 2, immutable)', () => {
+      const real = newProject();
+      const alias = join(tmpdir(), `ateam-frankie-alias-${process.pid}-${Date.now()}`);
+      symlinkSync(real, alias);
+      SANDBOXES.push(alias);
+      const sessionId = freshSession(alias);
+      const result = runHookIn(alias, {
+        agent_type: 'frankie',
+        session_id: sessionId,
+        tool_name: 'Bash',
+        tool_input: { command: `rm -rf ${join(alias, 'specs')}` },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
     it('blocks a directory created MID-session (not in the snapshot, may already hold graduated specs) (exit 2)', () => {
       const proj = newProject();
       const sessionId = freshSession(proj);

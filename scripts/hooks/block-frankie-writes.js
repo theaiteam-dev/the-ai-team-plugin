@@ -129,18 +129,23 @@ function isUnderDir(filePath, dirName) {
   const root = process.cwd();
   const abs = path.resolve(root, filePath);
   const base = path.join(root, dirName);
-  // Cheap lexical gate first — anything that isn't even textually under the
-  // allowed root can be rejected without touching the filesystem.
-  if (!isWithin(abs, base)) {
-    return false;
-  }
 
-  // Lexical containment is not enough: path.resolve() never follows symlinks,
-  // so `.qa-evidence/M-1/x -> ../../src/services/order.ts` (or an
-  // `.qa-evidence -> /` link planted before the directory exists) would be
-  // "under" the allowed root textually while every write through it lands in
-  // implementation code. Compare CANONICAL paths instead, and fail CLOSED if
-  // canonicalization is impossible (dangling link, permission error).
+  // Compare CANONICAL paths — no lexical prefix pre-gate. path.resolve() never
+  // follows symlinks, and there are two distinct reasons the textual forms can
+  // disagree even when the target genuinely lives under the allowed dir:
+  //   1. Symlink ESCAPE: `.qa-evidence/M-1/x -> ../../src/services/order.ts`
+  //      (or `.qa-evidence -> /` planted before the dir exists) looks textually
+  //      inside while every write lands in implementation code — must block.
+  //   2. Symlink-ALIASED root: an ABSOLUTE target may be spelled in an alias of
+  //      the canonical cwd — macOS `/var/folders/...` vs canonical
+  //      `/private/var/folders/...` (process.cwd() reports the canonical form),
+  //      any bind mount, any parent symlink. A lexical gate that compared the
+  //      aliased `abs` against a canonical-root `base` wrongly rejected these,
+  //      routing `rm -rf <tmproot>/specs` to the generic impl-territory branch
+  //      instead of spec-immutable. The canonical comparison below resolves
+  //      both cases correctly; a cheap lexical pre-gate cannot, because it
+  //      assumes `abs` and `base` share a namespace.
+  // Fail CLOSED if canonicalization is impossible (dangling link, permission).
   const canonicalRoot = canonicalizePath(root);
   const canonicalBase = canonicalizePath(base);
   const canonicalTarget = canonicalizePath(abs);
