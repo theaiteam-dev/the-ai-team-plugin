@@ -11,6 +11,20 @@ import { useEffect, useState } from "react";
 const MOBILE_BREAKPOINT_QUERY = "(max-width: 767px)";
 
 /**
+ * Reads the current match once. SSR- and jsdom-safe: returns `false`
+ * (desktop) whenever `window.matchMedia` is unavailable. Used as the lazy
+ * useState initializer so the value is correct on first render WITHOUT a
+ * synchronous setState inside the effect (which triggers cascading renders
+ * and is flagged by react-hooks lint).
+ */
+function readIsMobile(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return false;
+  }
+  return window.matchMedia(MOBILE_BREAKPOINT_QUERY).matches;
+}
+
+/**
  * Detects whether the viewport is currently at or below the mobile
  * breakpoint, via a live matchMedia listener (not just a one-time read) so
  * resizing or rotating the device updates the result.
@@ -23,7 +37,7 @@ const MOBILE_BREAKPOINT_QUERY = "(max-width: 767px)";
  * (innerWidth 1024) is desktop-sized anyway.
  */
 export function useIsMobileViewport(): boolean {
-  const [isMobile, setIsMobile] = useState(false);
+  const [isMobile, setIsMobile] = useState(readIsMobile);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -31,8 +45,10 @@ export function useIsMobileViewport(): boolean {
     }
 
     const mediaQueryList = window.matchMedia(MOBILE_BREAKPOINT_QUERY);
-    setIsMobile(mediaQueryList.matches);
 
+    // The initial value comes from the lazy useState initializer above; this
+    // effect only SUBSCRIBES to later changes, so there is no synchronous
+    // setState in the effect body.
     const handleChange = (event: MediaQueryListEvent) => setIsMobile(event.matches);
 
     // Safari < 14 (and other older WebKit builds) shipped MediaQueryList
