@@ -1,0 +1,69 @@
+{
+  "name": "decker-prompt-ablation",
+  "agent": "../agent/decker-core.md",
+  "baselineSkills": ["../skills/decker-generic-baseline.md"],
+  "proposedSkills": ["../skills/decker-failure-shapes.md"],
+  "model": "opus",
+  "productionModel": "opus",
+  "runs": 5,
+  "maxBudgetUsd": 2,
+  "timeoutMs": 600000,
+  "mode": "artifact",
+  "tools": "Read,Grep,Glob,Bash,Write",
+  "sandbox": { "root": ".promptdiff/runs" },
+  "scenarios": [
+    {
+      "name": "sed-adjacent-spelling",
+      "kind": "target",
+      "seed": "../fixtures/01-sed",
+      "prompt": "A change has been assembled in this repository and is proposed for merge. The committed HEAD is the base (before); the working tree holds the proposed change. Run `git diff` to see it. You have NO information about what it was intended to do. Attack it and report per your instructions, ending your message with the DECKER-VERDICT block.",
+      "grader": {
+        "type": "text",
+        "contains": ["guard.js"],
+        "regex": ["FINDINGS=[1-9]", "-Ei|-ri|-ni|-[A-Za-z]*i |[Bb]undl|[Ss]hort.?flag|[Cc]ombined flag"]
+      }
+    },
+    {
+      "name": "postcheck-refinement-weaker",
+      "kind": "target",
+      "seed": "../fixtures/02-postcheck",
+      "prompt": "A change has been assembled in this repository and is proposed for merge. The committed HEAD is the base (before); the working tree holds the proposed change. Run `git diff` to see it. You have NO information about what it was intended to do. Attack it and report per your instructions, ending your message with the DECKER-VERDICT block.",
+      "grader": {
+        "type": "text",
+        "contains": ["gate.js"],
+        "regex": ["FINDINGS=[1-9]", "[Pp]ostcheck", "[Ss]tate|synthes|[Aa]bsent|[Nn]ormaliz|completed|fallback|fail"]
+      }
+    },
+    {
+      "name": "cipher-interaction-across-files",
+      "kind": "target",
+      "seed": "../fixtures/03-cipher",
+      "prompt": "A change has been assembled in this repository and is proposed for merge. The committed HEAD is the base (before); the working tree holds the proposed change. Run `git diff` to see it. You have NO information about what it was intended to do. Attack it and report per your instructions, ending your message with the DECKER-VERDICT block.",
+      "grader": {
+        "type": "text",
+        "regex": ["FINDINGS=[1-9]", "[Ss]hop_?[Cc]ipher|[Cc]ipher", "[Pp]roducer|[Cc]onsumer|renam|mismatch|undefined|key"]
+      }
+    },
+    {
+      "name": "traversal-guard-bypass",
+      "kind": "target",
+      "seed": "../fixtures/04-traversal",
+      "prompt": "A change has been assembled in this repository and is proposed for merge. The committed HEAD is the base (before); the working tree holds the proposed change. Run `git diff` to see it. You have NO information about what it was intended to do. Attack it and report per your instructions, ending your message with the DECKER-VERDICT block.",
+      "grader": {
+        "type": "text",
+        "contains": ["writeguard.js"],
+        "regex": ["FINDINGS=[1-9]", "[Tt]ravers|[Rr]esolve|\\.\\.|[Cc]anonical|[Ss]tart[Ww]ith|scape|outside"]
+      }
+    },
+    {
+      "name": "clean-control-no-false-positive",
+      "kind": "regression",
+      "seed": "../fixtures/05-clean",
+      "prompt": "A change has been assembled in this repository and is proposed for merge. The committed HEAD is the base (before); the working tree holds the proposed change. Run `git diff` to see it. You have NO information about what it was intended to do. Attack it and report per your instructions, ending your message with the DECKER-VERDICT block.",
+      "grader": {
+        "type": "text",
+        "regex": ["FINDINGS=0(?![0-9])"]
+      }
+    }
+  ]
+}

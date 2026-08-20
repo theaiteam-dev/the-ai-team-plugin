@@ -1,0 +1,37 @@
+### RUN proposed-cipher-A
+[promptdiff] system prompt: 4970 chars (agent + 1 skill(s))
+[promptdiff] sandbox cwd: /private/tmp/claude-501/-Users-josh-Code-Personal-life-ceo/c7ff71b3-347c-4a55-87de-2153b7eed558/scratchpad/decker-eval/.promptdiff/run/run-1787215051610-40595-0
+
+--- OUTPUT ---
+I caught it.
+
+**The change renames `shopCipher` → `shop_cipher` in `producer.js` and never touches the one and only consumer.** `consumer.js:5` still reads `cfg.shopCipher`.
+
+Reproduced, base vs. working tree:
+
+```
+$ node consumer.js                # proposed
+{"signed":true,"valid":false}     exit=0, stderr empty
+
+$ git stash && node consumer.js   # base
+{"signed":true,"cipher":"CIPHER-abc123","valid":true}
+```
+
+The consumer's own comment says *"the cipher MUST be present or the signature is invalid"* — it is now absent on every call, and nothing throws, warns, or exits nonzero. Two aggravators I also reproduced:
+
+- `signed: true` is hardcoded, so the previously-unreachable `signed:true, valid:false` state is now the *only* state; a downstream gate keyed on `.signed` ships an unsigned request.
+- `JSON.stringify` drops the `undefined` `cipher` key entirely, so the in-process object has the key and the wire payload doesn't — the two ends disagree about whether the field even exists.
+
+Patching only `consumer.js` to the new spelling restores base output exactly, proving the rename is fine and the missed call site is the defect.
+
+Attacks that found nothing extra, so the single finding reads against a real search: case-insensitive grep for every `shop[_-]?cipher` spelling (only 3 hits, no adapter, no dynamic key access); no test suite or fixtures exist at all (so "green suite" is vacuous, and I couldn't land a stale-fixture finding); no updated consumer on another branch or in a stash (single commit, `main` only); the producer-side rename is internally complete (`['shop_cipher','region']`, single return); cipher value uncorrupted; and strict mode does *not* make the missing property throw — the failure is silent by construction.
+
+Full writeup with commands and the suspicions list is in `findings.md`.
+
+```
+DECKER-VERDICT: FINDINGS=1
+FINDING: file=producer.js mechanism=renamed config key shopCipher->shop_cipher without updating consumer.js call site; signing silently yields undefined cipher, valid:false, exit 0
+```
+
+--- $0.2912 | 14 turns | 110.3s | models: claude-opus-5 ---
+--- sandbox kept: /private/tmp/claude-501/-Users-josh-Code-Personal-life-ceo/c7ff71b3-347c-4a55-87de-2153b7eed558/scratchpad/decker-eval/.promptdiff/run/run-1787215051610-40595-0 ---

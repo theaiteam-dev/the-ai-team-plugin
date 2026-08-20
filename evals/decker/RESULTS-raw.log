@@ -1,0 +1,106 @@
+[promptdiff] scenario sed-adjacent-spelling (target)
+[promptdiff]   baseline run 1/5
+[promptdiff]   baseline run 2/5
+[promptdiff]   baseline run 3/5
+[promptdiff]   baseline run 4/5
+[promptdiff]   baseline run 5/5
+[promptdiff]   proposed run 1/5
+[promptdiff]   proposed run 2/5
+[promptdiff]   proposed run 3/5
+[promptdiff]   proposed run 4/5
+[promptdiff]   proposed run 5/5
+[promptdiff] scenario postcheck-refinement-weaker (target)
+[promptdiff]   baseline run 1/5
+[promptdiff]   baseline run 2/5
+[promptdiff]   baseline run 3/5
+[promptdiff]   baseline run 4/5
+[promptdiff]   baseline run 5/5
+[promptdiff]   proposed run 1/5
+[promptdiff]   proposed run 2/5
+[promptdiff]   proposed run 3/5
+[promptdiff]   proposed run 4/5
+[promptdiff]   proposed run 5/5
+[promptdiff] scenario cipher-interaction-across-files (target)
+[promptdiff]   baseline run 1/5
+[promptdiff]   baseline run 2/5
+[promptdiff]   baseline run 3/5
+[promptdiff]   baseline run 4/5
+[promptdiff]   baseline run 5/5
+[promptdiff]   proposed run 1/5
+[promptdiff]   proposed run 2/5
+[promptdiff]   proposed run 3/5
+[promptdiff]   proposed run 4/5
+[promptdiff]   proposed run 5/5
+[promptdiff] scenario traversal-guard-bypass (target)
+[promptdiff]   baseline run 1/5
+[promptdiff]   baseline run 2/5
+[promptdiff]   baseline run 3/5
+[promptdiff]   baseline run 4/5
+[promptdiff]   baseline run 5/5
+[promptdiff]   proposed run 1/5
+[promptdiff]   proposed run 2/5
+[promptdiff]   proposed run 3/5
+[promptdiff]   proposed run 4/5
+[promptdiff]   proposed run 5/5
+[promptdiff] scenario clean-control-no-false-positive (regression)
+[promptdiff]   baseline run 1/5
+[promptdiff]   baseline run 2/5
+[promptdiff]   baseline run 3/5
+[promptdiff]   baseline run 4/5
+[promptdiff]   baseline run 5/5
+[promptdiff]   proposed run 1/5
+[promptdiff]   proposed run 2/5
+[promptdiff]   proposed run 3/5
+[promptdiff]   proposed run 4/5
+[promptdiff]   proposed run 5/5
+promptdiff compare: decker-prompt-ablation
+
+sed-adjacent-spelling (target)
+  baseline: 4/5 pass (80%) | $4.3013
+  proposed: 5/5 pass (100%) | $3.7287
+  delta: +20% pass | $-0.5725
+  PASS: assertions satisfied
+  NOTE: delta could be sampling noise (Fisher exact p=1.00) — consider more runs
+  baseline run 4 failed: output did not contain "guard.js"
+
+postcheck-refinement-weaker (target)
+  baseline: 4/5 pass (80%) | $3.7106
+  proposed: 3/5 pass (60%) | $5.0897
+  delta: -20% pass | +$1.3790
+  FAIL: proposed did not improve the target pass rate
+  NOTE: delta could be sampling noise (Fisher exact p=1.00) — consider more runs
+  baseline run 4 failed: output did not contain "gate.js"
+  proposed run 2 failed: output did not contain "gate.js"
+  proposed run 3 failed: output did not contain "gate.js"
+
+cipher-interaction-across-files (target)
+  baseline: 5/5 pass (100%) | $1.5245
+  proposed: 3/5 pass (60%) | $4.6947
+  delta: -40% pass | +$3.1702
+  FAIL: baseline fully passed; the target gap was not reproduced
+  FAIL: proposed did not improve the target pass rate
+  NOTE: delta could be sampling noise (Fisher exact p=0.44) — consider more runs
+  proposed run 1 failed: output did not match /[Ss]hop_?[Cc]ipher|[Cc]ipher/
+  proposed run 3 failed: output did not match /[Ss]hop_?[Cc]ipher|[Cc]ipher/
+
+traversal-guard-bypass (target)
+  baseline: 5/5 pass (100%) | $2.7343
+  proposed: 5/5 pass (100%) | $2.3456
+  delta: +0% pass | $-0.3887
+  FAIL: baseline fully passed; the target gap was not reproduced
+  FAIL: proposed did not improve the target pass rate
+
+clean-control-no-false-positive (regression)
+  baseline: 5/5 pass (100%) | $2.2926
+  proposed: 5/5 pass (100%) | $2.0636
+  delta: +0% pass | $-0.2291
+  PASS: assertions satisfied
+
+total cost: $32.4856
+failed assertions:
+  - postcheck-refinement-weaker: proposed did not improve the target pass rate
+  - cipher-interaction-across-files: baseline fully passed; the target gap was not reproduced
+  - cipher-interaction-across-files: proposed did not improve the target pass rate
+  - traversal-guard-bypass: baseline fully passed; the target gap was not reproduced
+  - traversal-guard-bypass: proposed did not improve the target pass rate
+COMPARE EXIT=1 at Thu Aug 20 04:31:52 EDT 2026

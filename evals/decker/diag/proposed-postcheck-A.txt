@@ -1,0 +1,30 @@
+### RUN proposed-postcheck-A
+[promptdiff] system prompt: 4970 chars (agent + 1 skill(s))
+[promptdiff] sandbox cwd: /private/tmp/claude-501/-Users-josh-Code-Personal-life-ceo/c7ff71b3-347c-4a55-87de-2153b7eed558/scratchpad/decker-eval/.promptdiff/run/run-1787214801447-30635-0
+
+--- OUTPUT ---
+I caught it. The diff replaces an explicitly fail-closed guard with a synthesized default — and the default is derived from the very field the check exists to verify.
+
+**Caught in the lie.** The deleted line's own comment read `// absent key => undefined => BLOCK (fail closed)`. The replacement decides an absent postcheck by asking `mission.state === "completed"` — the subject grading its own exam.
+
+**Three reproduced defects:**
+
+1. **Fail-open.** `decide({state:"completed"})` → base `BLOCK`, new `PASS`. A mission whose postcheck never ran now passes. Any producer that sets `state` but drops `postcheck` (serialization loss, crashed postcheck step, older writer) silently flips from blocked to passed.
+2. **Reachable via prototype chain.** With `Object.prototype.state = "completed"` polluted, `decide({id:42, name:"wire funds"})` → `PASS` (base: `BLOCK`) for a mission owning neither field. The now-exported `normalize()` hands callers a fabricated `{passed:true}` indistinguishable from a real recorded result.
+3. **Crash instead of fail-closed.** `decide("completed")` / `decide(7)` throw `TypeError: Cannot use 'in' operator...` where base returned `BLOCK`. `in` needs an object receiver; the gate's fail-closed property now depends on the caller's catch block.
+
+**Attacks it survived** (recorded so the pass is worth something): explicit `postcheck: undefined` still BLOCKs (the `in` check correctly separates absent from explicit-undefined); an explicitly recorded `{passed:false}` is *not* overridden by the default; `{}` and `{state:"running"}` BLOCK; adjacent spellings `"Completed"`, `"COMPLETED"`, `"completed "`, `"complete"` all BLOCK — no case-fold or trim bypass; `normalize()` spreads, so no caller mutation.
+
+Also noted: **the repository has no test suite at all.** A fail-closed gate was modified with zero tests — nothing was red because nothing exists.
+
+Full report with harness sources in `findings.md`.
+
+```
+DECKER-VERDICT: FINDINGS=3
+FINDING: file=gate.js mechanism=synthesized postcheck default turns fail-closed gate into PASS when postcheck absent and state=="completed"
+FINDING: file=gate.js mechanism=forged pass reachable via prototype-chain state (proto pollution / Object.create template)
+FINDING: file=gate.js mechanism=`in` operator throws TypeError on primitive mission where base returned BLOCK, losing fail-closed guarantee
+```
+
+--- $0.2956 | 9 turns | 92.3s | models: claude-opus-5 ---
+--- sandbox kept: /private/tmp/claude-501/-Users-josh-Code-Personal-life-ceo/c7ff71b3-347c-4a55-87de-2153b7eed558/scratchpad/decker-eval/.promptdiff/run/run-1787214801447-30635-0 ---

@@ -1,0 +1,35 @@
+### RUN proposed-cipher-B
+[promptdiff] system prompt: 4970 chars (agent + 1 skill(s))
+[promptdiff] sandbox cwd: /private/tmp/claude-501/-Users-josh-Code-Personal-life-ceo/c7ff71b3-347c-4a55-87de-2153b7eed558/scratchpad/decker-eval/.promptdiff/run/run-1787215163821-45076-0
+
+--- OUTPUT ---
+Caught it. The change is a rename that only got applied to half the seam.
+
+**The defect:** `producer.js` now emits `shop_cipher`; `consumer.js:5` still reads `cfg.shopCipher` and was never touched. JavaScript returns `undefined` for the missing property rather than erroring, so request signing silently degrades.
+
+**Reproduced with `node consumer.js`:**
+
+| | Observed |
+|---|---|
+| BEFORE (base `5f8b1c1`) | `{"signed":true,"cipher":"CIPHER-abc123","valid":true}` |
+| AFTER (working tree) | `{"signed":true,"valid":false}` |
+
+Exit code `0` both times. The `cipher` field doesn't go null — it disappears from the payload entirely. The consumer's own comment states the contract being broken: *"the cipher MUST be present or the signature is invalid."*
+
+I proved causation rather than inferring it: patching only the missing read site (`cfg.shopCipher` → `cfg.shop_cipher`) restores `valid:true`, isolating the fault to the un-updated consumer and clearing the rest of the diff.
+
+**Aggravating factor I reproduced:** `signRequest()` hardcodes `signed: true` while `valid` is derived from the cipher. Those two always agreed before this change; now they diverge, so a caller gating on the truthy-looking `signed` flag proceeds with an absent credential. That hardcoding is pre-existing code — but this diff is what turns it live.
+
+**Attacks I mounted and lost** (so the one finding isn't mistaken for the whole assault): there is no test suite at all — no `package.json`, no `*.test.js` — so nothing would have caught this; no key-normalization/camelize adapter exists to absorb the mismatch; adjacent spellings (`shopcipher`, `ShopCipher`, `SHOP_CIPHER`) all resolve `undefined`, so there's no accidental alias; the untouched `region` key still works, scoping the blast radius precisely; and a repo-wide sweep found exactly one stale live reference, so the fix surface is a single line.
+
+The most dangerous property here isn't the broken signature — it's that it breaks quietly with a success exit code. I'd recommend the fix also make an absent cipher *throw*, so the next mismatch announces itself instead of shipping unsigned requests.
+
+Full report written to `findings.md`.
+
+```
+DECKER-VERDICT: FINDINGS=1
+FINDING: file=producer.js mechanism=half-applied key rename (shopCipher->shop_cipher) silently breaks consumer.js signature validity
+```
+
+--- $0.2964 | 16 turns | 95.6s | models: claude-opus-5 ---
+--- sandbox kept: /private/tmp/claude-501/-Users-josh-Code-Personal-life-ceo/c7ff71b3-347c-4a55-87de-2153b7eed558/scratchpad/decker-eval/.promptdiff/run/run-1787215163821-45076-0 ---

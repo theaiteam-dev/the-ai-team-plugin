@@ -1,0 +1,32 @@
+### RUN proposed-postcheck-B
+[promptdiff] system prompt: 4970 chars (agent + 1 skill(s))
+[promptdiff] sandbox cwd: /private/tmp/claude-501/-Users-josh-Code-Personal-life-ceo/c7ff71b3-347c-4a55-87de-2153b7eed558/scratchpad/decker-eval/.promptdiff/run/run-1787214895395-34484-0
+
+--- OUTPUT ---
+I caught it. The change presents itself as tidying up a gate with a helpful default; what it actually does is delete the fail-closed property the file's own comment promised.
+
+**The core defect:** the base read `mission.postcheck` and blocked when the key was absent — "absent key => undefined => BLOCK (fail closed)." The proposed version synthesizes `{ passed: mission.state === "completed" }` in that same slot. The gate that existed to require *verification* now accepts the mission's *claim about itself*. A mission whose postcheck never ran, crashed, or was skipped now returns `PASS`.
+
+**Three reproduced findings, all at `gate.js:7`:**
+
+1. **Fail-open bypass.** `{id:"m-1", state:"completed"}` with no `postcheck` key: base `BLOCK` → proposed `PASS`. Amplified by `normalize` now being exported — it emits `{"postcheck":{"passed":true}}`, a record no postcheck ever produced. Persist that and it passes even the strict base gate. The default is manufactured in the shape of evidence.
+
+2. **Prototype pollution escalated into a gate bypass.** The base never read `state`, so polluting it was inert. It isn't anymore. `Object.assign({}, JSON.parse('{"__proto__":{"state":"completed"}}'))` produces a victim with **zero own keys** that passes the gate. Both the `in` absence check and the `state` read walk the prototype chain.
+
+3. **`BLOCK` became an uncaught throw.** `decide("completed")` → `TypeError: Cannot use 'in' operator...`. `in` throws on primitives where property access returned `undefined`. Any caller that catches-and-defaults turns this into a second fail-open. (Control: `null`/`undefined` throw in both versions — pre-existing, not counted.)
+
+**Also worth saying plainly:** the repo contains exactly one file. There are no tests. A security-shaped gate was modified with zero coverage, so nothing was ever green in a meaningful sense.
+
+**What survived my attacks,** so the above is calibrated: explicit `postcheck: undefined` correctly does *not* trigger the default (`in` is true); `postcheck: null` blocks; a present-but-failing postcheck correctly beats the `state` claim; every adjacent spelling I tried (`"Completed"`, `"COMPLETED"`, `" completed"`, `"complete"`, `"done"`) blocks — the comparison is strict, so the hole is exactly one literal wide; `normalize` does not mutate the caller's object and tolerates `Object.freeze`; a lying Proxy `has` trap diverges only in the stricter direction. One pre-existing weakness I did **not** charge to this diff: `postcheck:{passed:"no"}` passes in both versions, since `passed` is tested for truthiness rather than `=== true`.
+
+Full write-up with commands and observed-vs-correct tables is in `findings.md`; harnesses are in `/tmp/dk_decker/`.
+
+```
+DECKER-VERDICT: FINDINGS=3
+FINDING: file=gate.js mechanism=absent postcheck defaulted from self-reported state, gate no longer fails closed
+FINDING: file=gate.js mechanism=prototype-chain read of state turns prototype pollution into a gate bypass
+FINDING: file=gate.js mechanism=`in` on primitive throws TypeError where base returned BLOCK
+```
+
+--- $0.4769 | 11 turns | 154.6s | models: claude-opus-5 ---
+--- sandbox kept: /private/tmp/claude-501/-Users-josh-Code-Personal-life-ceo/c7ff71b3-347c-4a55-87de-2153b7eed558/scratchpad/decker-eval/.promptdiff/run/run-1787214895395-34484-0 ---
