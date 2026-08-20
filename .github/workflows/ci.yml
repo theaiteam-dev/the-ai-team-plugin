@@ -69,7 +69,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install
-      - run: bunx vitest run
+      # Same script devs run via `bun run test` (root vitest suite).
+      - run: bun run test
 
   mcp-server:
     name: MCP Server
@@ -86,9 +87,8 @@ jobs:
         working-directory: .
       - run: bun run build
         working-directory: packages/shared
-      - run: bun run lint
-      - run: bunx tsc --noEmit
-      - run: bun run test
+      # Same script devs run: lint + typecheck + test for this package.
+      - run: bun run check
 
   shared:
     name: Shared Package
@@ -103,8 +103,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install
         working-directory: .
-      - run: bunx tsc --noEmit
-      - run: bun run test
+      # Same script devs run: typecheck + test for this package.
+      - run: bun run check
 
   dist-freshness-check:
     name: dist freshness check
@@ -145,6 +145,9 @@ jobs:
         with:
           go-version: "1.22"
           cache-dependency-path: packages/ateam-cli/go.sum
+      # Go isn't a JS workspace, so these live here rather than in a package.json
+      # script. The root `bun run check:cli` mirrors these exact three commands
+      # so `bun run check` covers the Go CLI locally too — keep the two in sync.
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
@@ -172,9 +175,8 @@ jobs:
       - run: bunx prisma migrate deploy --config prisma/prisma.config.ts
         env:
           DATABASE_URL: file:${{ github.workspace }}/packages/kanban-viewer/prisma/data/dev.db
-      - run: bun run lint
-      - run: bunx tsc --noEmit
-      - run: bun run test
+      # Same script devs run: lint + typecheck + test for this package.
+      - run: bun run check
         env:
           DATABASE_URL: file:${{ github.workspace }}/packages/kanban-viewer/prisma/data/dev.db
       - run: bun run build

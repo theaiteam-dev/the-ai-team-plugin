@@ -9,9 +9,14 @@
   ],
   "scripts": {
     "build": "bun run --filter './packages/*' build",
+    "build:shared": "bun run --filter '@ai-team/shared' build",
     "test": "vitest run",
     "test:all": "bun run --filter './packages/*' test",
-    "test:e2e": "flowspec run specs/"
+    "test:e2e": "flowspec run specs/",
+    "typecheck": "bun run --filter './packages/*' typecheck",
+    "check:cli": "cd packages/ateam-cli && go build ./... && go vet ./... && go test ./...",
+    "check:commits": "bunx commitlint --from origin/main --to HEAD --config .commitlintrc.yml",
+    "check": "bun run build:shared && bun run test && bun run --filter './packages/*' check && bun run check:cli"
   },
   "devDependencies": {
     "flowspec": "^0.1.2",

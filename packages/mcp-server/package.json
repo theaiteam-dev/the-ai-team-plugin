@@ -11,7 +11,9 @@
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "biome lint ."
+    "lint": "biome lint .",
+    "typecheck": "tsc --noEmit",
+    "check": "bun run lint && bun run typecheck && bun run test"
   },
   "dependencies": {
     "@ai-team/shared": "workspace:*",

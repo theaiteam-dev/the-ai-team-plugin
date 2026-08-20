@@ -365,6 +365,24 @@ Returns per-agent breakdown with model, token counts, and estimated cost:
 
 Token pricing is loaded from `ateam.config.json` at runtime (see `packages/kanban-viewer/src/lib/token-cost.ts`).
 
+## Verifying Changes (run what CI runs)
+
+CI and local runs execute the **same** `package.json` scripts. Do NOT hand-pick a subset (e.g. `bunx vitest run` alone) — that is how a branch stays green locally while CI is red: the test suites are only part of what CI runs (lint, typecheck, commitlint, Go, and per-package tests are the rest), and a dirty shell env can mask failures a clean CI env exposes.
+
+**Before pushing, run the aggregate and treat CI status — not a local run — as the verdict:**
+
+```bash
+bun run check          # builds shared, root test suite, then lint + typecheck +
+                       # test for every JS package, then go build/vet/test
+bun run check:commits  # commitlint over origin/main..HEAD
+```
+
+- `bun run check` = each package's `check` script (defined to match its CI job's lint/typecheck/test) + the root suite + the Go CLI. Editing what a package verifies means editing that package's `check` script, so CI and local never drift. CI additionally runs two slower steps `check` skips for speed: kanban's `bun run build` (Next.js build) and the shared `dist/` freshness check (rebuild `bun run build:shared` and commit `dist/` when you edit shared source).
+- To reproduce CI's clean environment locally (some tests parasitically inherit ambient vars like `ATEAM_PROJECT_ID`), clear them: `env -u ATEAM_PROJECT_ID -u CLAUDE_PROJECT_DIR bun run check`.
+- `kanban-viewer` tests need `DATABASE_URL` + a generated Prisma client (run its `dev` once, or set `DATABASE_URL` and `bunx prisma generate`).
+- These are standard `package.json` scripts — `bun run <script>` (repo default) and `npm run <script>` are equivalent.
+- Full reference: `README.md` → Development → Running Checks.
+
 ## Commits & Releases
 
 ### Commit Messages

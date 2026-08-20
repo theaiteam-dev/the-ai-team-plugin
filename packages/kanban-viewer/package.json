@@ -12,7 +12,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "bun run lint && bun run typecheck && bun run test"
   },
   "dependencies": {
     "@ai-team/shared": "workspace:*",

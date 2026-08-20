@@ -711,6 +711,32 @@ Hook scripts live in `scripts/hooks/`. Exit code 0 = allow, non-zero = block.
 
 ## Development
 
+### Running Checks
+
+CI and local development run the **same** `package.json` scripts, so "green locally" and "green in CI" mean the same thing. Before pushing, run:
+
+```bash
+bun run check          # the lint/typecheck/test CI runs: builds shared, root
+                       # test suite, then lint + typecheck + test for each
+                       # package, then go build / vet / test for the Go CLI
+bun run check:commits  # commitlint over origin/main..HEAD (header ≤100 chars, etc.)
+```
+
+`bun run check` is an aggregate of per-package `check` scripts — each package's `check` is exactly the lint/typecheck/test steps its CI job runs (`bun run check` in `.github/workflows/ci.yml`). Run a single surface directly when iterating:
+
+```bash
+bun run test                                    # root suite (hooks, agents, playbooks, commands)
+bun run --filter '@ai-team/kanban-viewer' check # one package: lint + typecheck + test
+bun run --filter '@ai-team/shared' check        # typecheck + test
+bun run check:cli                               # Go CLI only
+```
+
+Notes:
+- `check` covers the lint/typecheck/test jobs — the ones that catch nearly everything. CI *additionally* runs two slower steps `check` omits for speed: `bun run build` (Next.js production build) in `kanban-viewer`, and the shared **dist-freshness** check (rebuild `packages/shared` and fail if `dist/` changed — run `bun run build:shared` and commit `dist/` whenever you edit shared source).
+- The Go CLI isn't a JS workspace, so `check:cli` and the `Go CLI` CI job hold the same three `go` commands in two places — keep them in sync.
+- `kanban-viewer`'s tests need `DATABASE_URL` + a generated Prisma client. `bun run --filter '@ai-team/kanban-viewer' dev` once (or set `DATABASE_URL` and `bunx prisma generate`) before running its `check`.
+- Run these with `bun` (the repo's runner); `npm run <script>` works identically since they're standard `package.json` scripts.
+
 ### Commit Conventions
 
 All commits must follow [Conventional Commits](https://www.conventionalcommits.org/). This is enforced by [commitlint](https://commitlint.js.org/) on every PR to `main`.
