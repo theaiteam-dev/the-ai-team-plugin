@@ -88,6 +88,10 @@ Their **Stop** enforcement, though, splits three ways by role — there is no si
 - `PreToolUse(Bash)` → `block-raw-mv.js` — prevents raw `mv` on mission files
 - `Stop` → `enforce-final-review.js` — blocks exit until final review + post-checks pass
 
+Because Hannibal runs in the MAIN session, his frontmatter hooks never fire in the primary execution mode. Two plugin-level, matcher-less hooks cover him there instead:
+- `PreToolUse` (no matcher) → `enforce-orchestrator-boundary.js` — main-session allowlist (`ateam.config.json`, `.claude/**`, `/tmp/**`, `/var/**`) for `Write`/`Edit`, plus a block on Playwright browser tools; only enforced while a mission is active
+- `Stop` (no matcher) → `enforce-orchestrator-stop.js` — the plugin-wide twin of `enforce-final-review.js`, running the same shared gates from `scripts/hooks/lib/stop-gates.js`
+
 **Lynch** has additional hooks:
 - `PreToolUse(Write|Edit)` → `block-lynch-writes.js` — blocks Lynch from writing or editing any project files; `/tmp/` and `/var/` are allowed as scratch space
 - `PreToolUse(mcp__plugin_playwright_playwright__.*)` → `block-lynch-browser.js` — blocks Lynch from using any Playwright browser tools; browser-based verification is Amy's job, not the reviewer's
@@ -98,7 +102,7 @@ Their **Stop** enforcement, though, splits three ways by role — there is no si
 - `Stop` → `enforce-browser-verification.js` — blocks Amy from completing without evidence of browser verification for UI features (checks work log for browser activity before allowing exit)
 
 **Frankie** has an additional hook:
-- `PreToolUse(Write|Edit)` → `block-frankie-writes.js` — blocks writes to implementation, tests, or existing `specs/` files; only his evidence bundle (`.qa-evidence/`) and NEW spec files are allowed. A mission-level agent (not per-feature) — runs once, after all items reach `staged` and before Stockwell's Final Mission Review. He reports failures to Hannibal rather than moving items himself — that boundary is enforced regardless of the fact that a real path out of `staged` exists now (Hannibal executes the move via a real `board-move`, using the earliest-flagged-stage rule).
+- `PreToolUse` (no matcher, plugin level only) → `block-frankie-writes.js` — blocks writes to implementation, tests, or existing `specs/` files; only his evidence bundle (`.qa-evidence/`) and NEW spec files are allowed. Registered matcher-less in `hooks/hooks.json` and deliberately NOT in `agents/frankie.md`: besides `Write`/`Edit` it also scans `Bash` commands for write-shaped operations (redirection, `tee`, `mv`/`cp` destinations, `rm`, `ln`, `sed -i`, `touch`, `truncate`, `dd of=`) targeting a protected path, which a `"Write|Edit"` matcher would never deliver to it. A mission-level agent (not per-feature) — runs once, after all items reach `staged` and before Stockwell's Final Mission Review. He reports failures to Hannibal rather than moving items himself — that boundary is enforced regardless of the fact that a real path out of `staged` exists now (Hannibal executes the move via a real `board-move`, using the earliest-flagged-stage rule).
 
 ## Dual-Registration Pattern
 
@@ -125,8 +129,8 @@ Hook scripts share utilities in `scripts/hooks/lib/`:
 - `KNOWN_AGENTS` — `['hannibal', 'face', 'sosa', 'murdock', 'ba', 'lynch', 'stockwell', 'amy', 'tawnia', 'frankie']`
 
 **`send-denied-event.js`** — denied event telemetry:
-- `sendDeniedEvent({ agentName, toolName, reason })` — fire-and-forget POST to API with `status: "denied"`
-- All enforcement hooks call this before `process.exit(2)` (and before JSON block response for `block-raw-echo-log.js`)
+- `sendDeniedEvent({ agentName, toolName, reason })` — fire-and-forget POST to API with `status: "denied"`. Never call it directly before `process.exit()`: the process tears down before the POST's socket work runs, so the event is silently lost.
+- `denyAndExit(event, message?, options?)` — what every enforcement hook actually calls: writes the agent-facing message, awaits the POST (bounded by a 500ms flush timeout via `flushDeniedEvent()`), then exits (default exit code `2`, stderr; `block-raw-echo-log.js` passes `{ exitCode: 0, stream: 'stdout' }` for its JSON block response)
 - Events appear in Raw Agent View with status "denied"; silently ignores network failures
 
 **`observer.js`** — observer utilities:

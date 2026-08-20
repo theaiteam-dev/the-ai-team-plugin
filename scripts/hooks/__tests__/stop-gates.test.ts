@@ -756,7 +756,80 @@ describe('stop-gates — checkFrankieEvidence', () => {
         expect(message).toMatch(/STALE/i);
       });
 
-      it('ignores non-transition work-log entries (tail_rework / note) when deriving the staged transition', () => {
+      // -------------------------------------------------------------------
+      // The rework path itself: Hannibal moves an item OUT of staged with a
+      // real board-move (WI-794), which records a `tail_rework` entry, and the
+      // item later comes BACK to staged by another board-move — a path that
+      // writes no `completed` entry. Keying only on `completed` then yields the
+      // PRE-rework transition, and because that is non-null the
+      // completedAt/updatedAt fallback never runs, so the pre-rework (stale)
+      // evidence bundle satisfies the gate forever.
+      // -------------------------------------------------------------------
+      it('DOES flag STALE when the newest work-log entry is a tail_rework with no recorded re-entry (rework after the walk)', () => {
+        const cwd = scratch('M-TEST-001');
+        backdateReport(cwd, 'M-TEST-001', new Date(Date.now() - 2 * HOUR));
+        const message = checkFrankieEvidence({
+          missionId: 'M-TEST-001',
+          stagedCount: 1,
+          stagedItems: [
+            {
+              id: 'WI-001',
+              workLogs: [
+                {
+                  agent: 'Amy',
+                  action: 'completed',
+                  summary: 'Probing complete (pre-rework)',
+                  timestamp: new Date(Date.now() - 4 * HOUR).toISOString(),
+                },
+                {
+                  agent: 'Hannibal',
+                  action: 'tail_rework',
+                  summary: 'Tail rework: moved from staged to implementing',
+                  timestamp: new Date(Date.now() - 1 * HOUR).toISOString(),
+                },
+              ],
+              // No completedAt/updatedAt at all: the STALE verdict must come
+              // from the tail_rework entry itself, not from a fallback.
+            },
+          ],
+          cwd,
+        });
+        expect(message).toMatch(/STALE/i);
+        expect(message).toMatch(/FULL Definition of Done/i);
+      });
+
+      it('does NOT flag STALE when a completed entry follows the tail_rework and the report postdates it (rework fully re-walked)', () => {
+        const cwd = scratch('M-TEST-001');
+        backdateReport(cwd, 'M-TEST-001', new Date(Date.now() - 1 * HOUR));
+        expect(
+          checkFrankieEvidence({
+            missionId: 'M-TEST-001',
+            stagedCount: 1,
+            stagedItems: [
+              {
+                id: 'WI-001',
+                workLogs: [
+                  {
+                    agent: 'Hannibal',
+                    action: 'tail_rework',
+                    summary: 'Tail rework: moved from staged to implementing',
+                    timestamp: new Date(Date.now() - 4 * HOUR).toISOString(),
+                  },
+                  {
+                    agent: 'Amy',
+                    action: 'completed',
+                    summary: 'Probing complete (after rework)',
+                    timestamp: new Date(Date.now() - 3 * HOUR).toISOString(),
+                  },
+                ],
+              },
+            ],
+            cwd,
+          })
+        ).toBeNull();
+      });
+
+      it('ignores annotation (note) entries when deriving the staged transition', () => {
         const cwd = scratch('M-TEST-001');
         backdateReport(cwd, 'M-TEST-001', new Date(Date.now() - 2 * HOUR));
         expect(

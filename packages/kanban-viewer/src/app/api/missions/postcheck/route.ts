@@ -20,16 +20,50 @@ function parseLintErrors(stdout: string, stderr: string): number {
   return 0;
 }
 
-const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*m/g;
+// Strips ANSI escape sequences. Broader than SGR-only (`\u001b[...m`) on purpose:
+// cursor-control codes such as `\u001b[2K` (erase line) or `\u001b[1G` (column 1) are
+// emitted by runners writing to a pty, and would otherwise sit in front of the
+// summary line and defeat the `^\s*Tests\b` anchor below.
+const ANSI_ESCAPE_RE = /\u001b\[[0-9;?]*[a-zA-Z]/g;
+
+// Check names that are expected to produce test counts. Used only to decide
+// whether a zero-count parse deserves a warning (see `unparsed` below) — the
+// routing of counts into unit vs e2e buckets is a separate heuristic.
+const TEST_SHAPED_CHECK_RE = /test|unit|e2e|spec|vitest|jest|pytest/i;
+
+// Vitest/Jest per-invocation summary line: "Tests  79 passed (79)",
+// "Tests: 2 failed, 8 passed, 10 total". Vitest's "Test Files  6 passed (6)"
+// line does NOT match (it is "Test Files", not "Tests").
+const VITEST_SUMMARY_RE = /^\s*Tests\b/;
+
+// pytest's banner summary: "======== 8 passed in 1.24s ========",
+// "=== 1 failed, 7 passed in 0.5s ===". Distinctive enough (leading run of "="
+// plus an "<n> passed/failed" phrase) to count safely alongside Tests lines.
+// pytest's other banners ("=== test session starts ===", "=== FAILURES ===")
+// carry no such phrase and are ignored.
+const PYTEST_BANNER_RE = /^\s*=+/;
+const COUNT_PHRASE_RE = /\d+\s+(?:passed|failed)/i;
 
 /**
  * Parses test output to extract pass/fail counts.
- * Looks for Vitest/Jest output patterns.
+ * Looks for Vitest/Jest and pytest output patterns.
  *
  * A single check command may chain several test invocations (e.g. ateam.config.json's
  * `"unit-full": "bun run test && (cd client && bun run test)"`), producing one summary
- * line per invocation in the same stdout — every "Tests" line must be summed, and
+ * line per invocation in the same stdout — every summary line must be summed, and
  * Vitest's "Test Files  N passed" line must not be mistaken for a test count.
+ *
+ * Chains may also mix runners (`vitest && pytest`, or `pytest && vitest`), so both the
+ * "Tests" summary lines and pytest's "=== N passed ===" banners are collected in one
+ * pass over the output. No line is counted twice: a line is either a Tests summary or a
+ * pytest banner, never both.
+ *
+ * Boundary (deliberately conservative): only these two shapes are summed. If NEITHER
+ * appears, the whole output falls back to a single generic `N passed` / `N failed`
+ * match — the historical behavior for unknown runners. That means an unknown runner
+ * chained after a recognized one contributes nothing rather than risking a
+ * double-count of lines already summed; widen the recognized shapes above rather than
+ * loosening the fallback.
  */
 function parseTestResults(stdout: string, stderr: string): { passed: number; failed: number } {
   const combined = `${stdout}\n${stderr}`.replace(ANSI_ESCAPE_RE, '');
@@ -37,10 +71,13 @@ function parseTestResults(stdout: string, stderr: string): { passed: number; fai
   let passed = 0;
   let failed = 0;
 
-  // Sum every per-invocation summary line: Vitest's "Tests  79 passed (79)" /
-  // "Tests  1 failed | 78 passed (79)", Jest's "Tests: 2 failed, 8 passed, 10 total".
-  // "Test Files  6 passed (6)" does not match \bTests\b and is ignored.
-  const summaryLines = combined.split('\n').filter((line) => /^\s*Tests\b/.test(line));
+  const summaryLines = combined
+    .split('\n')
+    .filter(
+      (line) =>
+        VITEST_SUMMARY_RE.test(line) ||
+        (PYTEST_BANNER_RE.test(line) && COUNT_PHRASE_RE.test(line))
+    );
   for (const line of summaryLines) {
     const passedMatch = line.match(/(\d+)\s+passed/i);
     if (passedMatch) {
@@ -55,7 +92,7 @@ function parseTestResults(stdout: string, stderr: string): { passed: number; fai
     return { passed, failed };
   }
 
-  // Fallback for runners without a "Tests" summary line (e.g. pytest's "8 passed in 1.2s").
+  // Fallback for runners with no recognized summary line (e.g. a bare "8 passed").
   const passedMatch = combined.match(/(\d+)\s+passed/i);
   if (passedMatch) {
     passed = parseInt(passedMatch[1], 10);
@@ -259,10 +296,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const hasContent = ([, o]: [string, CheckOutput]): boolean =>
       (o.stdout ?? '').trim() !== '' || (o.stderr ?? '').trim() !== '';
     const hasSubmittedOutput = outputEntries.some(hasContent);
-    const hasNonLintOutput = outputEntries.filter(([name]) => !name.includes('lint')).some(hasContent);
+    // Only a TEST-shaped check can be expected to yield test counts. Gating on
+    // "any non-lint check" made every {lint, typecheck} or {lint, build} config
+    // warn on a perfectly clean postcheck, since those checks never print counts.
+    const hasTestShapedOutput = outputEntries
+      .filter(([name]) => !name.includes('lint') && TEST_SHAPED_CHECK_RE.test(name))
+      .some(hasContent);
     const totalTestCounts = unitTestsPassed + unitTestsFailed + e2eTestsPassed + e2eTestsFailed;
     const unmeasured = passed && !hasSubmittedOutput;
-    const unparsed = passed && hasNonLintOutput && totalTestCounts === 0;
+    const unparsed = passed && hasTestShapedOutput && totalTestCounts === 0;
 
     let passedMessage = `Postcheck passed: ${unitTestsPassed} unit tests, ${e2eTestsPassed} e2e tests passing, ${lintErrors} lint errors`;
     if (unmeasured) {

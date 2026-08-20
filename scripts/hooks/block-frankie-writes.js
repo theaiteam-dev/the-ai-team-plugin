@@ -363,6 +363,142 @@ function maskQuotedSpans(s) {
 }
 
 /**
+ * Finds every heredoc opener (`<<WORD`, `<< WORD`, `<<-WORD`, `<<'WORD'`,
+ * `<<"WORD"`) on a single line, in the order bash would read their bodies.
+ *
+ * Scans character by character tracking quote state, so a `<<` that appears
+ * inside a quoted argument (`echo "a <<EOF b"`) is not an opener. A `<<<`
+ * here-STRING is skipped — it has no body lines. Returns null when a line
+ * contains something opener-shaped whose delimiter cannot be determined
+ * (unterminated quote, empty delimiter); callers treat null as "no heredoc
+ * recognized" and keep scanning every line, which is the fail-closed
+ * direction.
+ */
+function findHeredocOpeners(line) {
+  const openers = [];
+  let quote = null;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quote) {
+      if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === '\\') {
+      i++;
+      continue;
+    }
+    if (ch !== '<' || line[i + 1] !== '<') {
+      continue;
+    }
+    if (line[i + 2] === '<') {
+      // `<<<` is a here-string: the word IS the input, no body lines follow.
+      i += 2;
+      continue;
+    }
+
+    let j = i + 2;
+    let dashed = false;
+    if (line[j] === '-') {
+      dashed = true;
+      j++;
+    }
+    while (line[j] === ' ' || line[j] === '\t') {
+      j++;
+    }
+
+    let delimiter;
+    const q = line[j];
+    if (q === "'" || q === '"') {
+      const end = line.indexOf(q, j + 1);
+      if (end === -1) {
+        return null;
+      }
+      delimiter = line.slice(j + 1, end);
+      j = end + 1;
+    } else {
+      let k = j;
+      while (k < line.length && /[A-Za-z0-9_.\-\\]/.test(line[k])) {
+        k++;
+      }
+      delimiter = line.slice(j, k).replace(/\\/g, '');
+      j = k;
+    }
+    if (!delimiter) {
+      return null;
+    }
+
+    openers.push({ delimiter, dashed });
+    i = j - 1;
+  }
+
+  return openers;
+}
+
+/**
+ * Removes heredoc BODY lines from a command before it is split into
+ * statements.
+ *
+ * splitBashStatements() treats a newline as a statement separator, so every
+ * line of a heredoc body used to be scanned as if it were a command. That
+ * false-positives on Frankie's own evidence writes: the markdown blockquote
+ * `> Expected the total to update` inside
+ * `cat > .qa-evidence/M-1/report.md <<EOF` reads as a redirect to a file
+ * called "Expected", and prose like `see report>summary` reads as a glued
+ * redirect once padRedirectOperators() normalizes it.
+ *
+ * The heredoc OPENER line is always kept — its own redirect is a real write
+ * (`cat > src/app.ts <<EOF` must still block). Only the lines between the
+ * opener and its terminator are dropped, and only when the terminator is
+ * actually found: an unterminated heredoc (or an opener whose delimiter
+ * cannot be parsed) returns the command untouched, so the scan stays
+ * fail-closed on anything it does not fully understand.
+ */
+function stripHeredocBodies(command) {
+  if (!command.includes('<<')) {
+    return command;
+  }
+
+  const lines = command.split('\n');
+  const kept = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    kept.push(lines[i]);
+
+    const openers = findHeredocOpeners(lines[i]);
+    if (!openers || openers.length === 0) {
+      continue;
+    }
+
+    // Bash reads the bodies of multiple heredocs on one line in order, each
+    // ending at its own delimiter line.
+    let idx = i + 1;
+    let pending = 0;
+    while (idx < lines.length && pending < openers.length) {
+      const bodyLine = lines[idx].replace(/\r$/, '');
+      const candidate = openers[pending].dashed ? bodyLine.replace(/^\t+/, '') : bodyLine;
+      if (candidate === openers[pending].delimiter) {
+        pending++;
+      }
+      idx++;
+    }
+    if (pending < openers.length) {
+      // No terminator in sight — fail closed and scan the whole command.
+      return command;
+    }
+    i = idx - 1;
+  }
+
+  return kept.join('\n');
+}
+
+/**
  * Splits a compound Bash command into independent statements on the
  * command separators that matter for this scan: &&, ||, ;, |, and
  * newlines. `||` and `&&` MUST be tested before the single-character `|`
@@ -371,8 +507,13 @@ function maskQuotedSpans(s) {
  * the returned statements are sliced from the ORIGINAL string, so quoting
  * is preserved within each statement and a delimiter inside quotes never
  * splits the command.
+ *
+ * Heredoc bodies are removed first (see stripHeredocBodies) — they are data,
+ * not commands, and scanning them as statements false-positives on ordinary
+ * prose containing ">".
  */
-function splitBashStatements(command) {
+function splitBashStatements(rawCommand) {
+  const command = stripHeredocBodies(rawCommand);
   const masked = maskQuotedSpans(command);
   const delimiterRe = /&&|\|\||[;\n]|\|/g;
   const statements = [];
@@ -503,7 +644,15 @@ function extractBashWriteTargets(statement) {
 
   const pushTarget = (raw) => {
     if (!raw) return;
-    const target = stripQuotes(raw);
+    // Subshell/group wrapping leaves shell punctuation glued to the path:
+    // `(echo hi > specs/checkout.flow.yaml)` extracts the token
+    // "specs/checkout.flow.yaml)", whose trailing ")" made the graduated-spec
+    // lookup miss and the write classify as a NEW spec (allowed) instead of an
+    // edit to an existing one (blocked). Peel the wrapper characters off
+    // before classification — a real path ending in ")" only ever loses
+    // characters, which can widen a match but never narrows one, so this
+    // errs fail-closed.
+    const target = stripQuotes(stripQuotes(raw).replace(/^\(+/, '').replace(/[);]+$/, ''));
     if (target && !isBenignRedirectSink(target)) {
       targets.push(target);
     }

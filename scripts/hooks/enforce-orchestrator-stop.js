@@ -49,17 +49,21 @@ import {
 
 const hookInput = readHookInput();
 
-// --- Re-entry Guard ---
+// --- Re-entry Guard (narrow) ---
 // Claude Code sets stop_hook_active when the session is stopping BECAUSE a
-// Stop hook already blocked once. Every gate below is a "keep orchestrating"
-// instruction, so re-blocking here is how a mission-tail gate that cannot be
-// satisfied (an API predating WI-790's promotion, a verdict that parses as
-// 'unknown') turns into an infinite Hannibal loop. Allow the stop and let the
-// operator act on the message the first block already delivered.
-if (hookInput && hookInput.stop_hook_active === true) {
-  console.log(JSON.stringify({}));
-  process.exit(0);
-}
+// Stop hook already blocked once. That matters for exactly ONE gate: the
+// staged-not-promoted check, which CANNOT be satisfied by orchestrating
+// harder when the API predates WI-790's promotion transaction or the review's
+// verdict parses as 'unknown' — block, resume, block, resume forever.
+//
+// It is NOT a blanket bypass. Bailing out here at the top degraded every gate
+// from permanent to one-shot — most damagingly the always-satisfiable
+// "totalActive > 0 → continue orchestrating" gate, which would then let the
+// SECOND stop end a mission with items still mid-pipeline. So the flag is
+// carried down to the one gate it belongs to (see checkStagedNotPromoted
+// below); everything else — active items, Frankie's evidence, the missing
+// final review, an explicit rejection, post-checks — keeps enforcing.
+const reentryAfterBlock = !!hookInput && hookInput.stop_hook_active === true;
 
 // --- Agent Detection ---
 
@@ -182,10 +186,15 @@ async function checkCompletion() {
   // — that only happens via WI-790's atomic transaction when Stockwell's
   // review is written. An all-staged board must never be treated as an
   // empty (no-mission) board and allowed to stop.
+  //
+  // This is the one gate the stop_hook_active re-entry guard releases: it is
+  // the only one that can be genuinely unsatisfiable (see the guard's comment
+  // at the top of this file). Reaching it already implies totalActive === 0,
+  // so releasing it can never end a mission with items mid-pipeline.
   const stagedBlock = checkStagedNotPromoted(stagedCount, {
     finalReview: missionData.final_review_verdict,
   });
-  if (stagedBlock) {
+  if (stagedBlock && !reentryAfterBlock) {
     console.log(JSON.stringify({ decision: 'block', additionalContext: stagedBlock }));
     process.exit(0);
   }

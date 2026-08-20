@@ -32,7 +32,7 @@
 
 import { readHookInput, lookupAgent } from './lib/observer.js';
 import { resolveAgent, isKnownAgent } from './lib/resolve-agent.js';
-import { sendDeniedEvent } from './lib/send-denied-event.js';
+import { denyAndExit } from './lib/send-denied-event.js';
 import { isMissionActive } from './lib/mission-active.js';
 
 let hookInput = {};
@@ -107,11 +107,10 @@ const agentLabel = resolvedAgent || 'hannibal';
 
 // Block Playwright browser tools (Amy's job)
 if (toolName.startsWith('mcp__plugin_playwright_playwright__')) {
-  sendDeniedEvent({ agentName: agentLabel, toolName, reason: `BLOCKED: Hannibal cannot use browser tools (${toolName}). Browser testing is Amy's responsibility.` });
   process.stderr.write(`BLOCKED: Hannibal cannot use browser tools (${toolName})\n`);
   process.stderr.write("Browser testing is Amy's responsibility.\n");
   process.stderr.write('Dispatch Amy to probe the feature instead.\n');
-  process.exit(2);
+  await denyAndExit({ agentName: agentLabel, toolName, reason: `BLOCKED: Hannibal cannot use browser tools (${toolName}). Browser testing is Amy's responsibility.` });
 }
 
 // Apply allowlist for Write/Edit
@@ -134,10 +133,9 @@ if (toolName === 'Write' || toolName === 'Edit') {
   }
 
   // Everything else is blocked
-  sendDeniedEvent({ agentName: agentLabel, toolName, reason: `BLOCKED: Hannibal cannot write to ${filePath}. Delegate implementation to B.A. or Murdock.` });
   process.stderr.write(`BLOCKED: Hannibal cannot write to ${filePath}\n`);
   process.stderr.write('Hannibal orchestrates only. Delegate implementation to B.A. or Murdock.\n');
-  process.exit(2);
+  await denyAndExit({ agentName: agentLabel, toolName, reason: `BLOCKED: Hannibal cannot write to ${filePath}. Delegate implementation to B.A. or Murdock.` });
 }
 
 // Allow everything else

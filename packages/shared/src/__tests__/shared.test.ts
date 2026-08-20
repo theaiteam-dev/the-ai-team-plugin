@@ -73,6 +73,12 @@ describe('Shared Package', () => {
       expect(isValidTransition(undefined as unknown as StageId, 'ready')).toBe(false);
     });
 
+    it('returns an empty list — never undefined — for an origin stage that is not in the matrix', () => {
+      // Same unvalidated-DB-data hazard isValidTransition() guards against: an
+      // unknown stage id must not hand callers undefined to .includes/.map on.
+      expect(getValidNextStages('nonexistent' as StageId)).toEqual([]);
+    });
+
     it('done has no outbound transitions to any stage (terminal)', () => {
       for (const target of ALL_STAGES) {
         expect(isValidTransition('done', target)).toBe(false);

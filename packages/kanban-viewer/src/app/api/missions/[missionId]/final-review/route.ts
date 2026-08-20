@@ -9,6 +9,10 @@
  *        never be recorded against a half-promoted board (WI-790).
  *        An APPROVED verdict is refused with 409 MISSION_NOT_READY when any
  *        non-archived item of the mission is still short of 'staged'/'done'.
+ *        Pending items sitting in 'blocked' are reported separately and the
+ *        409 spells out the human recovery path, since a blocked item never
+ *        advances on its own and would otherwise make the review permanently
+ *        un-recordable with nothing telling the operator how to clear it.
  * GET  - Return the stored final review report
  *
  * Both endpoints return 404 when the mission does not exist.
@@ -35,6 +39,23 @@ const DONE_STAGE_ID = 'done';
 // the system as the actor since no agent claim drives this promotion.
 const PROMOTION_AGENT = 'system';
 
+// Stage id an item sits in once it has exhausted the rejection cap.
+const BLOCKED_STAGE_ID = 'blocked';
+
+/**
+ * Recovery instructions appended to the MISSION_NOT_READY 409 when one or more
+ * of the pending items is 'blocked'. A blocked item cannot advance on its own —
+ * no agent picks it up and nothing in the tail retries it — so without this the
+ * operator sees only "finish the pipeline for them" and has no way to act. The
+ * precondition itself is deliberate and stays as-is; this only names the two
+ * human moves that clear it.
+ */
+const BLOCKED_RECOVERY_HINT =
+  "Blocked items never resolve on their own — a human must act: either move each one back into the pipeline " +
+  "(`ateam board-move moveItem --itemId <id> --toStage ready`) and let it finish, or archive it so it leaves " +
+  "this mission's promotable population (set archivedAt — `ateam missions-archive archiveMission` archives the " +
+  'whole mission; for a single item use updateItem/direct DB). Re-POST this review afterwards.';
+
 /**
  * Interactive-transaction budget for the review write + batch promotion.
  * Prisma's 5s default is tight for a large mission on SQLite; a timeout here
@@ -50,8 +71,18 @@ const TRANSACTION_TIMEOUT_MS = 15_000;
  * an approval must never be recorded against a half-finished mission.
  */
 class MissionNotReadyError extends Error {
-  constructor(public readonly pendingItemIds: string[]) {
+  constructor(
+    public readonly pendingItemIds: string[],
+    /** Subset of pendingItemIds sitting in 'blocked' — needs a human, not time. */
+    public readonly blockedItemIds: string[] = []
+  ) {
     super('MISSION_NOT_READY');
+  }
+
+  /** pendingItemIds that are merely mid-pipeline — they finish on their own. */
+  get unfinishedItemIds(): string[] {
+    const blocked = new Set(this.blockedItemIds);
+    return this.pendingItemIds.filter((id) => !blocked.has(id));
   }
 }
 
@@ -149,11 +180,17 @@ export async function POST(request: Request, context: RouteContext) {
         // nothing re-runs the tail after this write. Stage membership comes
         // from the shared isDependencySatisfied() so this stays in lockstep
         // with every other "is this item finished?" check (WI-788).
-        const pendingItemIds = missionItems
-          .filter(({ stageId }) => !isDependencySatisfied(stageId as StageId))
-          .map(({ id }) => id);
-        if (pendingItemIds.length > 0) {
-          throw new MissionNotReadyError(pendingItemIds);
+        const pendingItems = missionItems.filter(
+          ({ stageId }) => !isDependencySatisfied(stageId as StageId)
+        );
+        if (pendingItems.length > 0) {
+          // Blocked items are called out separately: unlike a mid-pipeline item
+          // they will never advance on their own, so the 409 has to name the
+          // human recovery path or the review becomes permanently un-recordable.
+          throw new MissionNotReadyError(
+            pendingItems.map(({ id }) => id),
+            pendingItems.filter(({ stageId }) => stageId === BLOCKED_STAGE_ID).map(({ id }) => id)
+          );
         }
 
         await tx.mission.update({
@@ -196,15 +233,21 @@ export async function POST(request: Request, context: RouteContext) {
     });
   } catch (error) {
     if (error instanceof MissionNotReadyError) {
+      const { pendingItemIds, blockedItemIds, unfinishedItemIds } = error;
+      const blockedClause =
+        blockedItemIds.length > 0
+          ? ` ${blockedItemIds.length} of them are blocked (${blockedItemIds.join(', ')}). ${BLOCKED_RECOVERY_HINT}`
+          : '';
       return NextResponse.json(
         {
           success: false,
           error: {
             code: 'MISSION_NOT_READY',
             message:
-              `Cannot record a FINAL APPROVED review: ${error.pendingItemIds.length} item(s) in this mission ` +
-              `have not reached 'staged' or 'done' yet. Finish the pipeline for them before running the mission tail.`,
-            details: { pendingItemIds: error.pendingItemIds },
+              `Cannot record a FINAL APPROVED review: ${pendingItemIds.length} item(s) in this mission ` +
+              `have not reached 'staged' or 'done' yet. Finish the pipeline for them before running the mission tail.` +
+              blockedClause,
+            details: { pendingItemIds, blockedItemIds, unfinishedItemIds },
           },
         },
         { status: 409 }

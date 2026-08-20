@@ -368,18 +368,44 @@ function workLogEntries(item) {
  * what advances probing → staged (POST /api/agents/stop writes the entry in
  * the same transaction as the stage update), so the newest `completed` entry
  * on an item currently sitting in staged IS its transition into staged.
- * Entries that move an item OUT of staged (`tail_rework`) or annotate it
- * (`note`) are deliberately ignored.
+ * Annotations (`note`) are deliberately ignored.
+ *
+ * `tail_rework` entries are NOT ignored, even though they move an item OUT of
+ * staged. An item currently sitting in staged whose newest `tail_rework`
+ * POSTDATES its newest `completed` was pulled out after Frankie's walk and put
+ * back by a board-move that wrote no `completed` entry (WI-794's mission-tail
+ * rework path) — so the newest `completed` is the PRE-rework transition, and
+ * honoring it would let a pre-rework (stale) evidence bundle satisfy the gate
+ * forever. In that state the tail_rework timestamp is the newest evidence we
+ * have that the item left staged, so it becomes the transition time: the
+ * bundle must postdate the rework. `updatedAt` is deliberately still not
+ * consulted — that is the @updatedAt churn this function exists to avoid, and
+ * re-walking after a rework already clears the gate.
  */
 function stagedTransitionAt(item) {
-  let latest = null;
+  let latestCompleted = null;
+  let latestRework = null;
+
   for (const entry of workLogEntries(item)) {
     if (!isPlainObject(entry)) continue;
-    if (typeof entry.action !== 'string' || entry.action.toLowerCase() !== 'completed') continue;
+    if (typeof entry.action !== 'string') continue;
+    const action = entry.action.toLowerCase();
+    if (action !== 'completed' && action !== 'tail_rework') continue;
     const ts = toEpochMs(entry.timestamp);
-    if (ts !== null && (latest === null || ts > latest)) latest = ts;
+    if (ts === null) continue;
+    if (action === 'completed') {
+      if (latestCompleted === null || ts > latestCompleted) latestCompleted = ts;
+    } else if (latestRework === null || ts > latestRework) {
+      latestRework = ts;
+    }
   }
-  return latest;
+
+  // Re-entry into staged went unrecorded (no `completed` after the rework):
+  // the rework itself is the newest transition the log can prove.
+  if (latestRework !== null && (latestCompleted === null || latestRework > latestCompleted)) {
+    return latestRework;
+  }
+  return latestCompleted;
 }
 
 /**

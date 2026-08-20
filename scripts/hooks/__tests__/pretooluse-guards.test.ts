@@ -2284,6 +2284,178 @@ describe('block-frankie-writes — agent guards', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Heredoc bodies are DATA, not statements (sweep finding #6). The statement
+  // splitter treats a newline as a separator, so every line of a heredoc body
+  // used to be scanned as its own command — which blocked Frankie writing his
+  // OWN evidence bundle: a markdown blockquote (`> Expected the total ...`)
+  // reads as a redirect to a file named "Expected", and prose like
+  // `see report>summary` reads as a glued redirect once padRedirectOperators()
+  // normalizes it. The opener LINE is still scanned (its `> path` is a real
+  // write), and an unterminated heredoc still scans everything (fail closed).
+  // ---------------------------------------------------------------------------
+  describe('heredoc bodies: prose is not scanned as commands (finding FIX/sweep #6)', () => {
+    it('allows a heredoc whose body contains blockquote and comparison prose, when the sink is .qa-evidence/ (exit 0)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: {
+          command: [
+            'cat > .qa-evidence/M-20260817-001/report.md <<EOF',
+            '> Expected the total to update',
+            'latency 200 > 100 budget',
+            'see report>summary',
+            'EOF',
+          ].join('\n'),
+        },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('allows a QUOTED heredoc (<<\'EOF\') whose body names an implementation path in prose (exit 0)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: {
+          command: [
+            "cat >> .qa-evidence/M-20260817-001/report.md <<'EOF'",
+            '> the failure surfaced in src/app.ts > line 40',
+            'EOF',
+          ].join('\n'),
+        },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('allows a tab-indented heredoc (<<-EOF) whose terminator is tab-indented (exit 0)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: {
+          command: ['cat > .qa-evidence/M-1/notes.md <<-EOF', '\t> checkout > cart regression', '\tEOF'].join('\n'),
+        },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('still blocks the heredoc OPENER line when it redirects into an implementation file (exit 2)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'cat > src/app.ts <<EOF\nexport const patched = true;\nEOF' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/src\/app\.ts/);
+    });
+
+    it('still blocks the heredoc OPENER line when it redirects into an existing graduated spec (exit 2, immutable)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'cat > specs/checkout.flow.yaml <<EOF\nname: hacked\nEOF' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
+    it('still blocks a real write on a line AFTER the heredoc terminator (exit 2)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: {
+          command: [
+            'cat > .qa-evidence/M-1/report.md <<EOF',
+            '> just prose here',
+            'EOF',
+            'echo "patched" > src/services/order.ts',
+          ].join('\n'),
+        },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/src\/services\/order\.ts/);
+    });
+
+    it('fails CLOSED on an UNTERMINATED heredoc — every line is still scanned (exit 2)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: {
+          command: ['cat > .qa-evidence/M-1/report.md <<EOF', 'echo "patched" > src/services/order.ts'].join('\n'),
+        },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/src\/services\/order\.ts/);
+    });
+
+    it('does not treat a here-STRING (<<<) as a heredoc opener — the following line is still scanned (exit 2)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'grep foo <<< "haystack"\necho "patched" > src/app.ts' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/src\/app\.ts/);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Subshell-wrapped writes (sweep finding #7). `(echo hi > specs/x.flow.yaml)`
+  // tokenizes with the closing paren glued to the path, so the graduated-spec
+  // lookup missed and the write classified as a NEW spec (allowed) rather than
+  // an edit to an existing one (blocked). pushTarget() now peels the wrapper
+  // punctuation off before classification. (`bash -c "..."` wrapping remains
+  // out of scope — this scan is documented best-effort, not a shell sandbox.)
+  // ---------------------------------------------------------------------------
+  describe('subshell-wrapped writes: wrapper punctuation must not launder the target (finding sweep #7)', () => {
+    it('blocks a subshell-wrapped redirect into an existing graduated spec (exit 2, immutable)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: '(echo hi > specs/checkout.flow.yaml)' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/immutable/i);
+      expect(result.stderr).toMatch(/specs\/checkout\.flow\.yaml(?!\))/);
+    });
+
+    it('blocks a subshell-wrapped redirect into an implementation file (exit 2, bounce to B.A.)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: '(echo hi > src/services/order.ts)' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/B\.A\./i);
+    });
+
+    it('blocks a brace-group redirect terminated by ";" into an existing graduated spec (exit 2, immutable)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: '{ echo hi > specs/checkout.flow.yaml; }' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
+    it('regression: a subshell-wrapped write into an allowed path is still allowed (exit 0)', () => {
+      for (const command of [
+        '(echo "walk complete" > .qa-evidence/M-20260817-001/report.md)',
+        '(echo "new flow" > specs/subshell-new-flow.flow.yaml)',
+      ]) {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(0);
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Symlink escapes (sweep finding #2). path.resolve() never follows symlinks,
   // so a lexical prefix match answers "is this path spelled like it is under
   // .qa-evidence/?" — not "does writing here land under .qa-evidence/?". Two

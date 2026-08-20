@@ -271,7 +271,7 @@ Two hooks enforce the lifecycle and routing invariants for peer-to-peer handoffs
 
 ## Environment Variables
 
-The `ateam` CLI reads the following environment variables:
+The `ateam` CLI reads the following environment variables (the two `ATEAM_SKIP_*_GATE` overrides are read by Hannibal's Stop hooks — `enforce-orchestrator-stop.js` / `enforce-final-review.js` via `scripts/hooks/lib/stop-gates.js` — not by the CLI):
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
@@ -283,6 +283,8 @@ The `ateam` CLI reads the following environment variables:
 | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` | No | - | Set to `1` to enable native teams dispatch |
 | `ATEAM_TEAMMATE_MODE` | No | `auto` | Teammate display: `auto`, `tmux`, or `in-process` |
 | `ATEAM_MISSION_ID` | Yes (native teams) | - | Mission identifier used to scope the pool directory at `/tmp/.ateam-pool/{missionId}/`. Each pipeline agent must export this before calling `ateam agents-stop` so pool claim/release can find the right directory. |
+| `ATEAM_SKIP_FRANKIE_GATE` | No | - | Set to `1`/`true` to override ONLY the Frankie evidence gate (`checkFrankieEvidence`) on Hannibal's Stop hooks — missing, stale, or ❌-bearing `.qa-evidence/<missionId>/report.md`. For operators who cannot drive Frankie's walk (no Playwright headless shell, no flowspec, dev server unavailable). Does NOT release the staged-promotion gate. |
+| `ATEAM_SKIP_PROMOTION_GATE` | No | - | Set to `1`/`true` to override ONLY the staged-items-not-promoted gate (`checkStagedNotPromoted`), which otherwise blocks the mission from stopping while any item sits in `staged`. For operator recovery when the board cannot clear on its own — e.g. an APPROVED final review exists but the API never promoted (a server predating WI-790's promotion transaction). Deliberately separate from `ATEAM_SKIP_FRANKIE_GATE`: skipping a walk nobody can drive is a different decision from declaring a mission finished with items the API never promoted. |
 
 *`ATEAM_API_URL` defaults to `http://localhost:3000`. If your API runs elsewhere, you MUST set this variable.
 

@@ -266,6 +266,10 @@ describe('POST /api/missions/[missionId]/final-review — staged-to-done promoti
     expect(data.success).toBe(false);
     expect(data.error.code).toBe('MISSION_NOT_READY');
     expect(data.error.details.pendingItemIds.sort()).toEqual(['WI-P08', 'WI-P09']);
+    // Nothing is blocked here, so the blocked-recovery guidance stays out of the way.
+    expect(data.error.details.blockedItemIds).toEqual([]);
+    expect(data.error.details.unfinishedItemIds.sort()).toEqual(['WI-P08', 'WI-P09']);
+    expect(data.error.message).not.toMatch(/blocked/i);
 
     // Neither the promotion nor the review write survives the refusal.
     expect((await prisma.item.findUnique({ where: { id: 'WI-P06a' } }))?.stageId).toBe('staged');
@@ -286,6 +290,32 @@ describe('POST /api/missions/[missionId]/final-review — staged-to-done promoti
     expect((await prisma.item.findUnique({ where: { id: 'WI-P07' } }))?.stageId).toBe('blocked');
     expect((await prisma.item.findUnique({ where: { id: 'WI-P07b' } }))?.stageId).toBe('staged');
     expect((await prisma.mission.findUnique({ where: { id: MISSION_ID } }))?.finalReview).toBeNull();
+  });
+
+  it('names the blocked items and the human recovery path in the 409 — a blocked item never advances on its own', async () => {
+    await seedItem('WI-P07c', 'blocked');
+    await seedItem('WI-P07d', 'implementing');
+    await seedItem('WI-P07e', 'staged');
+
+    const response = await POST(makeRequest({ finalReview: APPROVED_REPORT }), routeParams);
+    const data = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(data.error.code).toBe('MISSION_NOT_READY');
+
+    // Blocked ids are reported separately from the merely-unfinished ones, so a
+    // caller can tell "needs a human" apart from "just needs time".
+    expect(data.error.details.pendingItemIds.sort()).toEqual(['WI-P07c', 'WI-P07d']);
+    expect(data.error.details.blockedItemIds).toEqual(['WI-P07c']);
+    expect(data.error.details.unfinishedItemIds).toEqual(['WI-P07d']);
+
+    // The message must name the blocked item AND both escape hatches, otherwise
+    // an APPROVED review over a blocked mission is permanently un-recordable
+    // with nothing telling the operator how to clear it.
+    expect(data.error.message).toContain('WI-P07c');
+    expect(data.error.message).toMatch(/blocked/i);
+    expect(data.error.message).toContain('board-move moveItem');
+    expect(data.error.message).toContain('archivedAt');
   });
 
   it('a NON-approved verdict is stored even while items are mid-pipeline — the readiness gate guards promotion only', async () => {

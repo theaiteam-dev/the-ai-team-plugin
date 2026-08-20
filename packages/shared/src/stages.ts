@@ -38,8 +38,17 @@ export function isValidTransition(from: StageId, to: StageId): boolean {
   return TRANSITION_MATRIX[from]?.includes(to) ?? false;
 }
 
+/**
+ * Lists the stages an item may move to from `from`.
+ *
+ * Hardened the same way as isValidTransition() above and for the same reason:
+ * `from` is unvalidated DB data (Item.stageId is a plain String column), so an
+ * unknown or legacy stage id would otherwise hand callers `undefined` and blow
+ * up on the first `.includes`/`.map`. An unrecognized origin stage has no legal
+ * transitions, so it answers with an empty list.
+ */
 export function getValidNextStages(from: StageId): readonly StageId[] {
-  return TRANSITION_MATRIX[from];
+  return TRANSITION_MATRIX[from] ?? [];
 }
 
 /**

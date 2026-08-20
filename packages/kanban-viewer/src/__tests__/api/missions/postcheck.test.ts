@@ -341,6 +341,90 @@ describe('POST /api/missions/postcheck', () => {
       expect(data.data.unitTestsFailed).toBe(0);
     });
 
+    it('should sum both runners when a check chains vitest and pytest in one stdout', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+      mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'completed' });
+
+      // "bun run test && pytest": a vitest summary followed by a pytest banner.
+      // The regression this guards: returning early on the "Tests" lines dropped
+      // the pytest counts entirely, contradicting the sum-everything intent.
+      const chainedStdout = [
+        ' Test Files  6 passed (6)',
+        '      Tests  79 passed (79)',
+        '   Duration  3.41s',
+        '',
+        '==================== test session starts ====================',
+        'collected 10 items',
+        '=============== 1 failed, 9 passed in 2.10s ================',
+      ].join('\n');
+
+      const response = await POST(
+        makeRequest({
+          passed: true,
+          blockers: [],
+          output: { 'unit-full': { stdout: chainedStdout, stderr: '', timedOut: false } },
+        })
+      );
+      const data: PostcheckResponse = await response.json();
+
+      expect(data.data.unitTestsPassed).toBe(88);
+      expect(data.data.unitTestsFailed).toBe(1);
+    });
+
+    it('should sum both runners when pytest runs before vitest in one stdout', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+      mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'completed' });
+
+      const chainedStdout = [
+        '==================== test session starts ====================',
+        '===================== 8 passed in 1.24s =====================',
+        '',
+        ' Test Files  6 passed (6)',
+        '      Tests  79 passed (79)',
+      ].join('\n');
+
+      const response = await POST(
+        makeRequest({
+          passed: true,
+          blockers: [],
+          output: { 'unit-full': { stdout: chainedStdout, stderr: '', timedOut: false } },
+        })
+      );
+      const data: PostcheckResponse = await response.json();
+
+      expect(data.data.unitTestsPassed).toBe(87);
+      expect(data.data.unitTestsFailed).toBe(0);
+    });
+
+    it('should parse a Tests summary line prefixed with ANSI cursor-control codes', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+      mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'completed' });
+
+      // Output captured through a pty carries erase-line/column codes ahead of the
+      // summary; SGR-only stripping left them in place and broke the ^Tests anchor.
+      const esc = '\u001b';
+      const body = {
+        passed: true,
+        blockers: [],
+        output: {
+          unit: {
+            stdout: [
+              `${esc}[2K${esc}[1G Test Files  6 passed (6)`,
+              `${esc}[2K${esc}[1G      Tests  79 passed (79)`,
+            ].join('\n'),
+            stderr: '',
+            timedOut: false,
+          },
+        },
+      };
+
+      const response = await POST(makeRequest(body));
+      const data: PostcheckResponse = await response.json();
+
+      expect(data.data.unitTestsPassed).toBe(79);
+      expect(data.data.unitTestsFailed).toBe(0);
+    });
+
     it('should parse e2eTestsPassed and e2eTestsFailed from output.e2e', async () => {
       mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
       mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'failed' });
@@ -398,6 +482,31 @@ describe('POST /api/missions/postcheck', () => {
         .find((d) => d.message.startsWith('Postcheck passed'));
       expect(resultLog.message).toContain('no parsable test counts');
       expect(resultLog.level).toBe('warn');
+    });
+
+    it('logs info (not warn) for a config with no test-shaped check, e.g. lint + typecheck', async () => {
+      // Regression: gating the parse warning on "any non-lint check" made every
+      // {lint, typecheck} / {lint, build} config warn on a clean postcheck —
+      // those checks never print test counts, so zero counts is correct, not suspect.
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+
+      const body = {
+        passed: true,
+        blockers: [],
+        output: {
+          lint: { stdout: '', stderr: '', timedOut: false },
+          'typecheck-full': { stdout: 'tsc --noEmit completed with no output', stderr: '', timedOut: false },
+        },
+      };
+      const response = await POST(makeRequest(body));
+      expect(response.status).toBe(200);
+
+      const resultLog = mockPrismaClient.activityLog.create.mock.calls
+        .map((c) => c[0].data)
+        .find((d) => d.message.startsWith('Postcheck passed'));
+      expect(resultLog).toBeTruthy();
+      expect(resultLog.message).not.toContain('no parsable test counts');
+      expect(resultLog.level).toBe('info');
     });
 
     it('logs the normal info-level message when real test counts are parsed', async () => {

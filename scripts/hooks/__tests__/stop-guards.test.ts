@@ -1470,6 +1470,14 @@ describe('enforce-orchestrator-stop — Frankie evidence quality gates', () => {
 // the operator-level one, deliberately separate from ATEAM_SKIP_FRANKIE_GATE
 // (skipping a walk nobody can drive is a different decision from declaring a
 // mission finished with items the API never promoted).
+//
+// The guard is NARROW by construction: it releases only the staged/promotion
+// gate, the one gate that can be genuinely unsatisfiable. Applied at the top
+// of the hooks instead, it degraded EVERY gate from permanent to one-shot —
+// including the always-satisfiable "items still active → continue
+// orchestrating" gate, so the second stop would end a mission mid-pipeline.
+// The tests below pin both halves: the loop breaker still breaks the loop, and
+// the satisfiable gates keep enforcing regardless of stop_hook_active.
 // =============================================================================
 describe('Stop hooks — stop_hook_active re-entry guard and the promotion-gate override', () => {
   const MISSION_ID = 'M-TEST-REENTRY';
@@ -1503,7 +1511,77 @@ describe('Stop hooks — stop_hook_active re-entry guard and the promotion-gate 
     postcheck: { passed: true },
   });
 
-  it('enforce-orchestrator-stop: allows the stop when stop_hook_active is true, instead of re-blocking forever', () => {
+  /** Drivable repo with NO evidence bundle: the Frankie gate fires here. */
+  function drivableRepoWithoutEvidence() {
+    const dir = mkdtempSync(join(tmpdir(), 'ateam-reentry-drivable-'));
+    scratchDirs.push(dir);
+    writeFileSync(join(dir, 'ateam.config.json'), JSON.stringify({ surfaces: ['web'] }));
+    return dir;
+  }
+
+  const BOARD_THREE_ACTIVE = JSON.stringify({
+    columns: {
+      testing: [{ id: 'WI-001' }],
+      implementing: [{ id: 'WI-002' }],
+      review: [{ id: 'WI-003' }],
+    },
+  });
+  const BOARD_ONE_DONE = JSON.stringify({ columns: { done: [{ id: 'WI-001' }] } });
+  const MISSION_NO_REVIEW = JSON.stringify({
+    id: MISSION_ID,
+    status: 'active',
+    final_review_verdict: null,
+    postcheck: null,
+  });
+
+  it('enforce-orchestrator-stop: still blocks with items mid-pipeline even when stop_hook_active is true (the guard is not a mission-ending bypass)', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      { session_id: 'main-session-reentry', stop_hook_active: true },
+      { __TEST_MOCK_BOARD__: BOARD_THREE_ACTIVE, __TEST_MOCK_MISSION__: MISSION_APPROVED },
+      repo()
+    );
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/3 items still active/i);
+  });
+
+  it('enforce-final-review: still blocks with items mid-pipeline even when stop_hook_active is true', () => {
+    const result = runHook(
+      hookPath('enforce-final-review.js'),
+      { stop_hook_active: true },
+      { __TEST_MOCK_BOARD__: BOARD_THREE_ACTIVE, __TEST_MOCK_MISSION__: MISSION_APPROVED },
+      repo()
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/Mission incomplete/i);
+  });
+
+  it('enforce-orchestrator-stop: the Frankie evidence gate keeps enforcing under stop_hook_active (it is satisfiable — dispatch Frankie)', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      { session_id: 'main-session-reentry', stop_hook_active: true },
+      { __TEST_MOCK_BOARD__: BOARD_ONE_STAGED, __TEST_MOCK_MISSION__: MISSION_NO_REVIEW },
+      drivableRepoWithoutEvidence()
+    );
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/evidence bundle is missing/i);
+  });
+
+  it('enforce-orchestrator-stop: the missing-final-review gate keeps enforcing under stop_hook_active', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      { session_id: 'main-session-reentry', stop_hook_active: true },
+      { __TEST_MOCK_BOARD__: BOARD_ONE_DONE, __TEST_MOCK_MISSION__: MISSION_NO_REVIEW },
+      repo()
+    );
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/Final Mission Review/i);
+  });
+
+  it('enforce-orchestrator-stop: allows the stop when stop_hook_active is true and the only remaining block is the unsatisfiable promotion gate', () => {
     const result = runHook(
       hookPath('enforce-orchestrator-stop.js'),
       { session_id: 'main-session-reentry', stop_hook_active: true },
@@ -1524,7 +1602,7 @@ describe('Stop hooks — stop_hook_active re-entry guard and the promotion-gate 
     expect(parseStopOutput(result.stdout).decision).toBe('block');
   });
 
-  it('enforce-final-review: allows the stop when stop_hook_active is true', () => {
+  it('enforce-final-review: allows the stop when stop_hook_active is true and only the unsatisfiable promotion gate remains', () => {
     const result = runHook(
       hookPath('enforce-final-review.js'),
       { stop_hook_active: true },

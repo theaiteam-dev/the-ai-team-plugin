@@ -51,15 +51,17 @@ try {
   // Can't read stdin — assume main session (Hannibal), continue enforcing
 }
 
-// Re-entry guard: Claude Code sets stop_hook_active when the session is
-// stopping BECAUSE a Stop hook already blocked once. Every gate below is a
-// "keep orchestrating" instruction, so re-blocking here is how a mission-tail
-// gate that cannot be satisfied (an API predating WI-790's promotion, a
-// verdict that parses as 'unknown') turns into an infinite Hannibal loop.
-// Allow the stop and let the operator act on the first block's message.
-if (hookInput && hookInput.stop_hook_active === true) {
-  process.exit(0);
-}
+// Narrow re-entry guard: Claude Code sets stop_hook_active when the session is
+// stopping BECAUSE a Stop hook already blocked once. That matters for exactly
+// ONE gate — the staged-not-promoted check, which cannot be satisfied by
+// orchestrating harder when the API predates WI-790's promotion transaction or
+// the review's verdict parses as 'unknown' (block, resume, block, resume
+// forever). Bailing out here at the top instead degraded EVERY gate from
+// permanent to one-shot, including the always-satisfiable "items still active"
+// gate, letting the second stop end a mission mid-pipeline. The flag is
+// therefore carried down to that single gate (kept identical to
+// enforce-orchestrator-stop.js, its main-session twin).
+const reentryAfterBlock = !!hookInput && hookInput.stop_hook_active === true;
 
 // Only enforce for Hannibal (main session). Known non-hannibal agents pass through.
 const resolvedAgent = resolveAgent(hookInput);
@@ -150,10 +152,15 @@ async function checkFinalReview() {
   // stderr mechanism as the other pre-existing gates below (this is NOT the
   // Frankie-specific JSON-decision sub-check, so ATEAM_SKIP_FRANKIE_GATE
   // must not suppress it).
+  //
+  // This is the one gate the stop_hook_active re-entry guard releases — the
+  // only one that can be genuinely unsatisfiable. Reaching it already implies
+  // totalActive === 0, so releasing it can never end a mission with items
+  // still mid-pipeline.
   const stagedBlock = checkStagedNotPromoted(stagedCount, {
     finalReview: missionData.final_review_verdict,
   });
-  if (stagedBlock) {
+  if (stagedBlock && !reentryAfterBlock) {
     process.stderr.write(`${stagedBlock}\n`);
     process.exit(2);
   }
