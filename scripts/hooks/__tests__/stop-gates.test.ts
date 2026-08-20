@@ -62,7 +62,9 @@ import {
   parseFinalReviewVerdict,
   checkFinalReviewRejection,
   checkStagedNotPromoted,
+  checkOrphanStagedItems,
   checkMissingFinalReview,
+  checkUnparseableVerdict,
   checkPostcheck,
   isMissionActiveState,
   fetchBoard,
@@ -309,118 +311,65 @@ describe('stop-gates — normalizeMission', () => {
 // parseFinalReviewVerdict — the playbooks standardize Stockwell's verdict
 // line as `VERDICT: FINAL APPROVED` / `VERDICT: FINAL REJECTED`.
 // ---------------------------------------------------------------------------
-describe('stop-gates — parseFinalReviewVerdict', () => {
-  it('parses VERDICT: FINAL APPROVED', () => {
-    expect(parseFinalReviewVerdict('# Final Mission Review\n\nVERDICT: FINAL APPROVED\n')).toBe(
-      'approved'
-    );
+describe('stop-gates — parseFinalReviewVerdict (re-exported from @ai-team/shared)', () => {
+  // The rule is ONE copy — packages/shared/src/final-review-verdict.ts, whose
+  // own suite pins the full tolerated-decoration matrix. These cases exist so
+  // the HOOK side is proven to be reading that rule and not a local mirror.
+  it('reads the verdict from the report\'s LAST non-empty line', () => {
+    expect(parseFinalReviewVerdict('# Review\n\nVERDICT: FINAL APPROVED\n')).toBe('approved');
+    expect(parseFinalReviewVerdict('# Review\n\nVERDICT: FINAL REJECTED\n')).toBe('rejected');
   });
 
-  it('parses VERDICT: FINAL REJECTED', () => {
-    expect(parseFinalReviewVerdict('# Final Mission Review\n\nVERDICT: FINAL REJECTED\n')).toBe(
-      'rejected'
-    );
-  });
-
-  it('honors a bare FINAL APPROVED / FINAL REJECTED marker without the VERDICT: prefix', () => {
-    expect(parseFinalReviewVerdict('FINAL APPROVED — all requirements met')).toBe('approved');
-    expect(parseFinalReviewVerdict('FINAL REJECTED — see WI-003, WI-007')).toBe('rejected');
-  });
-
-  // ---------------------------------------------------------------------
-  // Adversarial: a REJECTED review must never read as approved. Every case
-  // below was a real 'approved' answer under the old "last VERDICT line wins,
-  // scan the raw text" rule — each one suppressed the ADR-0004
-  // restart-at-Frankie block AND told the operator to re-POST a rejected
-  // review to "trigger promotion".
-  // ---------------------------------------------------------------------
-  it('a fenced format reference containing the APPROVED line does not flip a rejection', () => {
+  it("a 'the earlier pass issued VERDICT: FINAL APPROVED' preamble does not flip a rejection", () => {
     expect(
       parseFinalReviewVerdict(
-        '# Final Mission Review\n\nVERDICT: FINAL REJECTED\n\n' +
-          'Format reference:\n\n```\nVERDICT: FINAL APPROVED\n```\n'
-      )
+        'Context: the earlier pass issued VERDICT: FINAL APPROVED, which was premature.\n\nVERDICT: FINAL REJECTED'
+      ),
+      'first-line-wins parsed this as approved and would have promoted a rejected mission'
     ).toBe('rejected');
   });
 
-  it('a fenced template block quoting the whole approved report does not flip a rejection', () => {
-    expect(
-      parseFinalReviewVerdict(
-        'VERDICT: FINAL REJECTED\n\n' +
-          '## For next time, the approved template is:\n\n' +
-          '```markdown\nFINAL MISSION REVIEW\n\n## Cross-Cutting Review\n\n' +
-          'VERDICT: FINAL APPROVED\n\nThe A(i)-Team got away with it.\n```\n'
-      )
-    ).toBe('rejected');
+  it('a 4-backtick block quoting a 3-backtick example cannot flip the verdict — there is no fence logic left to fool', () => {
+    const report = [
+      '# Final Mission Review',
+      '',
+      '````markdown',
+      '```',
+      'VERDICT: FINAL APPROVED',
+      '```',
+      '````',
+      '',
+      'VERDICT: FINAL REJECTED',
+    ].join('\n');
+    expect(parseFinalReviewVerdict(report)).toBe('rejected');
   });
 
-  it('prose ABOUT an earlier verdict does not outrank the report\'s own verdict line', () => {
-    expect(
-      parseFinalReviewVerdict(
-        'VERDICT: FINAL REJECTED\n\nCritical Issues Found:\n\n' +
-          '1. The previous review said VERDICT: FINAL APPROVED but that was wrong — ' +
-          'WI-003 never shipped.\n'
-      )
-    ).toBe('rejected');
-  });
-
-  it('the FIRST VERDICT line wins, matching the report template where the verdict precedes the issue list', () => {
-    // A re-review is a fresh POST that OVERWRITES mission.finalReview (see the
-    // final-review route), so an appended second verdict is commentary, never
-    // the real one. Last-wins was the bug.
-    expect(
-      parseFinalReviewVerdict(
-        'VERDICT: FINAL REJECTED\n\n## Re-review after rework\n\nVERDICT: FINAL APPROVED\n'
-      )
-    ).toBe('rejected');
-  });
-
-  it('control: a plain rejected report is rejected, a plain approved report is approved', () => {
-    expect(parseFinalReviewVerdict('FINAL MISSION REVIEW\n\nVERDICT: FINAL REJECTED\n')).toBe(
-      'rejected'
-    );
-    expect(parseFinalReviewVerdict('FINAL MISSION REVIEW\n\nVERDICT: FINAL APPROVED\n')).toBe(
-      'approved'
-    );
-  });
-
-  it('a bare marker that appears ONLY inside a fence is not a verdict', () => {
-    expect(parseFinalReviewVerdict('Report pending.\n\n```\nFINAL APPROVED\n```\n')).toBe(
-      'unknown'
-    );
-  });
-
-  it('a VERDICT line outranks a stray bare marker quoted elsewhere in the prose', () => {
-    expect(
-      parseFinalReviewVerdict(
-        'The previous run ended FINAL REJECTED; all issues addressed.\n\nVERDICT: FINAL APPROVED\n'
-      )
-    ).toBe('approved');
-  });
-
-  it('returns unknown for review text with no recognizable marker (fail open — never a deadlock)', () => {
-    expect(parseFinalReviewVerdict('# Final Mission Review\n\nAPPROVED')).toBe('unknown');
-    expect(parseFinalReviewVerdict('Looks good to me.')).toBe('unknown');
-  });
-
-  it('returns unknown when both bare markers appear with no VERDICT line to disambiguate', () => {
-    expect(parseFinalReviewVerdict('FINAL APPROVED? no — FINAL REJECTED? unclear')).toBe('unknown');
+  it('returns unknown when the last line is not the trailer (verdict buried mid-report, bare marker, or no marker)', () => {
+    expect(parseFinalReviewVerdict('VERDICT: FINAL APPROVED\n\n- WI-001: notes')).toBe('unknown');
+    expect(parseFinalReviewVerdict('# Review\n\nFINAL APPROVED')).toBe('unknown');
+    expect(parseFinalReviewVerdict('# Review\n\nEverything looks reasonable.')).toBe('unknown');
   });
 
   it('returns unknown for non-string input', () => {
     expect(parseFinalReviewVerdict(null)).toBe('unknown');
     expect(parseFinalReviewVerdict(undefined)).toBe('unknown');
-    expect(parseFinalReviewVerdict(42 as unknown as string)).toBe('unknown');
+    expect(parseFinalReviewVerdict(42)).toBe('unknown');
+  });
+
+  it('the hook side does not carry its own copy of the rule — no fence stripper, no prose scan', () => {
+    const source = readFileSync(join(__dirname, '..', 'lib', 'stop-gates.js'), 'utf8');
+    expect(source, 'stripFencedBlocks was deleted with the prose-scanning rule').not.toMatch(
+      /stripFencedBlocks/
+    );
+    expect(source, 'the rule must be imported from the built shared package').toMatch(
+      /packages\/shared\/dist\/final-review-verdict\.js/
+    );
   });
 });
 
-// ---------------------------------------------------------------------------
-// checkFinalReviewRejection — an explicit FINAL REJECTED must block with the
-// ADR 0004 restart-at-Frankie path, never fall through to "run postcheck".
-// ---------------------------------------------------------------------------
 describe('stop-gates — checkFinalReviewRejection', () => {
   it('blocks a FINAL REJECTED review with the restart-at-Frankie instructions', () => {
-    const message = checkFinalReviewRejection('VERDICT: FINAL REJECTED\n\n- WI-003: broken');
+    const message = checkFinalReviewRejection('- WI-003: broken\n\nVERDICT: FINAL REJECTED');
     expect(message).toMatch(/FINAL REJECTED/);
     expect(message, 'must not misdirect toward postcheck').toMatch(/Do NOT run post-checks/i);
     expect(message, 'ADR 0004: the tail restarts at Frankie').toMatch(/RESTARTS at Frankie/i);
@@ -437,8 +386,14 @@ describe('stop-gates — checkFinalReviewRejection', () => {
     expect(checkFinalReviewRejection('VERDICT: FINAL APPROVED')).toBeNull();
   });
 
-  it('returns null for review text with no recognizable marker (preserves current treat-as-complete behavior)', () => {
+  it('returns null for review text with no verdict trailer — checkUnparseableVerdict owns that case', () => {
     expect(checkFinalReviewRejection('# Final Mission Review\n\nAPPROVED')).toBeNull();
+  });
+
+  it('returns null when the rejection is only quoted mid-report — the trailer is the verdict', () => {
+    expect(
+      checkFinalReviewRejection('VERDICT: FINAL REJECTED\n\nfixed now\n\nVERDICT: FINAL APPROVED')
+    ).toBeNull();
   });
 
   it('returns null when there is no review at all', () => {
@@ -1158,7 +1113,10 @@ describe('stop-gates — checkStagedNotPromoted', () => {
 
     it('diagnoses an unparseable verdict — promotion only ever runs on FINAL APPROVED', () => {
       const message = checkStagedNotPromoted(1, { finalReview: 'Looks good, shipping it.' });
-      expect(message).toMatch(/verdict could not be parsed/i);
+      expect(message).toMatch(/states no verdict/i);
+      expect(message, 'the way out is the trailer requirement').toMatch(
+        /LAST line must be exactly "VERDICT: FINAL APPROVED" or "VERDICT: FINAL REJECTED"/
+      );
       expect(message).toMatch(/ATEAM_SKIP_PROMOTION_GATE=1/);
     });
 
@@ -1445,67 +1403,160 @@ describe('stop-gates — checkMissingFinalReview', () => {
 });
 
 // ---------------------------------------------------------------------------
-// checkPostcheck — FAIL CLOSED. The old synthesis (`{ passed: state ===
-// 'completed' }`) made this a bare mission-state check: the current-mission
-// payload carries no postcheck key at all, so the gate passed with zero
-// evidence a post-check had ever run.
+// checkOrphanStagedItems — FIX B. Mission scoping made the promotion gate's
+// counts and messages correct; it must never make an unexplained staged item
+// DISAPPEAR. Board staged=[WI-1] with no MissionItem link and mission
+// items=[WI-99] used to leave every gate silent, so the hook emitted {} on the
+// FIRST stop.
+// ---------------------------------------------------------------------------
+describe('stop-gates — checkOrphanStagedItems', () => {
+  const ENV = process.env.ATEAM_SKIP_PROMOTION_GATE;
+  afterEach(() => {
+    if (ENV === undefined) delete process.env.ATEAM_SKIP_PROMOTION_GATE;
+    else process.env.ATEAM_SKIP_PROMOTION_GATE = ENV;
+  });
+
+  it('allows the stop when there are no orphans', () => {
+    expect(checkOrphanStagedItems([])).toBeNull();
+    expect(checkOrphanStagedItems(undefined)).toBeNull();
+    expect(checkOrphanStagedItems(null)).toBeNull();
+  });
+
+  it("BLOCKS on the author's exact fixture — one staged item with no mission link", () => {
+    const { orphanStagedIds } = scopeBoardToMission(
+      { staged: [{ id: 'WI-1' }] },
+      [{ id: 'WI-99' }]
+    );
+    expect(orphanStagedIds).toEqual(['WI-1']);
+    const message = checkOrphanStagedItems(orphanStagedIds);
+    expect(message, 'an unexplained staged item is never silently dropped').not.toBeNull();
+    expect(message).toMatch(/WI-1/);
+  });
+
+  it('names every orphan and all three remediations that can actually clear one', () => {
+    const message = String(checkOrphanStagedItems(['WI-1', 'WI-2']));
+    expect(message).toMatch(/WI-1/);
+    expect(message).toMatch(/WI-2/);
+    expect(message, 'attach to the mission').toMatch(/attach it to this mission/i);
+    expect(message, 'move back into the pipeline').toMatch(/board-move moveItem/);
+    expect(message, 'or archive it').toMatch(/archive/i);
+  });
+
+  it('names ATEAM_SKIP_PROMOTION_GATE as the operator override, and honors it', () => {
+    expect(String(checkOrphanStagedItems(['WI-1']))).toMatch(/ATEAM_SKIP_PROMOTION_GATE=1/);
+    process.env.ATEAM_SKIP_PROMOTION_GATE = '1';
+    expect(checkOrphanStagedItems(['WI-1'])).toBeNull();
+    process.env.ATEAM_SKIP_PROMOTION_GATE = 'true';
+    expect(checkOrphanStagedItems(['WI-1'])).toBeNull();
+  });
+
+  it('still blocks when the override is set to an unset-like empty string', () => {
+    process.env.ATEAM_SKIP_PROMOTION_GATE = '';
+    expect(checkOrphanStagedItems(['WI-1'])).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkUnparseableVerdict — a review that states no verdict promoted nothing,
+// so it is not "review complete". Fail CLOSED with the trailer requirement,
+// which the operator clears by re-POSTing the report.
+// ---------------------------------------------------------------------------
+describe('stop-gates — checkUnparseableVerdict', () => {
+  it('blocks a written review whose last line is not the verdict trailer', () => {
+    const message = String(
+      checkUnparseableVerdict('# Final Mission Review\n\nVERDICT: FINAL APPROVED\n\n- notes')
+    );
+    expect(message).toMatch(/states no verdict/i);
+    expect(message, 'the remediation is the trailer requirement itself').toMatch(
+      /LAST line must be exactly "VERDICT: FINAL APPROVED" or "VERDICT: FINAL REJECTED"/
+    );
+    expect(message).toMatch(/writeFinalReview/);
+  });
+
+  it('falls through for a readable approved or rejected verdict', () => {
+    expect(checkUnparseableVerdict('body\n\nVERDICT: FINAL APPROVED')).toBeNull();
+    expect(checkUnparseableVerdict('body\n\nVERDICT: FINAL REJECTED')).toBeNull();
+  });
+
+  it('falls through when no review has been written at all (the missing-review gate owns that)', () => {
+    expect(checkUnparseableVerdict(null)).toBeNull();
+    expect(checkUnparseableVerdict(undefined)).toBeNull();
+    expect(checkUnparseableVerdict('')).toBeNull();
+    expect(checkUnparseableVerdict('   \n\n')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkPostcheck — FAIL CLOSED, and INDEPENDENT OF BOARD CONTENTS.
+//
+// Two defects converge here. The old synthesis (`{ passed: state ===
+// 'completed' }`) made this a bare mission-state check that passed with zero
+// evidence a post-check ran. Then the `pendingCount > 0` precondition added to
+// fix that made the gate silent in exactly the state it exists for: once an
+// APPROVED review promotes every staged item and those items are archived, the
+// board is empty, so the post-check never ran, the mission stayed `running`
+// forever, and POST /api/missions 409'd until someone found `force: true`.
+// Whether a post-check is owed is a fact about the MISSION, so nothing here
+// reads the board.
 // ---------------------------------------------------------------------------
 describe('stop-gates — checkPostcheck', () => {
   const APPROVED = '# Final Mission Review\n\nVERDICT: FINAL APPROVED\n';
 
-  it('BLOCKS a running mission whose payload carries no postcheck key (the real /api/missions/current shape)', () => {
+  it('BLOCKS a running mission with an approved review and an EMPTY board (the promoted-then-archived case)', () => {
     const message = checkPostcheck({
-      pendingCount: 2,
       finalReview: APPROVED,
       postcheck: null,
       missionState: 'running',
     });
-    expect(message).toMatch(/post-checks have not passed/i);
-    expect(message).toMatch(/ateam missions postcheck/);
+    expect(message, 'an empty board is not evidence a post-check ran').toMatch(
+      /post-checks have not passed/i
+    );
+    expect(message).toMatch(/ateam missions-postcheck/);
+  });
+
+  it('takes no board argument at all — the gate cannot be disarmed by emptying the board', () => {
+    expect(checkPostcheck.length, 'one destructured options object, no board counts').toBe(1);
+    const source = readFileSync(join(__dirname, '..', 'lib', 'stop-gates.js'), 'utf8');
+    const fn = source.slice(source.indexOf('export function checkPostcheck'));
+    expect(fn.slice(0, fn.indexOf('\n}')), 'no pendingCount precondition').not.toMatch(
+      /pendingCount/
+    );
+  });
+
+  it('BLOCKS a running mission whose payload carries no postcheck key (the real /api/missions/current shape)', () => {
+    expect(
+      checkPostcheck({ finalReview: APPROVED, postcheck: null, missionState: 'running' })
+    ).toMatch(/post-checks have not passed/i);
   });
 
   it('blocks a running mission that affirmatively reports a FAILED postcheck', () => {
     expect(
-      checkPostcheck({
-        pendingCount: 1,
-        finalReview: APPROVED,
-        postcheck: { passed: false },
-        missionState: 'running',
-      })
+      checkPostcheck({ finalReview: APPROVED, postcheck: { passed: false }, missionState: 'running' })
     ).toMatch(/post-checks/i);
   });
 
-  it('releases only on an affirmative postcheck.passed === true', () => {
+  it('releases on an affirmative postcheck.passed === true', () => {
     expect(
-      checkPostcheck({
-        pendingCount: 1,
-        finalReview: APPROVED,
-        postcheck: { passed: true },
-        missionState: 'running',
-      })
+      checkPostcheck({ finalReview: APPROVED, postcheck: { passed: true }, missionState: 'running' })
     ).toBeNull();
   });
 
   it('does not accept a truthy-but-not-true passed value', () => {
     expect(
-      checkPostcheck({
-        pendingCount: 1,
-        finalReview: APPROVED,
-        postcheck: { passed: 'yes' },
-        missionState: 'running',
-      })
+      checkPostcheck({ finalReview: APPROVED, postcheck: { passed: 'yes' }, missionState: 'running' })
     ).toMatch(/post-checks/i);
   });
 
-  it('stops applying once the mission reaches an over state — post-checks completed it, and a completed/failed mission can never be post-checked again', () => {
-    for (const state of ['completed', 'failed', 'archived']) {
+  it("releases on mission state 'completed' — POST /api/missions/postcheck is that state's only writer, so it IS the recorded pass", () => {
+    expect(
+      checkPostcheck({ finalReview: APPROVED, postcheck: null, missionState: 'completed' })
+    ).toBeNull();
+  });
+
+  it('releases on the other over states too — a failed/archived mission can never be post-checked again, so blocking would be an unclearable trap', () => {
+    for (const state of ['failed', 'archived']) {
       expect(
-        checkPostcheck({
-          pendingCount: 1,
-          finalReview: APPROVED,
-          postcheck: null,
-          missionState: state,
-        }),
+        checkPostcheck({ finalReview: APPROVED, postcheck: null, missionState: state }),
         `${state} must not deadlock the end of the mission`
       ).toBeNull();
     }
@@ -1513,12 +1564,7 @@ describe('stop-gates — checkPostcheck', () => {
 
   it('blocks on an unknown/absent mission state — an unrecognized lifecycle fails CLOSED', () => {
     expect(
-      checkPostcheck({
-        pendingCount: 1,
-        finalReview: APPROVED,
-        postcheck: null,
-        missionState: null,
-      })
+      checkPostcheck({ finalReview: APPROVED, postcheck: null, missionState: null })
     ).toMatch(/post-checks/i);
     expect(isMissionActiveState(undefined)).toBe(true);
     expect(isMissionActiveState('running')).toBe(true);
@@ -1527,20 +1573,24 @@ describe('stop-gates — checkPostcheck', () => {
 
   it('falls through when no review has been written (the missing-review gate owns that case)', () => {
     expect(
+      checkPostcheck({ finalReview: null, postcheck: null, missionState: 'running' })
+    ).toBeNull();
+  });
+
+  it('falls through on a REJECTED verdict — post-checks must not run, and checkFinalReviewRejection owns the message', () => {
+    expect(
       checkPostcheck({
-        pendingCount: 1,
-        finalReview: null,
+        finalReview: 'issues\n\nVERDICT: FINAL REJECTED',
         postcheck: null,
         missionState: 'running',
       })
     ).toBeNull();
   });
 
-  it('falls through when nothing has finished the pipeline', () => {
+  it('falls through on an UNKNOWN verdict — checkUnparseableVerdict owns that case, and nothing was promoted', () => {
     expect(
       checkPostcheck({
-        pendingCount: 0,
-        finalReview: APPROVED,
+        finalReview: '# Final Mission Review\n\nlooks fine',
         postcheck: null,
         missionState: 'running',
       })

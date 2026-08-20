@@ -138,32 +138,53 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
     const projectId = projectValidation.projectId;
 
-    // Find active mission (not archived) for this project
+    // Select the mission this route can actually operate on: the most recently
+    // started RUNNING, non-archived mission.
+    //
+    // This used to be a bare `findFirst({ projectId, archivedAt: null })` with
+    // no state filter and no ordering, so SQLite returned the LOWEST rowid. A
+    // stale completed-but-unarchived M1 sitting in front of a running M2 made
+    // this route answer 400 INVALID_MISSION_STATE forever — and this route is
+    // the ONLY way a mission ever reaches `completed`, so it was also the only
+    // remediation the Stop gates could offer. Same unordered-findFirst defect
+    // that /api/missions/current already fixed; the fix has to follow the bug
+    // to every copy of the query.
     const mission = await prisma.mission.findFirst({
       where: {
         projectId,
         archivedAt: null,
+        state: 'running',
       },
+      orderBy: { startedAt: 'desc' },
     });
 
     if (!mission) {
-      const apiError: ApiError = {
-        success: false,
-        error: {
-          code: 'NO_ACTIVE_MISSION',
-          message: 'No active mission found',
-        },
-      };
-      return NextResponse.json(apiError, { status: 404 });
-    }
+      // Nothing runnable. Distinguish "this project has no mission at all"
+      // (404 NO_ACTIVE_MISSION) from "there is a mission but it is not in a
+      // post-checkable state" (400 INVALID_MISSION_STATE), reporting the state
+      // of the mission the operator most likely means — the newest one. Both
+      // error semantics predate this change and are preserved.
+      const newest = await prisma.mission.findFirst({
+        where: { projectId, archivedAt: null },
+        orderBy: { startedAt: 'desc' },
+      });
 
-    // Verify mission is in running state
-    if (mission.state !== 'running') {
+      if (!newest) {
+        const apiError: ApiError = {
+          success: false,
+          error: {
+            code: 'NO_ACTIVE_MISSION',
+            message: 'No active mission found',
+          },
+        };
+        return NextResponse.json(apiError, { status: 404 });
+      }
+
       const apiError: ApiError = {
         success: false,
         error: {
           code: 'INVALID_MISSION_STATE',
-          message: `Mission must be in running state to run postcheck. Current state: ${mission.state}`,
+          message: `Mission must be in running state to run postcheck. Current state: ${newest.state}`,
         },
       };
       return NextResponse.json(apiError, { status: 400 });

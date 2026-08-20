@@ -6,10 +6,12 @@
  * Amy investigates and reports - she does NOT modify production code or tests.
  * Her findings go in the agent_stop summary, not file artifacts.
  *
- * Allowed: writes to /tmp/ and /var/, throwaway debug scripts outside the
- * project. Scratch paths are canonicalized before the allowlist test (see
- * lib/scratch-path.js), so `/tmp/../<repo>/src/app.ts` is not scratch and
- * still falls through to the deny rules below.
+ * Allowed: writes to the system temp dirs (/tmp, $TMPDIR, /var/tmp) —
+ * throwaway debug scripts OUTSIDE the project. Scratch paths are canonicalized
+ * before the allowlist test (see lib/scratch-path.js), so
+ * `/tmp/../<repo>/src/app.ts` is not scratch — and neither is anything under
+ * the project root when the repo itself lives under a temp root. Both still
+ * fall through to the deny rules below.
  *
  * Claude Code sends hook context via stdin JSON (tool_name, tool_input).
  */
@@ -18,6 +20,18 @@ import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
 import { isScratchPath } from './lib/scratch-path.js';
 import { denyAndExit } from './lib/send-denied-event.js';
+
+/**
+ * Project root for the scratch-space exclusion. Claude Code sends the session
+ * cwd in the hook payload; the hook process is started there too, so
+ * process.cwd() is the fallback. Passed EXPLICITLY into isScratchPath so a
+ * repo that lives under a temp root (macOS $TMPDIR, a /tmp worktree, a CI
+ * sandbox) never gets a scratch allowance for its own files.
+ */
+function projectRootFrom(input) {
+  const fromPayload = input && typeof input.cwd === 'string' ? input.cwd : '';
+  return fromPayload !== '' ? fromPayload : process.cwd();
+}
 
 let hookInput = {};
 try {
@@ -52,9 +66,10 @@ try {
     process.exit(0);
   }
 
-  // Allow writes to /tmp/ and /var/ (throwaway debug scripts, investigation
-  // artifacts) — only where the path REALLY resolves under them.
-  if (isScratchPath(filePath)) {
+  // Allow writes to the temp dirs (throwaway debug scripts, investigation
+  // artifacts) — only where the path REALLY resolves under them AND outside
+  // this project.
+  if (isScratchPath(filePath, undefined, projectRootFrom(hookInput))) {
     process.exit(0);
   }
 

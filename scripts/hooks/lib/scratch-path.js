@@ -19,16 +19,45 @@
  * specs/: resolve, canonicalize through symlinks, then compare whole path
  * SEGMENTS.
  *
+ * THE RULE (two clauses, both required):
+ *
+ *   scratch  ==  (target resolves under a REAL temp root)
+ *            AND (target does NOT resolve under the project root)
+ *
+ * The second clause is not decoration. Canonicalizing alone is not enough,
+ * because a repo can legitimately LIVE under a temp root:
+ *   - macOS: $TMPDIR is /var/folders/<hash>/T, and checkouts/worktrees made
+ *     with mktemp -d land inside it;
+ *   - CI sandboxes and `git worktree add /tmp/...` put the whole working tree
+ *     under /tmp;
+ *   - any `mktemp -d`-created scratch checkout.
+ * On such a checkout, a temp-root-only test judges `<repo>/src/app.ts` to be
+ * scratch, all four guards exit 0, and the agents are unguarded for exactly
+ * the writes the hooks exist to stop. The project-root exclusion WINS: a path
+ * under the project root is never scratch, even when the project itself sits
+ * inside a temp root. A sibling of the repo but still under the temp root
+ * (e.g. `<tmp>/notes.md` next to `<tmp>/repo/`) remains genuine scratch.
+ *
+ * The temp roots are the REAL ones only — os.tmpdir() (which is where $TMPDIR
+ * points, covering macOS /var/folders/<...>/T), /tmp, and /var/tmp. `/var`
+ * itself is deliberately NOT a root: it is a system tree (/var/lib, /var/log,
+ * /var/www — deployment targets), not throwaway space. Each root is
+ * canonicalized before comparison, so /tmp -> /private/tmp on macOS is handled.
+ *
  * Semantics preserved from the string-prefix version it replaces:
  *   - Only ABSOLUTE paths can be scratch. A relative path was never
  *     allowlisted before (it cannot start with "/tmp/"), and resolving it
- *     against process.cwd() would make the verdict depend on where the agent
- *     happens to be running — including allowlisting the whole project if cwd
- *     itself sat under /tmp.
+ *     against the cwd would make the verdict depend on where the agent
+ *     happens to be running.
  *   - The root DIRECTORY itself ("/tmp") is not scratch, matching the old
  *     `startsWith('/tmp/')`, which required a separator.
  *   - The separator guard means a sibling like "/tmpfoo" is never "under"
  *     "/tmp".
+ *
+ * The project root is passed IN by each hook (from the hook payload's `cwd`,
+ * falling back to process.cwd()) rather than read deep inside this module, so
+ * both layouts — repo under /home, repo under a temp root — are testable
+ * without depending on where the test checkout happens to live.
  *
  * Every failure path returns false (deny): an unresolvable path — dangling
  * symlink, permission error — must never be judged to be inside the
@@ -36,13 +65,25 @@
  */
 
 import { lstatSync, realpathSync } from 'fs';
+import { tmpdir } from 'os';
 import path from 'path';
 
-/** Scratch roots for hooks that allow both /tmp and /var (Lynch, Amy). */
-export const SCRATCH_ROOTS = ['/tmp', '/var'];
+/**
+ * Scratch roots for hooks that allow the system temp trees (Lynch, Amy).
+ *
+ * os.tmpdir() first: on macOS it is the per-user /var/folders/<...>/T that
+ * $TMPDIR points at, which is where most tooling actually writes. Duplicates
+ * (Linux, where os.tmpdir() is usually /tmp) collapse during canonicalization.
+ */
+export const SCRATCH_ROOTS = [tmpdir(), '/tmp', '/var/tmp'];
 
-/** Scratch roots for hooks that only ever allowed /tmp (Murdock). */
-export const TMP_ONLY_SCRATCH_ROOTS = ['/tmp'];
+/**
+ * Scratch roots for hooks that only ever allowed the throwaway temp dirs and
+ * never /var (Murdock). os.tmpdir() is included because it IS the system temp
+ * directory — on macOS that path happens to live under /var, but /var/tmp and
+ * the rest of /var stay excluded.
+ */
+export const TMP_ONLY_SCRATCH_ROOTS = [tmpdir(), '/tmp'];
 
 /**
  * True if `child` is `parent` itself or lives underneath it. Compares whole
@@ -107,17 +148,36 @@ function canonicalizePath(abs) {
 }
 
 /**
- * True if `filePath` genuinely resolves to a location UNDER one of `roots`.
+ * Canonical form of the project root used for the exclusion clause.
  *
- * @param {string} filePath  Path exactly as the agent typed it.
- * @param {string[]} [roots] Scratch roots to test against (default /tmp, /var).
+ * Unlike a write target, an un-canonicalizable project root must NOT silently
+ * disappear — dropping the exclusion is what re-opens the hole on a
+ * temp-rooted checkout. So fall back to the lexically resolved path (still a
+ * usable containment prefix) and only give up on a non-string/empty input.
  */
-export function isScratchPath(filePath, roots = SCRATCH_ROOTS) {
+function canonicalizeProjectRoot(projectRoot) {
+  if (typeof projectRoot !== 'string' || projectRoot === '') {
+    return null;
+  }
+  const resolved = path.resolve(projectRoot);
+  return canonicalizePath(resolved) ?? resolved;
+}
+
+/**
+ * True if `filePath` genuinely resolves to a location UNDER one of `roots` AND
+ * outside `projectRoot`.
+ *
+ * @param {string} filePath      Path exactly as the agent typed it.
+ * @param {string[]} [roots]     Temp roots to test against (default: os.tmpdir(), /tmp, /var/tmp).
+ * @param {string} [projectRoot] Project root to exclude; defaults to process.cwd().
+ *                               Hooks pass the hook payload's `cwd` explicitly.
+ */
+export function isScratchPath(filePath, roots = SCRATCH_ROOTS, projectRoot = process.cwd()) {
   if (typeof filePath !== 'string' || filePath === '') {
     return false;
   }
-  // Relative paths were never scratch, and resolving them against cwd would
-  // make the verdict depend on where the agent runs (see module header).
+  // Relative paths were never scratch, and resolving them against the cwd
+  // would make the verdict depend on where the agent runs (see module header).
   if (!path.isAbsolute(filePath)) {
     return false;
   }
@@ -130,13 +190,33 @@ export function isScratchPath(filePath, roots = SCRATCH_ROOTS) {
     return false;
   }
 
-  for (const root of roots) {
+  // Project-root exclusion, checked FIRST and unconditionally: when the repo
+  // itself lives under a temp root (macOS $TMPDIR, a /tmp worktree, a CI
+  // sandbox), everything in it is also "under /tmp" — and none of it is
+  // scratch. This clause is what keeps the guards armed on such a checkout.
+  const canonicalProjectRoot = canonicalizeProjectRoot(projectRoot);
+  if (canonicalProjectRoot !== null && isWithin(canonicalTarget, canonicalProjectRoot)) {
+    return false;
+  }
+
+  const rootList = Array.isArray(roots) ? roots : SCRATCH_ROOTS;
+  const seen = new Set();
+  for (const root of rootList) {
+    if (typeof root !== 'string' || root === '') {
+      continue;
+    }
     const canonicalRoot = canonicalizePath(path.resolve(root));
     if (canonicalRoot === null) {
       // Root doesn't exist / can't be resolved on this host — it cannot
       // contain anything, so skip it rather than widening the allowlist.
       continue;
     }
+    // Roots collapse to the same real path on many hosts (Linux os.tmpdir()
+    // === /tmp); only test each distinct real root once.
+    if (seen.has(canonicalRoot)) {
+      continue;
+    }
+    seen.add(canonicalRoot);
     // The root itself is not a write target (matches the old
     // `startsWith('/tmp/')`, which required a trailing separator).
     if (canonicalTarget === canonicalRoot) {

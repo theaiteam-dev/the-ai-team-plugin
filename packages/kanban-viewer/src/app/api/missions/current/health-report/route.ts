@@ -71,6 +71,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     const projectId = projectValidation.projectId;
 
+    // Newest-first, same as /api/missions/current's tier 1 — an unordered
+    // findFirst returns SQLite's lowest rowid, so a stale unarchived mission
+    // could have this route report health for a mission that is not the one in
+    // flight.
     const mission = await prisma.mission.findFirst({
       where: {
         projectId,
@@ -79,6 +83,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           notIn: ['completed', 'failed', 'archived'],
         },
       },
+      orderBy: { startedAt: 'desc' },
     });
 
     if (!mission) {

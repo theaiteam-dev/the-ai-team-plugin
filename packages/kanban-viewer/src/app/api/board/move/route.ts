@@ -22,10 +22,10 @@ import { isValidTransition, checkWipLimit } from '@/lib/validation';
 import { getAndValidateProjectId } from '@/lib/project-utils';
 import { transformItemToResponse } from '@/lib/item-transform';
 import { getRejectionEscalationThreshold } from '@/lib/rejection-cap';
-import { parseFinalReviewVerdict } from '@/lib/final-review-verdict';
 import type { StageId } from '@/types/board';
 import type { MoveItemRequest, MoveItemResponse } from '@/types/api';
 import type { WorkLogAction } from '@/types/item';
+import { parseFinalReviewVerdict } from '@ai-team/shared';
 
 const TAIL_REWORK_AGENT = 'Hannibal';
 

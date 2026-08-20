@@ -536,7 +536,9 @@ describe('enforce-final-review — Frankie evidence-bundle gate', () => {
   const MOCK_MISSION_FULLY_COMPLETE = JSON.stringify({
     id: MISSION_ID,
     status: 'active',
-    final_review_verdict: 'FINAL APPROVED',
+    // The verdict is read ONLY from the report's last line — a bare
+    // "FINAL APPROVED" mention is not a verdict and now parses as 'unknown'.
+    final_review_verdict: '# Final Mission Review\n\nVERDICT: FINAL APPROVED',
     postcheck: { passed: true },
   });
 
@@ -1213,7 +1215,9 @@ describe('Final Mission Review verdict gate', () => {
     });
   }
 
-  const REJECTED_REVIEW = '# Final Mission Review\n\nVERDICT: FINAL REJECTED\n\n- WI-003: broken';
+  // The verdict trailer is the report's LAST line — the issue list precedes it.
+  const REJECTED_REVIEW =
+    '# Final Mission Review\n\n- WI-003: broken\n\nVERDICT: FINAL REJECTED\n';
   const APPROVED_REVIEW = '# Final Mission Review\n\nVERDICT: FINAL APPROVED\n';
   const MARKERLESS_REVIEW = '# Final Mission Review\n\nEverything looks reasonable.';
 
@@ -1239,7 +1243,7 @@ describe('Final Mission Review verdict gate', () => {
       /FULL Definition of Done/i
     );
     expect(context, 'must not misdirect toward running postcheck').not.toMatch(
-      /Run ateam missions postcheck/i
+      /Run ateam missions-postcheck/i
     );
   });
 
@@ -1259,7 +1263,10 @@ describe('Final Mission Review verdict gate', () => {
     expect(String(output.additionalContext)).not.toMatch(/RESTARTS at Frankie/i);
   });
 
-  it('enforce-orchestrator-stop: review text with no recognizable marker preserves current behavior (postcheck gate, fail open)', () => {
+  it('enforce-orchestrator-stop: a review that states NO verdict fails CLOSED with the trailer requirement (never "run postcheck")', () => {
+    // Fail open here used to mean "treat as complete". An unknown verdict
+    // promoted nothing (WI-790 only promotes on FINAL APPROVED), so allowing
+    // the mission onward would end it with an unreviewed, unpromoted board.
     const result = runHook(
       hookPath('enforce-orchestrator-stop.js'),
       {},
@@ -1271,8 +1278,15 @@ describe('Final Mission Review verdict gate', () => {
     );
     const output = parseStopOutput(result.stdout);
     expect(output.decision).toBe('block');
-    expect(String(output.additionalContext)).toMatch(/postcheck/i);
-    expect(String(output.additionalContext)).not.toMatch(/RESTARTS at Frankie/i);
+    const context = String(output.additionalContext);
+    expect(context).toMatch(/states no verdict/i);
+    expect(context, 'the remediation is the trailer itself').toMatch(
+      /LAST line must be exactly "VERDICT: FINAL APPROVED" or "VERDICT: FINAL REJECTED"/
+    );
+    expect(context).not.toMatch(/RESTARTS at Frankie/i);
+    expect(context, 'post-checks are not owed on an unknown verdict').not.toMatch(
+      /Run ateam missions-postcheck/i
+    );
   });
 
   it('enforce-orchestrator-stop: FINAL APPROVED with passing postchecks allows the stop (rejection gate is inert)', () => {
@@ -1307,7 +1321,7 @@ describe('Final Mission Review verdict gate', () => {
     expect(result.stderr).toMatch(/FINAL REJECTED/);
     expect(result.stderr).toMatch(/RESTARTS at Frankie/i);
     expect(result.stderr).toMatch(/FULL Definition of Done/i);
-    expect(result.stderr).not.toMatch(/Run ateam missions postcheck/i);
+    expect(result.stderr).not.toMatch(/Run ateam missions-postcheck/i);
   });
 
   it('enforce-final-review: FINAL APPROVED proceeds to the postcheck gate (exit 2, postcheck message)', () => {
@@ -1325,7 +1339,7 @@ describe('Final Mission Review verdict gate', () => {
     expect(result.stderr).not.toMatch(/RESTARTS at Frankie/i);
   });
 
-  it('enforce-final-review: review text with no recognizable marker preserves current behavior (postcheck gate)', () => {
+  it('enforce-final-review: a review that states NO verdict fails CLOSED with the trailer requirement (exit 2)', () => {
     const result = runHook(
       hookPath('enforce-final-review.js'),
       {},
@@ -1336,7 +1350,10 @@ describe('Final Mission Review verdict gate', () => {
       repoWithEvidence()
     );
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toMatch(/Post-mission checks required/i);
+    expect(result.stderr).toMatch(/states no verdict/i);
+    expect(result.stderr).toMatch(
+      /LAST line must be exactly "VERDICT: FINAL APPROVED" or "VERDICT: FINAL REJECTED"/
+    );
     expect(result.stderr).not.toMatch(/RESTARTS at Frankie/i);
   });
 });
@@ -1804,7 +1821,7 @@ describe('Stop hooks — mission-completion gates cannot be walked past', () => 
       output.decision,
       'the mission state alone is not evidence a post-check ran'
     ).toBe('block');
-    expect(String(output.additionalContext)).toMatch(/ateam missions postcheck/);
+    expect(String(output.additionalContext)).toMatch(/ateam missions-postcheck/);
   });
 
   it('enforce-orchestrator-stop: once post-checks complete the mission, the stop is allowed (end-of-mission lifecycle)', () => {
@@ -1864,10 +1881,14 @@ describe('Stop hooks — mission-completion gates cannot be walked past', () => 
   // -------------------------------------------------------------------------
   // Finding 6: staged items are counted per MISSION, not per project
   // -------------------------------------------------------------------------
-  it('enforce-orchestrator-stop: an orphaned staged item from another mission does not block this mission', () => {
-    // /api/board is project-wide; promotion only sweeps the current mission.
-    // The orphan could never be cleared by "re-POST the final review", so it
-    // must not be what blocks the stop.
+  it('enforce-orchestrator-stop: an orphaned staged item BLOCKS and is named — mission scoping must not make it vanish', () => {
+    // /api/board is project-wide; promotion only sweeps the current mission,
+    // so "re-POST the final review" could never clear this item — which is why
+    // it is not counted into the promotion gate. But scoping it out of the
+    // COUNTS also scoped it out of every GATE: with the mission's own staged
+    // count at 0, this hook emitted {} on the FIRST stop and the item was
+    // stranded in staged forever. Orphans now block in their own right, with a
+    // remediation that actually clears them.
     const result = runHook(
       hookPath('enforce-orchestrator-stop.js'),
       {},
@@ -1883,11 +1904,34 @@ describe('Stop hooks — mission-completion gates cannot be walked past', () => 
       },
       repo()
     );
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision, 'an unexplained staged item is never silently dropped').toBe('block');
+    const context = String(output.additionalContext);
+    expect(context).toMatch(/WI-ORPHAN/);
+    expect(context).toMatch(/belong to NO mission/i);
+    expect(context, 'the operator must be told how to clear it').toMatch(/board-move moveItem/);
+    expect(context).toMatch(/ATEAM_SKIP_PROMOTION_GATE=1/);
+  });
+
+  it('enforce-orchestrator-stop: ATEAM_SKIP_PROMOTION_GATE=1 is the documented override for the orphan block', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: JSON.stringify({
+          columns: { staged: [{ id: 'WI-ORPHAN' }], done: [{ id: 'WI-001' }] },
+        }),
+        __TEST_MOCK_MISSION__: realMission({
+          state: 'completed',
+          final_review_verdict: APPROVED_REVIEW,
+        }),
+        __TEST_MOCK_MISSION_ITEMS__: JSON.stringify([{ id: 'WI-001' }]),
+        ATEAM_SKIP_PROMOTION_GATE: '1',
+      },
+      repo()
+    );
     expect(result.exitCode).toBe(0);
-    expect(
-      parseStopOutput(result.stdout).decision,
-      'WI-ORPHAN belongs to no current-mission item — it cannot block every future stop'
-    ).not.toBe('block');
+    expect(parseStopOutput(result.stdout).decision).not.toBe('block');
   });
 
   it('enforce-orchestrator-stop: the same orphan IS named, with a workable remediation, when this mission has its own staged items', () => {
@@ -1923,5 +1967,268 @@ describe('Stop hooks — mission-completion gates cannot be walked past', () => 
       repo()
     );
     expect(parseStopOutput(result.stdout).decision).toBe('block');
+  });
+});
+
+// =============================================================================
+// The WHOLE stop lifecycle, both hooks, one fixture table.
+//
+// Three prior rounds each fixed one gate and broke another: the two-stop escape
+// released downstream gates keyed on a doneCount that is 0 by construction; the
+// mission-scoping fix made an orphaned staged item vanish from every count; the
+// pendingCount precondition added to the post-check gate silenced it on the
+// empty board it exists for. Every one of those was a single-gate test passing
+// while the lifecycle regressed, so the lifecycle itself is asserted here as a
+// unit — every scenario against BOTH hooks.
+// =============================================================================
+describe('Stop hooks — the full mission-stop lifecycle (both hooks)', () => {
+  const MISSION_ID = 'M-TEST-LIFECYCLE';
+  const scratchDirs: string[] = [];
+
+  beforeAll(() => setMissionMarker());
+  afterAll(() => {
+    clearMissionMarker();
+    for (const dir of scratchDirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup
+      }
+    }
+  });
+
+  /** Non-drivable repo: the Frankie gate stays inert so the gates under test are isolated. */
+  function repo() {
+    const dir = mkdtempSync(join(tmpdir(), 'ateam-lifecycle-'));
+    scratchDirs.push(dir);
+    writeFileSync(join(dir, 'ateam.config.json'), JSON.stringify({ surfaces: ['hardware'] }));
+    return dir;
+  }
+
+  const APPROVED = '# Final Mission Review\n\nAll requirements met.\n\nVERDICT: FINAL APPROVED';
+  const REJECTED = '# Final Mission Review\n\n- WI-002: regression\n\nVERDICT: FINAL REJECTED';
+  /** A real report whose author forgot to end on the verdict line. */
+  const NO_TRAILER = '# Final Mission Review\n\nVERDICT: FINAL APPROVED\n\n- WI-001: minor nit';
+
+  function board(columns: Record<string, Array<{ id: string }>>) {
+    return JSON.stringify({ columns });
+  }
+  function mission(overrides: Record<string, unknown> = {}) {
+    return JSON.stringify({
+      id: MISSION_ID,
+      state: 'running',
+      final_review_verdict: null,
+      ...overrides,
+    });
+  }
+
+  /**
+   * Runs a scenario against BOTH hooks and normalizes their two very different
+   * block mechanisms (main-session JSON decision vs subagent exit(2)+stderr)
+   * into one { blocked, message } shape, so every assertion below applies to
+   * both without being written twice.
+   */
+  function bothHooks(
+    env: Record<string, string>,
+    stdin: object = {}
+  ): Array<{ hook: string; blocked: boolean; message: string }> {
+    const dir = repo();
+    const orchestrator = runHook(hookPath('enforce-orchestrator-stop.js'), stdin, env, dir);
+    const orchestratorOut = parseStopOutput(orchestrator.stdout);
+    const finalReview = runHook(hookPath('enforce-final-review.js'), stdin, env, dir);
+    const finalReviewOut = parseStopOutput(finalReview.stdout);
+    return [
+      {
+        hook: 'enforce-orchestrator-stop',
+        blocked: orchestratorOut.decision === 'block',
+        message: String(orchestratorOut.additionalContext ?? ''),
+      },
+      {
+        hook: 'enforce-final-review',
+        blocked: finalReview.exitCode === 2 || finalReviewOut.decision === 'block',
+        message: `${finalReview.stderr}\n${finalReviewOut.additionalContext ?? ''}`,
+      },
+    ];
+  }
+
+  // 1 — mid-mission
+  it('(1) mid-mission stop with active items → blocked', () => {
+    for (const r of bothHooks({
+      __TEST_MOCK_BOARD__: board({ implementing: [{ id: 'WI-001' }], review: [{ id: 'WI-002' }] }),
+      __TEST_MOCK_MISSION__: mission(),
+      __TEST_MOCK_MISSION_ITEMS__: JSON.stringify([{ id: 'WI-001' }, { id: 'WI-002' }]),
+    })) {
+      expect(r.blocked, `${r.hook} must block mid-pipeline`).toBe(true);
+      expect(r.message, r.hook).toMatch(/(still active|still in progress)/i);
+    }
+  });
+
+  // 2 — all staged, no verdict, on BOTH the first and the second stop
+  for (const [label, stdin] of [
+    ['stop 1', {}],
+    ['stop 2 (stop_hook_active)', { stop_hook_active: true }],
+  ] as const) {
+    it(`(2) all-staged with NO review → blocked on ${label}`, () => {
+      for (const r of bothHooks(
+        {
+          __TEST_MOCK_BOARD__: board({ staged: [{ id: 'WI-001' }, { id: 'WI-002' }] }),
+          __TEST_MOCK_MISSION__: mission(),
+          __TEST_MOCK_MISSION_ITEMS__: JSON.stringify([{ id: 'WI-001' }, { id: 'WI-002' }]),
+        },
+        stdin
+      )) {
+        expect(
+          r.blocked,
+          `${r.hook}: a mission must never end on ${label} with items staged and no review`
+        ).toBe(true);
+        expect(r.message, r.hook).toMatch(/Final Mission Review|staged/i);
+      }
+    });
+  }
+
+  // 3 — approved + promoted, post-check still owed. Board deliberately EMPTY:
+  //     promotion ran and the items were archived, which is exactly the state
+  //     the pendingCount precondition made this gate silent on.
+  it('(3) approved verdict, promotion done, board empty, post-check not run → blocked', () => {
+    for (const r of bothHooks({
+      __TEST_MOCK_BOARD__: board({}),
+      __TEST_MOCK_MISSION__: mission({ state: 'running', final_review_verdict: APPROVED }),
+      __TEST_MOCK_MISSION_ITEMS__: JSON.stringify([]),
+    })) {
+      expect(r.blocked, `${r.hook}: an empty board is not evidence a post-check ran`).toBe(true);
+      expect(r.message, r.hook).toMatch(/ateam missions-postcheck/);
+    }
+  });
+
+  it('(3b) same, with the promoted items still on the board as done → blocked', () => {
+    for (const r of bothHooks({
+      __TEST_MOCK_BOARD__: board({ done: [{ id: 'WI-001' }] }),
+      __TEST_MOCK_MISSION__: mission({ state: 'running', final_review_verdict: APPROVED }),
+      __TEST_MOCK_MISSION_ITEMS__: JSON.stringify([{ id: 'WI-001' }]),
+    })) {
+      expect(r.blocked, r.hook).toBe(true);
+      expect(r.message, r.hook).toMatch(/ateam missions-postcheck/);
+    }
+  });
+
+  // 4 — the post-check completed the mission: the stop is finally allowed.
+  it('(4) postcheck-completed mission → stop allowed', () => {
+    for (const r of bothHooks({
+      __TEST_MOCK_BOARD__: board({ done: [{ id: 'WI-001' }] }),
+      __TEST_MOCK_MISSION__: mission({ state: 'completed', final_review_verdict: APPROVED }),
+      __TEST_MOCK_MISSION_ITEMS__: JSON.stringify([{ id: 'WI-001' }]),
+    })) {
+      expect(
+        r.blocked,
+        `${r.hook}: POST /api/missions/postcheck is the sole writer of 'completed' — that IS the recorded pass`
+      ).toBe(false);
+    }
+  });
+
+  it('(4b) an empty board with a completed mission also stops cleanly', () => {
+    for (const r of bothHooks({
+      __TEST_MOCK_BOARD__: board({}),
+      __TEST_MOCK_MISSION__: mission({ state: 'completed', final_review_verdict: APPROVED }),
+      __TEST_MOCK_MISSION_ITEMS__: JSON.stringify([]),
+    })) {
+      expect(r.blocked, r.hook).toBe(false);
+    }
+  });
+
+  // 5 — an orphan poisons every one of the above, on the first stop.
+  for (const [label, extra, stdin] of [
+    ['the otherwise-allowed completed mission', { state: 'completed', final_review_verdict: APPROVED }, {}],
+    ['the second stop of an all-staged board', {}, { stop_hook_active: true }],
+  ] as const) {
+    it(`(5) an orphaned staged item blocks ${label}, naming it`, () => {
+      for (const r of bothHooks(
+        {
+          __TEST_MOCK_BOARD__: board({
+            staged: [{ id: 'WI-ORPHAN' }],
+            done: [{ id: 'WI-001' }],
+          }),
+          __TEST_MOCK_MISSION__: mission(extra),
+          __TEST_MOCK_MISSION_ITEMS__: JSON.stringify([{ id: 'WI-001' }]),
+        },
+        stdin
+      )) {
+        expect(r.blocked, `${r.hook}: the orphan must not vanish`).toBe(true);
+        expect(r.message, r.hook).toMatch(/WI-ORPHAN/);
+      }
+    });
+  }
+
+  it("(5b) the author's exact fixture: staged=[WI-1] with mission items=[WI-99] → blocked on the FIRST stop", () => {
+    for (const r of bothHooks({
+      __TEST_MOCK_BOARD__: board({ staged: [{ id: 'WI-1' }] }),
+      __TEST_MOCK_MISSION__: mission(),
+      __TEST_MOCK_MISSION_ITEMS__: JSON.stringify([{ id: 'WI-99' }]),
+    })) {
+      expect(
+        r.blocked,
+        `${r.hook}: every gate went silent here and the hook emitted {} on the first stop`
+      ).toBe(true);
+      expect(r.message, r.hook).toMatch(/WI-1/);
+    }
+  });
+
+  // 6 — a rejected trailer routes to the ADR-0004 restart-at-Frankie block.
+  it('(6) rejected-verdict trailer → the restart-at-Frankie block fires, not the postcheck misdirection', () => {
+    for (const r of bothHooks({
+      __TEST_MOCK_BOARD__: board({ done: [{ id: 'WI-001' }] }),
+      __TEST_MOCK_MISSION__: mission({ final_review_verdict: REJECTED }),
+      __TEST_MOCK_MISSION_ITEMS__: JSON.stringify([{ id: 'WI-001' }]),
+    })) {
+      expect(r.blocked, r.hook).toBe(true);
+      expect(r.message, r.hook).toMatch(/FINAL REJECTED/);
+      expect(r.message, r.hook).toMatch(/RESTARTS at Frankie/i);
+      expect(r.message, r.hook).not.toMatch(/Run ateam missions-postcheck/i);
+    }
+  });
+
+  it('(6b) a rejection is still a rejection when an earlier approval is quoted above it (the flip the old first-line rule allowed)', () => {
+    const flipped =
+      'Context: the earlier pass issued VERDICT: FINAL APPROVED, which was premature.\n\nVERDICT: FINAL REJECTED';
+    for (const r of bothHooks({
+      __TEST_MOCK_BOARD__: board({ done: [{ id: 'WI-001' }] }),
+      __TEST_MOCK_MISSION__: mission({ final_review_verdict: flipped }),
+      __TEST_MOCK_MISSION_ITEMS__: JSON.stringify([{ id: 'WI-001' }]),
+    })) {
+      expect(r.blocked, r.hook).toBe(true);
+      expect(r.message, `${r.hook}: this parsed as APPROVED before the trailer rule`).toMatch(
+        /FINAL REJECTED/
+      );
+    }
+  });
+
+  // 7 — an unknown verdict promoted nothing, so it must not read as complete.
+  it('(7) a review with no verdict trailer → blocked with the trailer requirement; nothing was promoted', () => {
+    for (const r of bothHooks({
+      __TEST_MOCK_BOARD__: board({ staged: [{ id: 'WI-001' }] }),
+      __TEST_MOCK_MISSION__: mission({ final_review_verdict: NO_TRAILER }),
+      __TEST_MOCK_MISSION_ITEMS__: JSON.stringify([{ id: 'WI-001' }]),
+    })) {
+      expect(r.blocked, r.hook).toBe(true);
+      expect(r.message, `${r.hook}: items are still staged — the API promoted nothing`).toMatch(
+        /states no verdict/i
+      );
+      expect(r.message, r.hook).toMatch(
+        /LAST line must be exactly "VERDICT: FINAL APPROVED" or "VERDICT: FINAL REJECTED"/
+      );
+    }
+  });
+
+  it('(7b) the unknown-verdict block survives the stop_hook_active re-entry guard — re-POSTing the report always clears it', () => {
+    for (const r of bothHooks(
+      {
+        __TEST_MOCK_BOARD__: board({ done: [{ id: 'WI-001' }] }),
+        __TEST_MOCK_MISSION__: mission({ final_review_verdict: NO_TRAILER }),
+        __TEST_MOCK_MISSION_ITEMS__: JSON.stringify([{ id: 'WI-001' }]),
+      },
+      { stop_hook_active: true }
+    )) {
+      expect(r.blocked, r.hook).toBe(true);
+      expect(r.message, r.hook).toMatch(/states no verdict/i);
+    }
   });
 });

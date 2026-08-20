@@ -27,8 +27,13 @@
  *     graduated spec inside it
  *   - Bash commands whose recognized write-shaped operation (redirection
  *     including `>|`, tee, every mv operand, cp destination, rm/rmdir, ln,
- *     every `sed -i` file operand, touch, truncate, dd of=) targets a
- *     protected path. This is best-effort defense-in-depth, NOT
+ *     every `sed -i` file operand — including bundled clusters like `-Ei` —,
+ *     touch, truncate, dd of=) targets a protected path. Recognition looks
+ *     past leading `VAR=val` assignments and command wrappers (`env`,
+ *     `command`, `nohup`, `exec`, `xargs`, `sudo`, `time`, `nice`), and an
+ *     operand carrying a brace/glob metacharacter is protected when its
+ *     literal prefix lands in the spec tree. This is best-effort
+ *     defense-in-depth, NOT
  *     a shell sandbox — arbitrary shell syntax can defeat the pattern scan
  *     — but every path it DOES recognize is checked against the exact same
  *     allow/block rule as Write/Edit above.
@@ -137,6 +142,37 @@ function isWithin(child, parent) {
   }
   const prefix = parent.endsWith(path.sep) ? parent : parent + path.sep;
   return child.startsWith(prefix);
+}
+
+/**
+ * True if `filePath` resolves to a location OUTSIDE the project root — a
+ * scratch path (`/tmp/playwright/step3.png`, `$TMPDIR/run/video.webm`,
+ * `/var/tmp/trace.zip`) rather than anything this repo owns.
+ *
+ * Deliberately defined as "not under the project root" rather than as a
+ * whitelist of temp directories: Frankie's driver writes screenshots, videos
+ * and traces wherever the platform's temp dir happens to be, and enumerating
+ * those spellings would miss one. Implemented locally rather than importing
+ * lib/scratch-path.js on purpose — that module's root definition is being
+ * revised concurrently, and this guard must not inherit a change to it
+ * unnoticed.
+ *
+ * Fails CLOSED (returns false → "treat as inside, classify it normally") on
+ * every uncertainty: a ".." traversal segment, or a path that cannot be
+ * canonicalized. Symlinks are resolved first, so `/tmp/link -> <repo>/src/app.ts`
+ * is correctly judged INSIDE the project.
+ */
+function isOutsideProjectRoot(filePath) {
+  if (!filePath || hasTraversalSegment(filePath)) {
+    return false;
+  }
+  const root = process.cwd();
+  const canonicalRoot = canonicalizePath(root);
+  const canonicalTarget = canonicalizePath(path.resolve(root, filePath));
+  if (canonicalRoot === null || canonicalTarget === null) {
+    return false;
+  }
+  return !isWithin(canonicalTarget, canonicalRoot);
 }
 
 /**
@@ -380,6 +416,69 @@ function classifyFrankiePath(filePath, specSnapshot) {
     return isImmutable ? { blocked: true, reason: 'spec-immutable' } : { blocked: false };
   }
   return { blocked: true, reason: 'other' };
+}
+
+/**
+ * Shell metacharacters that make an operand a PATTERN the shell expands
+ * before the command ever sees it, rather than a literal path: brace
+ * expansion (`{`), globs (`*`, `?`) and character classes (`[`).
+ */
+const GLOB_META_RE = /[{*?[]/;
+
+/**
+ * The operand's LITERAL prefix — everything before its first expansion
+ * metacharacter — or null when the operand contains none (an ordinary path,
+ * classified as-is).
+ *
+ * `specs/login.flow.yaml{,.disabled}` → `specs/login.flow.yaml`
+ * `specs/*.flow.yaml`                 → `specs/`
+ * `.qa-evidence/M-1/*.png`            → `.qa-evidence/M-1/`
+ */
+function literalPrefixBeforeMeta(operand) {
+  const match = GLOB_META_RE.exec(operand);
+  return match ? operand.slice(0, match.index) : null;
+}
+
+/**
+ * True if `prefix` names a location at or under the spec root. Lexical on
+ * purpose (no realpath): a prefix is a fragment of a path that may not exist
+ * as spelled, and over-matching here only ever blocks MORE, which is the
+ * fail-closed direction.
+ */
+function isSpecTreePrefix(prefix) {
+  if (hasTraversalSegment(prefix)) {
+    // A traversal operand is denied categorically by classifyFrankiePath()
+    // anyway; never let one be judged "inside the spec tree" here.
+    return false;
+  }
+  const root = process.cwd();
+  return isWithin(path.resolve(root, prefix), path.join(root, 'specs'));
+}
+
+/**
+ * Classifies a Bash OPERAND — a path as written on a command line, which
+ * unlike a Write/Edit `file_path` may still contain shell expansions.
+ *
+ * `mv specs/login.flow.yaml{,.disabled}` exited 0 because the un-expanded
+ * token matched no snapshot entry and so classified as a brand-new spec name
+ * — while the shell expands it to
+ * `mv specs/login.flow.yaml specs/login.flow.yaml.disabled`, deleting the
+ * graduated spec from its path. Same hole for `specs/*.flow.yaml`.
+ *
+ * No brace/glob expansion is attempted (that way lies writing a shell).
+ * Instead: an operand carrying an expansion metacharacter whose LITERAL
+ * prefix lands at or under the spec root is protected outright — whatever it
+ * expands to is inside the immutable spec tree. Everything else keeps the
+ * exact classification Write/Edit would give it, so a glob wholly inside
+ * .qa-evidence/ stays allowed (Frankie owns that tree) and a brace token that
+ * never touches specs/ is judged exactly as before.
+ */
+function classifyBashOperand(operand, specSnapshot) {
+  const literalPrefix = literalPrefixBeforeMeta(operand);
+  if (literalPrefix !== null && isSpecTreePrefix(literalPrefix)) {
+    return { blocked: true, reason: 'spec-immutable' };
+  }
+  return classifyFrankiePath(operand, specSnapshot);
 }
 
 /**
@@ -678,6 +777,96 @@ function padRedirectOperators(statement) {
 }
 
 /**
+ * True if `token` is a `sed` in-place flag.
+ *
+ * The old test was a PREFIX match (`/^(?:-i|--in-place)/`), so it recognized
+ * only clusters whose FIRST letter is `i`. `sed -ni`, `sed -Ei` and `sed -ri`
+ * edit in place exactly the same way and sailed through, rewriting graduated
+ * specs. Short flags bundle, so the whole letter run matters, not its head.
+ *
+ * Rules:
+ *   - short form: starts with a single "-", is not the bare "-", and its
+ *     leading FLAG-LETTER run contains "i". The letter run stops at the first
+ *     non-letter, which is what makes `-i.bak` read as the cluster "i" (BSD
+ *     suffix form) and `-e's/a/b/'` read as the cluster "e" (attached script,
+ *     NOT in-place).
+ *   - long form: matched BY NAME (`--in-place`, `--in-place=SUFFIX`), never
+ *     letter-scanned — otherwise every long option containing an "i"
+ *     (`--quiet`, `--silent`, `--separate`) would read as in-place.
+ */
+function isSedInPlaceFlag(token) {
+  if (!token.startsWith('-') || token === '-' || token === '--') {
+    return false;
+  }
+  if (token.startsWith('--')) {
+    return /^--in-place(?:$|=)/.test(token);
+  }
+  const flagLetters = /^[A-Za-z]*/.exec(token.slice(1))[0];
+  return flagLetters.includes('i');
+}
+
+/**
+ * Commands that RUN another command: everything after them (once their own
+ * flags/assignments are skipped) is the real command line. `sudo`, `time` and
+ * `nice` are included for the same reason even though Frankie has no reason
+ * to use them.
+ */
+const WRAPPER_COMMANDS = new Set(['env', 'command', 'nohup', 'exec', 'xargs', 'sudo', 'time', 'nice']);
+
+/** A leading `VAR=val` environment-assignment token. */
+const ASSIGNMENT_TOKEN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/**
+ * Peels leading environment assignments and command wrappers off a statement's
+ * tokens so command recognition sees the REAL command.
+ *
+ * Recognition read argv[0] literally, so any wrapper defeated it outright:
+ * `env FOO=1 sed -i s/a/b/ specs/login.flow.yaml` extracted zero targets and
+ * exited 0 because argv[0] was `env`, which matches no rule. Same for
+ * `command`, `nohup`, `exec`, `xargs`, `sudo`, and a bare `VAR=val` prefix.
+ *
+ * Stripping is iterative, so stacked wrappers (`nohup env FOO=1 sed …`) are
+ * peeled down to `sed`. A wrapper's own flags and assignments are skipped
+ * along with it. This can only ever REVEAL a command that was previously
+ * unrecognized — it never removes a command that used to be recognized — so
+ * the change is strictly in the fail-closed direction.
+ *
+ * Wrappers outside the set above, and flags that take a SEPARATE value
+ * (`nice -n 10 sed …` — the `10` is read as the command name), stay
+ * best-effort/fail-open, as this whole scan is documented to be.
+ */
+function stripLeadingWrappers(tokens) {
+  let remaining = tokens;
+  // Bounded purely as a runaway guard; each iteration consumes >= 1 token.
+  for (let depth = 0; depth < 16; depth++) {
+    let start = 0;
+    while (start < remaining.length && ASSIGNMENT_TOKEN_RE.test(stripQuotes(remaining[start]))) {
+      start++;
+    }
+    if (start >= remaining.length) {
+      return []; // assignments only (`FOO=1`) — no command at all
+    }
+    const head = stripQuotes(remaining[start]).split('/').pop();
+    if (!WRAPPER_COMMANDS.has(head)) {
+      return start === 0 ? remaining : remaining.slice(start);
+    }
+    let next = start + 1;
+    while (next < remaining.length) {
+      const token = stripQuotes(remaining[next]);
+      if (!token.startsWith('-') && !ASSIGNMENT_TOKEN_RE.test(token)) {
+        break;
+      }
+      next++;
+    }
+    remaining = remaining.slice(next);
+    if (remaining.length === 0) {
+      return remaining; // a bare wrapper (`env`, `xargs -0`) — nothing to recognize
+    }
+  }
+  return remaining;
+}
+
+/**
  * Best-effort extraction of write-shaped operations' target paths from a
  * single Bash statement (already split on &&/||/;/|/newline by
  * splitBashStatements). This is NOT a shell parser — variable expansion,
@@ -695,10 +884,15 @@ function padRedirectOperators(statement) {
  * whether the operator stands alone, is glued to the target (`>file`), is
  * glued to the PRECEDING token (`echo hi>file`), or is the noclobber-override
  * `>|` form — padRedirectOperators() normalizes all four), `tee [-a]`,
- * `mv` (EVERY non-flag operand — a source is a deletion), `cp` (destination
- * only — its source is read-only), `rm`/`rmdir`/`touch`/`truncate`/`ln`
- * (every non-flag arg is a target), `sed -i` (every file operand after the
- * script), and `dd of=`.
+ * `mv` (EVERY non-flag operand — a source is a deletion — except a source
+ * that resolves outside the project root, which is scratch), `cp`
+ * (destination only — its source is read-only),
+ * `rm`/`rmdir`/`touch`/`truncate`/`ln` (every non-flag arg is a target),
+ * `sed -i` (every file operand after the script), and `dd of=`.
+ *
+ * Command recognition runs on the tokens left after stripLeadingWrappers()
+ * peels leading environment assignments and wrapper commands, so
+ * `env FOO=1 sed -i …` is recognized as the `sed` it is.
  */
 function extractBashWriteTargets(statement) {
   const targets = [];
@@ -706,6 +900,10 @@ function extractBashWriteTargets(statement) {
   if (rawTokens.length === 0) {
     return targets;
   }
+
+  // Subshell/group wrapping leaves shell punctuation glued to the path:
+  const normalizeOperand = (raw) =>
+    stripQuotes(stripQuotes(raw).replace(/^\(+/, '').replace(/[);]+$/, ''));
 
   const pushTarget = (raw) => {
     if (!raw) return;
@@ -717,7 +915,7 @@ function extractBashWriteTargets(statement) {
     // before classification — a real path ending in ")" only ever loses
     // characters, which can widen a match but never narrows one, so this
     // errs fail-closed.
-    const target = stripQuotes(stripQuotes(raw).replace(/^\(+/, '').replace(/[);]+$/, ''));
+    const target = normalizeOperand(raw);
     if (target && !isBenignRedirectSink(target)) {
       targets.push(target);
     }
@@ -742,8 +940,16 @@ function extractBashWriteTargets(statement) {
     pushTarget(stripQuotes(ofToken).slice('of='.length));
   }
 
-  const cmd = stripQuotes(rawTokens[0]).split('/').pop();
-  const nonFlagArgs = rawTokens
+  // Command recognition runs on what is LEFT after leading environment
+  // assignments and command wrappers are peeled off (`env FOO=1 sed -i …`),
+  // so a wrapper can no longer hide the real command behind argv[0].
+  const cmdTokens = stripLeadingWrappers(rawTokens);
+  if (cmdTokens.length === 0) {
+    return targets;
+  }
+
+  const cmd = stripQuotes(cmdTokens[0]).split('/').pop();
+  const nonFlagArgs = cmdTokens
     .slice(1)
     .map(stripQuotes)
     .filter((w) => w.length > 0 && !w.startsWith('-') && !/[>|;&]/.test(w));
@@ -768,7 +974,23 @@ function extractBashWriteTargets(statement) {
     // specs/login2.flow.yaml` destroys a graduated spec even though its
     // destination is an innocent new spec name. Same "write op in BOTH
     // directions" reasoning as `ln` above.
-    nonFlagArgs.forEach(pushTarget);
+    //
+    // Sources are classified by a SOURCE-specific rule, though. Running the
+    // default-deny write rule over them blocked Frankie's core evidence move
+    // — `mv /tmp/playwright/step3.png .qa-evidence/M-1/step3.png` exited 2
+    // while the identical `cp` was allowed — because a scratch source is not
+    // a path this repo owns at all. A source that resolves OUTSIDE the
+    // project root is therefore skipped; a source INSIDE it keeps full
+    // classification, so moving a graduated spec or an implementation file
+    // still blocks. Destination classification is unchanged: the LAST operand
+    // is always classified, scratch or not.
+    const destinationIndex = nonFlagArgs.length - 1;
+    nonFlagArgs.forEach((operand, index) => {
+      if (index !== destinationIndex && isOutsideProjectRoot(normalizeOperand(operand))) {
+        return;
+      }
+      pushTarget(operand);
+    });
   } else if (cmd === 'cp') {
     // Destination ONLY — unlike mv, a cp source is read-only: the original
     // file survives untouched, so copying a graduated spec somewhere else is
@@ -777,7 +999,7 @@ function extractBashWriteTargets(statement) {
       pushTarget(nonFlagArgs[nonFlagArgs.length - 1]);
     }
   } else if (cmd === 'sed') {
-    const hasInPlace = rawTokens.some((w) => /^(?:-i|--in-place)/.test(stripQuotes(w)));
+    const hasInPlace = cmdTokens.some((w) => isSedInPlaceFlag(stripQuotes(w)));
     if (hasInPlace) {
       // `sed -i` edits EVERY file operand in place, so classifying only the
       // last one (the right heuristic for an mv/cp DESTINATION) let
@@ -799,8 +1021,8 @@ function extractBashWriteTargets(statement) {
       // and the real script is classified as a target too — erring toward
       // MORE targets, never fewer, which is the fail-closed direction.
       let scriptSeen = false;
-      for (let i = 1; i < rawTokens.length; i++) {
-        const operand = stripQuotes(rawTokens[i]);
+      for (let i = 1; i < cmdTokens.length; i++) {
+        const operand = stripQuotes(cmdTokens[i]);
         if (operand.length === 0) {
           continue;
         }
@@ -876,7 +1098,7 @@ try {
     const command = toolInput.command || '';
     for (const statement of splitBashStatements(command)) {
       for (const target of extractBashWriteTargets(statement)) {
-        const verdict = classifyFrankiePath(target, specSnapshot);
+        const verdict = classifyBashOperand(target, specSnapshot);
         if (!verdict.blocked) {
           continue;
         }

@@ -36,12 +36,12 @@ import { prisma } from '@/lib/db';
  * unilaterally — these tests import nothing from the route, so a rename
  * only breaks the response-shape assertions, not a compile-time import.
  *
- * VERDICT PARSING: report fixtures below are constructed to be unambiguous
- * under scripts/hooks/lib/stop-gates.js's parseFinalReviewVerdict() rules
- * (VERDICT: FINAL APPROVED/REJECTED lines take priority; otherwise a bare
- * FINAL APPROVED xor FINAL REJECTED; both-or-neither = unknown). The item's
- * own context asks the API to mirror those exact rules, so these fixtures
- * exercise the real matching contract, not an invented one.
+ * VERDICT PARSING: the verdict is read from ONE place — the report's LAST
+ * non-empty line — by @ai-team/shared's parseFinalReviewVerdict(), the single
+ * copy this route and Hannibal's Stop gates both import. The fixtures below
+ * therefore END on their verdict line; a report that states its verdict
+ * anywhere else parses as 'unknown' and promotes nothing (UNPARSEABLE_REPORT
+ * covers that, and so does a report whose verdict is followed by prose).
  */
 
 const PROJECT_ID = 'test-wi790-promotion-project';
@@ -54,9 +54,9 @@ const MISSION_ID = 'M-wi790-promotion-test';
 const OTHER_MISSION_ID = 'M-wi790-other-mission';
 
 const APPROVED_REPORT =
-  '## Final Mission Review\n\nVERDICT: FINAL APPROVED\n\nAll PRD requirements met, no security issues.';
+  '## Final Mission Review\n\nAll PRD requirements met, no security issues.\n\nVERDICT: FINAL APPROVED';
 const REJECTED_REPORT =
-  '## Final Mission Review\n\nVERDICT: FINAL REJECTED\n\nWI-999 needs rework before promotion.';
+  '## Final Mission Review\n\nWI-999 needs rework before promotion.\n\nVERDICT: FINAL REJECTED';
 const UNPARSEABLE_REPORT =
   '## Final Mission Review\n\nThe team did a great job this mission, nothing further to add.';
 

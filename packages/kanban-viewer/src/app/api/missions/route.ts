@@ -151,6 +151,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // Check for active mission (not archived and not completed) for this project
     // When force: true, find ANY non-archived mission (including failed ones)
+    // orderBy is not cosmetic: an unordered findFirst returns SQLite's lowest
+    // rowid, so with several non-archived missions this reported a STALE one —
+    // the 409's `state` (and its precheck_failure branch) then described a
+    // mission the operator wasn't looking at, and `force: true` archived the
+    // wrong row. Newest-first matches /api/missions/current, /archive and
+    // /postcheck, so every route means the same mission by "the current one".
     const activeMission = await prisma.mission.findFirst({
       where: {
         projectId,
@@ -161,6 +167,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           },
         }),
       },
+      orderBy: { startedAt: 'desc' },
     });
 
     // Guard: if an active mission exists and force is not set, return 409

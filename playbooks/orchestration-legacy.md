@@ -488,12 +488,12 @@ Task(
   2. The mission's commits — correct, consistent, secure?
   3. Integration — do changes wire into the existing codebase?
 
-  Respond with:
-  VERDICT: FINAL APPROVED
-  or
-  VERDICT: FINAL REJECTED
+  Write the full report, then END it with the verdict line — the verdict is
+  read ONLY from the report's LAST non-empty line, and nothing may follow it:
+
   Items requiring fixes: 003, 007
-  Issues: [detailed list]"
+  Issues: [detailed list]
+  VERDICT: FINAL APPROVED   (or VERDICT: FINAL REJECTED)"
 )
 ```
 

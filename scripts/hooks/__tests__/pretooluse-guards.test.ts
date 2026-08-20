@@ -3078,6 +3078,372 @@ describe('block-frankie-writes — agent guards', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // FIX 1 — bundled `sed` short-flag clusters (PR author's inline review).
+  //
+  // The in-place probe was a PREFIX test (`/^(?:-i|--in-place)/`), so it only
+  // ever recognized a cluster whose FIRST letter is `i`. Every other bundling
+  // — `sed -ni`, `sed -Ei`, `sed -ri`, and the unquoted-script form
+  // `sed -Ei s/a/b/ specs/login.flow.yaml` — edits in place exactly the same
+  // way, yet extracted ZERO targets and exited 0 while rewriting a graduated
+  // spec (author-verified by execution).
+  //
+  // Rule: a token is an in-place flag when it starts with "-", is neither "-"
+  // nor "--", and (short form) its leading FLAG-LETTER run — the letters
+  // before any suffix, so `-i.bak` reads as the cluster "i" — contains "i";
+  // or (long form) it is `--in-place` / `--in-place=SUFFIX`. Long options are
+  // matched by name, never letter-scanned, so `--quiet` is not an in-place
+  // flag just because it contains an "i".
+  // ---------------------------------------------------------------------------
+  describe('sed in-place detection covers bundled short-flag clusters (author FIX 1)', () => {
+    const BLOCKED_CLUSTERS: Array<[string, string]> = [
+      ["author repro: bundled `-ni`", "sed -ni 's/a/b/' specs/checkout.flow.yaml"],
+      ["author repro: bundled `-Ei`", "sed -Ei 's/a/b/' specs/checkout.flow.yaml"],
+      ["author repro: bundled `-ri`", "sed -ri 's/a/b/' specs/checkout.flow.yaml"],
+      ['author repro: bundled `-Ei` with an UNQUOTED script', 'sed -Ei s/a/b/ specs/checkout.flow.yaml'],
+      ['already-covered `-i.bak` suffix form stays blocked', "sed -i.bak 's/a/b/' specs/checkout.flow.yaml"],
+      ['already-covered `--in-place=.bak` form stays blocked', "sed --in-place=.bak 's/a/b/' specs/checkout.flow.yaml"],
+    ];
+
+    for (const [label, command] of BLOCKED_CLUSTERS) {
+      it(`blocks: ${label} (exit 2, immutable)`, () => {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(2);
+        expect(result.stderr).toMatch(/BLOCKED/i);
+        expect(result.stderr).toMatch(/immutable/i);
+        expect(result.stderr).toMatch(/specs\/checkout\.flow\.yaml/);
+      });
+    }
+
+    it('blocks a bundled cluster against implementation code too (exit 2, bounce to B.A.)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: "sed -Ei 's/a/b/' src/services/order.ts" },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/src\/services\/order\.ts/);
+      expect(result.stderr).toMatch(/B\.A\./i);
+    });
+
+    it('regression: clusters WITHOUT an "i" are read-only and still allowed on protected paths (exit 0)', () => {
+      for (const command of [
+        "sed -n 's/a/b/p' specs/checkout.flow.yaml",
+        "sed -En 's/a/b/p' specs/checkout.flow.yaml src/services/order.ts",
+        "sed -e 's/a/b/' specs/checkout.flow.yaml",
+        "sed -e's/a/b/' specs/checkout.flow.yaml",
+      ]) {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(0);
+      }
+    });
+
+    it('regression: a bundled in-place cluster entirely inside .qa-evidence/ is still allowed (exit 0)', () => {
+      for (const command of [
+        "sed -Ei 's/a/b/' .qa-evidence/M-1/a.md",
+        "sed -ni 's/a/b/' .qa-evidence/M-1/a.md .qa-evidence/M-1/b.md",
+      ]) {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(0);
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // FIX 2 — brace/glob evasion on protected operands (PR author's inline
+  // review).
+  //
+  // `mv specs/login.flow.yaml{,.disabled}` exits 0: the UN-EXPANDED token
+  // never matches a snapshot entry, so it classifies as a brand-new spec name
+  // (allowed) — while the shell expands it to
+  // `mv specs/login.flow.yaml specs/login.flow.yaml.disabled`, which deletes
+  // the graduated spec from its path (author-verified by execution). Same hole
+  // for `specs/*.flow.yaml`.
+  //
+  // Rule (no brace expansion is attempted — that way lies a shell): if an
+  // operand contains `{`, `*`, `?` or `[`, take its LITERAL prefix up to the
+  // first such metacharacter; when that prefix resolves to a path at or under
+  // the spec root, the operand is protected. Anything else keeps its existing
+  // classification, so a glob wholly inside .qa-evidence/ stays allowed and a
+  // brace token that never touches specs/ is judged exactly as it is today.
+  // ---------------------------------------------------------------------------
+  describe('brace/glob operands whose literal prefix lands under specs/ are protected (author FIX 2)', () => {
+    const BLOCKED_META: Array<[string, string]> = [
+      ["author repro: `mv specs/login.flow.yaml{,.disabled}`", 'mv specs/checkout.flow.yaml{,.disabled}'],
+      ['brace suffix `{,.bak}` on a graduated spec', 'mv specs/checkout.flow.yaml{,.bak}'],
+      ['a `*` glob under the spec root as an mv SOURCE', 'mv specs/*.flow.yaml /tmp/frankie-stash.yaml'],
+      ['a `*` glob under the spec root as an rm operand', 'rm specs/*.flow.yaml'],
+      ['a `?` glob under the spec root', 'rm specs/checkout.flow.yam?'],
+      ['a `[` character class under the spec root', 'rm specs/[cd]heckout.flow.yaml'],
+      ['a brace directly on the spec root', 'rm -rf specs{,-backup}'],
+    ];
+
+    for (const [label, command] of BLOCKED_META) {
+      it(`blocks: ${label} (exit 2, immutable)`, () => {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(2);
+        expect(result.stderr).toMatch(/BLOCKED/i);
+        expect(result.stderr).toMatch(/immutable/i);
+      });
+    }
+
+    it('regression: a glob wholly inside .qa-evidence/ is still allowed — Frankie owns that tree (exit 0)', () => {
+      for (const command of [
+        'rm .qa-evidence/M-1/*.png',
+        'rm -f .qa-evidence/M-1/screenshots/step?.png',
+        'mv .qa-evidence/M-1/step1.png{,.bak}',
+      ]) {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(0);
+      }
+    });
+
+    it('a brace token that never touches specs/ is unaffected by this rule (still the ordinary default-deny, not an immutability denial)', () => {
+      // `mv /tmp/a{,.bak}` was blocked before this fix and stays blocked
+      // after it — but via the pre-existing "everything else" rule, NOT via
+      // the new spec-glob rule. Pinning the REASON is what proves the new
+      // rule did not widen its reach beyond the spec root.
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'mv /tmp/a{,.bak}' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).not.toMatch(/immutable/i);
+    });
+
+    it('regression: metacharacter-free spec operands keep their existing classification (exit 0 for a NEW flow file)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'touch specs/brace-free-new-flow.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // FIX 3 — leading-wrapper evasion (PR author's inline review).
+  //
+  // Command recognition read argv[0] literally, so ANY wrapper in front of the
+  // real command defeated it: `env FOO=1 sed -i s/a/b/ specs/login.flow.yaml`
+  // exited 0 because argv[0] was `env`, which matches no rule
+  // (author-verified). Same for `command`, `nohup`, `exec`, `xargs`, and a
+  // bare `VAR=val` assignment prefix.
+  //
+  // Rule: before recognition, iteratively strip leading `VAR=val` assignments
+  // and a known wrapper (`env`, `command`, `nohup`, `exec`, `xargs`, `sudo`,
+  // `time`, `nice`) together with its own flags/assignments, then recognize on
+  // what is left. Iterating covers stacked wrappers (`nohup env FOO=1 sed …`).
+  // Unknown wrappers remain best-effort/fail-open, as documented.
+  // ---------------------------------------------------------------------------
+  describe('leading wrappers and assignment prefixes do not hide the real command (author FIX 3)', () => {
+    const WRAPPED_BLOCKED: Array<[string, string]> = [
+      ['author repro: `env FOO=1` prefix', 'env FOO=1 sed -i s/a/b/ specs/checkout.flow.yaml'],
+      ['`command` builtin prefix', 'command sed -i s/a/b/ specs/checkout.flow.yaml'],
+      ['`nohup` prefix', 'nohup sed -i s/a/b/ specs/checkout.flow.yaml'],
+      ['`exec` prefix', 'exec sed -i s/a/b/ specs/checkout.flow.yaml'],
+      ['`xargs` prefix', 'xargs sed -i s/a/b/ specs/checkout.flow.yaml'],
+      ['bare `VAR=val` assignment prefix', 'FOO=1 sed -i s/a/b/ specs/checkout.flow.yaml'],
+      ['stacked wrappers `nohup env FOO=1`', 'nohup env FOO=1 sed -i s/a/b/ specs/checkout.flow.yaml'],
+      ['wrapper with its own flags (`xargs -0 -n1`)', 'xargs -0 -n1 sed -i s/a/b/ specs/checkout.flow.yaml'],
+      ['`sudo` prefix', 'sudo sed -i s/a/b/ specs/checkout.flow.yaml'],
+      ['absolute wrapper path (`/usr/bin/env`)', '/usr/bin/env sed -i s/a/b/ specs/checkout.flow.yaml'],
+    ];
+
+    for (const [label, command] of WRAPPED_BLOCKED) {
+      it(`blocks: ${label} (exit 2, immutable)`, () => {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(2);
+        expect(result.stderr).toMatch(/BLOCKED/i);
+        expect(result.stderr).toMatch(/immutable/i);
+      });
+    }
+
+    it('blocks a wrapped `rm` of implementation code (exit 2, bounce to B.A.)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'env FOO=1 rm src/services/order.ts' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/src\/services\/order\.ts/);
+      expect(result.stderr).toMatch(/B\.A\./i);
+    });
+
+    it('regression: wrapped commands writing into allowed paths are still allowed (exit 0)', () => {
+      for (const command of [
+        'env FOO=1 echo hi > .qa-evidence/M-1/x',
+        'nohup rm .qa-evidence/M-1/old.png',
+        "env FOO=1 sed -i 's/a/b/' .qa-evidence/M-1/a.md",
+        'env FOO=1 touch specs/wrapper-new-flow.flow.yaml',
+      ]) {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(0);
+      }
+    });
+
+    it('does not crash on a wrapper with no command after it (exit 0, fail-open)', () => {
+      for (const command of ['env', 'env FOO=1', 'nohup', 'xargs -0', 'FOO=1']) {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(0);
+        expect(result.stderr).toBe('');
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // FIX 4 — the mv every-operand rule must not block Frankie's own evidence
+  // collection (author-verified regression from the previous round).
+  //
+  // Classifying EVERY mv operand is right for a source INSIDE the project (an
+  // mv source is a deletion), but it also ran the default-deny rule over
+  // scratch sources: `mv /tmp/playwright/step3.png .qa-evidence/M-1/step3.png`
+  // — Frankie's core evidence-collection move — exited 2, while the equivalent
+  // `cp` was allowed.
+  //
+  // Rule: sources get a SOURCE-specific test. A source that resolves (through
+  // realpath, separator-guarded) outside the project root is scratch and is
+  // allowed; a source inside the project root goes through the ordinary
+  // classification, so moving a graduated spec or an implementation file still
+  // blocks. Destination classification is unchanged.
+  // ---------------------------------------------------------------------------
+  describe('mv SOURCES outside the project root are scratch, not protected writes (author FIX 4)', () => {
+    it("author repro: `mv /tmp/playwright/step3.png .qa-evidence/M-1/step3.png` is allowed (exit 0)", () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'mv /tmp/playwright/step3.png .qa-evidence/M-1/step3.png' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('mv and cp now agree on that move — the asymmetry the author flagged is gone (both exit 0)', () => {
+      const mvResult = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'mv /tmp/playwright/step3.png .qa-evidence/M-1/step3.png' },
+      });
+      const cpResult = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'cp /tmp/playwright/step3.png .qa-evidence/M-1/step3.png' },
+      });
+      expect(mvResult.exitCode).toBe(cpResult.exitCode);
+      expect(mvResult.exitCode).toBe(0);
+    });
+
+    it('allows other scratch sources Frankie actually uses (os tmpdir, /var/tmp) (exit 0)', () => {
+      for (const command of [
+        `mv ${join(tmpdir(), 'frankie-run', 'video.webm')} .qa-evidence/M-1/video.webm`,
+        'mv /var/tmp/trace.zip .qa-evidence/M-1/trace.zip',
+      ]) {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(0);
+      }
+    });
+
+    it('blocks a PROTECTED source: `mv specs/checkout.flow.yaml /tmp/x` (exit 2, immutable)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'mv specs/checkout.flow.yaml /tmp/x' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/immutable/i);
+      expect(result.stderr).toMatch(/specs\/checkout\.flow\.yaml/);
+    });
+
+    it('blocks an implementation source: `mv src/app.ts /tmp/x` (exit 2, bounce to B.A.)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'mv src/app.ts /tmp/x' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/src\/app\.ts/);
+      expect(result.stderr).toMatch(/B\.A\./i);
+    });
+
+    it('regression: `mv` entirely inside .qa-evidence/ is still allowed (exit 0)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'mv .qa-evidence/M-1/a.png .qa-evidence/M-1/b.png' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('regression: an out-of-tree DESTINATION is still blocked — only SOURCES get the scratch rule (exit 2)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'mv .qa-evidence/M-1/a.png /tmp/frankie-elsewhere.png' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+    });
+
+    it('regression: a scratch source does not launder a protected DESTINATION (exit 2)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'mv /tmp/scratch.ts src/services/order.ts' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/src\/services\/order\.ts/);
+    });
+
+    it('a source containing a ".." traversal segment is never treated as scratch (exit 2, fail closed)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'mv specs/../src/services/order.ts .qa-evidence/M-1/order.ts' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Snapshot key case-folding (bypass review, finding 3).
   //
   // On a case-insensitive volume (darwin/win32) the snapshot's exact-string

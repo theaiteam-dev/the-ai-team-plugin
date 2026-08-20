@@ -352,7 +352,7 @@ describe('enforce-orchestrator-stop — real API path', async () => {
   it('allows the stop once every gate is genuinely satisfied via the real API shapes', async () => {
     state.items = [{ id: 'WI-001', stageId: 'done' }];
     state.missionState = 'completed';
-    state.finalReview = '# Final Mission Review\n\nAPPROVED';
+    state.finalReview = '# Final Mission Review\n\nVERDICT: FINAL APPROVED';
     const dir = makeScratchRepo({ surfaces: ['web'], evidence: true });
 
     const result = await runHookLive(HOOK, {}, dir);
@@ -364,7 +364,7 @@ describe('enforce-orchestrator-stop — real API path', async () => {
   it('blocks with the restart-at-Frankie path when the stored review carries VERDICT: FINAL REJECTED (real final-review route)', async () => {
     state.items = [{ id: 'WI-001', stageId: 'done' }];
     state.missionState = 'completed';
-    state.finalReview = '# Final Mission Review\n\nVERDICT: FINAL REJECTED\n\n- WI-001: broken';
+    state.finalReview = '# Final Mission Review\n\n- WI-001: broken\n\nVERDICT: FINAL REJECTED';
     const dir = makeScratchRepo({ surfaces: ['web'], evidence: true });
 
     const output = parseStopOutput((await runHookLive(HOOK, {}, dir)).stdout);
@@ -372,7 +372,7 @@ describe('enforce-orchestrator-stop — real API path', async () => {
     expect(output.decision).toBe('block');
     expect(String(output.additionalContext)).toMatch(/FINAL REJECTED/);
     expect(String(output.additionalContext)).toMatch(/RESTARTS at Frankie/i);
-    expect(String(output.additionalContext)).not.toMatch(/Run ateam missions postcheck/i);
+    expect(String(output.additionalContext)).not.toMatch(/Run ateam missions-postcheck/i);
   });
 
   it('blocks a RUNNING mission with an approved review over the real API path — the payload carries no post-check evidence', async () => {
@@ -391,10 +391,13 @@ describe('enforce-orchestrator-stop — real API path', async () => {
     expect(String(output.additionalContext)).toMatch(/post-check/i);
   });
 
-  it('scopes staged items to the current mission — an orphan from an earlier mission does not block the stop', async () => {
+  it('scopes staged items to the current mission AND blocks on the orphan it scoped out, over the real API path', async () => {
     // /api/board is project-wide; promotion only ever sweeps the current
     // mission's items, so a staged straggler could never be cleared by
-    // re-POSTing a review. Driven through the real /api/items?missionId= route.
+    // re-POSTing a review — which is why it is kept out of the promotion
+    // COUNTS. Keeping it out of the GATES too let it vanish, and the mission
+    // ended with an unexplained item parked in staged. Driven through the real
+    // /api/items?missionId= route.
     state.items = [
       { id: 'WI-001', stageId: 'done' },
       { id: 'WI-ORPHAN', stageId: 'staged' },
@@ -410,6 +413,39 @@ describe('enforce-orchestrator-stop — real API path', async () => {
       requestedPaths.some((p) => p.startsWith('/api/items?missionId=')),
       `hook never asked for mission membership — requested: ${JSON.stringify(requestedPaths)}`
     ).toBe(true);
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/WI-ORPHAN/);
+    expect(String(output.additionalContext)).toMatch(/belong to NO mission/i);
+  });
+
+  it('blocks a RUNNING mission with an approved review and an EMPTY board over the real API path (promoted then archived — the post-check is still owed)', async () => {
+    // The board carries nothing at all: the approved review promoted every item
+    // and archival took them off the board. The hook used to read "no items" as
+    // "no mission" and allow the stop BEFORE it had even fetched the mission,
+    // so the post-check never ran and the mission stayed `running` forever.
+    state.items = [];
+    state.missionItemIds = [];
+    state.missionState = 'running';
+    state.finalReview = '# Final Mission Review\n\nVERDICT: FINAL APPROVED\n';
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: true });
+
+    const output = parseStopOutput((await runHookLive(HOOK, {}, dir)).stdout);
+
+    expect(output.decision, 'an empty board is not evidence a post-check ran').toBe('block');
+    expect(String(output.additionalContext)).toMatch(/ateam missions-postcheck/);
+  });
+
+  it('an empty board with NO review still allows the stop over the real API path (a mission that has not created items yet)', async () => {
+    state.items = [];
+    state.missionItemIds = [];
+    state.missionState = 'running';
+    state.finalReview = null;
+    const dir = makeScratchRepo({ surfaces: ['web'] });
+
+    const result = await runHookLive(HOOK, {}, dir);
+
     expect(result.exitCode).toBe(0);
     expect(parseStopOutput(result.stdout).decision).not.toBe('block');
   });
@@ -482,7 +518,7 @@ describe('enforce-final-review — real API path', async () => {
   it('allows the stop once every gate is genuinely satisfied via the real API shapes', async () => {
     state.items = [{ id: 'WI-001', stageId: 'done' }];
     state.missionState = 'completed';
-    state.finalReview = '# Final Mission Review\n\nAPPROVED';
+    state.finalReview = '# Final Mission Review\n\nVERDICT: FINAL APPROVED';
     const dir = makeScratchRepo({ surfaces: ['web'], evidence: true });
 
     const result = await runHookLive(HOOK, {}, dir);

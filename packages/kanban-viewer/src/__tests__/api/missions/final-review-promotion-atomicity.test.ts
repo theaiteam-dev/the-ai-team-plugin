@@ -59,7 +59,7 @@ function buildContext(missionId: string) {
   return { params: Promise.resolve({ missionId }) };
 }
 
-const APPROVED_REPORT = '## Final Mission Review\n\nVERDICT: FINAL APPROVED\n\nAll good.';
+const APPROVED_REPORT = '## Final Mission Review\n\nAll good.\n\nVERDICT: FINAL APPROVED';
 
 const mockMission = { id: 'M-001', projectId: 'project-a', name: 'Test Mission', finalReview: null };
 
@@ -143,7 +143,7 @@ describe('POST /api/missions/[missionId]/final-review — AC2 transaction atomic
   });
 
   it('a rejected verdict does not require touching the promotion machinery at all (sanity: this file only asserts the approved/atomicity path)', async () => {
-    const REJECTED_REPORT = '## Final Mission Review\n\nVERDICT: FINAL REJECTED\n\nNeeds rework.';
+    const REJECTED_REPORT = '## Final Mission Review\n\nNeeds rework.\n\nVERDICT: FINAL REJECTED';
     mockPrisma.$transaction.mockImplementation(
       async (callback: (tx: typeof txMock) => Promise<unknown>) => callback(txMock)
     );

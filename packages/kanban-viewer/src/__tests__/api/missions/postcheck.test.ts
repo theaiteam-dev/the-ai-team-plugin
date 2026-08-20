@@ -729,43 +729,103 @@ describe('POST /api/missions/postcheck', () => {
   });
 
   describe('invalid mission state', () => {
-    it('should only run postcheck on mission in running state', async () => {
-      mockPrismaClient.mission.findFirst.mockResolvedValue({
-        ...mockMission,
-        state: 'initializing' as MissionState,
+    /**
+     * Stands in for the real query: the route now filters on `state: 'running'`
+     * in the WHERE clause rather than fetching whatever findFirst returns and
+     * checking afterwards, so a mock that ignores the WHERE clause would report
+     * a pass no matter what the route asked for. This mock answers the query it
+     * was actually given, against a fixed table of missions.
+     */
+    function withMissions(missions: Mission[]) {
+      mockPrismaClient.mission.findFirst.mockImplementation(
+        async (args: { where?: { state?: string }; orderBy?: { startedAt?: string } } = {}) => {
+          let rows = missions.filter(
+            (m) => !args.where?.state || m.state === args.where.state
+          );
+          if (args.orderBy?.startedAt === 'desc') {
+            rows = [...rows].sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
+          }
+          return rows[0] ?? null;
+        }
+      );
+    }
+
+    for (const state of ['initializing', 'completed', 'failed'] as MissionState[]) {
+      it(`rejects postcheck with 400 INVALID_MISSION_STATE when the only mission is ${state}`, async () => {
+        withMissions([{ ...mockMission, state }]);
+
+        const response = await POST(makeRequest(passingBody));
+
+        expect(response.status).toBe(400);
+        const data: ApiError = await response.json();
+        expect(data.success).toBe(false);
+        expect(data.error.code).toBe('INVALID_MISSION_STATE');
+        expect(data.error.message, 'names the state the operator is actually in').toContain(state);
       });
+    }
+
+    it('returns 404 NO_ACTIVE_MISSION when the project has no non-archived mission at all', async () => {
+      withMissions([]);
 
       const response = await POST(makeRequest(passingBody));
 
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(404);
       const data: ApiError = await response.json();
-      expect(data.success).toBe(false);
+      expect(data.error.code).toBe('NO_ACTIVE_MISSION');
     });
 
-    it('should reject postcheck on completed mission', async () => {
-      mockPrismaClient.mission.findFirst.mockResolvedValue({
+    it('selects the RUNNING mission even when a stale completed one sorts first — an unordered, unfiltered findFirst 400d forever', async () => {
+      // The exact production trap: SQLite's findFirst with no state filter and
+      // no ordering returns the LOWEST rowid, so stale completed M1 shadowed
+      // running M2. This route is the only writer of state 'completed', and the
+      // only remediation the Stop gates can offer — so a permanent 400 here
+      // left the mission stuck 'running' and POST /api/missions 409ing.
+      const staleCompleted: Mission = {
         ...mockMission,
+        id: 'M-STALE',
         state: 'completed' as MissionState,
-      });
+        startedAt: new Date('2026-01-01T00:00:00Z'),
+      };
+      const runningNow: Mission = {
+        ...mockMission,
+        id: 'M-RUNNING',
+        state: 'running' as MissionState,
+        startedAt: new Date('2026-02-01T00:00:00Z'),
+      };
+      withMissions([staleCompleted, runningNow]);
 
       const response = await POST(makeRequest(passingBody));
 
-      expect(response.status).toBe(400);
-      const data: ApiError = await response.json();
-      expect(data.success).toBe(false);
+      expect(response.status).toBe(200);
+      expect(
+        mockPrismaClient.mission.update,
+        'the RUNNING mission is the one that gets post-checked'
+      ).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'M-RUNNING' } }));
     });
 
-    it('should reject postcheck on failed mission', async () => {
-      mockPrismaClient.mission.findFirst.mockResolvedValue({
-        ...mockMission,
-        state: 'failed' as MissionState,
-      });
+    it('picks the most recently started running mission when several are running', async () => {
+      withMissions([
+        { ...mockMission, id: 'M-OLD', startedAt: new Date('2026-01-01T00:00:00Z') },
+        { ...mockMission, id: 'M-NEW', startedAt: new Date('2026-03-01T00:00:00Z') },
+      ]);
 
       const response = await POST(makeRequest(passingBody));
 
-      expect(response.status).toBe(400);
-      const data: ApiError = await response.json();
-      expect(data.success).toBe(false);
+      expect(response.status).toBe(200);
+      expect(mockPrismaClient.mission.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'M-NEW' } })
+      );
+    });
+
+    it('asks the database for a running, non-archived mission newest-first — the filter is in the query, not an afterthought', async () => {
+      withMissions([mockMission]);
+
+      await POST(makeRequest(passingBody));
+
+      expect(mockPrismaClient.mission.findFirst).toHaveBeenCalledWith({
+        where: { projectId: 'test-project', archivedAt: null, state: 'running' },
+        orderBy: { startedAt: 'desc' },
+      });
     });
   });
 

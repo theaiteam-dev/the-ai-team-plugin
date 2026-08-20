@@ -4,9 +4,11 @@
  *
  * Blocks Lynch from writing or editing any files. Lynch is a code reviewer —
  * he reviews statically and must NOT modify source files, tests, or docs.
- * /tmp/ and /var/ are allowed as scratch space — see lib/scratch-path.js:
- * the path is canonicalized (".." collapsed, symlinks resolved) before the
- * allowlist test, so `/tmp/../<repo>/src/app.ts` is NOT scratch.
+ * The system temp dirs are allowed as scratch space — see lib/scratch-path.js:
+ * the path is canonicalized (".." collapsed, symlinks resolved) and the project
+ * root is excluded before the allowlist test, so `/tmp/../<repo>/src/app.ts` is
+ * NOT scratch, and neither is `<repo>/src/app.ts` on a repo that lives under
+ * /tmp.
  *
  * Claude Code sends hook context via stdin JSON (tool_name, tool_input).
  */
@@ -15,6 +17,18 @@ import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
 import { isScratchPath } from './lib/scratch-path.js';
 import { denyAndExit } from './lib/send-denied-event.js';
+
+/**
+ * Project root for the scratch-space exclusion. Claude Code sends the session
+ * cwd in the hook payload; the hook process is started there too, so
+ * process.cwd() is the fallback. Passed EXPLICITLY into isScratchPath so a
+ * repo that lives under a temp root (macOS $TMPDIR, a /tmp worktree, a CI
+ * sandbox) never gets a scratch allowance for its own files.
+ */
+function projectRootFrom(input) {
+  const fromPayload = input && typeof input.cwd === 'string' ? input.cwd : '';
+  return fromPayload !== '' ? fromPayload : process.cwd();
+}
 
 try {
   let hookInput = {};
@@ -43,9 +57,10 @@ try {
 
   const filePath = (hookInput.tool_input && hookInput.tool_input.file_path) || '';
 
-  // Allow /tmp/ and /var/ as scratch space — but only where the path REALLY
-  // resolves under them (isScratchPath collapses ".." and follows symlinks).
-  if (!filePath || isScratchPath(filePath)) {
+  // Allow the temp dirs as scratch space — but only where the path REALLY
+  // resolves under them and outside this project (isScratchPath collapses
+  // "..", follows symlinks, and excludes the project root).
+  if (!filePath || isScratchPath(filePath, undefined, projectRootFrom(hookInput))) {
     process.exit(0);
   }
 

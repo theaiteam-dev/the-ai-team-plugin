@@ -27,6 +27,8 @@
  *   ATEAM_PROJECT_ID - Project identifier
  *   ATEAM_SKIP_FRANKIE_GATE - Set to 1 to override the Frankie evidence gate
  *   ATEAM_SKIP_PROMOTION_GATE - Set to 1 to override the staged-not-promoted gate
+ *                              AND the orphaned-staged-item gate (both answer
+ *                              "may this mission end with items still in staged?")
  *
  * For testing:
  *   __TEST_MOCK_BOARD__ - JSON string for fake board response
@@ -49,9 +51,12 @@ import {
   scopeBoardToMission,
   checkFrankieEvidence,
   checkStagedNotPromoted,
+  checkOrphanStagedItems,
   checkFinalReviewRejection,
   checkMissingFinalReview,
+  checkUnparseableVerdict,
   checkPostcheck,
+  parseFinalReviewVerdict,
 } from './lib/stop-gates.js';
 
 const hookInput = readHookInput();
@@ -137,15 +142,6 @@ async function checkCompletion() {
 
   const { activeCounts, totalActive, doneCount, stagedCount } = countBoard(boardData.columns);
 
-  // No items at all — no mission, allow stop. WI-791: a board with only
-  // staged items must NOT take this path (it must proceed to the
-  // Frankie-evidence / not-yet-promoted gates below), so stagedCount is
-  // part of the "genuinely empty" test.
-  if (totalActive === 0 && doneCount === 0 && stagedCount === 0) {
-    console.log(JSON.stringify({}));
-    process.exit(0);
-  }
-
   // Items still active — block stop
   if (totalActive > 0) {
     const summary = Object.entries(activeCounts)
@@ -196,6 +192,25 @@ async function checkCompletion() {
   const scope = scopeBoardToMission(boardData.columns, missionItems);
   const pendingCount = scope.stagedCount + scope.doneCount;
 
+  // A board with nothing on it at all. This used to be an unconditional early
+  // exit taken BEFORE the mission was even fetched ("no items = no mission"),
+  // which is precisely how the post-check gate got skipped: once an APPROVED
+  // review promoted every item to done and those items were archived, the
+  // board went empty and the mission was allowed to end `running`, with no
+  // post-check ever run. Whether a post-check is owed is a fact about the
+  // MISSION, so the empty board only releases the stop when this mission has
+  // no APPROVED review outstanding. Nothing is staged on an empty board, so
+  // there is nothing for the staged/orphan gates to say either way.
+  if (
+    totalActive === 0 &&
+    doneCount === 0 &&
+    stagedCount === 0 &&
+    parseFinalReviewVerdict(missionData.final_review_verdict) !== 'approved'
+  ) {
+    console.log(JSON.stringify({}));
+    process.exit(0);
+  }
+
   // Frankie's mission-tail walk precedes Stockwell's Final Mission Review —
   // same gate enforce-final-review.js applies, shared via lib/stop-gates.js.
   // WI-791: keyed on stagedCount/stagedItems — items sit in staged awaiting
@@ -234,12 +249,35 @@ async function checkCompletion() {
     process.exit(0);
   }
 
+  // A staged item that belongs to no mission must never vanish from the gates.
+  // Scoping the counts to this mission is right for the promotion messages and
+  // wrong as a release: with the mission's own staged count at 0, an orphan
+  // silently dropped out of every count and this hook emitted {} on the FIRST
+  // stop. Blocks on its own, is NOT released by the re-entry guard (attaching /
+  // moving / archiving an orphan is always available), and shares
+  // ATEAM_SKIP_PROMOTION_GATE as the operator override.
+  const orphanBlock = checkOrphanStagedItems(scope.orphanStagedIds);
+  if (orphanBlock) {
+    console.log(JSON.stringify({ decision: 'block', additionalContext: orphanBlock }));
+    process.exit(0);
+  }
+
   const missingReviewBlock = checkMissingFinalReview({
     pendingCount,
     finalReview: missionData.final_review_verdict,
   });
   if (missingReviewBlock) {
     console.log(JSON.stringify({ decision: 'block', additionalContext: missingReviewBlock }));
+    process.exit(0);
+  }
+
+  // A review exists but states no verdict in the one place the verdict is read
+  // from (its last line). Nothing was promoted and the mission's outcome is
+  // unknown — fail CLOSED with the trailer requirement, which the operator
+  // clears by re-POSTing the report with the verdict as its final line.
+  const unparseableBlock = checkUnparseableVerdict(missionData.final_review_verdict);
+  if (unparseableBlock) {
+    console.log(JSON.stringify({ decision: 'block', additionalContext: unparseableBlock }));
     process.exit(0);
   }
 
@@ -254,7 +292,6 @@ async function checkCompletion() {
   }
 
   const postcheckBlock = checkPostcheck({
-    pendingCount,
     finalReview: missionData.final_review_verdict,
     postcheck: missionData.postcheck,
     missionState: missionData.state,

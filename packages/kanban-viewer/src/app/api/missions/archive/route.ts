@@ -25,12 +25,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
     const projectId = projectValidation.projectId;
 
-    // Find current active mission (not archived) for this project
+    // Find the current non-archived mission for this project — the most
+    // recently started one.
+    //
+    // NO state filter, deliberately. Archiving is this project's close-out
+    // move, and the mission it closes out is normally already FINISHED
+    // (`completed` after a passing post-check, or `failed` after a failing
+    // one); it also has to be able to retire a mission abandoned mid-run. An
+    // active-only filter — the right call for /api/missions/postcheck, which
+    // genuinely requires `running` — would make the common case unarchivable.
+    // What was missing here was only DETERMINISM: an unordered findFirst
+    // returns SQLite's lowest rowid, so with a stale unarchived M1 in front of
+    // a newer M2 this route archived the wrong mission. `orderBy startedAt
+    // desc` matches /api/missions/current's tier-2 fallback, so "the current
+    // mission" means the same row in both places.
     const currentMission = await prisma.mission.findFirst({
       where: {
         projectId,
         archivedAt: null,
       },
+      orderBy: { startedAt: 'desc' },
     });
 
     // Return error if no active mission exists

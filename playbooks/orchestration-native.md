@@ -1265,6 +1265,10 @@ Agent(
   2. The mission's commits — correct, consistent, secure?
   3. Integration — do changes wire into the existing codebase?
 
+  End the report with the verdict line — `VERDICT: FINAL APPROVED` or
+  `VERDICT: FINAL REJECTED` must be its LAST non-empty line, with nothing after
+  it; that is the only place the verdict is read from.
+
   When done, run `ateam missions-final-review writeFinalReview --missionId {missionId} --report \"...\"` to persist the review, then send DONE to team-lead (the orchestrator's address — never 'hannibal', which silently bounces; if team-lead errors as an invalid address in headless/print mode, resend to main and use main from then on) with verdict."
 )
 ```

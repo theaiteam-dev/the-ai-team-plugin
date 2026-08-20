@@ -20,6 +20,7 @@
  *   ATEAM_PROJECT_ID - Project identifier
  *   ATEAM_SKIP_FRANKIE_GATE - Set to 1 to override the Frankie evidence gate
  *   ATEAM_SKIP_PROMOTION_GATE - Set to 1 to override the staged-not-promoted gate
+ *                              AND the orphaned-staged-item gate
  *
  * For testing:
  *   __TEST_MOCK_BOARD__ - JSON string for fake board response
@@ -42,8 +43,10 @@ import {
   scopeBoardToMission,
   checkFrankieEvidence,
   checkStagedNotPromoted,
+  checkOrphanStagedItems,
   checkFinalReviewRejection,
   checkMissingFinalReview,
+  checkUnparseableVerdict,
   checkPostcheck,
 } from './lib/stop-gates.js';
 
@@ -199,6 +202,19 @@ async function checkFinalReview() {
     process.exit(2);
   }
 
+  // A staged item belonging to no mission must never vanish from the gates.
+  // Mission scoping is right for the promotion messages and wrong as a release:
+  // with this mission's own staged count at 0, an orphan dropped out of every
+  // count and both hooks allowed the FIRST stop. Blocks on its own, is NOT
+  // released by the re-entry guard (attach / move / archive is always
+  // available), and shares ATEAM_SKIP_PROMOTION_GATE as the override. Kept
+  // identical to enforce-orchestrator-stop.js, its main-session twin.
+  const orphanBlock = checkOrphanStagedItems(scope.orphanStagedIds);
+  if (orphanBlock) {
+    process.stderr.write(`${orphanBlock}\n`);
+    process.exit(2);
+  }
+
   // Items finished the per-item pipeline (staged and/or done) but no review.
   const missingReviewBlock = checkMissingFinalReview({
     pendingCount,
@@ -207,6 +223,15 @@ async function checkFinalReview() {
   if (missingReviewBlock) {
     process.stderr.write('Final Mission Review required.\n');
     process.stderr.write(`${missingReviewBlock}\n`);
+    process.exit(2);
+  }
+
+  // A review exists but states no verdict on its last line — nothing was
+  // promoted and the mission's outcome is unknown. Fail CLOSED; the operator
+  // clears it by re-POSTing the report with the verdict as its final line.
+  const unparseableBlock = checkUnparseableVerdict(missionData.final_review_verdict);
+  if (unparseableBlock) {
+    process.stderr.write(`${unparseableBlock}\n`);
     process.exit(2);
   }
 
@@ -224,7 +249,6 @@ async function checkFinalReview() {
   // closed: only an affirmative postcheck.passed === true (or a mission that
   // has already reached an over state) releases this — see checkPostcheck().
   const postcheckBlock = checkPostcheck({
-    pendingCount,
     finalReview: missionData.final_review_verdict,
     postcheck: missionData.postcheck,
     missionState: missionData.state,

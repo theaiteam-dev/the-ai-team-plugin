@@ -293,7 +293,7 @@ describe('enforce-final-review', () => {
         }),
         __TEST_MOCK_MISSION__: JSON.stringify({
           status: 'active',
-          final_review_verdict: 'approved',
+          final_review_verdict: '# Final Mission Review\n\nVERDICT: FINAL APPROVED',
           postcheck: { passed: false },
         }),
       });
@@ -311,14 +311,14 @@ describe('enforce-final-review', () => {
         }),
         __TEST_MOCK_MISSION__: JSON.stringify({
           status: 'active',
-          final_review_verdict: 'approved',
+          final_review_verdict: '# Final Mission Review\n\nVERDICT: FINAL APPROVED',
           postcheck: null,
         }),
       });
 
       expect(result.exitCode).toBe(2);
       // Must reference the ateam CLI command
-      expect(result.stderr).toMatch(/ateam missions postcheck/);
+      expect(result.stderr).toMatch(/ateam missions-postcheck/);
     });
 
     it('should NOT reference legacy mission-postcheck.js script', () => {
@@ -330,7 +330,7 @@ describe('enforce-final-review', () => {
         }),
         __TEST_MOCK_MISSION__: JSON.stringify({
           status: 'active',
-          final_review_verdict: 'approved',
+          final_review_verdict: '# Final Mission Review\n\nVERDICT: FINAL APPROVED',
           postcheck: null,
         }),
       });
@@ -351,7 +351,7 @@ describe('enforce-final-review', () => {
         }),
         __TEST_MOCK_MISSION__: JSON.stringify({
           status: 'active',
-          final_review_verdict: 'approved',
+          final_review_verdict: '# Final Mission Review\n\nVERDICT: FINAL APPROVED',
           postcheck: { passed: true },
         }),
       });

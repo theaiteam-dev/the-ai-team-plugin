@@ -12,9 +12,10 @@
  *   - Type definition files: *.d.ts
  *   - Files inside /types/ directories
  *   - Vitest/Jest setup files: vitest.setup.*, jest.setup.*
- *   - Files in /tmp/ (throwaway scripts) — canonicalized before the allowlist
- *     test (see lib/scratch-path.js), so `/tmp/../<repo>/src/app.ts` is not
- *     treated as scratch.
+ *   - Files in the system temp dirs (throwaway scripts) — canonicalized
+ *     before the allowlist test (see lib/scratch-path.js), so
+ *     `/tmp/../<repo>/src/app.ts` is not treated as scratch, and neither is
+ *     anything under the project root when the repo itself lives under /tmp.
  *
  * Claude Code sends hook context via stdin JSON (tool_name, tool_input).
  */
@@ -23,6 +24,18 @@ import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
 import { isScratchPath, TMP_ONLY_SCRATCH_ROOTS } from './lib/scratch-path.js';
 import { denyAndExit } from './lib/send-denied-event.js';
+
+/**
+ * Project root for the scratch-space exclusion. Claude Code sends the session
+ * cwd in the hook payload; the hook process is started there too, so
+ * process.cwd() is the fallback. Passed EXPLICITLY into isScratchPath so a
+ * repo that lives under a temp root (macOS $TMPDIR, a /tmp worktree, a CI
+ * sandbox) never gets a scratch allowance for its own files.
+ */
+function projectRootFrom(input) {
+  const fromPayload = input && typeof input.cwd === 'string' ? input.cwd : '';
+  return fromPayload !== '' ? fromPayload : process.cwd();
+}
 
 let hookInput = {};
 try {
@@ -57,10 +70,11 @@ try {
     process.exit(0);
   }
 
-  // Allow writes to /tmp/ (throwaway scripts, debugging artifacts) — only
-  // where the path REALLY resolves under /tmp. Murdock's allowlist has never
-  // included /var, so keep it to /tmp alone.
-  if (isScratchPath(filePath, TMP_ONLY_SCRATCH_ROOTS)) {
+  // Allow writes to the temp dirs (throwaway scripts, debugging artifacts) —
+  // only where the path REALLY resolves under one of them AND outside this
+  // project. Murdock's allowlist has never included /var/tmp, so keep it to
+  // /tmp and $TMPDIR alone.
+  if (isScratchPath(filePath, TMP_ONLY_SCRATCH_ROOTS, projectRootFrom(hookInput))) {
     process.exit(0);
   }
 

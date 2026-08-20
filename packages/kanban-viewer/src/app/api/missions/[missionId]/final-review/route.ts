@@ -22,8 +22,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getAndValidateProjectId } from '@/lib/project-utils';
 import { createDatabaseError, createValidationError } from '@/lib/errors';
-import { parseFinalReviewVerdict } from '@/lib/final-review-verdict';
-import { isDependencySatisfied, type StageId } from '@ai-team/shared';
+import { isDependencySatisfied, parseFinalReviewVerdict, type StageId } from '@ai-team/shared';
 import type { ApiError } from '@/types/api';
 import type { WorkLogAction } from '@/types/item';
 

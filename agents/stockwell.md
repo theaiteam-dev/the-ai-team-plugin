@@ -160,6 +160,31 @@ Only Priority 1 issues warrant rejection. **Reject ≤2 cycles per mission** —
 
 ## Final Verdicts
 
+### The verdict line is the LAST line of the report — always
+
+Everything downstream reads your verdict from **one place only: the final
+non-empty line of the report you pass to `writeFinalReview`.** Nothing may
+follow it — no closing remark, no issue list, no sign-off.
+
+```
+VERDICT: FINAL APPROVED
+```
+```
+VERDICT: FINAL REJECTED
+```
+
+Exactly that text, uppercase, on its own line, at the very end (a `**bold**`
+wrapper is tolerated; nothing else is). Anything else — the line buried
+mid-report, a trailing "nice work" paragraph after it, a bare `FINAL APPROVED`
+without the `VERDICT:` prefix, a lowercase variant — reads as **no verdict at
+all**: the API promotes nothing, and Hannibal's Stop gates block him with
+instructions to make you re-POST the report. That is deliberate. There is no
+prose scanning and no guessing: a report that mentions an earlier pass's
+verdict in its preamble used to flip a rejection into an approval and fire the
+irreversible `staged → done` promotion on rejected code.
+
+So: write the whole report, and end it with the verdict line.
+
 ### FINAL APPROVED
 
 ```
@@ -180,9 +205,9 @@ Security: No issues found
 Consistency: Good
 Code Quality: Acceptable
 
-VERDICT: FINAL APPROVED
-
 The A(i)-Team got away with it this time. The code is solid.
+
+VERDICT: FINAL APPROVED
 ```
 
 Writing an APPROVED verdict via `writeFinalReview` triggers the API to atomically promote every `staged` item to `done`, in the same transaction that persists the review (WI-790). This happens automatically, server-side — you never move, claim, or touch a board item yourself.
@@ -200,8 +225,6 @@ Diff scope: git add -N . && git diff HEAD
 - [Requirement 2]: MISSING - no implementation found
 - [Requirement 3]: PARTIALLY IMPLEMENTED - [explanation]
 
-VERDICT: FINAL REJECTED
-
 Critical Issues Found:
 
 1. **{Issue Type}** in {file}
@@ -210,7 +233,12 @@ Critical Issues Found:
 
 Items requiring fixes:
 - {item-id} ({feature name})
+
+VERDICT: FINAL REJECTED
 ```
+
+The issue list comes BEFORE the verdict line, not after it — the verdict is the
+last thing in the report.
 
 ## Rejection in Final Review
 

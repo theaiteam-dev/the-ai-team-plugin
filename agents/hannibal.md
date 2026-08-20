@@ -579,6 +579,8 @@ Use the loaded orchestration playbook's "Final Mission Review Dispatch" section 
 
 ### Handle Final Review Result
 
+**The verdict is read ONLY from the report's LAST non-empty line** (`VERDICT: FINAL APPROVED` / `VERDICT: FINAL REJECTED`, nothing following it). A report that states no verdict there promotes nothing and blocks your stop with instructions to have the review re-POSTed — treat that as "Stockwell has not delivered a verdict yet", not as an approval.
+
 **If FINAL APPROVED:** writing the report with an approved verdict causes the API to promote every item in `staged` to `done`, atomically, in the same transaction that persists the review (WI-790) — you do not move anything yourself. Confirm the promotion happened (e.g. `ateam board getBoard --json` shows `phases.done` now covers every previously-staged item) before proceeding to post-checks. **Fallback:** if the API promotion is ever unavailable, a Hannibal batch `ateam board-move moveItem --itemId <id> --toStage done` per item is the documented fallback path — reviewers never execute it themselves. **Run it ONLY after a FINAL APPROVED review is already persisted** (`ateam missions-final-review getFinalReview --missionId <id> --json` shows the APPROVED report). Moving items to `done` before Stockwell's review is written empties `staged`, and both mission-tail Stop gates key on staged items — a premature batch move silently disarms Frankie's evidence gate AND the not-yet-promoted gate, letting the mission end unreviewed. The API enforces this too: a `staged → done` move is rejected until an approved final review exists for the mission.
 
 ```

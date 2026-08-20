@@ -32,6 +32,12 @@ import { existsSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { canFrankieDrive, readExecutionContractFrom } from './qa-contract.js';
 import { apiEventHeaders } from './observer.js';
+// ONE copy of the verdict rule, shared with the promotion API. These hooks are
+// ESM and resolve this specifier against their own file path, and
+// packages/shared is `"type": "module"` with a COMMITTED dist/ — so the built
+// module imports directly, with no generated mirror to drift. See
+// packages/shared/src/final-review-verdict.ts for the rule itself.
+import { parseFinalReviewVerdict } from '../../../packages/shared/dist/final-review-verdict.js';
 
 /** Stages that mean a mission still has work in flight. */
 export const ACTIVE_STAGES = [
@@ -164,90 +170,27 @@ export function normalizeMission(payload) {
 }
 
 /**
- * Removes fenced code blocks (``` / ~~~) from markdown.
+ * Re-exported so every Stop-gate consumer (and this module's own tests) reads
+ * the verdict through one import. The implementation lives in
+ * packages/shared/src/final-review-verdict.ts and is shared verbatim with the
+ * promotion API — the Stop gates and the transaction that promotes staged
+ * items to done can never disagree about the same report text, because there
+ * is no second copy to disagree with.
  *
- * A final review routinely QUOTES the report format — agents/stockwell.md
- * ships both verdict templates inside fences — so a fenced
- * `VERDICT: FINAL APPROVED` example is documentation, not a verdict. Scanning
- * it would flip a genuine rejection to approved.
- *
- * An unterminated fence drops everything after it: text inside an unclosed
- * fence is unbounded quoted material, and losing a verdict line yields
- * 'unknown' (fail open — the mission tail is never deadlocked), whereas
- * honoring it could hand back the wrong verdict.
- *
- * @param {string} text
- * @returns {string}
+ * The rule in one line: the verdict is the report's LAST non-empty line, or
+ * 'unknown'. 'unknown' fails CLOSED here — see checkUnparseableVerdict().
  */
-function stripFencedBlocks(text) {
-  const kept = [];
-  let fenceChar = null;
-
-  for (const line of text.split('\n')) {
-    const match = line.match(/^\s{0,3}(`{3,}|~{3,})/);
-    if (fenceChar === null) {
-      if (match) {
-        fenceChar = match[1][0];
-        continue;
-      }
-      kept.push(line);
-    } else if (match && match[1][0] === fenceChar) {
-      fenceChar = null;
-    }
-  }
-
-  return kept.join('\n');
-}
+export { parseFinalReviewVerdict };
 
 /**
- * Parses Stockwell's verdict marker out of the final review text.
- *
- * The playbooks standardize the verdict line as `VERDICT: FINAL APPROVED` /
- * `VERDICT: FINAL REJECTED` (playbooks/orchestration-*.md, agents/stockwell.md).
- *
- * Two rules keep a REJECTED review from reading as approved:
- *
- *   1. Fenced code blocks are stripped first — a quoted format reference or
- *      template ("Format reference: ```VERDICT: FINAL APPROVED```") is not a
- *      verdict.
- *   2. The FIRST remaining VERDICT line wins, not the last. In the report
- *      template (agents/stockwell.md) the verdict line precedes the issue
- *      list, so any later "the previous review said VERDICT: FINAL APPROVED,
- *      but that was wrong" prose is commentary ABOUT a verdict, not the
- *      verdict. Last-wins let exactly that prose flip a rejection to approved,
- *      which suppressed the ADR-0004 restart-at-Frankie block and told the
- *      operator to re-POST a rejected review to "trigger promotion". A
- *      re-review is a fresh POST that OVERWRITES mission.finalReview (see
- *      packages/kanban-viewer/src/app/api/missions/[missionId]/final-review/route.ts),
- *      so an appended second verdict is never the real one.
- *
- * When no VERDICT line survives, a bare `FINAL APPROVED` / `FINAL REJECTED`
- * marker is honored only when exactly one of the two appears — anything else
- * is 'unknown', which callers must treat as "review complete" (fail open: an
- * unrecognized marker must never deadlock the mission tail).
- *
- * MIRRORED in packages/kanban-viewer/src/lib/final-review-verdict.ts — the
- * promotion API and these Stop gates must never disagree about the same
- * report text. Change both, or neither.
- *
- * @param {unknown} review - The stored finalReview markdown.
- * @returns {'approved'|'rejected'|'unknown'}
+ * The trailer every block message points the operator back at. Spelled once
+ * so the hooks, agents/stockwell.md, and the playbooks stay literally
+ * identical.
  */
-export function parseFinalReviewVerdict(review) {
-  if (typeof review !== 'string') return 'unknown';
-
-  const scanned = stripFencedBlocks(review);
-
-  const verdictLines = scanned.match(/VERDICT:\s*FINAL\s+(?:APPROVED|REJECTED)/gi);
-  if (verdictLines && verdictLines.length > 0) {
-    return /REJECTED/i.test(verdictLines[0]) ? 'rejected' : 'approved';
-  }
-
-  const approved = /FINAL\s+APPROVED/i.test(scanned);
-  const rejected = /FINAL\s+REJECTED/i.test(scanned);
-  if (approved !== rejected) return approved ? 'approved' : 'rejected';
-  return 'unknown';
-}
+const TRAILER_REQUIREMENT =
+  `The report's LAST line must be exactly "VERDICT: FINAL APPROVED" or "VERDICT: FINAL REJECTED" ` +
+  `(optionally bolded) — nothing may follow it. Re-POST the review with the verdict as the final ` +
+  `line: ateam missions-final-review writeFinalReview.`;
 
 /**
  * Gate: an explicit FINAL REJECTED verdict must not fall through to the
@@ -799,11 +742,9 @@ function stagedNotPromotedMessage(stagedCount, options) {
     }
 
     return (
-      `STOP: a final review has been written but its verdict could not be parsed, and ` +
-      `${stagedCount} item(s) are still staged — promotion only runs on a FINAL APPROVED verdict ` +
-      `(WI-790). Re-POST the review with a standard "VERDICT: FINAL APPROVED" / "VERDICT: FINAL ` +
-      `REJECTED" line (ateam missions-final-review writeFinalReview). The mission cannot stop ` +
-      `while items sit in staged. ${escape}`
+      `STOP: a final review has been written but it states no verdict, and ${stagedCount} item(s) ` +
+      `are still staged — promotion only runs on a FINAL APPROVED verdict (WI-790). ` +
+      `${TRAILER_REQUIREMENT} The mission cannot stop while items sit in staged. ${escape}`
     );
   }
 
@@ -813,6 +754,85 @@ function stagedNotPromotedMessage(stagedCount, options) {
     `its verdict is FINAL APPROVED — dispatch Stockwell if the review has not been written yet, or ` +
     `check the review's verdict if it has already been written. The mission cannot stop while items ` +
     `sit in staged. ${escape}`
+  );
+}
+
+/**
+ * FIX B / fail-closed: a staged item that belongs to NO mission item is not
+ * something to drop on the floor.
+ *
+ * scopeBoardToMission() exists so the promotion gate's counts and messages
+ * describe the CURRENT mission — promotion only ever sweeps this mission's
+ * items, so "re-POST the review" can never clear a straggler from a
+ * force-ended earlier run. That scoping was right for the *message*, and wrong
+ * as a *release*: with the mission's own staged count at 0, every gate went
+ * quiet and the hook emitted {} on the FIRST stop. Board staged=[WI-1] with no
+ * MissionItem link and mission items=[WI-99] ended the session with an
+ * unexplained item sitting in staged forever — strictly worse than the
+ * project-wide count it replaced, which at least blocked.
+ *
+ * So orphans now BLOCK in their own right, named, with the three remediations
+ * that actually clear them. Unlike "re-POST the review", each of these is
+ * something the operator can do, which is what makes this a recoverable block
+ * rather than a trap. It shares ATEAM_SKIP_PROMOTION_GATE with
+ * checkStagedNotPromoted — both answer the same question ("may this mission
+ * end with items still sitting in staged?"), so one override covers both, and
+ * the message says so.
+ *
+ * Deliberately NOT released by the stop_hook_active re-entry guard: attaching,
+ * moving, or archiving an orphan is always available, so this gate cannot
+ * deadlock the way the promotion gate can.
+ *
+ * @param {string[]|undefined} orphanStagedIds - Staged board items with no
+ *   MissionItem link to the current mission (scopeBoardToMission output).
+ * @returns {string|null} A block message, or null when there are no orphans.
+ */
+export function checkOrphanStagedItems(orphanStagedIds) {
+  const orphans = Array.isArray(orphanStagedIds) ? orphanStagedIds.filter(Boolean) : [];
+  if (orphans.length === 0) return null;
+
+  const override = String(process.env.ATEAM_SKIP_PROMOTION_GATE || '')
+    .trim()
+    .toLowerCase();
+  if (override === '1' || override === 'true') return null;
+
+  return (
+    `STOP: ${orphans.length} staged item(s) belong to NO mission — ${orphans.join(', ')}. ` +
+    `They are on the board in 'staged' but carry no MissionItem link to the current mission, so ` +
+    `no final review will ever promote them and no agent will ever pick them up. An unexplained ` +
+    `staged item is never silently ignored. Resolve each one: attach it to this mission (so the ` +
+    `tail covers it), move it back into the pipeline with ` +
+    `'ateam board-move moveItem --itemId <id> --toStage <testing|implementing|ready>' so it can ` +
+    `finish, or archive it so it leaves the board. If this is deliberate and the mission must end ` +
+    `anyway, re-run with ATEAM_SKIP_PROMOTION_GATE=1 — the same override that releases the ` +
+    `staged-not-promoted gate.`
+  );
+}
+
+/**
+ * Gate: a review has been written but its verdict is not readable.
+ *
+ * 'unknown' means the report does not STATE a verdict in the one place the
+ * verdict is read from (its last line) — see
+ * packages/shared/src/final-review-verdict.ts. That is not "review complete":
+ * the promotion transaction promotes nothing on an unknown verdict, so
+ * treating it as complete would end a mission with an unreviewed board and
+ * items that were never promoted.
+ *
+ * It is also always satisfiable — Stockwell (or Hannibal) re-POSTs the same
+ * report with the verdict as its final line — so this blocks unconditionally,
+ * including under the stop_hook_active re-entry guard.
+ *
+ * @param {unknown} review - The mission's final_review_verdict text.
+ * @returns {string|null} A block message, or null to fall through.
+ */
+export function checkUnparseableVerdict(review) {
+  if (typeof review !== 'string' || review.trim() === '') return null;
+  if (parseFinalReviewVerdict(review) !== 'unknown') return null;
+
+  return (
+    `STOP: a Final Mission Review has been written but it states no verdict, so nothing was ` +
+    `promoted and the mission's outcome is unknown. ${TRAILER_REQUIREMENT}`
   );
 }
 
@@ -867,48 +887,61 @@ export function checkMissingFinalReview({ pendingCount, finalReview }) {
 }
 
 /**
- * Gate: the Final Mission Review is written and not rejected, but post-checks
- * have not passed.
+ * Gate: the Final Mission Review is APPROVED, but post-checks have not passed.
  *
- * FAIL CLOSED. `passed` is true only when the mission payload AFFIRMATIVELY
- * says so (`postcheck.passed === true`). An absent `postcheck` key — which is
- * what /api/missions/current actually returns, since it carries no postcheck
- * field at all — is "not passed". The old synthesis (`{ passed: state ===
- * 'completed' }`) turned this into a bare mission-state check that passed with
- * no evidence any post-check ran.
+ * INDEPENDENT OF BOARD CONTENTS (FIX C). This gate used to require
+ * `pendingCount > 0` — a count of the mission's staged + done board items.
+ * That precondition is exactly wrong at the moment the gate matters: once an
+ * APPROVED review promotes every staged item to done (WI-790) and those items
+ * are archived, the board is empty, pendingCount is 0, and the gate went
+ * silent. The post-check never ran, the mission stayed `running` forever, and
+ * every subsequent POST /api/missions 409'd until somebody discovered
+ * `force: true`. Whether a post-check is owed is a fact about the MISSION, not
+ * about how many cards happen to be on the board, so nothing here reads the
+ * board.
  *
- * END-OF-MISSION LIFECYCLE (why this can still ever be satisfied):
+ * THE KEY: an APPROVED verdict exists AND this mission has not recorded a
+ * post-check pass. A rejected verdict is handled upstream by
+ * checkFinalReviewRejection (post-checks must not run at all), and an unknown
+ * verdict by checkUnparseableVerdict — neither reaches this gate, and neither
+ * owes a post-check.
  *
- *   1. Stockwell's APPROVED review promotes staged -> done (WI-790).
- *   2. Hannibal runs post-checks. POST /api/missions/postcheck moves the
- *      mission to `completed` on pass, `failed` on fail — and refuses to run
- *      at all unless the mission is `running`, so a `failed` mission can never
- *      be post-checked again.
- *   3. GET /api/missions/current prefers the ACTIVE mission and only falls
- *      back to the newest non-archived one when no active mission exists, so
- *      from here on the gates see a mission in an over state.
- *   4. This gate stops applying (isMissionActiveState() is false) and Tawnia's
- *      documentation phase — then Hannibal's final stop — is allowed.
+ * "RECORDED A PASS" = mission state `completed`. POST /api/missions/postcheck
+ * is the SOLE writer of that state (`passed: true` -> `completed`,
+ * `passed: false` -> `failed`), and it refuses to run unless the mission is
+ * `running` — so `completed` is positive evidence a post-check ran and passed,
+ * and it cannot be reached any other way. GET /api/missions/current keeps
+ * returning the just-finished mission (its tier-2 fallback), which is what
+ * lets the end-of-mission stop through.
  *
- * Blocking on an over state would be an unclearable trap (there is no way to
- * re-run a post-check on a completed or failed mission), which is why the
- * release is keyed on the lifecycle rather than on the state meaning "passed".
+ * `postcheck.passed === true` in the mission payload is also honored, and is
+ * still fail-closed: only an affirmative `true` counts, never any truthy
+ * value. On the real API that key has never existed (see normalizeMission), so
+ * in production it is always the mission state that releases this gate; the
+ * field is read for normalized/test payloads that carry explicit evidence.
+ *
+ * `failed` and `archived` release it too — not as evidence of a pass, but
+ * because the mission lifecycle is OVER and a post-check can never be re-run
+ * on either (the route requires `running`). Blocking there would be an
+ * unclearable trap; a failed post-check is Hannibal's to report to the human.
  * The board-fact gates above (active items, Frankie evidence, staged not
- * promoted, missing review) keep enforcing regardless of mission state, so an
- * over state can never end a mission with unpromoted items.
+ * promoted, orphaned staged items, missing review, unparseable verdict) keep
+ * enforcing regardless of mission state, so an over state can never end a
+ * mission with unpromoted or unexplained items.
  *
- * @param {{ pendingCount: number, finalReview: unknown, postcheck: unknown, missionState: unknown }} args
+ * @param {{ finalReview: unknown, postcheck: unknown, missionState: unknown }} args
  * @returns {string|null} A block message, or null to fall through.
  */
-export function checkPostcheck({ pendingCount, finalReview, postcheck, missionState }) {
-  if (!(pendingCount > 0)) return null;
-  if (!finalReview) return null;
+export function checkPostcheck({ finalReview, postcheck, missionState }) {
+  if (parseFinalReviewVerdict(finalReview) !== 'approved') return null;
   if (isPlainObject(postcheck) && postcheck.passed === true) return null;
   if (!isMissionActiveState(missionState)) return null;
 
   return (
-    `STOP: the Final Mission Review is complete but post-checks have not passed. ` +
-    `Run ateam missions postcheck (lint, unit, e2e) — the mission cannot end until it reports ` +
-    `passed. Nothing in the mission payload reports a passing post-check yet.`
+    `STOP: the Final Mission Review is FINAL APPROVED but post-checks have not passed. ` +
+    `Run ateam missions-postcheck (lint, unit, e2e) — the mission cannot end until it reports ` +
+    `passed, and nothing on this mission records a passing post-check yet. This is a fact about ` +
+    `the MISSION, not the board: an empty board (items promoted and archived) does not mean the ` +
+    `post-check ran.`
   );
 }

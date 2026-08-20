@@ -14,6 +14,18 @@ import { resolveAgent } from './lib/resolve-agent.js';
 import { isScratchPath } from './lib/scratch-path.js';
 import { denyAndExit } from './lib/send-denied-event.js';
 
+/**
+ * Project root for the scratch-space exclusion. Claude Code sends the session
+ * cwd in the hook payload; the hook process is started there too, so
+ * process.cwd() is the fallback. Passed EXPLICITLY into isScratchPath so a
+ * repo that lives under a temp root (macOS $TMPDIR, a /tmp worktree, a CI
+ * sandbox) never gets a scratch allowance for its own files.
+ */
+function projectRootFrom(input) {
+  const fromPayload = input && typeof input.cwd === 'string' ? input.cwd : '';
+  return fromPayload !== '' ? fromPayload : process.cwd();
+}
+
 let hookInput = {};
 try {
   const raw = readFileSync(0, 'utf8');
@@ -39,10 +51,11 @@ try {
     process.exit(0);
   }
 
-  // Allow writes to /tmp/ and /var/ (throwaway debug scripts, investigation
-  // artifacts) — only where the path REALLY resolves under them
-  // (lib/scratch-path.js collapses ".." and follows symlinks first).
-  if (isScratchPath(filePath)) {
+  // Allow writes to the temp dirs (throwaway debug scripts, investigation
+  // artifacts) — only where the path REALLY resolves under them AND outside
+  // this project (lib/scratch-path.js collapses "..", follows symlinks, and
+  // excludes the project root first).
+  if (isScratchPath(filePath, undefined, projectRootFrom(hookInput))) {
     process.exit(0);
   }
 
