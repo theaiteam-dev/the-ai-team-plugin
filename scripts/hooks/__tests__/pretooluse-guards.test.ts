@@ -2777,6 +2777,30 @@ describe('block-frankie-writes — agent guards', () => {
       expect(result.stderr).toMatch(/immutable/i);
     });
 
+    // Regression: a write THROUGH a symlink that already sits in .qa-evidence/
+    // and points at an existing graduated spec. Frankie cannot plant such a
+    // link himself (the ln guard blocks any link source reaching outside the
+    // evidence dir), but one can be present by another route — a leftover from
+    // a prior mission in the same worktree, a restored/checked-in bundle, a
+    // second agent. The write lands on the immutable spec, so it must block in
+    // SNAPSHOT mode too, not only under the strict existsSync fallback. Both
+    // the Bash and Write forms are checked. (Regressed when isUnderDir's lexical
+    // pre-gate was removed: containment followed the link into specs/, but the
+    // snapshot lookup still used the un-followed .qa-evidence/ path and misread
+    // it as a new spec — see block-frankie-writes.js classifyFrankiePath.)
+    it.each([
+      ['Bash redirect', { tool_name: 'Bash', tool_input: { command: 'echo pwn > .qa-evidence/M-1/pwn' } }],
+      ['Write', { tool_name: 'Write', tool_input: { file_path: '.qa-evidence/M-1/pwn', content: 'pwn' } }],
+    ])('blocks a %s through an evidence-dir symlink into specs/ (exit 2, immutable)', (_label, extra) => {
+      const proj = newProject();
+      const sessionId = freshSession(proj);
+      // Plant the link AFTER the snapshot is frozen, as a stray artifact would be.
+      symlinkSync(join(proj, 'specs', 'login.flow.yaml'), join(proj, '.qa-evidence', 'M-1', 'pwn'));
+      const result = runHookIn(proj, { agent_type: 'frankie', session_id: sessionId, ...extra });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
     it('blocks a directory created MID-session (not in the snapshot, may already hold graduated specs) (exit 2)', () => {
       const proj = newProject();
       const sessionId = freshSession(proj);

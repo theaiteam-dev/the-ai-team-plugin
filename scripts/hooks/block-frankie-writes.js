@@ -426,7 +426,21 @@ function classifyFrankiePath(filePath, specSnapshot) {
     return { blocked: false };
   }
   if (isUnderDir(filePath, 'specs')) {
-    const abs = path.resolve(process.cwd(), filePath);
+    // Resolve the path the write ACTUALLY lands on — follow symlinks — before
+    // deciding existing-vs-new. isUnderDir compares CANONICAL paths, so a
+    // symlink under .qa-evidence/ pointing into specs/ (a leftover bundle, a
+    // restored artifact, another process's link) reaches this branch. Keying
+    // the existing-vs-new decision off the LEXICAL path (`.qa-evidence/...`,
+    // which path.resolve does not follow) then misses the snapshot — the write
+    // onto the graduated spec classifies as a brand-new file and is allowed.
+    // Canonicalize so the directory check and the snapshot lookup both use the
+    // real target; this matches the strict (existsSync) fallback, which already
+    // follows the link. Fail CLOSED if canonicalization is impossible.
+    const canonicalAbs = canonicalizePath(path.resolve(process.cwd(), filePath));
+    const canonicalSpecsRoot = canonicalizePath(path.join(process.cwd(), 'specs'));
+    if (canonicalAbs === null || canonicalSpecsRoot === null) {
+      return { blocked: true, reason: 'spec-immutable' };
+    }
     // The spec ROOT itself, and every directory beneath it, are immutable:
     // deleting or moving a directory destroys every graduated spec inside it,
     // so `rm -rf specs`, `rm -r specs/sub` and `mv specs elsewhere` are as
@@ -438,11 +452,13 @@ function classifyFrankiePath(filePath, specSnapshot) {
     //
     // Only the spec tree gets directory immutability. .qa-evidence/ returns
     // above: that bundle is Frankie's own working area and he may clean it.
-    if (abs === path.join(process.cwd(), 'specs') || isExistingDirectory(abs)) {
+    if (canonicalAbs === canonicalSpecsRoot || isExistingDirectory(canonicalAbs)) {
       return { blocked: true, reason: 'spec-immutable' };
     }
     const isImmutable =
-      specSnapshot !== null ? specSnapshot.has(foldSpecKey(abs)) : existsSync(abs);
+      specSnapshot !== null
+        ? specSnapshot.has(foldSpecKey(canonicalAbs))
+        : existsSync(canonicalAbs);
     return isImmutable ? { blocked: true, reason: 'spec-immutable' } : { blocked: false };
   }
   return { blocked: true, reason: 'other' };
