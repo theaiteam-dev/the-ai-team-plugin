@@ -531,3 +531,43 @@ describe('commands/setup.md and agents/amy.md - managed field documents both val
     expect(content).toMatch(/managed.*true.*(pipeline owns|Frankie)/is);
   });
 });
+
+// ============================================================================
+// agents/frankie.md - graduated-spec protection is described HONESTLY.
+//
+// The PreToolUse hook (scripts/hooks/block-frankie-writes.js) is a pattern
+// scanner over Bash, not a filesystem sandbox. Its detection is now INVERTED
+// -- a write-shaped statement it cannot prove writes only to .qa-evidence/ or
+// a brand-new specs/ file fails CLOSED -- but arbitrary shell can still defeat
+// a scanner, so the agent-facing docs must not sell graduated specs as
+// "immutable by design". The behavioral RULE stays exactly as binding as it
+// was; only the enforcement claim is corrected, and true filesystem-level
+// immutability is named as a separate follow-up.
+// ============================================================================
+describe('agents/frankie.md - graduated-spec rule is stated without overselling the hook', () => {
+  let content;
+
+  beforeAll(() => {
+    content = fs.readFileSync(path.join(process.cwd(), 'agents/frankie.md'), 'utf-8');
+  });
+
+  it('keeps the agent-facing rule intact: never edit an existing spec, add new flow files only', () => {
+    expect(content).toMatch(/Never edit existing files under `specs\/`/i);
+    expect(content).toMatch(/ADD new flow files/i);
+  });
+
+  it('keeps the evidence-bundle rule explicit: writes go under .qa-evidence/', () => {
+    expect(content).toMatch(/\.qa-evidence\//);
+  });
+
+  it('describes hook enforcement as best-effort and fail-closed, not as immutability', () => {
+    expect(content).toMatch(/best-effort/i);
+    expect(content).toMatch(/fails? closed/i);
+    expect(content).not.toMatch(/immutable by design/i);
+  });
+
+  it('names true filesystem-level immutability as a separate follow-up', () => {
+    expect(content).toMatch(/filesystem-level immutability/i);
+    expect(content).toMatch(/follow-up/i);
+  });
+});

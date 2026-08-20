@@ -5,8 +5,7 @@
  * Enforces Frankie's two structural hard rules (agents/frankie.md):
  *   - Never fix the code. Failures bounce back to B.A. with repro steps.
  *   - Never edit an existing file under specs/. Graduated specs are
- *     immutable by design (FlowSpec protection) — only NEW flow files
- *     may be added.
+ *     add-only — only NEW flow files may be added.
  *
  * Allowed:
  *   - Anything under .qa-evidence/ (his evidence bundle)
@@ -19,32 +18,58 @@
  *
  * Blocked:
  *   - An Edit/Write targeting a spec that pre-dates the session snapshot
- *     ("immutable" — graduated specs cannot be altered, only added to)
+ *     (graduated specs are add-only: they cannot be altered, only added to)
  *   - Everything else (implementation, tests, and any other path) —
  *     Frankie's job is to report, not to fix; the failure bounces to B.A.
  *   - An Edit/Write/delete targeting the specs/ directory itself or any
  *     directory under it — a directory move or delete destroys every
  *     graduated spec inside it
- *   - Bash commands whose recognized write-shaped operation (redirection
- *     including `>|`, tee, every mv operand, cp destination, rm/rmdir, ln,
- *     every `sed -i` file operand — including bundled clusters like `-Ei` —,
- *     touch, truncate, dd of=) targets a protected path. Recognition looks
- *     past leading `VAR=val` assignments and command wrappers (`env`,
- *     `command`, `nohup`, `exec`, `xargs`, `sudo`, `time`, `nice`), and an
- *     operand carrying a brace/glob metacharacter is protected when its
- *     literal prefix lands in the spec tree. This is best-effort
- *     defense-in-depth, NOT
- *     a shell sandbox — arbitrary shell syntax can defeat the pattern scan
- *     — but every path it DOES recognize is checked against the exact same
- *     allow/block rule as Write/Edit above.
+ *   - Bash: the decision is INVERTED relative to a blocklist. A write-shaped
+ *     statement is blocked UNLESS every write it performs is provably to an
+ *     allowlisted location. Two detectors feed that:
+ *       (a) extractBashWriteTargets() pulls the target paths out of the
+ *           PARSEABLE writers (redirection including `>|`, tee, every mv
+ *           operand, cp destination, rm/rmdir, ln, every `sed -i` file
+ *           operand — including bundled clusters like `-Ei` —, touch,
+ *           truncate, dd of=) and classifies each with the exact same
+ *           allow/block rule as Write/Edit above. An operand carrying a
+ *           brace/glob metacharacter is protected when its literal prefix
+ *           lands in the spec tree.
+ *       (b) detectUnverifiableWrite() blocks the write-shaped-but-
+ *           UNVERIFIABLE statements — an interpreter running an inline
+ *           script (`bash -c`, `python3 -c`, `perl -pi -e`, `node -e`), a
+ *           `find` carrying a mutating action (`-delete`, `-exec`, …), or a
+ *           known destructive writer whose target set could not be
+ *           extracted at all (`… | xargs rm -f`). Previously each of these
+ *           yielded zero targets and therefore sailed through; they now
+ *           fail CLOSED.
+ *     Both detectors run on the tokens left after leading `VAR=val`
+ *     assignments and command launchers/wrappers are peeled off (`env`,
+ *     `command`, `nohup`, `exec`, `xargs`, `sudo`, `time`, `nice`,
+ *     `timeout`, `stdbuf`, `setsid`, `ionice`, `chrt`), so a launcher can no
+ *     longer hide the real command behind argv[0] — `timeout 5 sed -i …`
+ *     resolves to the `sed -i` it is. The launcher list is deliberately NOT
+ *     the load-bearing part: an unrecognized launcher leaves the inner
+ *     command unresolved, and (b)'s structural checks are what keep that
+ *     honest.
+ *
+ * This is a best-effort scanner, NOT a filesystem sandbox. Arbitrary shell
+ * (a launcher this list doesn't know, a variable-expanded command name, a
+ * script file Frankie wrote earlier and then executes) can still defeat a
+ * pattern scan, so this hook must never be described as making graduated
+ * specs immutable. True filesystem-level immutability — read-only mounts or
+ * file permissions applied to specs/ for the duration of the walk — is a
+ * separate follow-up; until it ships, this hook plus the agent-facing rule
+ * in agents/frankie.md are the enforcement.
  *
  * Fail-closed: if session_id is missing, malformed, or the snapshot can't
  * be written or read, the check falls back to the strict at-call-time
- * existsSync behavior — an error path never weakens the guard. Similarly,
- * the Bash scanner fails OPEN on a command it cannot parse into a
- * recognized write op (this is pattern-matching, not parsing a shell
- * grammar), but fails CLOSED the instant it does recognize one targeting a
- * protected path.
+ * existsSync behavior — an error path never weakens the guard. The Bash
+ * scanner fails CLOSED on every write-shaped statement it recognizes but
+ * cannot verify, and on any recognized target that lands on a protected
+ * path. It still fails OPEN on a statement it does not read as write-shaped
+ * at all (this is pattern-matching, not parsing a shell grammar) — that
+ * residual gap is the follow-up named above.
  *
  * Claude Code sends hook context via stdin JSON (tool_name, tool_input,
  * session_id).
@@ -806,12 +831,94 @@ function isSedInPlaceFlag(token) {
 }
 
 /**
- * Commands that RUN another command: everything after them (once their own
- * flags/assignments are skipped) is the real command line. `sudo`, `time` and
- * `nice` are included for the same reason even though Frankie has no reason
- * to use them.
+ * Splits a single statement into quote-respecting tokens, after normalizing
+ * redirection operator spacing. A quoted argument (e.g. "a > b") stays ONE
+ * opaque token, so its contents are never mistaken for an operator or a
+ * command name.
  */
-const WRAPPER_COMMANDS = new Set(['env', 'command', 'nohup', 'exec', 'xargs', 'sudo', 'time', 'nice']);
+const STATEMENT_TOKEN_RE = /(?:[^\s"']+|"[^"]*"|'[^']*')+/g;
+
+function tokenizeStatement(statement) {
+  return padRedirectOperators(statement).match(STATEMENT_TOKEN_RE) || [];
+}
+
+/**
+ * A path operand with shell wrapping punctuation peeled off.
+ *
+ * `(echo hi > specs/checkout.flow.yaml)` tokenizes the target as
+ * "specs/checkout.flow.yaml)", whose trailing ")" made the graduated-spec
+ * lookup miss and the write classify as a NEW spec (allowed) instead of an
+ * edit to an existing one (blocked). A real path ending in ")" only ever
+ * loses characters here, which can widen a match but never narrows one, so
+ * this errs fail-closed.
+ */
+function normalizeOperand(raw) {
+  return stripQuotes(stripQuotes(raw).replace(/^\(+/, '').replace(/[);]+$/, ''));
+}
+
+/**
+ * The command NAME a token in command position denotes: quotes stripped,
+ * subshell/group punctuation peeled (`(rm` → `rm`), and any directory prefix
+ * dropped (`/usr/bin/env` → `env`).
+ *
+ * Only a token in COMMAND POSITION — argv[0] after wrappers are peeled — is
+ * ever run through this. A writer's name appearing as an ARGUMENT
+ * (`grep -rn "rm -rf specs" .`) is not a command and must never trigger a
+ * block.
+ */
+function commandName(token) {
+  return stripQuotes(token)
+    .replace(/^[({]+/, '')
+    .split('/')
+    .pop();
+}
+
+/**
+ * Commands that RUN another command: everything after them (once their own
+ * flags/assignments/values are skipped) is the real command line. `sudo`,
+ * `time` and `nice` are included for the same reason even though Frankie has
+ * no reason to use them.
+ *
+ * Per launcher:
+ *   - `valueFlags`: separate-form flags whose VALUE is the next token. Without
+ *     this, `nice -n 10 sed -i … specs/x` read `10` as the command name and
+ *     the real `sed -i` was never recognized. Only flags that unambiguously
+ *     require a value are listed — consuming a token that is actually the
+ *     command would WEAKEN the scan, so anything ambiguous (xargs' optional-
+ *     argument `-i`, sudo's overloaded `-h`) is deliberately left out.
+ *   - `leadingOperandRe`: a launcher whose first NON-flag operand is a value,
+ *     not a command — `timeout <duration> cmd`, `chrt <priority> cmd`. Exactly
+ *     one such token is skipped, and only when it matches the shape of that
+ *     launcher's operand, so a mis-parse can never eat the command itself.
+ *
+ * The list is NOT the load-bearing defense: an unknown launcher leaves the
+ * inner command unresolved, and detectUnverifiableWrite() is what stops that
+ * from becoming a bypass. Do not grow this list expecting it to be complete.
+ */
+const WRAPPER_SPECS = new Map([
+  ['env', { valueFlags: new Set(['-u', '--unset', '-C', '--chdir', '-S', '--split-string']) }],
+  ['command', {}],
+  ['nohup', {}],
+  ['exec', { valueFlags: new Set(['-a']) }],
+  ['xargs', { valueFlags: new Set(['-n', '-L', '-P', '-I', '-s', '-d', '-E', '-a']) }],
+  ['sudo', { valueFlags: new Set(['-u', '--user', '-g', '--group', '-p', '--prompt', '-C']) }],
+  ['time', {}],
+  ['nice', { valueFlags: new Set(['-n', '--adjustment']) }],
+  ['ionice', { valueFlags: new Set(['-c', '--class', '-n', '--classdata', '-p', '--pid', '-u', '--uid']) }],
+  [
+    'timeout',
+    {
+      valueFlags: new Set(['-s', '--signal', '-k', '--kill-after']),
+      // `5`, `1.5`, `30s`, `2m`, `1h`, `1d` — coreutils' DURATION grammar.
+      leadingOperandRe: /^\d+(?:\.\d+)?[smhd]?$/,
+    },
+  ],
+  ['stdbuf', { valueFlags: new Set(['-i', '--input', '-o', '--output', '-e', '--error']) }],
+  ['setsid', {}],
+  ['chrt', { valueFlags: new Set(['-p', '--pid', '-T', '--sched-runtime']), leadingOperandRe: /^\d+$/ }],
+]);
+
+const WRAPPER_COMMANDS = new Set(WRAPPER_SPECS.keys());
 
 /** A leading `VAR=val` environment-assignment token. */
 const ASSIGNMENT_TOKEN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -826,14 +933,17 @@ const ASSIGNMENT_TOKEN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
  * `command`, `nohup`, `exec`, `xargs`, `sudo`, and a bare `VAR=val` prefix.
  *
  * Stripping is iterative, so stacked wrappers (`nohup env FOO=1 sed …`) are
- * peeled down to `sed`. A wrapper's own flags and assignments are skipped
- * along with it. This can only ever REVEAL a command that was previously
- * unrecognized — it never removes a command that used to be recognized — so
- * the change is strictly in the fail-closed direction.
+ * peeled down to `sed`. A wrapper's own flags, flag VALUES and single leading
+ * value operand (`timeout 5 …`) are skipped along with it. This can only ever
+ * REVEAL a command that was previously unrecognized — it never removes a
+ * command that used to be recognized — so the change is strictly in the
+ * fail-closed direction.
  *
- * Wrappers outside the set above, and flags that take a SEPARATE value
- * (`nice -n 10 sed …` — the `10` is read as the command name), stay
- * best-effort/fail-open, as this whole scan is documented to be.
+ * Launchers outside WRAPPER_SPECS leave the inner command unresolved. That is
+ * acceptable ONLY because detectUnverifiableWrite() catches the structural
+ * shapes (inline interpreters, mutating `find`, a destructive writer with no
+ * extractable target) independently of the launcher list — chasing an
+ * ever-growing wrapper list is explicitly not the defense here.
  */
 function stripLeadingWrappers(tokens) {
   let remaining = tokens;
@@ -846,16 +956,31 @@ function stripLeadingWrappers(tokens) {
     if (start >= remaining.length) {
       return []; // assignments only (`FOO=1`) — no command at all
     }
-    const head = stripQuotes(remaining[start]).split('/').pop();
+    const head = commandName(remaining[start]);
     if (!WRAPPER_COMMANDS.has(head)) {
       return start === 0 ? remaining : remaining.slice(start);
     }
+    const spec = WRAPPER_SPECS.get(head) || {};
     let next = start + 1;
     while (next < remaining.length) {
       const token = stripQuotes(remaining[next]);
       if (!token.startsWith('-') && !ASSIGNMENT_TOKEN_RE.test(token)) {
         break;
       }
+      // A separate-form value flag's value is the NEXT token, never the
+      // command — skip it too (`nice -n 10 sed …`, `timeout -s KILL 5 sed …`).
+      if (spec.valueFlags && spec.valueFlags.has(token)) {
+        next++;
+      }
+      next++;
+    }
+    // `timeout <duration> cmd` / `chrt <priority> cmd`: exactly one bare VALUE
+    // stands between the launcher and the real command.
+    if (
+      spec.leadingOperandRe &&
+      next < remaining.length &&
+      spec.leadingOperandRe.test(stripQuotes(remaining[next]))
+    ) {
       next++;
     }
     remaining = remaining.slice(next);
@@ -896,25 +1021,13 @@ function stripLeadingWrappers(tokens) {
  */
 function extractBashWriteTargets(statement) {
   const targets = [];
-  const rawTokens = padRedirectOperators(statement).match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+  const rawTokens = tokenizeStatement(statement);
   if (rawTokens.length === 0) {
     return targets;
   }
 
-  // Subshell/group wrapping leaves shell punctuation glued to the path:
-  const normalizeOperand = (raw) =>
-    stripQuotes(stripQuotes(raw).replace(/^\(+/, '').replace(/[);]+$/, ''));
-
   const pushTarget = (raw) => {
     if (!raw) return;
-    // Subshell/group wrapping leaves shell punctuation glued to the path:
-    // `(echo hi > specs/checkout.flow.yaml)` extracts the token
-    // "specs/checkout.flow.yaml)", whose trailing ")" made the graduated-spec
-    // lookup miss and the write classify as a NEW spec (allowed) instead of an
-    // edit to an existing one (blocked). Peel the wrapper characters off
-    // before classification — a real path ending in ")" only ever loses
-    // characters, which can widen a match but never narrows one, so this
-    // errs fail-closed.
     const target = normalizeOperand(raw);
     if (target && !isBenignRedirectSink(target)) {
       targets.push(target);
@@ -943,12 +1056,34 @@ function extractBashWriteTargets(statement) {
   // Command recognition runs on what is LEFT after leading environment
   // assignments and command wrappers are peeled off (`env FOO=1 sed -i …`),
   // so a wrapper can no longer hide the real command behind argv[0].
-  const cmdTokens = stripLeadingWrappers(rawTokens);
+  targets.push(...collectOperandTargets(stripLeadingWrappers(rawTokens)));
+  return targets;
+}
+
+/**
+ * The target paths a recognized writer takes from its OWN operands (not from
+ * redirection), given the statement's tokens with wrappers already peeled.
+ *
+ * Split out of extractBashWriteTargets() so detectUnverifiableWrite() can ask
+ * the same question — "how many targets could we actually extract for this
+ * writer?" — through the identical code path. Two callers, one rule: the two
+ * can never drift into disagreeing about what a writer's targets are.
+ */
+function collectOperandTargets(cmdTokens) {
+  const targets = [];
   if (cmdTokens.length === 0) {
     return targets;
   }
 
-  const cmd = stripQuotes(cmdTokens[0]).split('/').pop();
+  const pushTarget = (raw) => {
+    if (!raw) return;
+    const target = normalizeOperand(raw);
+    if (target && !isBenignRedirectSink(target)) {
+      targets.push(target);
+    }
+  };
+
+  const cmd = commandName(cmdTokens[0]);
   const nonFlagArgs = cmdTokens
     .slice(1)
     .map(stripQuotes)
@@ -1050,6 +1185,134 @@ function extractBashWriteTargets(statement) {
   return targets;
 }
 
+/**
+ * Interpreters whose INLINE-script/eval flag makes a statement unverifiable:
+ * the script body is opaque to a pattern scan and can write anywhere.
+ *
+ * Keyed by command name; the value tests one argv token and answers "is this
+ * an inline-script flag for this interpreter?". Short flags BUNDLE, so the
+ * shells/python/perl/ruby cases test the leading flag-LETTER run (the letters
+ * before any suffix) rather than the whole token — `bash -lc '…'`,
+ * `python3 -Bc '…'` and `perl -pi -e '…'` are the same vector as their
+ * unbundled spellings. Long options are matched BY NAME, never letter-scanned,
+ * so `--color` is not an eval flag just because it contains a "c".
+ *
+ * BOUNDARY (deliberate): an interpreter invoked WITHOUT an inline flag —
+ * `python3 script.py`, `node app.js`, `bash ./run.sh` — is NOT this case and
+ * stays allowed. It is running a FILE, not an opaque inline write, and
+ * blocking it would break Frankie's legitimate ability to run the project's
+ * own scripts. The residual gap that leaves (Frankie writes a script into
+ * .qa-evidence/ and then executes it) is named in this file's header as the
+ * filesystem-level-immutability follow-up.
+ */
+const flagLetterRun = (token) =>
+  token.startsWith('-') && !token.startsWith('--') ? /^[A-Za-z]*/.exec(token.slice(1))[0] : '';
+
+const shellEvalFlag = (token) => flagLetterRun(token).includes('c');
+
+const INLINE_EVAL_INTERPRETERS = new Map([
+  ['bash', shellEvalFlag],
+  ['sh', shellEvalFlag],
+  ['dash', shellEvalFlag],
+  ['zsh', shellEvalFlag],
+  ['ksh', shellEvalFlag],
+  ['python', shellEvalFlag],
+  ['python2', shellEvalFlag],
+  ['python3', shellEvalFlag],
+  // perl's inline forms: -e/-E supply a program, -i/-pi/-ni edit files in
+  // place. Any of them writes without naming a target this scan can verify.
+  ['perl', (token) => /[eEi]/.test(flagLetterRun(token))],
+  ['ruby', (token) => flagLetterRun(token).includes('e')],
+  [
+    'node',
+    (token) =>
+      /^--(?:eval|print)(?:$|=)/.test(token) || /[ep]/.test(flagLetterRun(token)),
+  ],
+  [
+    'nodejs',
+    (token) =>
+      /^--(?:eval|print)(?:$|=)/.test(token) || /[ep]/.test(flagLetterRun(token)),
+  ],
+]);
+
+/**
+ * `find` actions that MUTATE (or write a file) rather than just print. Their
+ * target set is a directory walk — unbounded and unverifiable — so a `find`
+ * carrying one is blocked outright regardless of the path it starts from.
+ * `-fprint`, `-fprintf`, `-fprint0` and `-fls` all write to a named file, so
+ * they are matched by prefix.
+ */
+const FIND_MUTATING_ACTIONS = new Set(['-delete', '-exec', '-execdir', '-ok', '-okdir']);
+
+function isFindMutatingAction(token) {
+  return FIND_MUTATING_ACTIONS.has(token) || /^-(?:fprint|fls)/.test(token);
+}
+
+/**
+ * Destructive writers whose ENTIRE purpose is to modify or remove the paths
+ * they are given. If one of these is in command position and NOT ONE target
+ * could be extracted from its operands, there is nothing to check against the
+ * allowlist — the paths arrive on stdin (`… | xargs rm -f`), from a glob that
+ * doesn't resolve here, or from a shape this scan doesn't read. Fail closed.
+ */
+const DESTRUCTIVE_WRITERS = new Set(['rm', 'rmdir', 'mv', 'truncate', 'tee', 'ln']);
+
+/**
+ * Returns a short human-readable description of why a statement performs a
+ * write this scan cannot VERIFY lands in an allowlisted location, or null when
+ * the statement is not one of those shapes.
+ *
+ * This is the inversion: extractBashWriteTargets() answers "which paths does
+ * this statement write?", and a statement it does not recognize yields zero
+ * targets and used to pass. The three shapes below are write-shaped by
+ * construction yet yield nothing to classify, so they are blocked on the
+ * structure alone rather than on a target:
+ *   1. an interpreter running an inline script (`bash -c`, `python3 -c`,
+ *      `perl -pi -e`, `node -e`)
+ *   2. a `find` carrying a mutating action (`-delete`, `-exec`, `-fprint*`)
+ *   3. a destructive writer with zero extractable targets (`… | xargs rm -f`,
+ *      `sed -i` with no file operand, `dd` with no `of=`)
+ *
+ * Recognition runs on argv[0] AFTER wrappers are peeled, so a writer's name
+ * appearing as an ARGUMENT (`grep -rn "rm -rf specs" .`) never triggers it.
+ */
+function detectUnverifiableWrite(statement) {
+  const rawTokens = tokenizeStatement(statement);
+  if (rawTokens.length === 0) {
+    return null;
+  }
+  const cmdTokens = stripLeadingWrappers(rawTokens);
+  if (cmdTokens.length === 0) {
+    return null;
+  }
+
+  const cmd = commandName(cmdTokens[0]);
+  const args = cmdTokens.slice(1).map(stripQuotes);
+
+  const isEvalFlag = INLINE_EVAL_INTERPRETERS.get(cmd);
+  if (isEvalFlag && args.some((token) => isEvalFlag(token))) {
+    return `${cmd} is running an inline script, whose writes cannot be verified`;
+  }
+
+  if (cmd === 'find' && args.some(isFindMutatingAction)) {
+    return 'find carries a mutating action over an unbounded directory walk';
+  }
+
+  if (cmd === 'dd') {
+    // dd's target is its `of=` operand; without one there is nothing to check.
+    return args.some((token) => /^of=/.test(token)) ? null : 'dd names no verifiable output file';
+  }
+
+  const isInPlaceSed = cmd === 'sed' && cmdTokens.some((w) => isSedInPlaceFlag(stripQuotes(w)));
+  if (DESTRUCTIVE_WRITERS.has(cmd) || isInPlaceSed) {
+    if (collectOperandTargets(cmdTokens).length === 0) {
+      return `${cmd} is a destructive write with no target this scan can verify`;
+    }
+  }
+
+  return null;
+}
+
 let hookInput = {};
 try {
   const raw = readFileSync(0, 'utf8');
@@ -1091,9 +1354,12 @@ try {
 
   // Bash: full shell interdiction is impossible (arbitrary syntax can
   // always defeat a pattern scan), so this is best-effort defense-in-depth
-  // on top of the Write/Edit guard, not a sandbox. Scan each statement for
-  // a recognized write-shaped op and classify its target with the exact
-  // same rule Write/Edit uses below.
+  // on top of the Write/Edit guard, not a sandbox. The decision is inverted
+  // from a blocklist: each statement's recognized write targets are
+  // classified with the exact same rule Write/Edit uses below, AND a
+  // statement that is write-shaped but whose writes cannot be verified
+  // (inline interpreter, mutating find, destructive writer with no
+  // extractable target) is blocked on its structure alone.
   if (toolName === 'Bash') {
     const command = toolInput.command || '';
     for (const statement of splitBashStatements(command)) {
@@ -1108,7 +1374,7 @@ try {
           await denyAndExit(
             { agentName: agent, toolName, reason },
             `BLOCKED: Frankie's Bash command targets an existing spec file: ${target}\n` +
-              'Graduated specs under specs/ are immutable by design (FlowSpec protection).\n' +
+              'Graduated specs under specs/ are add-only (FlowSpec protection): one that already exists is immutable to you.\n' +
               'You may ADD new flow files only — never edit one that already exists, including via shell redirection or in-place tools.\n' +
               `Command: ${command}\n`
           );
@@ -1123,8 +1389,27 @@ try {
             `Command: ${command}\n`
         );
       }
+
+      // Nothing classifiable came out of this statement's writers — but a
+      // write-shaped statement with nothing to classify is exactly the shape
+      // every documented bypass took (`bash -c '…'`, `find … -delete`,
+      // `… | xargs rm -f`). Unverifiable means DENIED, not allowed.
+      const unverifiable = detectUnverifiableWrite(statement);
+      if (unverifiable) {
+        const reason = `BLOCKED: Frankie's Bash command performs an unverifiable write (${unverifiable}).`;
+        await denyAndExit(
+          { agentName: agent, toolName, reason },
+          `BLOCKED: Frankie's Bash command performs an unverifiable write: ${unverifiable}\n` +
+            'Frankie may write ONLY under .qa-evidence/ (his evidence bundle) or to a NEW file under specs/.\n' +
+            'This statement writes somewhere this guard cannot prove is one of those, so it is denied rather than assumed safe.\n' +
+            'Spell the write out as a plain command naming its target path (e.g. `echo ... >> .qa-evidence/<mission>/report.md`), ' +
+            'and never fix code or edit an existing spec — bounce the failure to B.A. with repro steps instead.\n' +
+            `Statement: ${statement}\n`
+        );
+      }
     }
-    // No recognized write op targeted a protected path — allow.
+    // Every write this statement performs was recognized AND allowlisted —
+    // allow.
     process.exit(0);
   }
 
@@ -1143,7 +1428,7 @@ try {
     await denyAndExit(
       { agentName: agent, toolName, reason },
       `BLOCKED: Frankie cannot edit an existing spec file: ${filePath}\n` +
-        'Graduated specs under specs/ are immutable by design (FlowSpec protection).\n' +
+        'Graduated specs under specs/ are add-only (FlowSpec protection): one that already exists is immutable to you.\n' +
         'You may ADD new flow files only — never edit one that already exists.\n'
     );
   }

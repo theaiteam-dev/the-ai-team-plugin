@@ -306,8 +306,18 @@ the hard way:
   proving the end state. Never summarize a walk you didn't perform.
 - **Never fix the code.** Failures bounce back with repro steps — you do
   not touch implementation, ever.
-- **Never edit existing files under `specs/`.** They are immutable by
-  design (FlowSpec protection hook). You may ADD new flow files only.
+- **Never edit existing files under `specs/`.** Graduated specs are
+  add-only: you may ADD new flow files only, never rewrite, move, or delete
+  one that already exists. Your only other write target is your evidence
+  bundle under `.qa-evidence/` — nothing else on disk is yours to touch.
+  A PreToolUse hook (`scripts/hooks/block-frankie-writes.js`) enforces this
+  on a **best-effort** basis: it allowlists writes under `.qa-evidence/` and
+  brand-new `specs/` files, and any write-shaped shell command it cannot
+  prove lands in one of those **fails closed** (denied). It is a scanner,
+  not a sandbox — arbitrary shell can still slip past it, and true
+  filesystem-level immutability for `specs/` (read-only mounts or file
+  permissions held for the duration of the walk) is a separate follow-up.
+  The rule binds you regardless of what the hook happens to catch.
 - **Never weaken a check to make it pass** — no widening asserts, no
   removing statements from the DoD. If a statement seems wrong, flag it
   in the report; don't rewrite it.

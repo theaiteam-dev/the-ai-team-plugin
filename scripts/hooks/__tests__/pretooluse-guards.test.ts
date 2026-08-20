@@ -3560,6 +3560,218 @@ describe('block-frankie-writes — agent guards', () => {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // INVERTED DETECTION — write-shaped statements that cannot be VERIFIED fail
+  // closed (PR author's bypass groups 1-3).
+  //
+  // classifyFrankiePath() was already an allowlist; the bypasses lived in
+  // DETECTION. extractBashWriteTargets() yields ZERO targets for a
+  // write-shaped statement it doesn't recognize, so the caller's loop found
+  // nothing to classify and the statement passed. Three documented groups, all
+  // exiting 0 while destroying a graduated spec:
+  //   1. launchers not in WRAPPER_COMMANDS (`timeout 5 sed -i …`)
+  //   2. interpreters / nested shells (`bash -c '…'`, `python3 -c '…'`)
+  //   3. a writer fed by a pipe or a find action (`xargs rm -f`, `find … -delete`)
+  //
+  // The decision is now "block a write-shaped statement UNLESS every write it
+  // performs is provably to an allowlisted location". Chasing an ever-growing
+  // wrapper list is explicitly NOT the fix: group 1 is handled by peeling the
+  // launcher (including `timeout`'s bare duration operand) and re-running the
+  // SAME detection on the inner command, and anything still unresolved is
+  // caught structurally by group 2/3's checks.
+  // ---------------------------------------------------------------------------
+  describe('unverifiable write-shaped Bash statements fail CLOSED (bypass groups 1-3)', () => {
+    const SANDBOXES: string[] = [];
+    let PROJECT = '';
+
+    /** Same contract as runHook(), but with an explicit cwd (the hook anchors its allowlist on process.cwd()). */
+    function runHookIn(cwd: string, stdin: object) {
+      try {
+        const stdout = execFileSync('node', [HOOK], {
+          cwd,
+          env: { ...process.env, ATEAM_API_URL: 'http://localhost:3000', ATEAM_PROJECT_ID: 'test-project' },
+          encoding: 'utf8',
+          timeout: 5000,
+          input: JSON.stringify(stdin),
+        });
+        return { stdout: stdout.trim(), stderr: '', exitCode: 0 };
+      } catch (err: any) {
+        return { stdout: (err.stdout || '').trim(), stderr: (err.stderr || '').trim(), exitCode: err.status ?? 1 };
+      }
+    }
+
+    /**
+     * Fixture project: ONE graduated spec (specs/login.flow.yaml) and an
+     * evidence bundle Frankie owns (.qa-evidence/M-1/). No session_id is sent,
+     * so the hook uses its strict at-call-time fallback — login.flow.yaml is
+     * graduated because it exists, specs/brand-new.flow.yaml is new because it
+     * does not. Nothing here mutates the fixture, so one project is shared.
+     */
+    beforeAll(() => {
+      PROJECT = mkdtempSync(join(tmpdir(), 'ateam-frankie-invert-'));
+      SANDBOXES.push(PROJECT);
+      mkdirSync(join(PROJECT, 'specs'), { recursive: true });
+      writeFileSync(join(PROJECT, 'specs', 'login.flow.yaml'), 'name: login\nsteps: []\n');
+      mkdirSync(join(PROJECT, '.qa-evidence', 'M-1'), { recursive: true });
+    });
+
+    afterAll(() => {
+      for (const dir of SANDBOXES) {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    function runBash(command: string) {
+      return runHookIn(PROJECT, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command },
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // Group 1 — launchers whose first operand is a VALUE, not a command. Peeled
+    // like any other wrapper, then the INNER command goes through the same
+    // detection, so the real target is extracted and blocked by name.
+    // -------------------------------------------------------------------------
+    const GROUP_1: Array<[string, string]> = [
+      ['author repro: `timeout 5 sed -i` (bare duration operand)', 'timeout 5 sed -i "" s/login/x/ specs/login.flow.yaml'],
+      ['author repro: `stdbuf -oL sed -i`', 'stdbuf -oL sed -i "" s/a/b/ specs/login.flow.yaml'],
+      ['author repro: `setsid truncate -s0`', 'setsid truncate -s0 specs/login.flow.yaml'],
+      ['`timeout` with a value-taking flag before the duration', 'timeout -s KILL 5 sed -i "" s/a/b/ specs/login.flow.yaml'],
+      ['`nice -n 10` (separate-value flag)', 'nice -n 10 rm specs/login.flow.yaml'],
+      ['`ionice -c 3` (separate-value flag)', 'ionice -c 3 rm specs/login.flow.yaml'],
+      ['`chrt 10` (bare priority operand)', 'chrt 10 rm specs/login.flow.yaml'],
+    ];
+
+    for (const [label, command] of GROUP_1) {
+      it(`group 1 — blocks ${label} (exit 2, immutable, names the spec)`, () => {
+        const result = runBash(command);
+        expect(result.exitCode, `command=${command}`).toBe(2);
+        expect(result.stderr).toMatch(/BLOCKED/i);
+        expect(result.stderr).toMatch(/immutable/i);
+        expect(result.stderr).toMatch(/specs\/login\.flow\.yaml/);
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // Group 2 — an interpreter invoked with an inline-script/eval flag. The
+    // script body is opaque to any pattern scan and can write anywhere, so the
+    // statement is unverifiable by construction and blocks outright.
+    // -------------------------------------------------------------------------
+    const GROUP_2: Array<[string, string]> = [
+      ['author repro: `bash -c` truncating a graduated spec', "bash -c ': > specs/login.flow.yaml'"],
+      ['author repro: `sh -c` redirecting into a graduated spec', "sh -c 'echo pwn > specs/login.flow.yaml'"],
+      ['author repro: `python3 -c`', 'python3 -c "open(\'specs/login.flow.yaml\',\'w\').write(\'x\')"'],
+      ['author repro: `perl -pi -e`', "perl -pi -e 's/login/x/' specs/login.flow.yaml"],
+      ['author repro: `node -e`', 'node -e "require(\'fs\').writeFileSync(\'specs/login.flow.yaml\',\'x\')"'],
+      ['`zsh -c`', "zsh -c 'rm specs/login.flow.yaml'"],
+      ['`ruby -e`', "ruby -e 'File.write(\"specs/login.flow.yaml\", \"x\")'"],
+      ['`node --eval`', 'node --eval "require(\'fs\').unlinkSync(\'specs/login.flow.yaml\')"'],
+      ['`perl -i` alone (in-place, no -e)', "perl -i.bak -ne 'print' specs/login.flow.yaml"],
+      ['an interpreter reached THROUGH a launcher', "timeout 5 bash -c 'rm specs/login.flow.yaml'"],
+    ];
+
+    for (const [label, command] of GROUP_2) {
+      it(`group 2 — blocks ${label} (exit 2, unverifiable)`, () => {
+        const result = runBash(command);
+        expect(result.exitCode, `command=${command}`).toBe(2);
+        expect(result.stderr).toMatch(/BLOCKED/i);
+        expect(result.stderr).toMatch(/unverifiable/i);
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // Group 3 — a destructive writer whose target set could not be extracted at
+    // all (it arrives on stdin, or it is a directory walk). Nothing to verify
+    // means nothing can be proven allowlisted, so it blocks.
+    // -------------------------------------------------------------------------
+    const GROUP_3: Array<[string, string]> = [
+      ['author repro: `find … -delete`', "find specs -name '*.flow.yaml' -delete"],
+      ['author repro: `xargs rm -f` (path arrives on stdin)', 'echo specs/login.flow.yaml | xargs rm -f'],
+      ['`find … -exec rm`', "find specs -name '*.yaml' -exec rm {} ;"],
+      ['`find … -execdir`', "find . -name '*.yaml' -execdir truncate -s0 {} ;"],
+      ['`find … -fprint`', 'find . -fprint specs/login.flow.yaml'],
+      ['`xargs truncate` fed by a pipe', 'ls specs | xargs truncate -s0'],
+      ['`rm` with no extractable operand at all', 'rm -rf'],
+      ['`sed -i` with no file operand', "sed -i 's/a/b/'"],
+    ];
+
+    for (const [label, command] of GROUP_3) {
+      it(`group 3 — blocks ${label} (exit 2, unverifiable)`, () => {
+        const result = runBash(command);
+        expect(result.exitCode, `command=${command}`).toBe(2);
+        expect(result.stderr).toMatch(/BLOCKED/i);
+        expect(result.stderr).toMatch(/unverifiable/i);
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // The inversion must not swallow Frankie's legitimate Bash. If any of these
+    // block, the rule is too aggressive — tune the command-position test, never
+    // loosen the writer detection.
+    // -------------------------------------------------------------------------
+    const ALLOWED: Array<[string, string]> = [
+      ['`npm test`', 'npm test'],
+      ['`bun run test`', 'bun run test'],
+      ['`npx playwright test`', 'npx playwright test'],
+      ['a playwright run tee\'d into the evidence bundle', 'npx playwright test 2>&1 | tee .qa-evidence/M-1/run.log'],
+      ['`curl` against the dev server', 'curl -s http://localhost:5173'],
+      ['`git status`', 'git status'],
+      ['`git diff`', 'git diff'],
+      ['reading his own evidence bundle', 'cat .qa-evidence/M-1/report.md'],
+      ['`grep -rn` over the tree', 'grep -rn foo .'],
+      ['a writer NAME appearing as a grep ARGUMENT, not in command position', 'grep -rn "rm -rf specs" .'],
+      ['a writer NAME inside a quoted echo argument', 'echo "next step: rm specs/login.flow.yaml (do not)"'],
+      ['`ls specs/`', 'ls specs/'],
+      ['appending a step into the evidence report', 'echo "## Step 1" >> .qa-evidence/M-1/report.md'],
+      ['copying a screenshot out of scratch into the bundle', 'cp /tmp/playwright/shot.png .qa-evidence/M-1/shot.png'],
+      ['writing a BRAND-NEW flow file', "printf 'name: brand-new\\n' > specs/brand-new.flow.yaml"],
+      ['`python3 script.py` — running a FILE, not an inline eval', 'python3 script.py'],
+      ['`node app.js` — running a FILE, not an inline eval', 'node app.js'],
+      ['`bash ./run.sh` — running a FILE, not an inline eval', 'bash ./run.sh'],
+      ['a read-only `find` with no mutating action', "find . -name '*.flow.yaml'"],
+      ['a read-only `find -print`', 'find specs -type f -print'],
+      ['`timeout` wrapping a read-only command', 'timeout 30 npx playwright test'],
+      ['cleaning his own evidence bundle', 'rm -rf .qa-evidence/M-1/screenshots'],
+    ];
+
+    for (const [label, command] of ALLOWED) {
+      it(`allows ${label} (exit 0)`, () => {
+        const result = runBash(command);
+        expect(result.exitCode, `command=${command}\nstderr=${result.stderr}`).toBe(0);
+      });
+    }
+
+    it('regression: subshell-wrapped `rm` of a graduated spec is blocked (argv[0] is normalized past "(" )', () => {
+      const result = runBash('(rm specs/login.flow.yaml)');
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Honest wording (PR author's group-2 point): "immutable" oversells a
+  // best-effort scanner. The hook's own header must describe graduated-spec
+  // protection as enforced best-effort — now inverted, so an unverifiable
+  // write fails CLOSED — and must name true filesystem-level immutability as a
+  // separate follow-up rather than implying the scanner already provides it.
+  // ---------------------------------------------------------------------------
+  it('header doc describes the protection as best-effort + fail-closed, not shell-proof immutability (wording check)', () => {
+    const source = readFileSync(HOOK, 'utf8');
+    const header = source.slice(0, source.indexOf('*/') + 2);
+
+    expect(header).toMatch(/best-effort/i);
+    expect(header).toMatch(/fails? CLOSED/i);
+    expect(header).toMatch(/unverifiable/i);
+    // The follow-up is named, not implied.
+    expect(header).toMatch(/filesystem-level immutability/i);
+    expect(header).toMatch(/follow-up/i);
+    // No claim that the scanner makes specs immutable against arbitrary shell.
+    expect(header).not.toMatch(/immutable by design/i);
+    expect(header).not.toMatch(/"immutable"/);
+  });
+
   it('allows non-target agent ba to write implementation files (exit 0, no interference)', () => {
     const result = runHook(HOOK, {
       agent_type: 'ba',
