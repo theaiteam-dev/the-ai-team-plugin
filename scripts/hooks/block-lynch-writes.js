@@ -4,13 +4,16 @@
  *
  * Blocks Lynch from writing or editing any files. Lynch is a code reviewer —
  * he reviews statically and must NOT modify source files, tests, or docs.
- * /tmp/ and /var/ are allowed as scratch space.
+ * /tmp/ and /var/ are allowed as scratch space — see lib/scratch-path.js:
+ * the path is canonicalized (".." collapsed, symlinks resolved) before the
+ * allowlist test, so `/tmp/../<repo>/src/app.ts` is NOT scratch.
  *
  * Claude Code sends hook context via stdin JSON (tool_name, tool_input).
  */
 
 import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
+import { isScratchPath } from './lib/scratch-path.js';
 import { denyAndExit } from './lib/send-denied-event.js';
 
 try {
@@ -40,8 +43,9 @@ try {
 
   const filePath = (hookInput.tool_input && hookInput.tool_input.file_path) || '';
 
-  // Allow /tmp/ and /var/ as scratch space
-  if (!filePath || filePath.startsWith('/tmp/') || filePath.startsWith('/var/')) {
+  // Allow /tmp/ and /var/ as scratch space — but only where the path REALLY
+  // resolves under them (isScratchPath collapses ".." and follows symlinks).
+  if (!filePath || isScratchPath(filePath)) {
     process.exit(0);
   }
 

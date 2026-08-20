@@ -12,13 +12,16 @@
  *   - Type definition files: *.d.ts
  *   - Files inside /types/ directories
  *   - Vitest/Jest setup files: vitest.setup.*, jest.setup.*
- *   - Files in /tmp/ (throwaway scripts)
+ *   - Files in /tmp/ (throwaway scripts) — canonicalized before the allowlist
+ *     test (see lib/scratch-path.js), so `/tmp/../<repo>/src/app.ts` is not
+ *     treated as scratch.
  *
  * Claude Code sends hook context via stdin JSON (tool_name, tool_input).
  */
 
 import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
+import { isScratchPath, TMP_ONLY_SCRATCH_ROOTS } from './lib/scratch-path.js';
 import { denyAndExit } from './lib/send-denied-event.js';
 
 let hookInput = {};
@@ -54,8 +57,10 @@ try {
     process.exit(0);
   }
 
-  // Allow writes to /tmp/ (throwaway scripts, debugging artifacts)
-  if (filePath.startsWith('/tmp/')) {
+  // Allow writes to /tmp/ (throwaway scripts, debugging artifacts) — only
+  // where the path REALLY resolves under /tmp. Murdock's allowlist has never
+  // included /var, so keep it to /tmp alone.
+  if (isScratchPath(filePath, TMP_ONLY_SCRATCH_ROOTS)) {
     process.exit(0);
   }
 

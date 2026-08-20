@@ -47,6 +47,7 @@ async function generateItemId(): Promise<string> {
  * - type: Filter by item type
  * - priority: Filter by priority
  * - agent: Filter by assigned agent (use "null" for unassigned)
+ * - missionId: Only items belonging to that mission (via the MissionItem join)
  * - includeArchived: Include archived items (default: false)
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -88,6 +89,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const agent = searchParams.get('agent');
     if (agent !== null && agent !== '') {
       where.assignedAgent = agent === 'null' ? null : agent;
+    }
+
+    // Mission filter — mission membership lives on the MissionItem join, the
+    // same join promotion and the health report use. Hannibal's Stop gates
+    // need it to tell THIS mission's staged items from stragglers left on the
+    // project board by an earlier one (an orphan would otherwise block every
+    // future stop with advice no review could satisfy).
+    const missionId = searchParams.get('missionId');
+    if (missionId) {
+      where.missionItems = { some: { missionId } };
     }
 
     // Archive filter (default: exclude archived)

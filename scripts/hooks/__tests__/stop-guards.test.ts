@@ -1681,3 +1681,247 @@ describe('Stop hooks — stop_hook_active re-entry guard and the promotion-gate 
     expect(parseStopOutput(result.stdout).decision).toBe('block');
   });
 });
+
+// =============================================================================
+// The two-stop escape hatch, the fail-closed post-check gate, and mission-scoped
+// staged items.
+//
+// Before these fixes a mission could END in two ordinary stops with NO Final
+// Mission Review and NO post-check:
+//
+//   Board: 2 items staged, done empty, no review written.
+//   Stop #1 → blocked by the staged-not-promoted gate.
+//   Stop #2 → stop_hook_active releases that gate, and every gate downstream
+//             keyed on doneCount (0 — nothing reaches done except through
+//             promotion) or on a truthy verdict (null). Hook emits {}.
+//             Mission over, items still staged.
+//
+// The downstream gates now key on stagedCount + doneCount, and the post-check
+// gate no longer synthesizes `passed` from the mission state.
+// =============================================================================
+describe('Stop hooks — mission-completion gates cannot be walked past', () => {
+  const MISSION_ID = 'M-TEST-GATES';
+  const scratchDirs: string[] = [];
+
+  beforeAll(() => setMissionMarker());
+  afterAll(() => {
+    clearMissionMarker();
+    for (const dir of scratchDirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup
+      }
+    }
+  });
+
+  /** Non-drivable repo: the Frankie gate stays inert, isolating the gates under test. */
+  function repo() {
+    const dir = mkdtempSync(join(tmpdir(), 'ateam-gates-'));
+    scratchDirs.push(dir);
+    writeFileSync(join(dir, 'ateam.config.json'), JSON.stringify({ surfaces: ['hardware'] }));
+    return dir;
+  }
+
+  const BOARD_TWO_STAGED = JSON.stringify({
+    columns: { staged: [{ id: 'WI-001' }, { id: 'WI-002' }] },
+  });
+  const APPROVED_REVIEW = '# Final Mission Review\n\nVERDICT: FINAL APPROVED\n';
+
+  /**
+   * The REAL /api/missions/current payload shape: a lifecycle `state`, and NO
+   * `postcheck` key — that field has never existed on this endpoint.
+   */
+  function realMission(overrides: Record<string, unknown> = {}) {
+    return JSON.stringify({
+      id: MISSION_ID,
+      state: 'running',
+      final_review_verdict: null,
+      ...overrides,
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Finding 1: staged board + no review + stop_hook_active
+  // -------------------------------------------------------------------------
+  it('enforce-orchestrator-stop: a staged board with NO review still blocks on the second stop (stop_hook_active does not end the mission)', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      { session_id: 'main-two-stop', stop_hook_active: true },
+      { __TEST_MOCK_BOARD__: BOARD_TWO_STAGED, __TEST_MOCK_MISSION__: realMission() },
+      repo()
+    );
+    const output = parseStopOutput(result.stdout);
+    expect(
+      output.decision,
+      'the mission must not end with 2 items staged, no review and no post-check'
+    ).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/Final Mission Review/i);
+    expect(String(output.additionalContext)).toMatch(/Stockwell/);
+  });
+
+  it('enforce-final-review: same board, same second stop, still blocks (exit 2)', () => {
+    const result = runHook(
+      hookPath('enforce-final-review.js'),
+      { stop_hook_active: true },
+      { __TEST_MOCK_BOARD__: BOARD_TWO_STAGED, __TEST_MOCK_MISSION__: realMission() },
+      repo()
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/Final Mission Review required/i);
+  });
+
+  it('enforce-orchestrator-stop: with a review written, the second stop falls through to the post-check gate instead of ending the mission', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      { session_id: 'main-two-stop', stop_hook_active: true },
+      {
+        __TEST_MOCK_BOARD__: BOARD_TWO_STAGED,
+        __TEST_MOCK_MISSION__: realMission({ final_review_verdict: APPROVED_REVIEW }),
+      },
+      repo()
+    );
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/post-check/i);
+  });
+
+  // -------------------------------------------------------------------------
+  // Finding 3: the post-check gate must fail closed
+  // -------------------------------------------------------------------------
+  it('enforce-orchestrator-stop: a RUNNING mission with an approved review and no postcheck evidence is blocked', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: JSON.stringify({ columns: { done: [{ id: 'WI-001' }] } }),
+        __TEST_MOCK_MISSION__: realMission({ final_review_verdict: APPROVED_REVIEW }),
+      },
+      repo()
+    );
+    const output = parseStopOutput(result.stdout);
+    expect(
+      output.decision,
+      'the mission state alone is not evidence a post-check ran'
+    ).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/ateam missions postcheck/);
+  });
+
+  it('enforce-orchestrator-stop: once post-checks complete the mission, the stop is allowed (end-of-mission lifecycle)', () => {
+    // POST /api/missions/postcheck with passed=true is the ONLY writer of
+    // state 'completed'. From then on the mission is over: Tawnia documents,
+    // Hannibal stops. Blocking here would be an unclearable trap — a completed
+    // mission can never be post-checked again.
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: JSON.stringify({ columns: { done: [{ id: 'WI-001' }] } }),
+        __TEST_MOCK_MISSION__: realMission({
+          state: 'completed',
+          final_review_verdict: APPROVED_REVIEW,
+        }),
+      },
+      repo()
+    );
+    expect(result.exitCode).toBe(0);
+    expect(parseStopOutput(result.stdout).decision).not.toBe('block');
+  });
+
+  it('enforce-orchestrator-stop: a truthy-but-not-true postcheck value does not count as passing', () => {
+    // The gate used to read `!missionData.postcheck.passed`, so any truthy
+    // value — a string, a number, a nested object — released it. Only an
+    // affirmative `true` is evidence now.
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: JSON.stringify({ columns: { done: [{ id: 'WI-001' }] } }),
+        __TEST_MOCK_MISSION__: realMission({
+          final_review_verdict: APPROVED_REVIEW,
+          postcheck: { passed: 'yes' },
+        }),
+      },
+      repo()
+    );
+    expect(parseStopOutput(result.stdout).decision).toBe('block');
+  });
+
+  it('enforce-final-review: a RUNNING mission with an approved review and no postcheck evidence is blocked (exit 2)', () => {
+    const result = runHook(
+      hookPath('enforce-final-review.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: JSON.stringify({ columns: { done: [{ id: 'WI-001' }] } }),
+        __TEST_MOCK_MISSION__: realMission({ final_review_verdict: APPROVED_REVIEW }),
+      },
+      repo()
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/Post-mission checks required/i);
+  });
+
+  // -------------------------------------------------------------------------
+  // Finding 6: staged items are counted per MISSION, not per project
+  // -------------------------------------------------------------------------
+  it('enforce-orchestrator-stop: an orphaned staged item from another mission does not block this mission', () => {
+    // /api/board is project-wide; promotion only sweeps the current mission.
+    // The orphan could never be cleared by "re-POST the final review", so it
+    // must not be what blocks the stop.
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: JSON.stringify({
+          columns: { staged: [{ id: 'WI-ORPHAN' }], done: [{ id: 'WI-001' }] },
+        }),
+        __TEST_MOCK_MISSION__: realMission({
+          state: 'completed',
+          final_review_verdict: APPROVED_REVIEW,
+        }),
+        __TEST_MOCK_MISSION_ITEMS__: JSON.stringify([{ id: 'WI-001' }]),
+      },
+      repo()
+    );
+    expect(result.exitCode).toBe(0);
+    expect(
+      parseStopOutput(result.stdout).decision,
+      'WI-ORPHAN belongs to no current-mission item — it cannot block every future stop'
+    ).not.toBe('block');
+  });
+
+  it('enforce-orchestrator-stop: the same orphan IS named, with a workable remediation, when this mission has its own staged items', () => {
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: JSON.stringify({
+          columns: { staged: [{ id: 'WI-001' }, { id: 'WI-ORPHAN' }] },
+        }),
+        __TEST_MOCK_MISSION__: realMission(),
+        __TEST_MOCK_MISSION_ITEMS__: JSON.stringify([{ id: 'WI-001' }]),
+      },
+      repo()
+    );
+    const context = String(parseStopOutput(result.stdout).additionalContext);
+    expect(context).toMatch(/1 item\(s\) remain staged/);
+    expect(context).toMatch(/WI-ORPHAN/);
+    expect(context).toMatch(/board-move moveItem/);
+  });
+
+  it('enforce-orchestrator-stop: unknown mission membership keeps the project-wide count (fail closed)', () => {
+    // No __TEST_MOCK_MISSION_ITEMS__ and no reachable API — scoping must not
+    // silently narrow the gated set to nothing.
+    const result = runHook(
+      hookPath('enforce-orchestrator-stop.js'),
+      {},
+      {
+        __TEST_MOCK_BOARD__: JSON.stringify({ columns: { staged: [{ id: 'WI-ORPHAN' }] } }),
+        __TEST_MOCK_MISSION__: realMission(),
+        ATEAM_API_URL: 'http://127.0.0.1:1',
+      },
+      repo()
+    );
+    expect(parseStopOutput(result.stdout).decision).toBe('block');
+  });
+});

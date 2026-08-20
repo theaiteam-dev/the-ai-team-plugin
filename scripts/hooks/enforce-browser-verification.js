@@ -27,6 +27,7 @@ import { existsSync, unlinkSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { resolveAgent } from './lib/resolve-agent.js';
+import { apiEventHeaders } from './lib/observer.js';
 
 // Read hook input from stdin
 let hookInput = {};
@@ -103,7 +104,7 @@ async function checkSummary() {
     try {
       const url = `${apiUrl}/api/projects/${projectId}/items/${detectedItemId}`;
       const response = await fetch(url, {
-        headers: { 'X-Project-ID': projectId },
+        headers: apiEventHeaders(projectId),
       });
       if (response.ok) {
         const itemData = await response.json();

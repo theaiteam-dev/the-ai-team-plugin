@@ -768,6 +768,13 @@ paths:
           schema:
             type: string
           description: Filter by assigned agent name, or "null" for unassigned
+        - name: missionId
+          in: query
+          schema:
+            type: string
+          description: |
+            Only items belonging to this mission (via the MissionItem join) — the
+            same membership promotion and the health report use.
         - name: includeArchived
           in: query
           schema:
@@ -1897,12 +1904,23 @@ paths:
     get:
       operationId: getCurrentMission
       summary: Get the active mission
+      description: |
+        Selection precedence (both tiers exclude archived missions):
+
+        1. The newest ACTIVE mission — `state` not in
+           (`completed`, `failed`, `archived`), ordered by `startedAt` descending.
+        2. Only when no active mission exists: the newest non-archived mission
+           (i.e. the just-finished one), ordered by `startedAt` descending.
+
+        Tier 2 keeps a just-completed mission addressable for `/ai-team:retro`,
+        which reads this endpoint after post-checks move the mission to
+        `completed`. Consumers that must distinguish the two cases read `state`.
       tags: [missions]
       parameters:
         - $ref: '#/components/parameters/ProjectId'
       responses:
         '200':
-          description: Active mission or null
+          description: Current mission (active if one exists, else the newest non-archived one) or null
           content:
             application/json:
               schema:

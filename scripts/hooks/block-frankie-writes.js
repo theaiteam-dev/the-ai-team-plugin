@@ -22,9 +22,13 @@
  *     ("immutable" — graduated specs cannot be altered, only added to)
  *   - Everything else (implementation, tests, and any other path) —
  *     Frankie's job is to report, not to fix; the failure bounces to B.A.
- *   - Bash commands whose recognized write-shaped operation (redirection,
- *     tee, mv/cp destination, rm/rmdir, ln, sed -i, touch, truncate, dd of=)
- *     targets a protected path. This is best-effort defense-in-depth, NOT
+ *   - An Edit/Write/delete targeting the specs/ directory itself or any
+ *     directory under it — a directory move or delete destroys every
+ *     graduated spec inside it
+ *   - Bash commands whose recognized write-shaped operation (redirection
+ *     including `>|`, tee, every mv operand, cp destination, rm/rmdir, ln,
+ *     every `sed -i` file operand, touch, truncate, dd of=) targets a
+ *     protected path. This is best-effort defense-in-depth, NOT
  *     a shell sandbox — arbitrary shell syntax can defeat the pattern scan
  *     — but every path it DOES recognize is checked against the exact same
  *     allow/block rule as Write/Edit above.
@@ -53,6 +57,7 @@ import {
 } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
+import { foldSpecKey } from './lib/frankie-spec-key.js';
 import { resolveAgent } from './lib/resolve-agent.js';
 import { denyAndExit } from './lib/send-denied-event.js';
 
@@ -186,6 +191,27 @@ function canonicalizePath(abs) {
 }
 
 /**
+ * True if `abs` names an existing DIRECTORY.
+ *
+ * Used to give every directory at or under specs/ the same immutability a
+ * graduated spec file has: the session snapshot records only FILES, so a
+ * directory always missed the "is it graduated?" lookup and classified as a
+ * brand-new spec — which made `rm -rf specs` an allowed way to delete every
+ * graduated spec at once, while `rm specs/login.flow.yaml` blocked correctly.
+ *
+ * ENOENT (nothing there) is the only "not a directory" answer; any other
+ * stat failure — a permission error, ENOTDIR, a symlink loop — is unknowable
+ * and treated as a directory, i.e. blocked. Fail closed.
+ */
+function isExistingDirectory(abs) {
+  try {
+    return statSync(abs).isDirectory();
+  } catch (err) {
+    return !(err && err.code === 'ENOENT');
+  }
+}
+
+/**
  * Where session snapshots of specs/ live. One JSON file per session_id,
  * self-contained in this hook (mirrors lib/observer.js's tmpdir()-keyed
  * ateam-agent-map convention). The directory is created 0o700 (owner-only)
@@ -297,12 +323,18 @@ function loadOrTakeSpecSnapshot(sessionId) {
       if (parsed.cwd !== process.cwd()) {
         return null;
       }
-      return new Set(parsed.specs);
+      // Fold on READ as well as on write: folding is idempotent, so this
+      // also normalizes a snapshot written before folding existed.
+      return new Set(parsed.specs.map((p) => foldSpecKey(p)));
     }
     const specsRoot = path.join(process.cwd(), 'specs');
     const files = existsSync(specsRoot) ? listFilesUnder(specsRoot) : [];
-    writeFileSync(snapshotPath, JSON.stringify({ cwd: process.cwd(), specs: files }), { mode: 0o600 });
-    return new Set(files);
+    // Keys are stored ALREADY FOLDED, so the folding rule stays derivable
+    // from the platform alone — a snapshot written by one hook process is
+    // read the same way by the next one.
+    const keys = files.map((file) => foldSpecKey(file));
+    writeFileSync(snapshotPath, JSON.stringify({ cwd: process.cwd(), specs: keys }), { mode: 0o600 });
+    return new Set(keys);
   } catch {
     return null;
   }
@@ -329,7 +361,22 @@ function classifyFrankiePath(filePath, specSnapshot) {
   }
   if (isUnderDir(filePath, 'specs')) {
     const abs = path.resolve(process.cwd(), filePath);
-    const isImmutable = specSnapshot !== null ? specSnapshot.has(abs) : existsSync(abs);
+    // The spec ROOT itself, and every directory beneath it, are immutable:
+    // deleting or moving a directory destroys every graduated spec inside it,
+    // so `rm -rf specs`, `rm -r specs/sub` and `mv specs elsewhere` are as
+    // destructive as writing over a graduated file. Judged at CALL time
+    // rather than from the snapshot (which lists only files), so a directory
+    // created mid-session — which may already hold graduated specs — is
+    // covered too. The root is blocked whether or not it currently exists,
+    // so the rule doesn't hinge on a race with its creation.
+    //
+    // Only the spec tree gets directory immutability. .qa-evidence/ returns
+    // above: that bundle is Frankie's own working area and he may clean it.
+    if (abs === path.join(process.cwd(), 'specs') || isExistingDirectory(abs)) {
+      return { blocked: true, reason: 'spec-immutable' };
+    }
+    const isImmutable =
+      specSnapshot !== null ? specSnapshot.has(foldSpecKey(abs)) : existsSync(abs);
     return isImmutable ? { blocked: true, reason: 'spec-immutable' } : { blocked: false };
   }
   return { blocked: true, reason: 'other' };
@@ -515,11 +562,21 @@ function stripHeredocBodies(command) {
 function splitBashStatements(rawCommand) {
   const command = stripHeredocBodies(rawCommand);
   const masked = maskQuotedSpans(command);
-  const delimiterRe = /&&|\|\||[;\n]|\|/g;
+  // `>\|` MUST be matched ahead of the bare `\|` alternative — it is bash's
+  // noclobber-override REDIRECT (`echo x >| file`), not a pipe. Matching it
+  // here consumes it so the bare `\|` never sees it; the `continue` below
+  // then declines to split there. Without this, `echo x >| specs/x.flow.yaml`
+  // split into `echo x >` (a dangling operator whose target is undefined) and
+  // a second "statement" whose argv[0] was the path — zero targets extracted,
+  // write allowed.
+  const delimiterRe = /&&|\|\||>\||[;\n]|\|/g;
   const statements = [];
   let lastIndex = 0;
   let match;
   while ((match = delimiterRe.exec(masked))) {
+    if (match[0] === '>|') {
+      continue;
+    }
     statements.push(command.slice(lastIndex, match.index));
     lastIndex = delimiterRe.lastIndex;
   }
@@ -608,6 +665,12 @@ function padRedirectOperators(statement) {
       operator += '>';
       i++;
     }
+    // `>|` (and `2>|`, `&>|`) is the noclobber-override spelling of `>`: the
+    // `|` belongs to the OPERATOR, not to the target. Absorb it so the target
+    // is the next token and the `|` is never mistaken for a path of its own.
+    if (statement[i + 1] === '|') {
+      i++;
+    }
     out += ` ${operator} `;
   }
 
@@ -629,11 +692,13 @@ function padRedirectOperators(statement) {
  * "a > b", is one opaque token — its contents are never mistaken for a
  * redirect operator or a statement's command/args), then recognizes:
  * output redirection (`>`, `>>`, and fd-qualified variants like `2>`,
- * whether the operator stands alone, is glued to the target (`>file`), or is
- * glued to the PRECEDING token (`echo hi>file`) — padRedirectOperators()
- * normalizes all three), `tee [-a]`, `mv`/`cp` (destination = last non-flag
- * arg), `rm`/`rmdir`/`touch`/`truncate`/`ln` (every non-flag arg is a
- * target), `sed -i` (target = last non-flag arg), and `dd of=`.
+ * whether the operator stands alone, is glued to the target (`>file`), is
+ * glued to the PRECEDING token (`echo hi>file`), or is the noclobber-override
+ * `>|` form — padRedirectOperators() normalizes all four), `tee [-a]`,
+ * `mv` (EVERY non-flag operand — a source is a deletion), `cp` (destination
+ * only — its source is read-only), `rm`/`rmdir`/`touch`/`truncate`/`ln`
+ * (every non-flag arg is a target), `sed -i` (every file operand after the
+ * script), and `dd of=`.
  */
 function extractBashWriteTargets(statement) {
   const targets = [];
@@ -697,14 +762,66 @@ function extractBashWriteTargets(statement) {
     cmd === 'ln'
   ) {
     nonFlagArgs.forEach(pushTarget);
-  } else if (cmd === 'mv' || cmd === 'cp') {
+  } else if (cmd === 'mv') {
+    // EVERY operand, not just the destination: an mv SOURCE is a deletion —
+    // the file stops existing at that path — so `mv specs/login.flow.yaml
+    // specs/login2.flow.yaml` destroys a graduated spec even though its
+    // destination is an innocent new spec name. Same "write op in BOTH
+    // directions" reasoning as `ln` above.
+    nonFlagArgs.forEach(pushTarget);
+  } else if (cmd === 'cp') {
+    // Destination ONLY — unlike mv, a cp source is read-only: the original
+    // file survives untouched, so copying a graduated spec somewhere else is
+    // not a mutation of it. Only the path being written is a target.
     if (nonFlagArgs.length > 0) {
       pushTarget(nonFlagArgs[nonFlagArgs.length - 1]);
     }
   } else if (cmd === 'sed') {
-    const hasInPlace = rawTokens.some((w) => /^-i/.test(stripQuotes(w)));
-    if (hasInPlace && nonFlagArgs.length > 0) {
-      pushTarget(nonFlagArgs[nonFlagArgs.length - 1]);
+    const hasInPlace = rawTokens.some((w) => /^(?:-i|--in-place)/.test(stripQuotes(w)));
+    if (hasInPlace) {
+      // `sed -i` edits EVERY file operand in place, so classifying only the
+      // last one (the right heuristic for an mv/cp DESTINATION) let
+      // `sed -i "" s/a/b/ specs/login.flow.yaml .qa-evidence/x.md` rewrite a
+      // graduated spec while only the allowed evidence file was checked.
+      //
+      // Walk sed's argv rather than the flat non-flag list so the SCRIPT slot
+      // is identified correctly and every remaining operand is classified:
+      //   - `-e`/`-f`/`--expression`/`--file` supply the script; in their
+      //     separate-token form the following token is that script (never a
+      //     file), and in their attached form (`-e's/a/b/'`,
+      //     `--expression=s/a/b/`) the token carries it.
+      //   - otherwise the first bare operand is the script and the rest are
+      //     files.
+      //   - BSD's empty suffix (`sed -i '' …`) tokenizes to an empty string
+      //     and is skipped; `-i.bak` / `--in-place=.bak` are ordinary flags.
+      // Boundary: a space-separated BSD suffix (`sed -i .bak s/a/b/ f`) is
+      // indistinguishable from a script operand, so it takes the script slot
+      // and the real script is classified as a target too — erring toward
+      // MORE targets, never fewer, which is the fail-closed direction.
+      let scriptSeen = false;
+      for (let i = 1; i < rawTokens.length; i++) {
+        const operand = stripQuotes(rawTokens[i]);
+        if (operand.length === 0) {
+          continue;
+        }
+        if (operand.startsWith('-')) {
+          if (/^(?:-e|-f)$/.test(operand) || /^--(?:expression|file)$/.test(operand)) {
+            scriptSeen = true;
+            i++; // the next token is the script/script-file, never an edit target
+          } else if (/^(?:-e|-f)./.test(operand) || /^--(?:expression|file)=/.test(operand)) {
+            scriptSeen = true;
+          }
+          continue;
+        }
+        if (/[>|;&]/.test(operand)) {
+          continue; // shell punctuation, not an operand (same rule as nonFlagArgs)
+        }
+        if (!scriptSeen) {
+          scriptSeen = true;
+          continue;
+        }
+        pushTarget(operand);
+      }
     }
   }
 

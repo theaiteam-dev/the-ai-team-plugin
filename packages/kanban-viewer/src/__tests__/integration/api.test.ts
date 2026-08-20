@@ -512,6 +512,41 @@ describe('Item Endpoints Integration', () => {
       expect(data.data).toHaveLength(2);
     });
 
+    it('should filter items by missionId through the MissionItem join', async () => {
+      // Hannibal's Stop gates need mission membership: /api/board is
+      // project-wide, but promotion only sweeps the current mission's items, so
+      // a staged straggler left by an earlier mission must not be counted
+      // against this one.
+      mockPrisma.item.findMany.mockResolvedValue([createMockItem({ id: 'WI-001' })]);
+
+      const { GET } = await import('@/app/api/items/route');
+      const request = new NextRequest('http://localhost:3000/api/items?missionId=M-20260101-001', {
+        headers: { 'X-Project-ID': 'kanban-viewer' },
+      });
+      await GET(request);
+
+      expect(mockPrisma.item.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            missionItems: { some: { missionId: 'M-20260101-001' } },
+          }),
+        })
+      );
+    });
+
+    it('does not constrain by mission when no missionId is given', async () => {
+      mockPrisma.item.findMany.mockResolvedValue([]);
+
+      const { GET } = await import('@/app/api/items/route');
+      const request = new NextRequest('http://localhost:3000/api/items', {
+        headers: { 'X-Project-ID': 'kanban-viewer' },
+      });
+      await GET(request);
+
+      const where = mockPrisma.item.findMany.mock.calls[0][0].where;
+      expect(where.missionItems).toBeUndefined();
+    });
+
     it('should filter items by stage', async () => {
       const mockItems = [createMockItem({ id: 'WI-001', stageId: 'ready' })];
       mockPrisma.item.findMany.mockResolvedValue(mockItems);

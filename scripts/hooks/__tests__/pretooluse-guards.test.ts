@@ -21,6 +21,7 @@ import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { readFileSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync, rmSync, rmdirSync } from 'fs';
 import { tmpdir } from 'os';
+import { foldSpecKey, isCaseInsensitiveFs } from '../lib/frankie-spec-key.js';
 
 const HOOKS_DIR = join(__dirname, '..');
 const REPO_ROOT = join(__dirname, '..', '..', '..');
@@ -2622,6 +2623,514 @@ describe('block-frankie-writes — agent guards', () => {
         tool_input: { command: 'ln -s .qa-evidence/M-1/report.md .qa-evidence/M-1/latest.md' },
       });
       expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Directory targets at or under specs/ (bypass review, finding 1).
+  //
+  // `rm -rf specs` deletes every graduated spec in one stroke, yet it used to
+  // be ALLOWED: "specs" IS under the spec root (isUnderDir counts the root
+  // itself), but the session snapshot records only FILES — so the directory
+  // missed the immutable lookup and classified as a brand-new spec. The file
+  // form (`rm specs/login.flow.yaml`) blocked correctly the whole time; the
+  // directory form was the hole.
+  //
+  // Rule: under the spec root, a target that IS the spec root, or names an
+  // existing DIRECTORY beneath it, is immutable. The directory test is made at
+  // call time (statSync), not from the snapshot, so a directory created
+  // mid-session is equally un-deletable — it may already hold graduated specs.
+  // .qa-evidence/ is deliberately NOT given directory immutability: that tree
+  // is Frankie's own evidence bundle and he may reorganize or clean it.
+  // ---------------------------------------------------------------------------
+  describe('adversarial: directories at or under specs/ are immutable (finding 1: rm -rf specs)', () => {
+    const SANDBOXES: string[] = [];
+    const SESSIONS: string[] = [];
+    const SNAPSHOT_DIR = join(tmpdir(), 'ateam-frankie-spec-snapshot');
+
+    /** Same contract as runHook(), but with an explicit cwd (the hook anchors its allowlist on process.cwd()). */
+    function runHookIn(cwd: string, stdin: object) {
+      try {
+        const stdout = execFileSync('node', [HOOK], {
+          cwd,
+          env: { ...process.env, ATEAM_API_URL: 'http://localhost:3000', ATEAM_PROJECT_ID: 'test-project' },
+          encoding: 'utf8',
+          timeout: 5000,
+          input: JSON.stringify(stdin),
+        });
+        return { stdout: stdout.trim(), stderr: '', exitCode: 0 };
+      } catch (err: any) {
+        return { stdout: (err.stdout || '').trim(), stderr: (err.stderr || '').trim(), exitCode: err.status ?? 1 };
+      }
+    }
+
+    /** Throwaway project: two graduated specs (one nested) plus an evidence bundle. */
+    function newProject() {
+      const dir = mkdtempSync(join(tmpdir(), 'ateam-frankie-specdir-'));
+      SANDBOXES.push(dir);
+      mkdirSync(join(dir, 'specs', 'sub'), { recursive: true });
+      writeFileSync(join(dir, 'specs', 'login.flow.yaml'), 'name: login\nsteps: []\n');
+      writeFileSync(join(dir, 'specs', 'sub', 'nested.flow.yaml'), 'name: nested\nsteps: []\n');
+      mkdirSync(join(dir, '.qa-evidence', 'M-1'), { recursive: true });
+      writeFileSync(join(dir, '.qa-evidence', 'M-1', 'x.md'), '# x\n');
+      return dir;
+    }
+
+    /**
+     * Freeze a session snapshot for this project — the mode the bypass lived
+     * in. Without a session_id the hook uses the strict existsSync fallback,
+     * which happens to catch directories already; the snapshot path did not.
+     */
+    function freshSession(cwd: string) {
+      const sessionId = `frankie-specdir-${process.pid}-${SESSIONS.length}-${Date.now()}`;
+      SESSIONS.push(sessionId);
+      const warm = runHookIn(cwd, {
+        agent_type: 'frankie',
+        session_id: sessionId,
+        tool_name: 'Write',
+        tool_input: { file_path: '.qa-evidence/M-1/warmup.md' },
+      });
+      expect(warm.exitCode).toBe(0);
+      return sessionId;
+    }
+
+    afterAll(() => {
+      for (const dir of SANDBOXES) {
+        rmSync(dir, { recursive: true, force: true });
+      }
+      for (const sessionId of SESSIONS) {
+        rmSync(join(SNAPSHOT_DIR, `${sessionId}.json`), { force: true });
+      }
+    });
+
+    const BLOCKED_DIRECTORY_COMMANDS: Array<[string, string]> = [
+      ['`rm -rf specs` — wipes every graduated spec', 'rm -rf specs'],
+      ['trailing-slash form `rm -rf specs/`', 'rm -rf specs/'],
+      ['an intermediate spec directory `rm -r specs/sub`', 'rm -r specs/sub'],
+      ['`rmdir` on a spec directory', 'rmdir specs/sub'],
+      ['`mv` of the whole spec tree (source is a directory)', 'mv specs .qa-evidence/M-1/stash'],
+    ];
+
+    for (const [label, command] of BLOCKED_DIRECTORY_COMMANDS) {
+      it(`blocks with a session snapshot active: ${label} (exit 2, immutable)`, () => {
+        const proj = newProject();
+        const sessionId = freshSession(proj);
+        const result = runHookIn(proj, {
+          agent_type: 'frankie',
+          session_id: sessionId,
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(2);
+        expect(result.stderr).toMatch(/BLOCKED/i);
+        expect(result.stderr).toMatch(/immutable/i);
+      });
+
+      it(`blocks under the strict fallback too (no session_id): ${label} (exit 2, immutable)`, () => {
+        const proj = newProject();
+        const result = runHookIn(proj, {
+          agent_type: 'frankie',
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(2);
+        expect(result.stderr).toMatch(/BLOCKED/i);
+        expect(result.stderr).toMatch(/immutable/i);
+      });
+    }
+
+    it('blocks an ABSOLUTE path to the spec root (exit 2, immutable)', () => {
+      const proj = newProject();
+      const sessionId = freshSession(proj);
+      const result = runHookIn(proj, {
+        agent_type: 'frankie',
+        session_id: sessionId,
+        tool_name: 'Bash',
+        tool_input: { command: `rm -rf ${join(proj, 'specs')}` },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
+    it('blocks a directory created MID-session (not in the snapshot, may already hold graduated specs) (exit 2)', () => {
+      const proj = newProject();
+      const sessionId = freshSession(proj);
+      mkdirSync(join(proj, 'specs', 'later'), { recursive: true });
+
+      const result = runHookIn(proj, {
+        agent_type: 'frankie',
+        session_id: sessionId,
+        tool_name: 'Bash',
+        tool_input: { command: 'rm -rf specs/later' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
+    it('regression: the file form is still blocked (exit 2, immutable)', () => {
+      const proj = newProject();
+      const sessionId = freshSession(proj);
+      const result = runHookIn(proj, {
+        agent_type: 'frankie',
+        session_id: sessionId,
+        tool_name: 'Bash',
+        tool_input: { command: 'rm specs/login.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
+    it('regression: writing a BRAND-NEW spec file is still allowed, including into a nested spec dir (exit 0)', () => {
+      const proj = newProject();
+      const sessionId = freshSession(proj);
+      for (const filePath of ['specs/brand-new.flow.yaml', 'specs/sub/brand-new-nested.flow.yaml']) {
+        const result = runHookIn(proj, {
+          agent_type: 'frankie',
+          session_id: sessionId,
+          tool_name: 'Write',
+          tool_input: { file_path: filePath },
+        });
+        expect(result.exitCode, `file_path=${filePath}`).toBe(0);
+      }
+    });
+
+    it('regression: .qa-evidence/ directories are NOT immutable — Frankie owns that tree (exit 0)', () => {
+      const proj = newProject();
+      const sessionId = freshSession(proj);
+      for (const command of ['rm -rf .qa-evidence/M-1', 'rm -rf .qa-evidence', 'rmdir .qa-evidence/M-1']) {
+        const result = runHookIn(proj, {
+          agent_type: 'frankie',
+          session_id: sessionId,
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(0);
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // `mv` sources are deletions (bypass review, finding 2).
+  //
+  // Only the LAST non-flag operand (the destination) used to be classified for
+  // mv AND cp, so `mv specs/login.flow.yaml specs/login2.flow.yaml` sailed
+  // through: the destination is a new spec name (allowed) while the SOURCE —
+  // a graduated spec — ceases to exist at its path. That is exactly the
+  // "write op in BOTH directions" reasoning `ln` already applies.
+  //
+  // cp keeps destination-only classification on purpose: a cp source is
+  // read-only, the original file survives untouched.
+  // ---------------------------------------------------------------------------
+  describe('mv sources are deletions: every operand is classified (finding 2)', () => {
+    it('blocks `mv` whose SOURCE is a graduated spec, even when the destination is a new spec name (exit 2, immutable)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'mv specs/checkout.flow.yaml specs/checkout2.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/immutable/i);
+      expect(result.stderr).toMatch(/specs\/checkout\.flow\.yaml/);
+    });
+
+    it('blocks `mv` of a graduated spec into .qa-evidence/ (exit 2, immutable)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'mv specs/checkout.flow.yaml .qa-evidence/M-1/stashed.yaml' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
+    it('blocks `mv` whose SOURCE is an implementation file (exit 2, bounce to B.A.)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'mv src/services/order.ts .qa-evidence/M-1/order.ts' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/src\/services\/order\.ts/);
+      expect(result.stderr).toMatch(/B\.A\./i);
+    });
+
+    it('regression: `mv` entirely inside .qa-evidence/ is still allowed (exit 0)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'mv .qa-evidence/M-1/step1.png .qa-evidence/M-1/screenshots/step1.png' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('regression: `mv` destination in implementation territory is still blocked (exit 2)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'mv .qa-evidence/M-1/patch.ts src/services/order.ts' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/src\/services\/order\.ts/);
+    });
+
+    it('`cp` from a graduated spec into .qa-evidence/ stays allowed — a cp source is read-only (exit 0)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'cp specs/checkout.flow.yaml .qa-evidence/M-1/checkout-copy.yaml' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('regression: `cp` INTO a graduated spec is still blocked (destination classification unchanged, exit 2)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'cp .qa-evidence/M-1/hacked.yaml specs/checkout.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // `>|` — the noclobber-override redirect (bypass review, finding 4).
+  //
+  // splitBashStatements() ran BEFORE padRedirectOperators(), and its delimiter
+  // alternation had no `>|` case, so the bare `|` split `echo x >| specs/x`
+  // into `echo x >` (a dangling operator with no target) and a second
+  // "statement" whose argv[0] was the path — ZERO targets extracted, write
+  // allowed. `>|` is now consumed as a redirect operator by both the splitter
+  // (never a statement break) and the padder (the `|` belongs to the operator,
+  // not to the target).
+  // ---------------------------------------------------------------------------
+  describe('noclobber-override redirect `>|` is a redirect, not a pipe (finding 4)', () => {
+    it('blocks `>|` into an existing graduated spec (exit 2, immutable)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'echo x >| specs/checkout.flow.yaml' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
+    it('blocks `>|` into an implementation file (exit 2, bounce to B.A.)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'echo x >| src/services/order.ts' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/src\/services\/order\.ts/);
+    });
+
+    it('blocks the glued form `>|path` and the fd-qualified form `2>|path` (exit 2)', () => {
+      for (const command of ['echo x >|specs/checkout.flow.yaml', 'some-command 2>| src/app.ts']) {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(2);
+        expect(result.stderr).toMatch(/BLOCKED/i);
+      }
+    });
+
+    it('allows `>|` into a brand-new spec file and into .qa-evidence/ (exit 0)', () => {
+      for (const command of [
+        'echo x >| specs/noclobber-new-flow.flow.yaml',
+        'echo x >| .qa-evidence/M-1/report.md',
+        'noisy-command >| /dev/null',
+      ]) {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(0);
+      }
+    });
+
+    it('regression: a real pipe still splits into two statements, and the redirect target is still classified (exit 2)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'cat specs/checkout.flow.yaml | grep name > src/app.ts' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/src\/app\.ts/);
+    });
+
+    it('regression: an ordinary pipeline with no protected target is still allowed (exit 0)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'ls specs/ | grep flow | tee .qa-evidence/M-1/listing.txt' },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // `sed -i` edits EVERY file operand (bypass review, finding 5).
+  //
+  // Only the LAST non-flag operand was classified — the right heuristic for an
+  // mv/cp destination, wrong for sed: `sed -i "" s/a/b/ specs/login.flow.yaml
+  // .qa-evidence/x.md` rewrote the graduated spec while only the allowed
+  // evidence file was checked. Every operand after the script slot is now
+  // classified. Boundary: a space-separated BSD suffix (`sed -i .bak s/a/b/ f`)
+  // is indistinguishable from a script operand, so it occupies the script slot
+  // and the real script gets classified too — erring toward MORE targets, which
+  // is the fail-closed direction.
+  // ---------------------------------------------------------------------------
+  describe('sed -i classifies every file operand, not just the last (finding 5)', () => {
+    it('blocks a multi-operand `sed -i` whose FIRST file is a graduated spec and whose last is allowed (exit 2, immutable)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: 'sed -i "" s/a/b/ specs/checkout.flow.yaml .qa-evidence/M-1/x.md' },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+      expect(result.stderr).toMatch(/immutable/i);
+      expect(result.stderr).toMatch(/specs\/checkout\.flow\.yaml/);
+    });
+
+    it('blocks a multi-operand `sed -i.bak` whose first file is implementation code (exit 2, bounce to B.A.)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: "sed -i.bak 's/a/b/' src/services/order.ts .qa-evidence/M-1/x.md" },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/src\/services\/order\.ts/);
+      expect(result.stderr).toMatch(/B\.A\./i);
+    });
+
+    it('blocks the `-e script` form with several file operands (exit 2, immutable)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: "sed -i -e 's/a/b/' specs/checkout.flow.yaml .qa-evidence/M-1/x.md" },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/immutable/i);
+    });
+
+    it('blocks the long `--in-place` spelling (exit 2)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: "sed --in-place 's/a/b/' src/services/order.ts" },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/src\/services\/order\.ts/);
+    });
+
+    it('blocks the ATTACHED script forms (`-e\'s/a/b/\'`, `--expression=…`), whose only bare operand is the FILE (exit 2)', () => {
+      // These are the shapes a naive "skip the first bare operand" rule gets
+      // wrong in the WEAKENING direction: the script rides on the flag, so the
+      // single bare operand is the file being edited, not the script.
+      for (const command of [
+        "sed -i -e's/a/b/' src/services/order.ts",
+        "sed -i --expression='s/a/b/' src/services/order.ts",
+        "sed -i -f fixup.sed src/services/order.ts",
+      ]) {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(2);
+        expect(result.stderr).toMatch(/src\/services\/order\.ts/);
+      }
+    });
+
+    it('regression: a multi-operand `sed -i` entirely inside .qa-evidence/ is still allowed (exit 0)', () => {
+      for (const command of [
+        "sed -i 's/a/b/' .qa-evidence/M-1/a.md .qa-evidence/M-1/b.md",
+        "sed -i '' -e 's/a/b/' .qa-evidence/M-1/a.md .qa-evidence/M-1/b.md",
+        "sed -i.bak 's/a/b/' .qa-evidence/M-1/a.md",
+        "sed -i -e's/a/b/' .qa-evidence/M-1/a.md .qa-evidence/M-1/b.md",
+        "sed -i -f fixup.sed .qa-evidence/M-1/a.md",
+      ]) {
+        const result = runHook(HOOK, {
+          agent_type: 'frankie',
+          tool_name: 'Bash',
+          tool_input: { command },
+        });
+        expect(result.exitCode, `command=${command}`).toBe(0);
+      }
+    });
+
+    it('regression: `sed` WITHOUT -i is read-only and still allowed on protected paths (exit 0)', () => {
+      const result = runHook(HOOK, {
+        agent_type: 'frankie',
+        tool_name: 'Bash',
+        tool_input: { command: "sed -n 's/a/b/p' specs/checkout.flow.yaml src/services/order.ts" },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Snapshot key case-folding (bypass review, finding 3).
+  //
+  // On a case-insensitive volume (darwin/win32) the snapshot's exact-string
+  // Set was strictly WEAKER than the existsSync fallback it refines:
+  // specs/Checkout.flow.yaml is snapshotted, a Write to
+  // specs/checkout.flow.yaml misses Set.has(), classifies as NEW, and lands on
+  // the graduated file (same inode on APFS) — while the no-session_id fallback
+  // correctly blocks it via a case-insensitive existsSync.
+  //
+  // Keys are therefore folded at snapshot-write time AND at lookup time, and
+  // the folding rule is derivable from the platform alone (so a snapshot
+  // written by one process is read consistently by another). CI runs on a
+  // case-sensitive filesystem, so the folding rule is exercised directly here
+  // rather than through the hook's real filesystem behavior.
+  // ---------------------------------------------------------------------------
+  describe('spec-snapshot keys are case-folded on case-insensitive volumes (finding 3)', () => {
+    const ABS = '/repo/specs/Checkout.flow.yaml';
+
+    it('folds keys on darwin and win32', () => {
+      expect(foldSpecKey(ABS, 'darwin')).toBe('/repo/specs/checkout.flow.yaml');
+      expect(foldSpecKey(ABS, 'win32')).toBe('/repo/specs/checkout.flow.yaml');
+      expect(isCaseInsensitiveFs('darwin')).toBe(true);
+      expect(isCaseInsensitiveFs('win32')).toBe(true);
+    });
+
+    it('leaves keys untouched on case-sensitive platforms', () => {
+      expect(foldSpecKey(ABS, 'linux')).toBe(ABS);
+      expect(isCaseInsensitiveFs('linux')).toBe(false);
+    });
+
+    it('is idempotent, so re-folding an already-folded stored key is a no-op', () => {
+      expect(foldSpecKey(foldSpecKey(ABS, 'darwin'), 'darwin')).toBe(foldSpecKey(ABS, 'darwin'));
+    });
+
+    it('makes a differently-cased path hit the SAME graduated-spec entry on a case-insensitive volume', () => {
+      const macSnapshot = new Set([foldSpecKey('/repo/specs/Checkout.flow.yaml', 'darwin')]);
+      expect(macSnapshot.has(foldSpecKey('/repo/specs/checkout.flow.yaml', 'darwin'))).toBe(true);
+
+      // …and stays a genuinely different file where the filesystem is case-sensitive.
+      const linuxSnapshot = new Set([foldSpecKey('/repo/specs/Checkout.flow.yaml', 'linux')]);
+      expect(linuxSnapshot.has(foldSpecKey('/repo/specs/checkout.flow.yaml', 'linux'))).toBe(false);
+    });
+
+    it('is wired into the hook on BOTH sides: snapshot construction and the immutability lookup', () => {
+      const source = readFileSync(HOOK, 'utf8');
+      expect(source).toMatch(/frankie-spec-key\.js/);
+      // The immutability lookup folds…
+      expect(source).toMatch(/\.has\(foldSpecKey\(/);
+      // …and so do both snapshot-construction paths: the one loaded from disk
+      // (which also normalizes a snapshot written before folding existed) and
+      // the freshly-taken one (whose keys are stored already folded).
+      expect(source).toMatch(/parsed\.specs\.map\([\s\S]{0,40}foldSpecKey/);
+      expect(source).toMatch(/files\.map\([\s\S]{0,40}foldSpecKey/);
     });
   });
 

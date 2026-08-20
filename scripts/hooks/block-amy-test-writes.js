@@ -11,6 +11,7 @@
 
 import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
+import { isScratchPath } from './lib/scratch-path.js';
 import { denyAndExit } from './lib/send-denied-event.js';
 
 let hookInput = {};
@@ -38,8 +39,10 @@ try {
     process.exit(0);
   }
 
-  // Allow writes to /tmp/ (throwaway debug scripts, investigation artifacts)
-  if (filePath.startsWith('/tmp/') || filePath.startsWith('/var/')) {
+  // Allow writes to /tmp/ and /var/ (throwaway debug scripts, investigation
+  // artifacts) — only where the path REALLY resolves under them
+  // (lib/scratch-path.js collapses ".." and follows symlinks first).
+  if (isScratchPath(filePath)) {
     process.exit(0);
   }
 

@@ -40,7 +40,7 @@
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { join } from 'path';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync, readdirSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 
 // The gate resolves EVERYTHING — the execution contract AND the evidence
@@ -53,15 +53,21 @@ import {
   buildBoardUrl,
   buildMissionUrl,
   buildFinalReviewUrl,
+  buildItemsUrl,
   normalizeBoard,
   normalizeMission,
   countBoard,
+  scopeBoardToMission,
   checkFrankieEvidence,
   parseFinalReviewVerdict,
   checkFinalReviewRejection,
   checkStagedNotPromoted,
+  checkMissingFinalReview,
+  checkPostcheck,
+  isMissionActiveState,
   fetchBoard,
   fetchMission,
+  fetchMissionItems,
 } from '../lib/stop-gates.js';
 
 // ---------------------------------------------------------------------------
@@ -84,6 +90,14 @@ describe('stop-gates — URL builders', () => {
     const url = buildMissionUrl(API);
     expect(url).toBe('http://localhost:3000/api/missions/current');
     expect(url).not.toMatch(/\/api\/projects\//);
+  });
+
+  it('builds the mission-scoped items URL against /api/items?missionId=', () => {
+    // /api/board is project-wide; promotion only ever sweeps the CURRENT
+    // mission's items, so the gates need the mission's own membership list.
+    expect(buildItemsUrl(API, 'M-TEST-001')).toBe(
+      'http://localhost:3000/api/items?missionId=M-TEST-001'
+    );
   });
 
   it('builds the final-review URL against /api/missions/:missionId/final-review', () => {
@@ -245,16 +259,26 @@ describe('stop-gates — normalizeMission', () => {
     expect(mission?.id).toBe('M-TEST-001');
   });
 
-  it('derives postcheck.passed from mission state === "completed" (postcheck sets that state on pass)', () => {
+  // The payload from /api/missions/current has never carried a `postcheck`
+  // key. It used to be SYNTHESIZED here as `{ passed: state === 'completed' }`,
+  // which turned the post-check gate into a bare mission-state check that
+  // passed with zero evidence any post-check ran — and, before the route
+  // learned to prefer the ACTIVE mission, a stale completed mission could
+  // satisfy it for the mission actually in flight. Absent now means null, and
+  // null means "not passed" (checkPostcheck below).
+  it('does NOT synthesize postcheck from the mission state — an absent key is null (fail closed)', () => {
     expect(
-      normalizeMission({ success: true, data: { id: 'M-1', state: 'completed' } })?.postcheck?.passed
-    ).toBe(true);
+      normalizeMission({ success: true, data: { id: 'M-1', state: 'completed' } })?.postcheck
+    ).toBeNull();
     expect(
-      normalizeMission({ success: true, data: { id: 'M-1', state: 'running' } })?.postcheck?.passed
-    ).toBe(false);
-    expect(
-      normalizeMission({ success: true, data: { id: 'M-1', state: 'failed' } })?.postcheck?.passed
-    ).toBe(false);
+      normalizeMission({ success: true, data: { id: 'M-1', state: 'running' } })?.postcheck
+    ).toBeNull();
+  });
+
+  it('keeps the mission state so the gates can read the lifecycle directly', () => {
+    expect(normalizeMission({ success: true, data: { id: 'M-1', state: 'completed' } })?.state).toBe(
+      'completed'
+    );
   });
 
   it('maps the stored finalReview markdown onto final_review_verdict', () => {
@@ -303,12 +327,67 @@ describe('stop-gates — parseFinalReviewVerdict', () => {
     expect(parseFinalReviewVerdict('FINAL REJECTED — see WI-003, WI-007')).toBe('rejected');
   });
 
-  it('the last VERDICT line wins when a re-review appends below the original', () => {
+  // ---------------------------------------------------------------------
+  // Adversarial: a REJECTED review must never read as approved. Every case
+  // below was a real 'approved' answer under the old "last VERDICT line wins,
+  // scan the raw text" rule — each one suppressed the ADR-0004
+  // restart-at-Frankie block AND told the operator to re-POST a rejected
+  // review to "trigger promotion".
+  // ---------------------------------------------------------------------
+  it('a fenced format reference containing the APPROVED line does not flip a rejection', () => {
+    expect(
+      parseFinalReviewVerdict(
+        '# Final Mission Review\n\nVERDICT: FINAL REJECTED\n\n' +
+          'Format reference:\n\n```\nVERDICT: FINAL APPROVED\n```\n'
+      )
+    ).toBe('rejected');
+  });
+
+  it('a fenced template block quoting the whole approved report does not flip a rejection', () => {
+    expect(
+      parseFinalReviewVerdict(
+        'VERDICT: FINAL REJECTED\n\n' +
+          '## For next time, the approved template is:\n\n' +
+          '```markdown\nFINAL MISSION REVIEW\n\n## Cross-Cutting Review\n\n' +
+          'VERDICT: FINAL APPROVED\n\nThe A(i)-Team got away with it.\n```\n'
+      )
+    ).toBe('rejected');
+  });
+
+  it('prose ABOUT an earlier verdict does not outrank the report\'s own verdict line', () => {
+    expect(
+      parseFinalReviewVerdict(
+        'VERDICT: FINAL REJECTED\n\nCritical Issues Found:\n\n' +
+          '1. The previous review said VERDICT: FINAL APPROVED but that was wrong — ' +
+          'WI-003 never shipped.\n'
+      )
+    ).toBe('rejected');
+  });
+
+  it('the FIRST VERDICT line wins, matching the report template where the verdict precedes the issue list', () => {
+    // A re-review is a fresh POST that OVERWRITES mission.finalReview (see the
+    // final-review route), so an appended second verdict is commentary, never
+    // the real one. Last-wins was the bug.
     expect(
       parseFinalReviewVerdict(
         'VERDICT: FINAL REJECTED\n\n## Re-review after rework\n\nVERDICT: FINAL APPROVED\n'
       )
-    ).toBe('approved');
+    ).toBe('rejected');
+  });
+
+  it('control: a plain rejected report is rejected, a plain approved report is approved', () => {
+    expect(parseFinalReviewVerdict('FINAL MISSION REVIEW\n\nVERDICT: FINAL REJECTED\n')).toBe(
+      'rejected'
+    );
+    expect(parseFinalReviewVerdict('FINAL MISSION REVIEW\n\nVERDICT: FINAL APPROVED\n')).toBe(
+      'approved'
+    );
+  });
+
+  it('a bare marker that appears ONLY inside a fence is not a verdict', () => {
+    expect(parseFinalReviewVerdict('Report pending.\n\n```\nFINAL APPROVED\n```\n')).toBe(
+      'unknown'
+    );
   });
 
   it('a VERDICT line outranks a stray bare marker quoted elsewhere in the prose', () => {
@@ -1086,5 +1165,385 @@ describe('stop-gates — checkStagedNotPromoted', () => {
     it('treats a blank review string as no review at all (falls back to the dispatch-Stockwell message)', () => {
       expect(checkStagedNotPromoted(1, { finalReview: '   ' })).toMatch(/Stockwell/);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cloudflare Access headers — every API request these hooks make must carry
+// the CF service-token headers when they are configured. This is the THIRD
+// occurrence of the same bug shape (observer.js documents the last one): a
+// fetch built its headers inline as `{ 'X-Project-ID': projectId }`, so behind
+// Cloudflare Access the request was answered with a 302/403 before it ever
+// reached the app, fetchJsonOrNull returned null, and EVERY gate in this
+// module failed open — silently, exactly like the telemetry blackout did.
+// ---------------------------------------------------------------------------
+describe('stop-gates — Cloudflare Access service-token headers', () => {
+  const API = 'http://localhost:3000';
+  const PROJECT_ID = 'cf-project';
+
+  beforeEach(() => {
+    process.env.ACCESS_CLIENT_ID = 'cf-id.access';
+    process.env.ACCESS_CLIENT_SECRET = 'cf-secret';
+  });
+
+  afterEach(() => {
+    delete process.env.ACCESS_CLIENT_ID;
+    delete process.env.ACCESS_CLIENT_SECRET;
+    vi.unstubAllGlobals();
+  });
+
+  function stubFetch(body: unknown) {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => body,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  function headersOf(fetchMock: ReturnType<typeof vi.fn>, call = 0): Record<string, string> {
+    return (fetchMock.mock.calls[call][1] as { headers: Record<string, string> }).headers;
+  }
+
+  it('fetchBoard sends CF-Access-Client-Id/Secret alongside X-Project-ID', async () => {
+    const fetchMock = stubFetch({ success: true, data: { items: [] } });
+    await fetchBoard(API, PROJECT_ID);
+
+    expect(headersOf(fetchMock)).toMatchObject({
+      'X-Project-ID': PROJECT_ID,
+      'CF-Access-Client-Id': 'cf-id.access',
+      'CF-Access-Client-Secret': 'cf-secret',
+    });
+  });
+
+  it('fetchMission sends them on BOTH the mission and the final-review sub-fetch', async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('final-review')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ success: true, data: { finalReview: 'VERDICT: FINAL APPROVED' } }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ success: true, data: { id: 'M-1', state: 'running' } }),
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchMission(API, PROJECT_ID);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of [0, 1]) {
+      expect(headersOf(fetchMock, call)).toMatchObject({
+        'CF-Access-Client-Id': 'cf-id.access',
+        'CF-Access-Client-Secret': 'cf-secret',
+      });
+    }
+  });
+
+  it('fetchMissionItems sends them too', async () => {
+    const fetchMock = stubFetch({ success: true, data: [] });
+    await fetchMissionItems(API, PROJECT_ID, 'M-1');
+
+    expect(headersOf(fetchMock)).toMatchObject({
+      'X-Project-ID': PROJECT_ID,
+      'CF-Access-Client-Id': 'cf-id.access',
+      'CF-Access-Client-Secret': 'cf-secret',
+    });
+  });
+
+  // TRIPWIRE. Not a test of behavior — a test that the bug shape cannot come
+  // back a fourth time in a file nobody thought to re-check.
+  it('no hook builds an X-Project-ID header inline — apiEventHeaders() is the only place that spells it', () => {
+    const hooksDir = join(__dirname, '..');
+    const offenders: string[] = [];
+
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules' || entry.name === '__tests__') continue;
+          walk(full);
+          continue;
+        }
+        if (!entry.name.endsWith('.js')) continue;
+        // observer.js DEFINES apiEventHeaders — the one legitimate spelling.
+        if (full === join(hooksDir, 'lib', 'observer.js')) continue;
+
+        const source = readFileSync(full, 'utf8');
+        for (const [index, line] of source.split('\n').entries()) {
+          // A header OBJECT literal keyed by X-Project-ID (prose mentioning the
+          // header in a comment is fine, and must not false-positive).
+          if (/['"]X-Project-ID['"]\s*:/.test(line)) {
+            offenders.push(`${full}:${index + 1}: ${line.trim()}`);
+          }
+        }
+      }
+    };
+
+    walk(hooksDir);
+
+    expect(
+      offenders,
+      'Build API request headers with apiEventHeaders(projectId) from lib/observer.js. ' +
+        'An inline { "X-Project-ID": projectId } object drops the CF-Access service-token ' +
+        'headers, so behind Cloudflare Access the request 302/403s and the caller fails open.'
+    ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fetchMissionItems — mission membership, or null (never a throw).
+// ---------------------------------------------------------------------------
+describe('stop-gates — fetchMissionItems', () => {
+  const API = 'http://localhost:3000';
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('unwraps the { success, data } envelope into a plain array', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, data: [{ id: 'WI-001' }, { id: 'WI-002' }] }),
+      })
+    );
+    await expect(fetchMissionItems(API, 'p', 'M-1')).resolves.toEqual([
+      { id: 'WI-001' },
+      { id: 'WI-002' },
+    ]);
+  });
+
+  it('resolves null (never throws) when the API is unreachable — callers fall back to the project-wide board', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+    await expect(fetchMissionItems(API, 'p', 'M-1')).resolves.toBeNull();
+  });
+
+  it('resolves null on a non-2xx (e.g. an API server too old to know ?missionId=)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) }));
+    await expect(fetchMissionItems(API, 'p', 'M-1')).resolves.toBeNull();
+  });
+
+  it('does not even attempt a fetch without a mission id', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(fetchMissionItems(API, 'p', null)).resolves.toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// scopeBoardToMission — /api/board is PROJECT-wide, promotion is MISSION-wide.
+// One orphaned staged item used to block every future stop of every future
+// mission, with advice ("re-POST the final review") that could never clear it.
+// ---------------------------------------------------------------------------
+describe('stop-gates — scopeBoardToMission', () => {
+  const columns = {
+    staged: [{ id: 'WI-001' }, { id: 'WI-002' }, { id: 'WI-ORPHAN' }],
+    done: [{ id: 'WI-000' }, { id: 'WI-OLD' }],
+  };
+  const missionItems = [{ id: 'WI-001' }, { id: 'WI-002' }, { id: 'WI-000' }];
+
+  it('counts only the staged items that belong to the mission', () => {
+    const scope = scopeBoardToMission(columns, missionItems);
+    expect(scope.scoped).toBe(true);
+    expect(scope.stagedCount).toBe(2);
+    expect(scope.stagedItems.map((i: any) => i.id)).toEqual(['WI-001', 'WI-002']);
+  });
+
+  it('counts only the done items that belong to the mission', () => {
+    expect(scopeBoardToMission(columns, missionItems).doneCount).toBe(1);
+  });
+
+  it('reports staged items that belong to no mission item as orphans, by id', () => {
+    expect(scopeBoardToMission(columns, missionItems).orphanStagedIds).toEqual(['WI-ORPHAN']);
+  });
+
+  it('an orphan-only board leaves the mission with nothing staged — the gate must not fire', () => {
+    const scope = scopeBoardToMission({ staged: [{ id: 'WI-ORPHAN' }] }, [{ id: 'WI-001' }]);
+    expect(scope.stagedCount).toBe(0);
+    expect(checkStagedNotPromoted(scope.stagedCount)).toBeNull();
+  });
+
+  it('falls back to the project-wide view when membership is unknown (null) — scoping may only ever narrow on positive knowledge', () => {
+    const scope = scopeBoardToMission(columns, null);
+    expect(scope.scoped).toBe(false);
+    expect(scope.stagedCount).toBe(3);
+    expect(scope.doneCount).toBe(2);
+    expect(scope.orphanStagedIds).toEqual([]);
+  });
+
+  it('falls back to the project-wide view when the mission has no linked items at all', () => {
+    expect(scopeBoardToMission(columns, []).stagedCount).toBe(3);
+  });
+
+  it('tolerates junk entries in either list rather than throwing', () => {
+    const scope = scopeBoardToMission({ staged: [null, 'WI-001', { id: 'WI-001' }] } as any, [
+      { id: 'WI-001' },
+      null,
+      { nope: true },
+    ] as any);
+    expect(scope.stagedCount).toBe(1);
+    expect(scope.orphanStagedIds).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkStagedNotPromoted — orphan reporting.
+// ---------------------------------------------------------------------------
+describe('stop-gates — checkStagedNotPromoted names orphaned staged items', () => {
+  afterEach(() => delete process.env.ATEAM_SKIP_PROMOTION_GATE);
+
+  it('appends the orphan ids and a remediation that can actually clear them', () => {
+    const message = checkStagedNotPromoted(1, { orphanStagedIds: ['WI-OLD', 'WI-STRAY'] });
+    expect(message).toMatch(/WI-OLD, WI-STRAY/);
+    expect(message, 'the way out is a board-move or an archive, not another review').toMatch(
+      /board-move moveItem/
+    );
+    expect(message).toMatch(/do NOT belong to this mission/i);
+  });
+
+  it('says nothing about orphans when there are none', () => {
+    expect(checkStagedNotPromoted(1)).not.toMatch(/orphan|do NOT belong/i);
+  });
+
+  it('never blocks on orphans alone — with nothing of THIS mission staged the gate is silent', () => {
+    expect(checkStagedNotPromoted(0, { orphanStagedIds: ['WI-OLD'] })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkMissingFinalReview — the gate that closed the two-stop escape hatch.
+// ---------------------------------------------------------------------------
+describe('stop-gates — checkMissingFinalReview', () => {
+  it('BLOCKS on an all-staged board with no review — doneCount is 0 by construction there', () => {
+    // This is the exact board the old doneCount-keyed gate was silent on:
+    // nothing reaches done except via promotion, and promotion only runs on an
+    // APPROVED review — so keying the "no review yet" gate on done items meant
+    // it could never fire on the board that needed it.
+    const message = checkMissingFinalReview({ pendingCount: 2, finalReview: null });
+    expect(message).toMatch(/Stockwell/);
+    expect(message).toMatch(/Final Mission Review/i);
+  });
+
+  it('blocks on a done board with no review too (unchanged behavior)', () => {
+    expect(checkMissingFinalReview({ pendingCount: 1, finalReview: undefined })).toMatch(
+      /Final Mission Review/i
+    );
+  });
+
+  it('falls through once a review exists', () => {
+    expect(
+      checkMissingFinalReview({ pendingCount: 3, finalReview: 'VERDICT: FINAL APPROVED' })
+    ).toBeNull();
+  });
+
+  it('falls through when nothing has finished the pipeline', () => {
+    expect(checkMissingFinalReview({ pendingCount: 0, finalReview: null })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkPostcheck — FAIL CLOSED. The old synthesis (`{ passed: state ===
+// 'completed' }`) made this a bare mission-state check: the current-mission
+// payload carries no postcheck key at all, so the gate passed with zero
+// evidence a post-check had ever run.
+// ---------------------------------------------------------------------------
+describe('stop-gates — checkPostcheck', () => {
+  const APPROVED = '# Final Mission Review\n\nVERDICT: FINAL APPROVED\n';
+
+  it('BLOCKS a running mission whose payload carries no postcheck key (the real /api/missions/current shape)', () => {
+    const message = checkPostcheck({
+      pendingCount: 2,
+      finalReview: APPROVED,
+      postcheck: null,
+      missionState: 'running',
+    });
+    expect(message).toMatch(/post-checks have not passed/i);
+    expect(message).toMatch(/ateam missions postcheck/);
+  });
+
+  it('blocks a running mission that affirmatively reports a FAILED postcheck', () => {
+    expect(
+      checkPostcheck({
+        pendingCount: 1,
+        finalReview: APPROVED,
+        postcheck: { passed: false },
+        missionState: 'running',
+      })
+    ).toMatch(/post-checks/i);
+  });
+
+  it('releases only on an affirmative postcheck.passed === true', () => {
+    expect(
+      checkPostcheck({
+        pendingCount: 1,
+        finalReview: APPROVED,
+        postcheck: { passed: true },
+        missionState: 'running',
+      })
+    ).toBeNull();
+  });
+
+  it('does not accept a truthy-but-not-true passed value', () => {
+    expect(
+      checkPostcheck({
+        pendingCount: 1,
+        finalReview: APPROVED,
+        postcheck: { passed: 'yes' },
+        missionState: 'running',
+      })
+    ).toMatch(/post-checks/i);
+  });
+
+  it('stops applying once the mission reaches an over state — post-checks completed it, and a completed/failed mission can never be post-checked again', () => {
+    for (const state of ['completed', 'failed', 'archived']) {
+      expect(
+        checkPostcheck({
+          pendingCount: 1,
+          finalReview: APPROVED,
+          postcheck: null,
+          missionState: state,
+        }),
+        `${state} must not deadlock the end of the mission`
+      ).toBeNull();
+    }
+  });
+
+  it('blocks on an unknown/absent mission state — an unrecognized lifecycle fails CLOSED', () => {
+    expect(
+      checkPostcheck({
+        pendingCount: 1,
+        finalReview: APPROVED,
+        postcheck: null,
+        missionState: null,
+      })
+    ).toMatch(/post-checks/i);
+    expect(isMissionActiveState(undefined)).toBe(true);
+    expect(isMissionActiveState('running')).toBe(true);
+    expect(isMissionActiveState('completed')).toBe(false);
+  });
+
+  it('falls through when no review has been written (the missing-review gate owns that case)', () => {
+    expect(
+      checkPostcheck({
+        pendingCount: 1,
+        finalReview: null,
+        postcheck: null,
+        missionState: 'running',
+      })
+    ).toBeNull();
+  });
+
+  it('falls through when nothing has finished the pipeline', () => {
+    expect(
+      checkPostcheck({
+        pendingCount: 0,
+        finalReview: APPROVED,
+        postcheck: null,
+        missionState: 'running',
+      })
+    ).toBeNull();
   });
 });

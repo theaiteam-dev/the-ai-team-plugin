@@ -31,6 +31,7 @@
 import { existsSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { canFrankieDrive, readExecutionContractFrom } from './qa-contract.js';
+import { apiEventHeaders } from './observer.js';
 
 /** Stages that mean a mission still has work in flight. */
 export const ACTIVE_STAGES = [
@@ -66,6 +67,20 @@ export function buildMissionUrl(apiUrl) {
  */
 export function buildFinalReviewUrl(apiUrl, missionId) {
   return `${trimTrailingSlash(apiUrl)}/api/missions/${encodeURIComponent(missionId)}/final-review`;
+}
+
+/**
+ * Items belonging to ONE mission.
+ *
+ * /api/board is project-wide: it cannot tell a staged item of the mission in
+ * flight from a staged leftover of a force-ended earlier one. Promotion,
+ * however, only ever clears the CURRENT mission's items (the final-review
+ * route scopes its sweep through the MissionItem join), so gating on the
+ * project-wide staged set blocks every future stop on an item no promotion
+ * will ever touch. `?missionId=` applies the same join server-side.
+ */
+export function buildItemsUrl(apiUrl, missionId) {
+  return `${trimTrailingSlash(apiUrl)}/api/items?missionId=${encodeURIComponent(missionId)}`;
 }
 
 function isPlainObject(value) {
@@ -120,6 +135,17 @@ export function normalizeBoard(payload) {
  * (POST /api/missions/postcheck moves a mission to `completed` on pass and
  * `failed` otherwise). Already-normalized payloads keep their own values.
  *
+ * `postcheck` is NOT synthesized from the mission state. It used to be
+ * (`{ passed: state === 'completed' }`), and because the current-mission
+ * payload has never carried a `postcheck` key, that turned the post-check
+ * gate into a pure mission-state check that passed with zero evidence a
+ * post-check ever ran — and, before the current-mission route learned to
+ * prefer the ACTIVE mission, a stale completed mission from a PREVIOUS run
+ * could satisfy it for the mission actually in flight. An absent key is now
+ * `null`, which the post-check gate reads as "not passed" (fail closed).
+ * The mission lifecycle is what releases that gate instead — see
+ * checkPostcheck() for the full end-of-mission sequence.
+ *
  * @returns {{ id: string|null, state: string|null, final_review_verdict: unknown, postcheck: unknown }|null}
  */
 export function normalizeMission(payload) {
@@ -133,8 +159,44 @@ export function normalizeMission(payload) {
     state,
     final_review_verdict:
       'final_review_verdict' in body ? body.final_review_verdict : (body.finalReview ?? null),
-    postcheck: 'postcheck' in body ? body.postcheck : { passed: state === 'completed' },
+    postcheck: 'postcheck' in body ? body.postcheck : null,
   };
+}
+
+/**
+ * Removes fenced code blocks (``` / ~~~) from markdown.
+ *
+ * A final review routinely QUOTES the report format — agents/stockwell.md
+ * ships both verdict templates inside fences — so a fenced
+ * `VERDICT: FINAL APPROVED` example is documentation, not a verdict. Scanning
+ * it would flip a genuine rejection to approved.
+ *
+ * An unterminated fence drops everything after it: text inside an unclosed
+ * fence is unbounded quoted material, and losing a verdict line yields
+ * 'unknown' (fail open — the mission tail is never deadlocked), whereas
+ * honoring it could hand back the wrong verdict.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function stripFencedBlocks(text) {
+  const kept = [];
+  let fenceChar = null;
+
+  for (const line of text.split('\n')) {
+    const match = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+    if (fenceChar === null) {
+      if (match) {
+        fenceChar = match[1][0];
+        continue;
+      }
+      kept.push(line);
+    } else if (match && match[1][0] === fenceChar) {
+      fenceChar = null;
+    }
+  }
+
+  return kept.join('\n');
 }
 
 /**
@@ -142,11 +204,31 @@ export function normalizeMission(payload) {
  *
  * The playbooks standardize the verdict line as `VERDICT: FINAL APPROVED` /
  * `VERDICT: FINAL REJECTED` (playbooks/orchestration-*.md, agents/stockwell.md).
- * The last VERDICT line wins (a re-review appends below the original). When no
- * VERDICT line exists, a bare `FINAL APPROVED` / `FINAL REJECTED` marker is
- * honored only when exactly one of the two appears — anything else is
- * 'unknown', which callers must treat as "review complete" (fail open: an
+ *
+ * Two rules keep a REJECTED review from reading as approved:
+ *
+ *   1. Fenced code blocks are stripped first — a quoted format reference or
+ *      template ("Format reference: ```VERDICT: FINAL APPROVED```") is not a
+ *      verdict.
+ *   2. The FIRST remaining VERDICT line wins, not the last. In the report
+ *      template (agents/stockwell.md) the verdict line precedes the issue
+ *      list, so any later "the previous review said VERDICT: FINAL APPROVED,
+ *      but that was wrong" prose is commentary ABOUT a verdict, not the
+ *      verdict. Last-wins let exactly that prose flip a rejection to approved,
+ *      which suppressed the ADR-0004 restart-at-Frankie block and told the
+ *      operator to re-POST a rejected review to "trigger promotion". A
+ *      re-review is a fresh POST that OVERWRITES mission.finalReview (see
+ *      packages/kanban-viewer/src/app/api/missions/[missionId]/final-review/route.ts),
+ *      so an appended second verdict is never the real one.
+ *
+ * When no VERDICT line survives, a bare `FINAL APPROVED` / `FINAL REJECTED`
+ * marker is honored only when exactly one of the two appears — anything else
+ * is 'unknown', which callers must treat as "review complete" (fail open: an
  * unrecognized marker must never deadlock the mission tail).
+ *
+ * MIRRORED in packages/kanban-viewer/src/lib/final-review-verdict.ts — the
+ * promotion API and these Stop gates must never disagree about the same
+ * report text. Change both, or neither.
  *
  * @param {unknown} review - The stored finalReview markdown.
  * @returns {'approved'|'rejected'|'unknown'}
@@ -154,13 +236,15 @@ export function normalizeMission(payload) {
 export function parseFinalReviewVerdict(review) {
   if (typeof review !== 'string') return 'unknown';
 
-  const verdictLines = review.match(/VERDICT:\s*FINAL\s+(?:APPROVED|REJECTED)/gi);
+  const scanned = stripFencedBlocks(review);
+
+  const verdictLines = scanned.match(/VERDICT:\s*FINAL\s+(?:APPROVED|REJECTED)/gi);
   if (verdictLines && verdictLines.length > 0) {
-    return /REJECTED/i.test(verdictLines[verdictLines.length - 1]) ? 'rejected' : 'approved';
+    return /REJECTED/i.test(verdictLines[0]) ? 'rejected' : 'approved';
   }
 
-  const approved = /FINAL\s+APPROVED/i.test(review);
-  const rejected = /FINAL\s+REJECTED/i.test(review);
+  const approved = /FINAL\s+APPROVED/i.test(scanned);
+  const rejected = /FINAL\s+REJECTED/i.test(scanned);
   if (approved !== rejected) return approved ? 'approved' : 'rejected';
   return 'unknown';
 }
@@ -227,7 +311,7 @@ async function fetchJsonOrNull(url, opts = {}, timeoutMs = 5000) {
  */
 export async function fetchBoard(apiUrl, projectId) {
   const payload = await fetchJsonOrNull(buildBoardUrl(apiUrl), {
-    headers: { 'X-Project-ID': projectId },
+    headers: apiEventHeaders(projectId),
   });
   if (!payload) return null;
   return normalizeBoard(payload);
@@ -241,7 +325,7 @@ export async function fetchBoard(apiUrl, projectId) {
  */
 export async function fetchMission(apiUrl, projectId) {
   const payload = await fetchJsonOrNull(buildMissionUrl(apiUrl), {
-    headers: { 'X-Project-ID': projectId },
+    headers: apiEventHeaders(projectId),
   });
   if (!payload) return null;
 
@@ -253,7 +337,7 @@ export async function fetchMission(apiUrl, projectId) {
   // with an actionable "dispatch Stockwell" message rather than hanging or
   // crashing the hook.
   const reviewPayload = await fetchJsonOrNull(buildFinalReviewUrl(apiUrl, mission.id), {
-    headers: { 'X-Project-ID': projectId },
+    headers: apiEventHeaders(projectId),
   });
   if (reviewPayload) {
     const body = unwrapEnvelope(reviewPayload);
@@ -263,6 +347,91 @@ export async function fetchMission(apiUrl, projectId) {
   }
 
   return mission;
+}
+
+/**
+ * Fetches the item list for ONE mission (via `/api/items?missionId=`) and
+ * normalizes it to a plain array.
+ *
+ * Returns null — never throws — when the API is unreachable, answers non-2xx,
+ * or the payload isn't a list. Callers must read null as "mission membership
+ * is unknown" and fall back to the project-wide board view (fail closed:
+ * keep gating on everything rather than silently gating on nothing).
+ *
+ * @returns {Promise<unknown[]|null>}
+ */
+export async function fetchMissionItems(apiUrl, projectId, missionId) {
+  if (!missionId) return null;
+
+  const payload = await fetchJsonOrNull(buildItemsUrl(apiUrl, missionId), {
+    headers: apiEventHeaders(projectId),
+  });
+  if (!payload) return null;
+
+  const body = unwrapEnvelope(payload);
+  if (Array.isArray(body)) return body;
+  if (isPlainObject(body) && Array.isArray(body.items)) return body.items;
+  return null;
+}
+
+/**
+ * Splits the board's terminal columns into "belongs to the current mission"
+ * and "orphaned" sets.
+ *
+ * WHY: `stagedCount` used to come straight off /api/board, which is
+ * project-wide. A single orphaned staged item — created while no mission was
+ * current, or stranded by a force-ended previous mission — blocked EVERY
+ * future stop with advice ("re-POST the final review to trigger promotion")
+ * that could never work: promotion only sweeps the current mission's items,
+ * so nothing would ever clear it. The same mismatch fed a stale-evidence
+ * verdict into checkFrankieEvidence, since an orphan's work-log timestamps
+ * were compared against THIS mission's bundle.
+ *
+ * FAIL-CLOSED FALLBACK: when `missionItems` is null (API unreachable, an API
+ * server too old to honor `?missionId=`) or empty (a mission with no linked
+ * items — nothing to scope against), the project-wide board view is returned
+ * unchanged with `scoped: false`. Scoping may only ever REMOVE items from the
+ * gated set when we positively know which items the mission owns.
+ *
+ * @param {Record<string, unknown[]>} columns - normalizeBoard()'s columns.
+ * @param {unknown[]|null} missionItems - fetchMissionItems() output.
+ * @returns {{ scoped: boolean, stagedItems: unknown[], stagedCount: number, doneCount: number, orphanStagedIds: string[] }}
+ */
+export function scopeBoardToMission(columns, missionItems) {
+  const cols = isPlainObject(columns) ? columns : {};
+  const boardStaged = Array.isArray(cols.staged) ? cols.staged : [];
+  const boardDone = Array.isArray(cols.done) ? cols.done : [];
+
+  const known = Array.isArray(missionItems)
+    ? missionItems
+        .filter((item) => isPlainObject(item) && typeof item.id === 'string')
+        .map((item) => item.id)
+    : [];
+
+  if (known.length === 0) {
+    return {
+      scoped: false,
+      stagedItems: boardStaged,
+      stagedCount: boardStaged.length,
+      doneCount: boardDone.length,
+      orphanStagedIds: [],
+    };
+  }
+
+  const ids = new Set(known);
+  const belongs = (item) => isPlainObject(item) && ids.has(item.id);
+  const stagedItems = boardStaged.filter(belongs);
+
+  return {
+    scoped: true,
+    stagedItems,
+    stagedCount: stagedItems.length,
+    doneCount: boardDone.filter(belongs).length,
+    orphanStagedIds: boardStaged
+      .filter((item) => !belongs(item))
+      .map((item) => (isPlainObject(item) && typeof item.id === 'string' ? item.id : '?'))
+      .filter((id) => id !== '?'),
+  };
 }
 
 /**
@@ -562,10 +731,20 @@ export function checkFrankieEvidence({ missionId, stagedCount, stagedItems = [],
  * situation the operator is in — so the way out is visible from inside the
  * trap, exactly as checkFrankieEvidence does.
  *
- * @param {number} stagedCount
- * @param {{ finalReview?: unknown }} [options] - The mission's stored final
- *   review text (`final_review_verdict` on the normalized mission), used to
- *   diagnose the "review written but nothing promoted" case.
+ * `stagedCount` MUST be scoped to the current mission (see
+ * scopeBoardToMission): promotion only sweeps the current mission's items, so
+ * a project-wide count lets one orphaned staged item block every future stop
+ * with advice that can never work. Orphans are reported through
+ * `options.orphanStagedIds` instead — named, with a remediation that actually
+ * clears them, and only ever appended to a block this mission's OWN staged
+ * items already earned.
+ *
+ * @param {number} stagedCount - Mission-scoped count of staged items.
+ * @param {{ finalReview?: unknown, orphanStagedIds?: string[] }} [options] -
+ *   The mission's stored final review text (`final_review_verdict` on the
+ *   normalized mission), used to diagnose the "review written but nothing
+ *   promoted" case, plus any staged item ids that do NOT belong to this
+ *   mission.
  * @returns {string|null} A block message, or null when nothing is staged.
  */
 export function checkStagedNotPromoted(stagedCount, options = {}) {
@@ -576,6 +755,20 @@ export function checkStagedNotPromoted(stagedCount, options = {}) {
     .toLowerCase();
   if (override === '1' || override === 'true') return null;
 
+  const message = stagedNotPromotedMessage(stagedCount, options);
+  const orphans = Array.isArray(options.orphanStagedIds) ? options.orphanStagedIds : [];
+  if (orphans.length === 0) return message;
+
+  return (
+    `${message} NOTE: ${orphans.length} additional staged item(s) do NOT belong to this mission ` +
+    `(${orphans.join(', ')}) and are NOT what is blocking it — promotion only ever sweeps this ` +
+    `mission's items, so no review can clear them. Retire each one directly: ` +
+    `ateam board-move moveItem --itemId <id> --toStage done (staged -> done is a legal ` +
+    `transition), or archive it so it leaves the board.`
+  );
+}
+
+function stagedNotPromotedMessage(stagedCount, options) {
   const review = options.finalReview;
   const hasReview = typeof review === 'string' && review.trim() !== '';
   const escape =
@@ -620,5 +813,102 @@ export function checkStagedNotPromoted(stagedCount, options = {}) {
     `its verdict is FINAL APPROVED — dispatch Stockwell if the review has not been written yet, or ` +
     `check the review's verdict if it has already been written. The mission cannot stop while items ` +
     `sit in staged. ${escape}`
+  );
+}
+
+/**
+ * Mission lifecycle states that mean the mission is OVER.
+ *
+ * `completed` is set by exactly one writer — POST /api/missions/postcheck with
+ * `passed: true` — and `failed` by the same route with `passed: false`.
+ * `archived` is the mission being closed out. Nothing else in the API writes
+ * these values, so reaching one is a fact about THIS mission's lifecycle, not
+ * a guess.
+ */
+export const MISSION_OVER_STATES = ['completed', 'failed', 'archived'];
+
+/**
+ * Is this mission still in flight?
+ *
+ * A missing/unrecognized state answers TRUE (still active) on purpose: the
+ * gates below block while a mission is active, so an unknown state must fail
+ * CLOSED, not silently release the end-of-mission gates.
+ */
+export function isMissionActiveState(state) {
+  return !(typeof state === 'string' && MISSION_OVER_STATES.includes(state));
+}
+
+/**
+ * Gate: items have finished the per-item pipeline (staged and/or done) but
+ * Stockwell has not written a Final Mission Review.
+ *
+ * Keyed on `stagedCount + doneCount`, NOT doneCount alone. Nothing reaches
+ * `done` except through WI-790's promotion, which only runs when an APPROVED
+ * review is persisted — so a board whose items are all staged has doneCount
+ * 0 BY CONSTRUCTION, and a doneCount-keyed gate could never fire on the exact
+ * board that needs it. Combined with the stop_hook_active re-entry release on
+ * checkStagedNotPromoted (the one gate that can be unsatisfiable), that let a
+ * mission end in two ordinary stops with no review and no post-check: stop #1
+ * blocked on the staged gate, stop #2 skipped it and found every downstream
+ * gate keyed on a doneCount of 0.
+ *
+ * @param {{ pendingCount: number, finalReview: unknown }} args
+ * @returns {string|null} A block message, or null to fall through.
+ */
+export function checkMissingFinalReview({ pendingCount, finalReview }) {
+  if (!(pendingCount > 0)) return null;
+  if (finalReview) return null;
+
+  return (
+    `STOP: ${pendingCount} item(s) have finished the per-item pipeline (staged/done) but Stockwell ` +
+    `has not completed the Final Mission Review. Dispatch Stockwell for the Final Mission Review ` +
+    `before ending the mission.`
+  );
+}
+
+/**
+ * Gate: the Final Mission Review is written and not rejected, but post-checks
+ * have not passed.
+ *
+ * FAIL CLOSED. `passed` is true only when the mission payload AFFIRMATIVELY
+ * says so (`postcheck.passed === true`). An absent `postcheck` key — which is
+ * what /api/missions/current actually returns, since it carries no postcheck
+ * field at all — is "not passed". The old synthesis (`{ passed: state ===
+ * 'completed' }`) turned this into a bare mission-state check that passed with
+ * no evidence any post-check ran.
+ *
+ * END-OF-MISSION LIFECYCLE (why this can still ever be satisfied):
+ *
+ *   1. Stockwell's APPROVED review promotes staged -> done (WI-790).
+ *   2. Hannibal runs post-checks. POST /api/missions/postcheck moves the
+ *      mission to `completed` on pass, `failed` on fail — and refuses to run
+ *      at all unless the mission is `running`, so a `failed` mission can never
+ *      be post-checked again.
+ *   3. GET /api/missions/current prefers the ACTIVE mission and only falls
+ *      back to the newest non-archived one when no active mission exists, so
+ *      from here on the gates see a mission in an over state.
+ *   4. This gate stops applying (isMissionActiveState() is false) and Tawnia's
+ *      documentation phase — then Hannibal's final stop — is allowed.
+ *
+ * Blocking on an over state would be an unclearable trap (there is no way to
+ * re-run a post-check on a completed or failed mission), which is why the
+ * release is keyed on the lifecycle rather than on the state meaning "passed".
+ * The board-fact gates above (active items, Frankie evidence, staged not
+ * promoted, missing review) keep enforcing regardless of mission state, so an
+ * over state can never end a mission with unpromoted items.
+ *
+ * @param {{ pendingCount: number, finalReview: unknown, postcheck: unknown, missionState: unknown }} args
+ * @returns {string|null} A block message, or null to fall through.
+ */
+export function checkPostcheck({ pendingCount, finalReview, postcheck, missionState }) {
+  if (!(pendingCount > 0)) return null;
+  if (!finalReview) return null;
+  if (isPlainObject(postcheck) && postcheck.passed === true) return null;
+  if (!isMissionActiveState(missionState)) return null;
+
+  return (
+    `STOP: the Final Mission Review is complete but post-checks have not passed. ` +
+    `Run ateam missions postcheck (lint, unit, e2e) — the mission cannot end until it reports ` +
+    `passed. Nothing in the mission payload reports a passing post-check yet.`
   );
 }

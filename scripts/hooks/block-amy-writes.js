@@ -6,13 +6,17 @@
  * Amy investigates and reports - she does NOT modify production code or tests.
  * Her findings go in the agent_stop summary, not file artifacts.
  *
- * Allowed: writes to /tmp/, throwaway debug scripts outside the project.
+ * Allowed: writes to /tmp/ and /var/, throwaway debug scripts outside the
+ * project. Scratch paths are canonicalized before the allowlist test (see
+ * lib/scratch-path.js), so `/tmp/../<repo>/src/app.ts` is not scratch and
+ * still falls through to the deny rules below.
  *
  * Claude Code sends hook context via stdin JSON (tool_name, tool_input).
  */
 
 import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
+import { isScratchPath } from './lib/scratch-path.js';
 import { denyAndExit } from './lib/send-denied-event.js';
 
 let hookInput = {};
@@ -48,8 +52,9 @@ try {
     process.exit(0);
   }
 
-  // Allow writes to /tmp/ (throwaway debug scripts, investigation artifacts)
-  if (filePath.startsWith('/tmp/') || filePath.startsWith('/var/')) {
+  // Allow writes to /tmp/ and /var/ (throwaway debug scripts, investigation
+  // artifacts) — only where the path REALLY resolves under them.
+  if (isScratchPath(filePath)) {
     process.exit(0);
   }
 

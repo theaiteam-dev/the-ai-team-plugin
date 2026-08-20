@@ -146,8 +146,13 @@ describe('GET /api/missions/current', () => {
     });
 
     it('should return completed but not archived mission as current', async () => {
-      // A completed mission that hasn't been archived yet is still the "current" mission
-      mockPrismaClient.mission.findFirst.mockResolvedValue(mockCompletedMission);
+      // A completed mission that hasn't been archived yet is still the "current"
+      // mission — /ai-team:retro reads this endpoint AFTER post-checks move the
+      // mission to `completed`. It is served by the FALLBACK query, which only
+      // runs when no active mission exists (see the precedence tests below).
+      mockPrismaClient.mission.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(mockCompletedMission);
 
       const request = new NextRequest('http://localhost:3000/api/missions/current', {
         headers: { 'X-Project-ID': 'test-project' },
@@ -160,6 +165,94 @@ describe('GET /api/missions/current', () => {
       expect(data.data).not.toBeNull();
       expect(data.data?.state).toBe('completed');
       expect(data.data?.archivedAt).toBeNull();
+    });
+  });
+
+  describe('selection precedence (stale-mission bug)', () => {
+    // These tests queue per-call resolutions (the route issues up to TWO
+    // findFirst calls), and vi.clearAllMocks() clears call history without
+    // draining a mockResolvedValueOnce queue — a leftover would leak into the
+    // next test. mockReset() drops both.
+    beforeEach(() => {
+      mockPrismaClient.mission.findFirst.mockReset();
+    });
+
+    const mockStaleCompleted: Mission = {
+      id: 'M-20260101-001',
+      name: 'Stale completed mission',
+      state: 'completed',
+      prdPath: '/prd/old.md',
+      startedAt: new Date('2026-01-01T08:00:00Z'),
+      completedAt: new Date('2026-01-01T09:00:00Z'),
+      archivedAt: null,
+    };
+
+    it('filters out completed/failed/archived missions on the primary query', async () => {
+      // findFirst had NO state filter and NO orderBy, so SQLite handed back the
+      // LOWEST rowid: a stale completed-but-unarchived mission M1 while M2 was
+      // actually running. Hannibal's Stop gates then checked M1's evidence
+      // bundle (a permanent unclearable STALE deadlock) and let M1's completed
+      // state and approved verdict satisfy M2's review/post-check gates.
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockActiveMission);
+
+      const request = new NextRequest('http://localhost:3000/api/missions/current', {
+        headers: { 'X-Project-ID': 'test-project' },
+      });
+      await GET(request);
+
+      expect(mockPrismaClient.mission.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            archivedAt: null,
+            state: { notIn: ['completed', 'failed', 'archived'] },
+          }),
+          orderBy: { startedAt: 'desc' },
+        })
+      );
+    });
+
+    it('returns the ACTIVE mission even when a stale completed one exists (and never runs the fallback)', async () => {
+      mockPrismaClient.mission.findFirst
+        .mockResolvedValueOnce(mockActiveMission)
+        .mockResolvedValueOnce(mockStaleCompleted);
+
+      const request = new NextRequest('http://localhost:3000/api/missions/current', {
+        headers: { 'X-Project-ID': 'test-project' },
+      });
+      const data: GetCurrentMissionResponse = await (await GET(request)).json();
+
+      expect(data.data?.id).toBe(mockActiveMission.id);
+      expect(mockPrismaClient.mission.findFirst).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to the newest non-archived mission, newest first, when nothing is active', async () => {
+      mockPrismaClient.mission.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(mockCompletedMission);
+
+      const request = new NextRequest('http://localhost:3000/api/missions/current', {
+        headers: { 'X-Project-ID': 'test-project' },
+      });
+      const data: GetCurrentMissionResponse = await (await GET(request)).json();
+
+      expect(data.data?.id).toBe(mockCompletedMission.id);
+      expect(mockPrismaClient.mission.findFirst).toHaveBeenCalledTimes(2);
+
+      const fallbackArgs = mockPrismaClient.mission.findFirst.mock.calls[1][0];
+      expect(fallbackArgs.where.archivedAt).toBeNull();
+      expect(fallbackArgs.where.state, 'the fallback tier is state-agnostic').toBeUndefined();
+      expect(fallbackArgs.orderBy).toEqual({ startedAt: 'desc' });
+    });
+
+    it('returns null when the project has no non-archived mission at all', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(null);
+
+      const request = new NextRequest('http://localhost:3000/api/missions/current', {
+        headers: { 'X-Project-ID': 'test-project' },
+      });
+      const data: GetCurrentMissionResponse = await (await GET(request)).json();
+
+      expect(data.data).toBeNull();
     });
   });
 

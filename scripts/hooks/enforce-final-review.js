@@ -25,6 +25,9 @@
  *   __TEST_MOCK_BOARD__ - JSON string for fake board response
  *   __TEST_MOCK_MISSION__ - JSON string for fake mission response
  *   __TEST_MOCK_NO_MISSION__ - Set to 'true' to simulate no active mission
+ *   __TEST_MOCK_MISSION_ITEMS__ - JSON array of the current mission's items
+ *     (mission membership; absent means "unknown", which falls back to the
+ *     project-wide board view)
  */
 
 import { readFileSync } from 'fs';
@@ -32,12 +35,16 @@ import { resolveAgent, isKnownAgent } from './lib/resolve-agent.js';
 import {
   fetchBoard,
   fetchMission,
+  fetchMissionItems,
   normalizeBoard,
   normalizeMission,
   countBoard,
+  scopeBoardToMission,
   checkFrankieEvidence,
   checkStagedNotPromoted,
   checkFinalReviewRejection,
+  checkMissingFinalReview,
+  checkPostcheck,
 } from './lib/stop-gates.js';
 
 // Read hook input from stdin (optional — old callers may not pipe stdin)
@@ -74,6 +81,7 @@ const projectId = process.env.ATEAM_PROJECT_ID || '';
 const mockBoard = process.env.__TEST_MOCK_BOARD__;
 const mockMission = process.env.__TEST_MOCK_MISSION__;
 const mockNoMission = process.env.__TEST_MOCK_NO_MISSION__;
+const mockMissionItems = process.env.__TEST_MOCK_MISSION_ITEMS__;
 
 async function checkFinalReview() {
   // Simulate no active mission
@@ -108,7 +116,7 @@ async function checkFinalReview() {
     }
   }
 
-  const { activeCounts, totalActive, doneCount, stagedCount } = countBoard(boardData.columns);
+  const { activeCounts, totalActive, doneCount } = countBoard(boardData.columns);
 
   // If items are still active, block stop
   if (totalActive > 0) {
@@ -124,6 +132,25 @@ async function checkFinalReview() {
     process.exit(2);
   }
 
+  // Scope the board's terminal columns to THIS mission's items — /api/board is
+  // project-wide but promotion only sweeps the current mission, so an orphaned
+  // staged item must not block this mission (see scopeBoardToMission; unknown
+  // membership falls back to the project-wide counts, fail closed). Identical
+  // to enforce-orchestrator-stop.js, its main-session twin.
+  //
+  // Mock mode never reaches the network: a fixture board/mission with no
+  // __TEST_MOCK_MISSION_ITEMS__ means "membership unknown", which is the
+  // project-wide fallback — not a live fetch against whatever ATEAM_API_URL
+  // happens to point at.
+  const missionItems =
+    mockMissionItems !== undefined
+      ? JSON.parse(mockMissionItems)
+      : mockBoard !== undefined || mockMission !== undefined
+        ? null
+        : await fetchMissionItems(apiUrl, projectId, missionData.id);
+  const scope = scopeBoardToMission(boardData.columns, missionItems);
+  const pendingCount = scope.stagedCount + scope.doneCount;
+
   // Frankie's mission-tail walk precedes Stockwell's Final Mission Review —
   // on a repo with a drivable surface, block until his evidence bundle
   // exists on disk (only reached once totalActive === 0, i.e. every item is
@@ -137,8 +164,8 @@ async function checkFinalReview() {
   // the primary execution mode, where Hannibal runs in the main session.
   const frankieBlock = checkFrankieEvidence({
     missionId: missionData.id,
-    stagedCount,
-    stagedItems: boardData.columns.staged,
+    stagedCount: scope.stagedCount,
+    stagedItems: scope.stagedItems,
   });
   if (frankieBlock) {
     console.log(JSON.stringify({ decision: 'block', additionalContext: frankieBlock }));
@@ -157,23 +184,29 @@ async function checkFinalReview() {
   // only one that can be genuinely unsatisfiable. Reaching it already implies
   // totalActive === 0, so releasing it can never end a mission with items
   // still mid-pipeline.
-  const stagedBlock = checkStagedNotPromoted(stagedCount, {
+  //
+  // The release covers THIS gate only. Every gate below keys on
+  // stagedCount + doneCount, not doneCount alone: nothing reaches done except
+  // through WI-790's promotion, so a doneCount-keyed gate is silent on exactly
+  // the all-staged board that reaches this point, and the second stop would end
+  // the mission with no review and no post-check.
+  const stagedBlock = checkStagedNotPromoted(scope.stagedCount, {
     finalReview: missionData.final_review_verdict,
+    orphanStagedIds: scope.orphanStagedIds,
   });
   if (stagedBlock && !reentryAfterBlock) {
     process.stderr.write(`${stagedBlock}\n`);
     process.exit(2);
   }
 
-  // If all items done but no final review verdict, block stop
-  if (doneCount > 0 && !missionData.final_review_verdict) {
+  // Items finished the per-item pipeline (staged and/or done) but no review.
+  const missingReviewBlock = checkMissingFinalReview({
+    pendingCount,
+    finalReview: missionData.final_review_verdict,
+  });
+  if (missingReviewBlock) {
     process.stderr.write('Final Mission Review required.\n');
-    process.stderr.write(
-      `All ${doneCount} items are done, but Stockwell has not completed the final review.\n`
-    );
-    process.stderr.write(
-      'Dispatch Stockwell for Final Mission Review before ending.\n'
-    );
+    process.stderr.write(`${missingReviewBlock}\n`);
     process.exit(2);
   }
 
@@ -187,20 +220,19 @@ async function checkFinalReview() {
     process.exit(2);
   }
 
-  // If final review done but post-checks not run/passed, block stop
-  if (missionData.final_review_verdict) {
-    const postcheck = missionData.postcheck;
-    if (!postcheck || !postcheck.passed) {
-      process.stderr.write('Post-mission checks required.\n');
-      process.stderr.write(
-        'Final review is complete, but post-checks have not passed.\n'
-      );
-      process.stderr.write('\n');
-      process.stderr.write(
-        'Run ateam missions postcheck to verify lint, tests, and e2e all pass.\n'
-      );
-      process.exit(2);
-    }
+  // If final review done but post-checks not run/passed, block stop. Fail
+  // closed: only an affirmative postcheck.passed === true (or a mission that
+  // has already reached an over state) releases this — see checkPostcheck().
+  const postcheckBlock = checkPostcheck({
+    pendingCount,
+    finalReview: missionData.final_review_verdict,
+    postcheck: missionData.postcheck,
+    missionState: missionData.state,
+  });
+  if (postcheckBlock) {
+    process.stderr.write('Post-mission checks required.\n');
+    process.stderr.write(`${postcheckBlock}\n`);
+    process.exit(2);
   }
 
   // Mission complete with final review and passing post-checks - allow stop

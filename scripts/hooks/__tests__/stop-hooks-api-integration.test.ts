@@ -83,6 +83,8 @@ let requestedPaths: string[] = [];
 /** Mutable per-test server state. */
 let state = {
   items: [] as Array<{ id: string; stageId: string }>,
+  /** Item ids linked to MISSION_ID through the MissionItem join. */
+  missionItemIds: [] as string[],
   missionState: 'running',
   finalReview: null as string | null,
 };
@@ -118,6 +120,20 @@ beforeAll(async () => {
         return send(400, { success: false, error: { code: 'VALIDATION_ERROR' } });
       }
       return send(200, missionPayload(state.missionState));
+    }
+
+    // The real /api/items honors ?missionId= by joining MissionItem. Mission
+    // membership is what separates THIS mission's staged items from stragglers
+    // another mission left on the project board.
+    if (path === '/api/items') {
+      if (req.headers['x-project-id'] !== PROJECT_ID) {
+        return send(400, { success: false, error: { code: 'VALIDATION_ERROR' } });
+      }
+      const missionId = search.get('missionId');
+      const items = missionId
+        ? state.items.filter((i) => state.missionItemIds.includes(i.id))
+        : state.items;
+      return send(200, { success: true, data: items });
     }
 
     if (path === `/api/missions/${MISSION_ID}/final-review`) {
@@ -161,7 +177,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   requestedPaths = [];
-  state = { items: [], missionState: 'running', finalReview: null };
+  state = { items: [], missionItemIds: [], missionState: 'running', finalReview: null };
 });
 
 // ---------------------------------------------------------------------------
@@ -357,6 +373,56 @@ describe('enforce-orchestrator-stop — real API path', async () => {
     expect(String(output.additionalContext)).toMatch(/FINAL REJECTED/);
     expect(String(output.additionalContext)).toMatch(/RESTARTS at Frankie/i);
     expect(String(output.additionalContext)).not.toMatch(/Run ateam missions postcheck/i);
+  });
+
+  it('blocks a RUNNING mission with an approved review over the real API path — the payload carries no post-check evidence', async () => {
+    // /api/missions/current has never returned a `postcheck` key. The gate used
+    // to synthesize one from the mission state, so it passed with zero evidence
+    // a post-check had run. Absent now means "not passed".
+    state.items = [{ id: 'WI-001', stageId: 'done' }];
+    state.missionItemIds = ['WI-001'];
+    state.missionState = 'running';
+    state.finalReview = '# Final Mission Review\n\nVERDICT: FINAL APPROVED\n';
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: true });
+
+    const output = parseStopOutput((await runHookLive(HOOK, {}, dir)).stdout);
+
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/post-check/i);
+  });
+
+  it('scopes staged items to the current mission — an orphan from an earlier mission does not block the stop', async () => {
+    // /api/board is project-wide; promotion only ever sweeps the current
+    // mission's items, so a staged straggler could never be cleared by
+    // re-POSTing a review. Driven through the real /api/items?missionId= route.
+    state.items = [
+      { id: 'WI-001', stageId: 'done' },
+      { id: 'WI-ORPHAN', stageId: 'staged' },
+    ];
+    state.missionItemIds = ['WI-001'];
+    state.missionState = 'completed';
+    state.finalReview = '# Final Mission Review\n\nVERDICT: FINAL APPROVED\n';
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: true });
+
+    const result = await runHookLive(HOOK, {}, dir);
+
+    expect(
+      requestedPaths.some((p) => p.startsWith('/api/items?missionId=')),
+      `hook never asked for mission membership — requested: ${JSON.stringify(requestedPaths)}`
+    ).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(parseStopOutput(result.stdout).decision).not.toBe('block');
+  });
+
+  it('still blocks when the mission OWNS the staged item (scoping narrows, it does not disarm)', async () => {
+    state.items = [{ id: 'WI-001', stageId: 'staged' }];
+    state.missionItemIds = ['WI-001'];
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: true });
+
+    const output = parseStopOutput((await runHookLive(HOOK, {}, dir)).stdout);
+
+    expect(output.decision).toBe('block');
+    expect(String(output.additionalContext)).toMatch(/staged/i);
   });
 
   it('fails open when the API returns 404 for every route (adversity must not trap the operator)', async () => {

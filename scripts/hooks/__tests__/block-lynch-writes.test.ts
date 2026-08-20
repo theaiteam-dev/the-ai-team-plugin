@@ -10,7 +10,8 @@
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'child_process';
 import { join } from 'path';
-import { readFileSync } from 'fs';
+import { readFileSync, mkdtempSync, symlinkSync, rmSync, realpathSync } from 'fs';
+import { tmpdir } from 'os';
 
 const HOOK = join(__dirname, '..', 'block-lynch-writes.js');
 
@@ -138,6 +139,92 @@ describe('block-lynch-writes — Lynch allowlist', () => {
       agent_type: 'lynch',
       tool_name: 'Write',
       tool_input: { file_path: '/var/tmp/scratch.txt' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+});
+
+// =============================================================================
+// Lynch/Stockwell — the scratch allowlist must not be traversable
+//
+// This is an allow-then-block hook: a path judged "scratch" exits 0 and skips
+// the block entirely. When the test was a raw startsWith('/tmp/'), a path that
+// merely BEGAN with a scratch root escaped the guard — `/tmp/../<repo>/src/app.ts`
+// was allowed while the `src/app.ts` it resolves to was blocked. The allowlist
+// now canonicalizes first (lib/scratch-path.js).
+// =============================================================================
+describe('block-lynch-writes — scratch allowlist canonicalization', () => {
+  const REPO_ROOT = realpathSync(join(__dirname, '..', '..', '..'));
+
+  it('blocks /tmp/../<repo>/src/app.ts (traversal back into the repo)', () => {
+    const result = runHook({
+      agent_type: 'lynch',
+      tool_name: 'Write',
+      tool_input: { file_path: `/tmp/..${REPO_ROOT}/src/app.ts` },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('blocks /tmp/x/../../etc/hosts (traversal out of /tmp entirely)', () => {
+    const result = runHook({
+      agent_type: 'lynch',
+      tool_name: 'Write',
+      tool_input: { file_path: '/tmp/x/../../etc/hosts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('blocks /var/../etc/passwd', () => {
+    const result = runHook({
+      agent_type: 'lynch',
+      tool_name: 'Write',
+      tool_input: { file_path: '/var/../etc/passwd' },
+    });
+    expect(result.exitCode).toBe(2);
+  });
+
+  it('blocks a sibling directory that merely starts with the root name', () => {
+    const result = runHook({
+      agent_type: 'lynch',
+      tool_name: 'Write',
+      tool_input: { file_path: '/tmpfoo/notes.md' },
+    });
+    expect(result.exitCode).toBe(2);
+  });
+
+  it('blocks a /tmp symlink that resolves into the repo (laundering)', () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'lynch-scratch-test-'));
+    try {
+      const link = join(sandbox, 'launder');
+      symlinkSync(join(REPO_ROOT, 'src'), link);
+      const result = runHook({
+        agent_type: 'lynch',
+        tool_name: 'Write',
+        tool_input: { file_path: join(link, 'app.ts') },
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/BLOCKED/i);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it('still allows a genuine nested /tmp/ scratch file', () => {
+    const result = runHook({
+      agent_type: 'lynch',
+      tool_name: 'Write',
+      tool_input: { file_path: '/tmp/scratch/review-notes.md' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('still allows a ".." that stays inside the scratch root', () => {
+    const result = runHook({
+      agent_type: 'lynch',
+      tool_name: 'Write',
+      tool_input: { file_path: '/tmp/a/../b/review-notes.md' },
     });
     expect(result.exitCode).toBe(0);
   });
