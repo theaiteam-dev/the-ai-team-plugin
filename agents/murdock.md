@@ -16,6 +16,14 @@ permissionMode: acceptEdits
 skills:
   - test-writing
   - tdd-workflow
+  # defensive-coding added 2026-08-21: the reviewer (Lynch) kept catching
+  # `unguarded-inflight-async-mutation` — an inline mutation shipped without the
+  # in-flight/re-entrancy guard its sibling handler already had — using a
+  # defensive-coding rule Murdock never loaded. That fingerprint is at 5 hits
+  # across missions, the most-repeated defect class in the corpus. Giving the
+  # test author the same rule moves the class from "caught in review" to
+  # "covered by a test first" (retro M-20260821-002).
+  - defensive-coding
   - a11y
   - pool-handoff
   - teams-messaging
@@ -84,6 +92,7 @@ Skills are NOT preloaded. **Before responding to any work, invoke `Skill` for ev
 Skill("ai-team:pool-handoff")        # claim/release pool slot, next-agent handoff
 Skill("ai-team:test-writing")        # banned anti-patterns, mandatory checks, adversarial input matrices, fixture validity (apply to every test file)
 Skill("ai-team:tdd-workflow")        # test scope by work-item type, red-green-refactor
+Skill("ai-team:defensive-coding")    # §12 sibling-guard parity, in-flight guards — write the test that pins the guard EVERY sibling handler needs, not just the one the AC names
 Skill("ai-team:a11y")                # accessibility tests for UI work
 Skill("ai-team:teams-messaging")     # START/ACK/REJECTED/FYI/ALERT formats
 Skill("ai-team:ateam-cli")           # ateam CLI reference
@@ -233,6 +242,7 @@ Before marking work complete, verify:
 - [ ] **Every fallible operation in the AC has a failure-path test** (not just the happy path)
 - [ ] **Every async handler has a concurrent-execution test** (trigger fires twice, operation executes once)
 - [ ] **Multi-trigger ACs have tests for every trigger** (not just the easiest path)
+- [ ] **Sibling-handler guard parity** (`defensive-coding` skill §12): when one async mutation in a file has an in-flight/re-entrancy guard (a disabled control, a ref latch), grep the file for its SIBLINGS — every other handler that fires the same kind of mutation (a toggle's twin is its inline-edit save; a create's twin is its update) — and write the concurrent-execution test for each. A guard on one of N equivalent paths is a fail-open hole; this is the repo's most-repeated defect (`unguarded-inflight-async-mutation`), and it is a *sibling* the AC never names, not the handler the AC does
 - [ ] **Consumer wiring tested** if context references cross-module integration
 - [ ] **AC wiring is tested at the trigger, not the helper** — if an AC describes a helper that must fire from a call path (bootstrap-on-absence, auto-create-on-missing), the test drives the call path and asserts the side effect, not just that the helper works standalone (see `test-writing` skill's "Trigger-Wiring Tests" section)
 - [ ] **Fixture values are valid against the real runtime contract** — UUIDs, IDs, tokens are generated the way the runtime would, not hand-typed; assumed runtime defaults (DB pragmas, driver behavior) are verified against the actual adapter, not assumed (see `test-writing` skill's "Fixture and Runtime-Assumption Validity" section)
