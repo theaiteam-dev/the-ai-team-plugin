@@ -394,6 +394,7 @@ describe('block-amy-test-writes', () => {
   it('should block writes to .test.ts files', () => {
     const result = runHook(AMY_TEST_WRITES_HOOK, {}, {
       agent_type: 'ai-team:amy',
+      tool_name: 'Write',
       tool_input: { file_path: 'src/__tests__/feature-raptor.test.ts' },
     });
     expect(result.exitCode).toBe(2);
@@ -403,6 +404,7 @@ describe('block-amy-test-writes', () => {
   it('should block writes to .spec.tsx files', () => {
     const result = runHook(AMY_TEST_WRITES_HOOK, {}, {
       agent_type: 'ai-team:amy',
+      tool_name: 'Write',
       tool_input: { file_path: 'src/components/Button.spec.tsx' },
     });
     expect(result.exitCode).toBe(2);
@@ -412,6 +414,7 @@ describe('block-amy-test-writes', () => {
   it('should block writes to raptor files', () => {
     const result = runHook(AMY_TEST_WRITES_HOOK, {}, {
       agent_type: 'ai-team:amy',
+      tool_name: 'Write',
       tool_input: { file_path: 'src/raptor-investigation.js' },
     });
     expect(result.exitCode).toBe(2);
@@ -420,6 +423,7 @@ describe('block-amy-test-writes', () => {
 
   it('should allow non-test writes like /tmp/debug.js', () => {
     const result = runHook(AMY_TEST_WRITES_HOOK, {}, {
+      tool_name: 'Write',
       tool_input: { file_path: '/tmp/debug.js' },
     });
     expect(result.exitCode).toBe(0);
@@ -427,7 +431,17 @@ describe('block-amy-test-writes', () => {
 
   it('should allow writes with no file path', () => {
     const result = runHook(AMY_TEST_WRITES_HOOK, {}, {
+      tool_name: 'Write',
       tool_input: {},
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('should allow amy to READ a source/test file (not a write)', () => {
+    const result = runHook(AMY_TEST_WRITES_HOOK, {}, {
+      agent_type: 'ai-team:amy',
+      tool_name: 'Read',
+      tool_input: { file_path: 'src/__tests__/feature.test.ts' },
     });
     expect(result.exitCode).toBe(0);
   });

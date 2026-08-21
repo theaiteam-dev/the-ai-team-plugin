@@ -354,6 +354,18 @@ describe('block-amy-test-writes — agent guards', () => {
     expect(result.exitCode).toBe(2);
   });
 
+  // Regression: this hook is matcher-less (fires on every tool), and Read
+  // carries a file_path too. Without a write-tool gate it falsely blocked
+  // Amy from READING source/test files to investigate — she had to work
+  // around it with `cat`. Reads must pass.
+  it.each([
+    ['Read', 'src/services/order.ts'],
+    ['Read', 'src/__tests__/auth.test.ts'],
+  ])('allows amy %s of %s (exit 0 — reads are not writes)', (tool, file_path) => {
+    const result = runHook(HOOK, { agent_type: 'amy', tool_name: tool, tool_input: { file_path } });
+    expect(result.exitCode).toBe(0);
+  });
+
   it('allows non-target agent murdock writing .test.ts (exit 0)', () => {
     const result = runHook(HOOK, {
       agent_type: 'murdock',
@@ -556,6 +568,18 @@ describe('block-ba-test-writes — agent guards', () => {
     });
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  // Regression: matcher-less hook fires on every tool; without a write-tool
+  // gate it falsely blocked B.A. from READING a test file (Read carries a
+  // file_path too). B.A. must read existing tests to implement against them.
+  it('allows ba Read of a .test.ts file (exit 0 — reads are not writes)', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'ba',
+      tool_name: 'Read',
+      tool_input: { file_path: 'src/__tests__/auth.test.ts' },
+    });
+    expect(result.exitCode).toBe(0);
   });
 
   it('blocks ba editing a .spec.tsx file (exit 2)', () => {

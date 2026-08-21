@@ -51,11 +51,18 @@ try {
 
   const toolName = hookInput.tool_name || '';
 
-  if (toolName !== 'Write' && toolName !== 'Edit') {
+  // Only gate write-capable tools (matcher-less hook → fires on every tool, so
+  // Read must fall through). Includes MultiEdit/NotebookEdit, not just
+  // Write/Edit, so a reviewer can't route a write around this block.
+  const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+  if (!WRITE_TOOLS.has(toolName)) {
     process.exit(0);
   }
 
-  const filePath = (hookInput.tool_input && hookInput.tool_input.file_path) || '';
+  const filePath =
+    (hookInput.tool_input &&
+      (hookInput.tool_input.file_path || hookInput.tool_input.notebook_path)) ||
+    '';
 
   // Allow the temp dirs as scratch space — but only where the path REALLY
   // resolves under them and outside this project (isScratchPath collapses

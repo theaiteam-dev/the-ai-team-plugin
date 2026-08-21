@@ -32,7 +32,16 @@ try {
 
   const toolName = hookInput.tool_name || '';
   const toolInput = hookInput.tool_input || {};
-  const filePath = toolInput.file_path || '';
+  const filePath = toolInput.file_path || toolInput.notebook_path || '';
+
+  // Only gate write-capable tools. This hook is matcher-less (fires on every
+  // tool), and Read/Grep/Glob also carry a file_path — without this gate the
+  // test-file path check below falsely blocks B.A. from READING test files,
+  // not just from writing them.
+  const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+  if (!WRITE_TOOLS.has(toolName)) {
+    process.exit(0);
+  }
 
   if (!filePath) {
     process.exit(0);
