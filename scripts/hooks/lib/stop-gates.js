@@ -30,7 +30,7 @@
 
 import { existsSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
-import { canFrankieDrive, readExecutionContractFrom } from './qa-contract.js';
+import { frankieDriveReadiness, readExecutionContractFrom } from './qa-contract.js';
 import { apiEventHeaders } from './observer.js';
 // ONE copy of the verdict rule, shared with the promotion API. These hooks are
 // ESM and resolve this specifier against their own file path, and
@@ -595,10 +595,27 @@ export function checkFrankieEvidence({ missionId, stagedCount, stagedItems = [],
     if (!missionId || !(stagedCount > 0)) return null;
 
     const { surfaces, drive } = readSurfacesAndDrive(cwd);
-    if (!canFrankieDrive(surfaces, drive)) return null;
+    const readiness = frankieDriveReadiness(surfaces, drive, cwd);
+    // 'inert' — no drivable surface / unsupported driver: gate stays off.
+    if (readiness === 'inert') return null;
 
     const reportPath = join(cwd, '.qa-evidence', missionId, 'report.md');
     if (!existsSync(reportPath)) {
+      // 'driver-missing' — the surface is drivable and the driver is DECLARED,
+      // but it is not installed/executable here. Arming blind (the generic
+      // "evidence missing" message below) sent the operator chasing a walk the
+      // declared driver could never run (retro M-20260821-002). Name the driver
+      // and the actual remedy instead.
+      if (readiness === 'driver-missing') {
+        return (
+          `STOP: this repo declares a drivable surface with qa.drive='${drive}', but that driver ` +
+          `is not installed/executable here (no node_modules/.bin/${drive}). The mission-completion ` +
+          `gate armed against a QA driver that cannot run, so Frankie cannot produce the DoD walk it ` +
+          `demands. Install '${drive}' in the target repo, correct qa.drive in ateam.config.json, or ` +
+          `if this environment intentionally has no driver re-run with ATEAM_SKIP_FRANKIE_GATE=1 to ` +
+          `override this gate.`
+        );
+      }
       return (
         `STOP: Frankie's evidence bundle is missing. ` +
         `Expected: .qa-evidence/${missionId}/report.md. ` +

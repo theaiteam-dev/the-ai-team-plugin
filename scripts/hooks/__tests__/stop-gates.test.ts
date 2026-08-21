@@ -466,15 +466,23 @@ describe('stop-gates — countBoard (WI-791 AC1: stagedCount alongside doneCount
 describe('stop-gates — checkFrankieEvidence', () => {
   const scratchDirs: string[] = [];
 
-  /** Throwaway repo dir; pass a mission id to seed a real evidence report. */
+  /** Throwaway repo dir; pass a mission id to seed a real evidence report.
+   * By default the flowspec driver is "installed" (node_modules/.bin/flowspec)
+   * so a web-surface repo is genuinely drivable — pass installDriver:false to
+   * model a repo that DECLARES flowspec but hasn't installed it. */
   function scratch(
     withReport: string | null = null,
-    opts: { surfaces?: string[]; reportBody?: string } = {}
+    opts: { surfaces?: string[]; reportBody?: string; installDriver?: boolean } = {}
   ) {
-    const { surfaces = ['web'], reportBody = '# Evidence\n' } = opts;
+    const { surfaces = ['web'], reportBody = '# Evidence\n', installDriver = true } = opts;
     const dir = mkdtempSync(join(tmpdir(), 'ateam-stop-gates-'));
     scratchDirs.push(dir);
     writeFileSync(join(dir, 'ateam.config.json'), JSON.stringify({ surfaces }));
+    if (installDriver) {
+      const binDir = join(dir, 'node_modules', '.bin');
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(join(binDir, 'flowspec'), '#!/bin/sh\n', { mode: 0o755 });
+    }
     if (withReport) {
       mkdirSync(join(dir, '.qa-evidence', withReport), { recursive: true });
       writeFileSync(join(dir, '.qa-evidence', withReport, 'report.md'), reportBody);
@@ -511,6 +519,22 @@ describe('stop-gates — checkFrankieEvidence', () => {
     });
     expect(message).toMatch(/frankie/i);
     expect(message).toMatch(/\.qa-evidence\/M-TEST-001\/report\.md/);
+  });
+
+  it('surfaces a SPECIFIC diagnostic when web+flowspec are declared but flowspec is not installed', () => {
+    // The retro bug (qa-driver-declared-but-not-executable): the gate armed
+    // on a driver that could not run. Instead of the generic "evidence
+    // missing" message, the operator must be told the DECLARED driver is not
+    // installed/executable, and named.
+    const message = checkFrankieEvidence({
+      missionId: 'M-TEST-001',
+      stagedCount: 1,
+      cwd: scratch(null, { installDriver: false }),
+    });
+    expect(message).toMatch(/flowspec/);
+    expect(message).toMatch(/not (installed|executable)/i);
+    // still points at the operator escape hatch
+    expect(message).toMatch(/ATEAM_SKIP_FRANKIE_GATE=1/);
   });
 
   it('documents the ATEAM_SKIP_FRANKIE_GATE escape hatch in the block message itself', () => {

@@ -245,6 +245,64 @@ export function canFrankieDrive(surfaces, drive) {
 }
 
 /**
+ * Answers "is the DECLARED driver actually installed and runnable in this repo?"
+ *
+ * canFrankieDrive() only checks the driver NAME is one Frankie supports — it
+ * cannot see whether that driver can execute. A repo can declare
+ * `qa.drive: "flowspec"` on a `web` surface and never install flowspec, which
+ * arms the mission-completion gate against a driver that cannot run (retro
+ * M-20260821-002, `qa-driver-declared-but-not-executable`, "FlowSpec armed the
+ * gate while unable to run at all"). A supported driver is executable iff its
+ * CLI resolves at `<cwd>/node_modules/.bin/<driver>` — exactly what
+ * `bunx <driver>` or a package.json script would invoke.
+ *
+ * An unsupported driver is never "executable-as-a-supported-driver" even if a
+ * same-named binary happens to exist. Never throws; an unreadable/absent repo
+ * dir returns false (fail-inert, like every other axis here).
+ *
+ * @param {string|undefined} drive - a contract's `qa.drive` (undefined defaults
+ *   to DEFAULT_CONTRACT.qa.drive, matching canFrankieDrive()).
+ * @param {string} [cwd] - repo root to resolve the driver binary against.
+ * @returns {boolean}
+ */
+export function isDriverExecutable(drive, cwd = process.cwd()) {
+  const resolved = drive === undefined ? DEFAULT_CONTRACT.qa.drive : drive;
+  if (!SUPPORTED_DRIVERS.includes(resolved)) {
+    return false;
+  }
+  try {
+    return fs.existsSync(path.join(cwd, 'node_modules', '.bin', resolved));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Three-state arming for the mission-completion gate, so a drivable repo whose
+ * driver cannot run is neither silently ARMED (a tail deadlock demanding
+ * evidence a broken driver can't produce) nor silently SKIPPED (a web app
+ * shipping with no QA walk at all — the failure mode of just returning false):
+ *
+ *   'inert'          — no drivable surface, or an unsupported driver name.
+ *                      The gate stays off (equivalent to canFrankieDrive() false).
+ *   'driver-missing' — a drivable surface with a supported driver DECLARED, but
+ *                      that driver is not installed/executable here. The caller
+ *                      surfaces this specifically instead of arming blind.
+ *   'armed'          — drivable surface AND the declared driver is executable.
+ *
+ * @param {string[]|undefined} surfaces
+ * @param {string|undefined} drive
+ * @param {string} [cwd]
+ * @returns {'inert'|'driver-missing'|'armed'}
+ */
+export function frankieDriveReadiness(surfaces, drive, cwd = process.cwd()) {
+  if (!canFrankieDrive(surfaces, drive)) {
+    return 'inert';
+  }
+  return isDriverExecutable(drive, cwd) ? 'armed' : 'driver-missing';
+}
+
+/**
  * Resets the module-level execution-contract cache.
  * Intended for use in tests only — do not call in production code.
  */

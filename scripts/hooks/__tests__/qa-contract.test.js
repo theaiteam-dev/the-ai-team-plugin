@@ -32,8 +32,16 @@
 
 import fs from 'fs';
 import path from 'path';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
 import { describe, it, expect, vi, beforeEach, beforeAll, afterEach } from 'vitest';
-import { readExecutionContract, canFrankieDrive, _resetQaContractCache } from '../lib/qa-contract.js';
+import {
+  readExecutionContract,
+  canFrankieDrive,
+  isDriverExecutable,
+  frankieDriveReadiness,
+  _resetQaContractCache,
+} from '../lib/qa-contract.js';
 
 /**
  * Mocks fs.readFileSync so any read of a path ending in ateam.config.json
@@ -369,6 +377,108 @@ describe('canFrankieDrive() - driver support (CodeRabbit PR #55: qa.drive must b
   it('treats a missing/undefined drive as the DEFAULT_CONTRACT.qa.drive default (flowspec)', () => {
     expect(canFrankieDrive(['web'], undefined)).toBe(true);
     expect(canFrankieDrive(['web'])).toBe(true);
+  });
+});
+
+// =============================================================================
+// isDriverExecutable() — a DECLARED, supported driver is not the same as an
+// INSTALLED one. canFrankieDrive() only checks the driver NAME is recognized;
+// it never checks the driver can actually run. The retro finding
+// (M-20260821-002, `qa-driver-declared-but-not-executable`, high): FlowSpec
+// armed the mission gate while unable to run at all. A supported driver is
+// executable iff its CLI resolves at <cwd>/node_modules/.bin/<driver> — what
+// `bunx <driver>` / an npm script would actually invoke.
+// =============================================================================
+describe('isDriverExecutable() — a supported driver must be INSTALLED, not just declared', () => {
+  let dir;
+
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(tmpdir(), 'qa-driver-exec-'));
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  function installDriverBin(root, name) {
+    const binDir = path.join(root, 'node_modules', '.bin');
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(path.join(binDir, name), '#!/bin/sh\n', { mode: 0o755 });
+  }
+
+  it('returns true when the flowspec CLI resolves under node_modules/.bin', () => {
+    installDriverBin(dir, 'flowspec');
+    expect(isDriverExecutable('flowspec', dir)).toBe(true);
+  });
+
+  it('returns false when flowspec is declared but not installed (the retro bug)', () => {
+    // No node_modules/.bin/flowspec in this repo.
+    expect(isDriverExecutable('flowspec', dir)).toBe(false);
+  });
+
+  it('returns false for an unsupported driver even if a same-named bin exists', () => {
+    installDriverBin(dir, 'selenium-custom');
+    expect(isDriverExecutable('selenium-custom', dir)).toBe(false);
+  });
+
+  it('treats a missing/undefined drive as the flowspec default', () => {
+    expect(isDriverExecutable(undefined, dir)).toBe(false);
+    installDriverBin(dir, 'flowspec');
+    expect(isDriverExecutable(undefined, dir)).toBe(true);
+  });
+
+  it('returns false (never throws) when the repo dir does not exist', () => {
+    expect(isDriverExecutable('flowspec', path.join(dir, 'does-not-exist'))).toBe(false);
+  });
+});
+
+// =============================================================================
+// frankieDriveReadiness() — three-state arming so a drivable repo whose driver
+// cannot run is neither silently armed (tail deadlock demanding evidence a
+// broken driver can't produce) nor silently skipped (a web app shipping with
+// no QA walk at all). 'inert' | 'driver-missing' | 'armed'.
+// =============================================================================
+describe('frankieDriveReadiness() — distinguishes not-drivable from driver-not-installed', () => {
+  let dir;
+
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(tmpdir(), 'qa-drive-ready-'));
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  function installFlowspec(root) {
+    const binDir = path.join(root, 'node_modules', '.bin');
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(path.join(binDir, 'flowspec'), '#!/bin/sh\n', { mode: 0o755 });
+  }
+
+  it("is 'inert' when there is no drivable surface (gate must stay off)", () => {
+    expect(frankieDriveReadiness(['api'], 'flowspec', dir)).toBe('inert');
+    expect(frankieDriveReadiness([], 'flowspec', dir)).toBe('inert');
+  });
+
+  it("is 'inert' when the driver name is unsupported", () => {
+    expect(frankieDriveReadiness(['web'], 'selenium-custom', dir)).toBe('inert');
+  });
+
+  it("is 'driver-missing' when web+flowspec are declared but flowspec is not installed", () => {
+    expect(frankieDriveReadiness(['web'], 'flowspec', dir)).toBe('driver-missing');
+  });
+
+  it("is 'armed' only when the surface is drivable AND the driver is installed", () => {
+    installFlowspec(dir);
+    expect(frankieDriveReadiness(['web'], 'flowspec', dir)).toBe('armed');
   });
 });
 

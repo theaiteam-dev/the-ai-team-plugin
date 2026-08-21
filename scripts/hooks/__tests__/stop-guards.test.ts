@@ -477,8 +477,15 @@ describe('enforce-final-review — Frankie evidence-bundle gate', () => {
     config?: 'missing' | 'malformed' | 'valid';
     evidence?: 'none' | 'dir-only' | 'report';
     missionId?: string;
+    installDriver?: boolean;
   }) {
-    const { surfaces, config = 'valid', evidence = 'none', missionId = MISSION_ID } = opts;
+    const {
+      surfaces,
+      config = 'valid',
+      evidence = 'none',
+      missionId = MISSION_ID,
+      installDriver = true,
+    } = opts;
     const dir = mkdtempSync(join(tmpdir(), 'ateam-frankie-gate-'));
     scratchDirs.push(dir);
 
@@ -489,6 +496,15 @@ describe('enforce-final-review — Frankie evidence-bundle gate', () => {
       writeFileSync(join(dir, 'ateam.config.json'), '{ this is not valid json');
     }
     // 'missing': write nothing — readExecutionContract() must fail open (ENOENT).
+
+    // A web-surface repo is only genuinely drivable when the flowspec driver is
+    // installed. Default to installed so drivability tests exercise the armed
+    // path; pass installDriver:false to model a declared-but-uninstalled driver.
+    if (installDriver) {
+      const binDir = join(dir, 'node_modules', '.bin');
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(join(binDir, 'flowspec'), '#!/bin/sh\n', { mode: 0o755 });
+    }
 
     if (evidence === 'dir-only') {
       mkdirSync(join(dir, '.qa-evidence', missionId), { recursive: true });
@@ -558,6 +574,22 @@ describe('enforce-final-review — Frankie evidence-bundle gate', () => {
     expect(output.decision).toBe('block');
     expect(output.additionalContext).toMatch(/frankie/i);
     expect(output.additionalContext).toMatch(/\.qa-evidence\/M-TEST-001\/report\.md/);
+  });
+
+  it('blocks with a driver-not-installed diagnostic when web+flowspec are declared but flowspec is not installed', () => {
+    const dir = makeScratchRepo({ surfaces: ['web'], evidence: 'none', installDriver: false });
+    const result = runHook(
+      HOOK,
+      {},
+      { __TEST_MOCK_BOARD__: MOCK_BOARD_ONE_STAGED, __TEST_MOCK_MISSION__: missionWithId() },
+      dir
+    );
+    expect(result.exitCode).toBe(0);
+    const output = parseStopOutput(result.stdout);
+    expect(output.decision).toBe('block');
+    expect(output.additionalContext).toMatch(/flowspec/);
+    expect(output.additionalContext).toMatch(/not (installed|executable)/i);
+    expect(output.additionalContext).toMatch(/ATEAM_SKIP_FRANKIE_GATE=1/);
   });
 
   it('blocks when the evidence directory exists but report.md itself is missing (adversarial: directory presence is not report presence)', () => {
@@ -888,11 +920,18 @@ describe('enforce-orchestrator-stop — Frankie evidence-bundle gate', () => {
     expect(finalReviewSource).toMatch(/stop-gates/);
   });
 
-  function makeScratchRepo(opts: { surfaces?: string[]; evidence?: boolean }) {
+  function makeScratchRepo(opts: { surfaces?: string[]; evidence?: boolean; installDriver?: boolean }) {
     const dir = mkdtempSync(join(tmpdir(), 'ateam-orchestrator-gate-'));
     scratchDirs.push(dir);
     const body = opts.surfaces === undefined ? {} : { surfaces: opts.surfaces };
     writeFileSync(join(dir, 'ateam.config.json'), JSON.stringify(body));
+    // Install the flowspec driver by default so a web surface is genuinely
+    // drivable (armed); pass installDriver:false for the declared-but-missing case.
+    if (opts.installDriver !== false) {
+      const binDir = join(dir, 'node_modules', '.bin');
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(join(binDir, 'flowspec'), '#!/bin/sh\n', { mode: 0o755 });
+    }
     if (opts.evidence) {
       mkdirSync(join(dir, '.qa-evidence', MISSION_ID), { recursive: true });
       writeFileSync(join(dir, '.qa-evidence', MISSION_ID, 'report.md'), '# Evidence\n');
@@ -1074,6 +1113,10 @@ describe('Frankie evidence gate — ATEAM_SKIP_FRANKIE_GATE escape hatch', () =>
     const dir = mkdtempSync(join(tmpdir(), 'ateam-frankie-escape-'));
     scratchDirs.push(dir);
     writeFileSync(join(dir, 'ateam.config.json'), JSON.stringify({ surfaces: ['web'] }));
+    // Install the flowspec driver so the web surface is genuinely drivable (armed).
+    const binDir = join(dir, 'node_modules', '.bin');
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, 'flowspec'), '#!/bin/sh\n', { mode: 0o755 });
     return dir;
   }
 
@@ -1533,6 +1576,10 @@ describe('Stop hooks — stop_hook_active re-entry guard and the promotion-gate 
     const dir = mkdtempSync(join(tmpdir(), 'ateam-reentry-drivable-'));
     scratchDirs.push(dir);
     writeFileSync(join(dir, 'ateam.config.json'), JSON.stringify({ surfaces: ['web'] }));
+    // Install the flowspec driver so the web surface is genuinely drivable (armed).
+    const binDir = join(dir, 'node_modules', '.bin');
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, 'flowspec'), '#!/bin/sh\n', { mode: 0o755 });
     return dir;
   }
 
