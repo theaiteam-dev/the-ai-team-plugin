@@ -1,8 +1,8 @@
 {
   "name": "ai-team",
   "description": "Parallel Agent Orchestration - The A(i)-Team transforms PRDs into working, tested code",
-  "version": "1.11.0",
-  "minCliVersion": "1.10.0",
+  "version": "1.12.0",
+  "minCliVersion": "1.12.0",
   "author": {
     "name": "Josh / Arcane Ops"
   }
