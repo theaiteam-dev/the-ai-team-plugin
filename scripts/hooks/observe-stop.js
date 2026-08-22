@@ -92,9 +92,13 @@ if (payload) {
     if (itemId) {
       const nowMs = Date.now();
       // Route-conformant shape — see observe-pre-tool-use.js handoff-start.
+      // Uses the RESOLVED payload.agentName, not the raw CLI arg: in the main
+      // orchestrator session argv[2] is empty (generic hooks.json Stop hook),
+      // and the API rejects agentName-less events with a 400 — every
+      // handoff-stop in M-20260819-001 was silently dropped this way.
       handoffStopPromise = sendObserverEvent({
         eventType: 'handoff-stop',
-        agentName,
+        agentName: payload.agentName,
         status: 'completed',
         summary: `handoff-stop: ${itemId}`,
         payload: JSON.stringify({ itemId, timestampMs: nowMs }),

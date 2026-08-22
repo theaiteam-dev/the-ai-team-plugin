@@ -53,7 +53,11 @@ if empty or "default":
 
 2. **Dispatch the retro agent**
 
-   Dispatch `agents/retro.md` as a subagent, passing the `missionId`.
+   Dispatch `agents/retro.md` as a plain subagent, passing the `missionId`.
+   Do NOT use worktree isolation (`isolation: "worktree"`): the retro agent
+   is read-only against the repo and writes only to the API — it needs no
+   isolated checkout, and a worktree can be auto-cleaned out from under a
+   long-running retro (this killed the M-20260815-001 retro mid-analysis).
 
    The retro agent will:
    - Pull all mission data from the API

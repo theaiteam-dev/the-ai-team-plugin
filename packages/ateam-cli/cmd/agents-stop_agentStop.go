@@ -223,7 +223,7 @@ var agentsStopAgentStopCmd = &cobra.Command{
 			if err := validate.RequireFlags(cmd, "agent", "itemId", "summary"); err != nil {
 				return err
 			}
-			if err := validate.AgentName("agent", agentsStopAgentStopCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}); err != nil {
+			if err := validate.AgentName("agent", agentsStopAgentStopCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia", "Frankie"}); err != nil {
 				return err
 			}
 			if cmd.Flags().Changed("outcome") {
@@ -255,7 +255,12 @@ var agentsStopAgentStopCmd = &cobra.Command{
 			return apiErr
 		}
 
-		// Check for wipExceeded — item was NOT advanced but work was logged
+		// Check for wipExceeded — item was NOT advanced but work was logged.
+		// NOTE: /api/agents/stop never fails with WIP_LIMIT_EXCEEDED; it always
+		// logs the work and returns 200, signalling the skipped transition with
+		// wipExceeded/blockedStage. (Only /api/agents/start rejects on WIP.)
+		// There is deliberately no "retry with --advance=false" advice here:
+		// the work is already recorded, so a retry would double-log it.
 		var parsed struct {
 			Data struct {
 				WipExceeded  bool   `json:"wipExceeded"`
@@ -304,10 +309,10 @@ func init() {
 	agentsStopCmd.AddCommand(agentsStopAgentStopCmd)
 	agentsStopAgentStopCmd.Flags().StringVar(&agentsStopAgentStopCmdBody, "body", "", "Raw JSON body (overrides individual flags)")
 	agentsStopAgentStopCmd.Flags().StringVar(&agentsStopAgentStopCmdBodyFile, "body-file", "", "Path to JSON file to use as request body")
-	agentsStopAgentStopCmd.Flags().StringVar(&agentsStopAgentStopCmd_agent, "agent", "", "(Hannibal|Face|Murdock|B.A.|Amy|Lynch|Stockwell|Sosa|Tawnia)")
+	agentsStopAgentStopCmd.Flags().StringVar(&agentsStopAgentStopCmd_agent, "agent", "", "(Hannibal|Face|Murdock|B.A.|Amy|Lynch|Stockwell|Sosa|Tawnia|Frankie)")
 	agentsStopAgentStopCmd.Flags().BoolVar(&agentsStopAgentStopCmd_advance, "advance", true, "When true (default), advance item to next stage with WIP limit check. When false, skip stage transition — only release claim and log work.")
 	agentsStopAgentStopCmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}, cobra.ShellCompDirectiveNoFileComp
+		return []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia", "Frankie"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	agentsStopAgentStopCmd.Flags().StringVar(&agentsStopAgentStopCmd_itemId, "itemId", "", "")
 	agentsStopAgentStopCmd.Flags().StringVar(&agentsStopAgentStopCmd_outcome, "outcome", "", "(completed|blocked|rejected)")

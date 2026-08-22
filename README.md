@@ -60,6 +60,8 @@ Agents interact with the API via the `ateam` CLI binary (`${CLAUDE_PLUGIN_ROOT}/
 | **B.A.** | Implementer | `clean-code-architect` | Builds solid, reliable code. No jibber-jabber. |
 | **Lynch** | Reviewer | `code-review-expert` | Reviews tests + implementation together. |
 | **Amy** | Investigator | `bug-hunter` | Probes every feature for bugs beyond tests. |
+| **Frankie** | QA / Demo Man | `ai-team:frankie` | Walks the mission's Definition of Done against the running app. Verifies and evidences — never fixes. |
+| **Stockwell** | Reviewer | `ai-team:stockwell` | Final Mission Review — holistic PRD+diff review of the whole codebase. |
 | **Tawnia** | Documentation | `clean-code-architect` | Updates docs and makes the final commit. |
 
 ## Getting Started
@@ -167,14 +169,14 @@ git submodule update --remote .claude/ai-team
 The dashboard provides two views:
 
 ### Mission Board View
-- **Kanban board** with columns for each pipeline stage (briefings, ready, testing, implementing, review, probing, done)
+- **Kanban board** with columns for each pipeline stage (briefings, ready, testing, implementing, review, probing, staged, done)
 - **Work item cards** showing title, type, assigned agent, and status
 - **Live updates** via Server-Sent Events (SSE) as items move through stages
 - **Activity feed** with timestamped agent actions
 
 ### Raw Agent View (NEW)
 - **Real-time observability** into agent tool calls via observer hooks
-- **Swim lanes** showing each agent's activity (Hannibal, Face, Sosa, Murdock, B.A., Lynch, Amy, Tawnia)
+- **Swim lanes** showing each agent's activity (Hannibal, Face, Murdock, B.A., Amy, Lynch, Frankie, Stockwell, Tawnia)
 - **Tool call timeline** with PreToolUse, PostToolUse, and Stop events
 - **Duration tracking** showing how long each tool call took (e.g., "Write took 1.2s")
 - **Filtering controls** to view specific agents, tools, or event types
@@ -247,15 +249,29 @@ The scaling decision (instance count, binding constraint, rationale) is visible 
 Each feature flows through stages sequentially:
 
 ```
-briefings → ready → testing → implementing → review → probing → done
+briefings → ready → testing → implementing → review → probing → staged
                        ↑           ↑            ↑         ↑       │
                     Murdock      B.A.        Lynch      Amy       │
                                           (per-feature)           │
                                                                   ▼
                                                         ┌─────────────────┐
+                                                        │  Frankie Walk   │
+                                                        │ (mission tail)  │
+                                                        └────────┬────────┘
+                                                                 │
+                                                                 ▼
+                                                        ┌─────────────────┐
                                                         │  Final Review   │
-                                                        │  (Lynch - all   │
-                                                        │   code at once) │
+                                                        │  (Stockwell -   │
+                                                        │   all code at   │
+                                                        │      once)      │
+                                                        └────────┬────────┘
+                                                                 │ FINAL APPROVED
+                                                                 ▼
+                                                        ┌─────────────────┐
+                                                        │ Promote staged  │
+                                                        │  items → done   │
+                                                        │   (API, WI-790) │
                                                         └────────┬────────┘
                                                                  │
                                                                  ▼
@@ -276,23 +292,24 @@ briefings → ready → testing → implementing → review → probing → done
 2. `testing → implementing`: B.A. implements to pass tests
 3. `implementing → review`: Lynch reviews ALL outputs together
 4. `review → probing`: Amy probes for bugs beyond tests (APPROVED)
-5. `probing → done`: Feature complete (VERIFIED), or back to ready (FLAG)
-6. `all done → final review`: Lynch reviews entire codebase holistically
-7. `final review → post-checks`: Run `ateam missions-postcheck missionPostcheck` (lint, unit, e2e)
-8. `post-checks → documentation`: Tawnia updates CHANGELOG, README, docs/
-9. `documentation → complete`: Tawnia creates final commit with all co-authors
+5. `probing → staged`: Feature individually complete (VERIFIED); a FLAG returns the item to `testing` or `implementing` by the earliest-flagged-stage rule (test gap — alone or alongside an impl bug — goes to `testing`; an impl bug alone goes to `implementing`), never to `ready`. `staged` is the per-item pipeline's real terminal stage (WI-786/787), a holding pen awaiting mission-tail verification
+6. `all staged → Frankie's mission-tail walk → final review`: Frankie walks the mission's full Definition of Done against the running app first (a fresh, non-pre-warmed agent). A failure halts the tail: Hannibal moves each named item out of `staged` to `testing` or `implementing` using the earliest-flagged-stage rule, via a real `board-move` (WI-794, rejection-cap-counted) — not a manual bounce. Once Frankie's walk is clean, Stockwell reviews the entire codebase holistically (including Frankie's evidence bundle and graduated specs). Any rework — from a Frankie failure or a Stockwell rejection — moves the named items the same way; once they're back in `staged`, the tail restarts at Frankie, who re-walks the FULL Definition of Done.
+7. `final review APPROVED → promotion`: the API atomically promotes every `staged` item to `done` (WI-790) as part of persisting the review — a Hannibal batch `board-move` is the documented fallback only.
+8. `done → post-checks`: Run `ateam missions-postcheck missionPostcheck` (lint, unit, e2e)
+9. `post-checks → documentation`: Tawnia updates CHANGELOG, README, docs/
+10. `documentation → complete`: Tawnia creates final commit with all co-authors
 
 ## Pipeline Parallelism
 
 Different features can be at different stages simultaneously:
 
 ```
-Feature 001: [implementing] ─→ [review]       ─→ done
+Feature 001: [implementing] ─→ [review]       ─→ staged
 Feature 002:    [testing]   ─→ [implementing] ─→ ...
 Feature 003:                   [testing]      ─→ ...
 ```
 
-WIP limit controls how many features are in-flight (not in briefings, ready, or done stages).
+WIP limit controls how many features are in-flight (not in briefings, ready, staged, or done stages).
 
 ### Multi-Instance Agent Pools
 
@@ -362,14 +379,14 @@ Each feature flows: **Murdock → B.A. → Lynch → Amy**
 
 ### Final Mission Review
 
-When ALL features are complete, Lynch performs a holistic review of the entire codebase:
+When ALL features reach `staged` — the per-item pipeline's real terminal stage (WI-786/787), not `done` — Frankie walks the mission's full Definition of Done against the running app first (a fresh, non-pre-warmed agent) and produces an evidence bundle. A failure halts the tail: Hannibal moves each named item out of `staged` to `testing` or `implementing` using the earliest-flagged-stage rule, via a real, rejection-cap-counted `board-move` (WI-794) — not a manual reopen. Once Frankie's walk is clean, Stockwell performs a holistic review of the entire codebase, including Frankie's evidence bundle and graduated specs:
 - **Readability & consistency** across all files
 - **Race conditions & async issues** in concurrent code
 - **Security vulnerabilities** (injection, auth gaps, input validation)
 - **Code quality** (DRY violations, coupling, performance)
 - **Integration issues** between modules
 
-If issues are found, specific items return to the pipeline for fixes.
+If issues are found, specific items are moved out of `staged` the same automated way; once they're back in `staged`, the mission tail restarts at Frankie, not at post-checks. An APPROVED verdict atomically promotes every `staged` item to `done` (WI-790) — post-checks and Tawnia run only after that.
 
 ### Mission Lifecycle Checks
 
@@ -388,7 +405,7 @@ If issues are found, specific items return to the pipeline for fixes.
 - Dashboard shows recoverable `precheck_failure` with blocker details and retry affordance
 
 **Post-Mission Checks** (`ateam missions-postcheck missionPostcheck`):
-- Run after Lynch's Final Mission Review approves
+- Run after Stockwell's Final Mission Review approves (which itself runs only after Frankie's DoD walk succeeds)
 - Configured via `ateam.config.json` (typically lint + unit + e2e)
 - Proves all code works together
 - Required for mission completion (enforced by Hannibal's Stop hook)
@@ -656,6 +673,7 @@ ai-team/                     # Installed via marketplace or git submodule
 │       ├── block-amy-test-writes.js     # Block test file writes (Amy)
 │       ├── block-lynch-browser.js       # Block Playwright (Lynch)
 │       ├── block-sosa-writes.js         # Block all writes (Sosa)
+│       ├── block-frankie-writes.js      # Block impl/test/existing-specs writes (Frankie)
 │       ├── block-worker-board-move.js   # Block board_move (workers)
 │       ├── block-worker-board-claim.js  # Block board_claim (workers)
 │       ├── track-browser-usage.js       # Track browser tool usage (Amy)
@@ -681,7 +699,7 @@ The plugin uses Claude Code's hook system to enforce workflow discipline. All ag
 
 **Completion enforcement hooks** ensure proper handoff:
 - All working agents must run `ateam agents-stop agentStop` before exiting — the Stop hook blocks premature exit
-- Hannibal's Stop hook validates that all items are in `done`, Lynch's Final Review is complete, and post-checks have passed
+- Hannibal's Stop hook validates that all items are in `done`, Frankie's evidence gate and Stockwell's Final Mission Review are complete, and post-checks have passed
 
 **Observer hooks** for telemetry (Raw Agent View) fire automatically for all sessions via `hooks/hooks.json` — no per-project configuration needed.
 
@@ -689,28 +707,35 @@ Hook scripts live in `scripts/hooks/`. Exit code 0 = allow, non-zero = block.
 
 ## Project Configuration
 
-`ateam.config.json` (created by `/ai-team:setup`):
-
-```json
-{
-  "packageManager": "pnpm",
-  "checks": {
-    "lint": "pnpm run lint",
-    "unit": "pnpm test:unit",
-    "e2e": "pnpm exec playwright test"
-  },
-  "precheck": ["lint", "unit"],
-  "postcheck": ["lint", "unit", "e2e"],
-  "devServer": {
-    "url": "http://localhost:3000",
-    "start": "docker compose up",
-    "restart": "docker compose restart",
-    "managed": false
-  }
-}
-```
+`ateam.config.json` is created by `/ai-team:setup`, which auto-detects and asks for every field — package manager, checks, dev server, and the execution contract (drivable surfaces, QA recipe, testing level, evidence policy, review tier). See `commands/setup.md` (Step 6) for the canonical template and full field reference. This file doesn't duplicate it — see `adr/0006-ateam-config-schema-deferred.md` for why a second copy is exactly how this file's fields have drifted before.
 
 ## Development
+
+### Running Checks
+
+CI and local development run the **same** `package.json` scripts, so "green locally" and "green in CI" mean the same thing. Before pushing, run:
+
+```bash
+bun run check          # the lint/typecheck/test CI runs: builds shared, root
+                       # test suite, then lint + typecheck + test for each
+                       # package, then go build / vet / test for the Go CLI
+bun run check:commits  # commitlint over origin/main..HEAD (header ≤100 chars, etc.)
+```
+
+`bun run check` is an aggregate of per-package `check` scripts — each package's `check` is exactly the lint/typecheck/test steps its CI job runs (`bun run check` in `.github/workflows/ci.yml`). Run a single surface directly when iterating:
+
+```bash
+bun run test                                    # root suite (hooks, agents, playbooks, commands)
+bun run --filter '@ai-team/kanban-viewer' check # one package: lint + typecheck + test
+bun run --filter '@ai-team/shared' check        # typecheck + test
+bun run check:cli                               # Go CLI only
+```
+
+Notes:
+- `check` covers the lint/typecheck/test jobs — the ones that catch nearly everything. CI *additionally* runs two slower steps `check` omits for speed: `bun run build` (Next.js production build) in `kanban-viewer`, and the shared **dist-freshness** check (rebuild `packages/shared` and fail if `dist/` changed — run `bun run build:shared` and commit `dist/` whenever you edit shared source).
+- The Go CLI isn't a JS workspace, so `check:cli` and the `Go CLI` CI job hold the same three `go` commands in two places — keep them in sync.
+- `kanban-viewer`'s tests need `DATABASE_URL` + a generated Prisma client. `bun run --filter '@ai-team/kanban-viewer' dev` once (or set `DATABASE_URL` and `bunx prisma generate`) before running its `check`.
+- Run these with `bun` (the repo's runner); `npm run <script>` works identically since they're standard `package.json` scripts.
 
 ### Commit Conventions
 

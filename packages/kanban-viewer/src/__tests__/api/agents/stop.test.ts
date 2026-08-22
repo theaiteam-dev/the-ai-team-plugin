@@ -11,9 +11,9 @@ import { NextRequest } from 'next/server';
  * - testing (Murdock) → implementing
  * - implementing (B.A.) → review
  * - review (Lynch) → probing
- * - probing (Amy) → done
+ * - probing (Amy) → staged
  * - blocked override: any stage → blocked (when outcome='blocked')
- * - non-pipeline stages → review (fallback)
+ * - non-pipeline stages → 400 INVALID_STAGE (fail closed, no fallback)
  */
 
 import type { AgentStopRequest, ApiError } from '@/types/api';
@@ -342,7 +342,7 @@ describe('POST /api/agents/stop', () => {
       expect(data.data.nextStage).toBe('probing');
     });
 
-    it('Amy in probing → done', async () => {
+    it('Amy in probing → staged', async () => {
       setupSuccessfulStop('probing', 'Amy');
 
       const { POST } = await import('@/app/api/agents/stop/route');
@@ -355,7 +355,7 @@ describe('POST /api/agents/stop', () => {
       const response = await POST(request);
       expect(response.status).toBe(200);
       const data = await response.json();
-      expect(data.data.nextStage).toBe('done');
+      expect(data.data.nextStage).toBe('staged');
     });
 
     it('should move to blocked when outcome is blocked (regardless of stage)', async () => {
@@ -375,7 +375,7 @@ describe('POST /api/agents/stop', () => {
       expect(data.data.nextStage).toBe('blocked');
     });
 
-    it('should fall back to review for non-pipeline stages', async () => {
+    it('should fail closed with 400 INVALID_STAGE for non-pipeline stages', async () => {
       setupSuccessfulStop('ready', 'Hannibal');
 
       const { POST } = await import('@/app/api/agents/stop/route');
@@ -386,9 +386,10 @@ describe('POST /api/agents/stop', () => {
       });
 
       const response = await POST(request);
-      expect(response.status).toBe(200);
-      const data = await response.json();
-      expect(data.data.nextStage).toBe('review');
+      expect(response.status).toBe(400);
+      const data: ApiError = await response.json();
+      expect(data.error.code).toBe('INVALID_STAGE');
+      expect(data.error.message).toMatch(/no pipeline transition is defined for stage 'ready'/i);
     });
   });
 

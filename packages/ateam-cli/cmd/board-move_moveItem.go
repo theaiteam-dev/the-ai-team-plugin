@@ -62,7 +62,7 @@ var boardMoveMoveItemCmd = &cobra.Command{
 		if err := validate.RequireFlags(cmd, "itemId", "toStage"); err != nil {
 			return err
 		}
-		if err := validate.Enum("toStage", boardMoveMoveItemCmd_toStage, []string{"briefings", "ready", "testing", "implementing", "review", "probing", "done", "blocked"}); err != nil { return err }
+		if err := validate.Enum("toStage", boardMoveMoveItemCmd_toStage, []string{"briefings", "ready", "testing", "implementing", "review", "probing", "staged", "done", "blocked"}); err != nil { return err }
 		bodyMap := map[string]interface{}{}
 		bodyMap["force"] = boardMoveMoveItemCmd_force
 		bodyMap["itemId"] = boardMoveMoveItemCmd_itemId
@@ -90,9 +90,9 @@ func init() {
 	boardMoveMoveItemCmd.Flags().StringVar(&boardMoveMoveItemCmdBodyFile, "body-file", "", "Path to JSON file to use as request body")
 	boardMoveMoveItemCmd.Flags().BoolVar(&boardMoveMoveItemCmd_force, "force", false, "")
 	boardMoveMoveItemCmd.Flags().StringVar(&boardMoveMoveItemCmd_itemId, "itemId", "", "")
-	boardMoveMoveItemCmd.Flags().StringVar(&boardMoveMoveItemCmd_toStage, "toStage", "", "(briefings|ready|testing|implementing|review|probing|done|blocked)")
+	boardMoveMoveItemCmd.Flags().StringVar(&boardMoveMoveItemCmd_toStage, "toStage", "", "(briefings|ready|testing|implementing|review|probing|staged|done|blocked)")
 	boardMoveMoveItemCmd.RegisterFlagCompletionFunc("toStage", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return []string{"briefings", "ready", "testing", "implementing", "review", "probing", "done", "blocked"}, cobra.ShellCompDirectiveNoFileComp
+		return []string{"briefings", "ready", "testing", "implementing", "review", "probing", "staged", "done", "blocked"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	// NOTE: required-flag enforcement is done in RunE via validate.RequireFlags
 	// so that --body / --body-file can be used as an alternative to individual

@@ -13,7 +13,7 @@ Configure Claude Code permissions and project settings for A(i)-Team.
 1. **Auto-detects** project settings from CLAUDE.md and package.json
 2. **Configures** the project ID environment variable for multi-project isolation
 3. **Configures** native Agent Teams if desired (optional)
-4. **Creates** `ateam.config.json` with project-specific settings
+4. **Creates** `ateam.config.json` with project-specific settings, including the execution contract (drivable surfaces, QA recipe, testing level, evidence policy, review tier)
 5. **Downloads** the `ateam` CLI binary from GitHub releases (if not already present)
 6. **Injects** A(i)-Team instructions into CLAUDE.md (so Claude uses the workflow)
 7. **Detects** Docker and offers to start kanban-viewer if not running
@@ -90,9 +90,20 @@ AskUserQuestion({
 
 2. **Read package.json** (if exists)
    - Check `scripts` for: `test`, `test:unit`, `test:e2e`, `lint`, `dev`, `start`
-   - Detect package manager from lock files: `package-lock.json` → npm, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, `bun.lockb` → bun
+   - Detect package manager from lock files: `package-lock.json` → npm, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, `bun.lock` (or legacy binary `bun.lockb`) → bun
+   - Check `scripts` for a seed-shaped entry (`seed`, `seed:test`, `db:seed`, or any script whose command matches `/seed/i`) — propose it as `qa.seed`
 
-3. **Build detected config** from findings
+3. **Detect drivable surfaces** from framework config and entrypoints
+   - Web framework config present (`next.config.*`, `vite.config.*`, `astro.config.*`, `nuxt.config.*`, or a `dev`/`start` script that boots an HTTP server) → propose `surfaces: ["web"]`
+   - A `bin` field in package.json (CLI entrypoint) with no web framework config → propose `surfaces: ["cli"]`
+   - Neither detected → propose `surfaces: []` — no drivable surface today; Face's Project Readiness Audit exempts repos like this from the QA-contract check
+   - A repo can declare more than one surface; detection proposes, it doesn't decide — confirmed in Step 4
+
+4. **Read `.env.example`** (if exists)
+   - Look for an env-var name suggesting a QA/test login credential (matches `/PASSWORD|QA|TEST_ACCOUNT/i`) — propose its NAME (never its value) as `qa.account.credential_env`
+   - No matching var found → propose `null`. Many repos have no authenticated surface to walk.
+
+5. **Build detected config** from findings
 
 ### Step 3: Configure Native Teams (Optional)
 
@@ -184,11 +195,16 @@ I detected the following settings from your project:
   Unit tests:      pnpm test:unit (from package.json scripts.test:unit)
   E2E tests:       pnpm exec playwright test (from CLAUDE.md)
   Dev server:      http://localhost:3000 (from CLAUDE.md)
+  Surfaces:        web (next.config.js detected)
+  QA seed command: pnpm run seed:test (from package.json scripts.seed:test)
+  QA credential:   ATEAM_QA_PASSWORD (from .env.example)
 
 Does this look correct?
 ```
 
 Then use `AskUserQuestion` with detected values as the recommended option.
+
+**The pointer fields are proposals, not silent writes.** `surfaces`, `qa.seed`, and `qa.account.credential_env` go through this same confirm-or-correct flow as every other detected setting above — never written to `ateam.config.json` without the user seeing the proposed value first. Per the thin-contract principle (PRD 010 §2.1), these are pointers detected from the repo and ratified by the user, not authored from a blank file.
 
 ### Step 5: Fill Gaps with Questions
 
@@ -228,12 +244,93 @@ AskUserQuestion({
 })
 ```
 
+**Execution contract — policy questions.** The pointer fields above (`surfaces`, `qa.seed`, `qa.account.credential_env`) are detected and ratified, not decided. These four fields are genuine choices the repo itself can't answer — always ask, unless the drivable-surface exemption below applies.
+
+**QA Driver** (policy)
+```
+AskUserQuestion({
+  questions: [{
+    question: "How should specs be run against this repo's drivable surface(s)? (default: flowspec, the repo-agnostic runner)",
+    header: "QA driver",
+    options: [
+      { label: "flowspec (Recommended)", description: "Default spec runner; drives 'web' via agent-browser today. Requires the flowspec package — see Prerequisites below." },
+      { label: "Custom driver", description: "A repo-specific runner (golden-pair diff, fixture harness, etc.) — enter the driver name" }
+    ],
+    multiSelect: false
+  }]
+})
+```
+
+**Testing Level** (policy)
+```
+AskUserQuestion({
+  questions: [{
+    question: "How much of each mission's Definition of Done should Frankie graduate into permanent CI specs?",
+    header: "Testing level",
+    options: [
+      { label: "critical-path (Recommended)", description: "Default: the DoD's user-journey spine graduates every mission, plus every escape (a bug found once is a spec forever)" },
+      { label: "full-dod", description: "Every DoD statement graduates every mission — deepest CI coverage, most spec-writing time" },
+      { label: "smoke", description: "Only the entry path graduates — lightest CI coverage" }
+    ],
+    multiSelect: false
+  }]
+})
+```
+
+**Evidence Policy** (policy)
+```
+AskUserQuestion({
+  questions: [{
+    question: "What evidence should Frankie bundle with a mission's PR?",
+    header: "Evidence policy",
+    options: [
+      { label: "Video + screenshots for PRD work (Recommended)", description: "Full flow video for the PRD's primary journey, screenshots elsewhere — the canonical policy (PRD 010 §2.1)" },
+      { label: "Screenshots only", description: "A screenshot per DoD statement walked; no video" }
+    ],
+    multiSelect: false
+  }]
+})
+```
+
+**Answer → JSON mapping** — what each choice writes as the `evidence` field in `ateam.config.json`:
+
+| Answer | `evidence` written |
+|---|---|
+| Video + screenshots for PRD work (Recommended) | `{ "prd_work": "video+screenshots", "default": "screenshots" }` |
+| Screenshots only | `{ "prd_work": "screenshots", "default": "screenshots" }` |
+
+**Review Tier** (policy)
+```
+AskUserQuestion({
+  questions: [{
+    question: "What is Josh's step when a mission's PR arrives, with evidence already baked in?",
+    header: "Review tier",
+    options: [
+      { label: "hands-on (Recommended to start)", description: "Review evidence, then personally drive the feature ~5 min before merge — the safe starting tier for any repo" },
+      { label: "evidence-only", description: "Review the bundle; merge on its strength; hands never touch it — for repos with objectively-checkable output (golden-pair diffs, fixture runs)" }
+    ],
+    multiSelect: false
+  }]
+})
+```
+
+`auto` exists as a `review_tier` value but is never offered as a selectable option here — it's earned via the promotion ladder (PRD 010 §2.6), not granted at setup. If a user asks for `auto` at setup time, record `hands-on` and tell them the ladder path: a repo is promoted once its Frankie-accumulated CI specs cover its critical paths at its `testing_level` and its bug-found-at-Josh's-gate scoreboard has been zero for an agreed stretch.
+
+**`review_tier: "auto"` is never granted at setup — earned only.** Setup must not offer it as a default and should discourage picking it cold; a repo reaches `auto` via the promotion ladder (PRD 010 §2.6): its Frankie-accumulated CI specs cover its critical paths at its `testing_level`, and its bug-found-at-Josh's-gate scoreboard has been zero for an agreed stretch. Every repo starts at `hands-on` or `evidence-only`.
+
+**Drivable-surface exemption.** If Step 2 detected `surfaces: []` (or only non-drivable values, e.g. `hardware`) — skip the QA Driver, Testing Level, and Evidence Policy questions entirely; there's nothing for Frankie to drive, so asking is noise. Pin `review_tier` to `hands-on` without asking — a repo with no drivable surface can't earn a higher tier through Frankie's CI specs, so a human decides that out-of-band, not setup. State this in the confirmation output, e.g. "No drivable surface detected — QA driver/testing level/evidence questions skipped, review_tier set to hands-on."
+
+**Thin-contract rule, stated at the point of authoring:** the config **points and decides — it never describes.** `qa.seed`, `qa.account.credential_env`, and `surfaces` are pointers (a command, an env-var name, a tag) detected from the repo and ratified above. `qa.drive`, `testing_level`, `evidence`, and `review_tier` are policy decisions with nowhere else to live. Nothing here describes how the app works — no free-prose `qa.notes` field is offered. Test-mode quirks, seed-data specifics, and entry-path details stay in the repo itself (README, `.env.example`, code comments), versioned with the code they describe, not copied into config where they'll drift the next time that code changes.
+
+**Prerequisite: flowspec (only when `qa.drive` is `flowspec`).** If the repo declares `qa.drive: "flowspec"` (the default), the published `flowspec@0.1.2` package must be available in the target repo. Running `flowspec init` installs its own PreToolUse hook that protects `specs/` from agent edits — this is what makes Frankie's graduated specs a trust guarantee rather than something B.A. can quietly patch around. If `flowspec` isn't installed yet, note it in the setup summary so the mission's Project Readiness Audit (`agents/face.md`) can scaffold it as a Wave-0 dependency.
+
 ### Step 6: Write Config File
 
-Based on answers, create `ateam.config.json` in project root:
+Based on answers, create `ateam.config.json` in project root. **This is the single canonical template** — README.md and docs/ORCHESTRATION.md point here rather than restating it (see `adr/0006-ateam-config-schema-deferred.md`):
 
 ```json
 {
+  "ateamCliVersion": "latest",
   "packageManager": "npm",
   "checks": {
     "lint": "npm run lint",
@@ -247,14 +344,44 @@ Based on answers, create `ateam.config.json` in project root:
     "start": "npm run dev",
     "restart": "docker compose restart",
     "managed": false
+  },
+  "surfaces": ["web"],
+  "qa": {
+    "seed": "npm run seed:test",
+    "account": { "credential_env": "ATEAM_QA_PASSWORD" },
+    "drive": "flowspec"
+  },
+  "testing_level": "critical-path",
+  "evidence": { "prd_work": "video+screenshots", "default": "screenshots" },
+  "review_tier": "hands-on",
+  "pricing": {
+    "models": {
+      "claude-opus-4-8": { "input_per_1m": 5.00, "output_per_1m": 25.00, "cache_read_per_1m": 0.50 },
+      "claude-opus-4-7": { "input_per_1m": 5.00, "output_per_1m": 25.00, "cache_read_per_1m": 0.50 },
+      "claude-opus-4-6": { "input_per_1m": 15.00, "output_per_1m": 75.00, "cache_read_per_1m": 1.50 },
+      "claude-sonnet-4-6": { "input_per_1m": 3.00, "output_per_1m": 15.00, "cache_read_per_1m": 0.30 },
+      "claude-haiku-4-5-20251001": { "input_per_1m": 0.80, "output_per_1m": 4.00, "cache_read_per_1m": 0.08 }
+    },
+    "fallback": { "input_per_1m": 3.00, "output_per_1m": 15.00, "cache_read_per_1m": 0.30 }
   }
 }
 ```
 
+**Field reference:**
+
+- `ateamCliVersion`: Pin a specific `ateam` CLI release tag, or `"latest"` (default) to always use the newest. Read only by `bin/ateam`'s downloader (Step 7) — the CLI itself does not read `ateam.config.json`.
 - `devServer.url`: Where Amy should point Playwright for browser testing
 - `devServer.start`: Command to start the server (for user reference)
 - `devServer.restart`: Command to restart the server (e.g., to pick up code changes)
-- `devServer.managed`: If false, user manages server; Amy checks if running but doesn't start/restart it
+- `devServer.managed`: If `false` (the default), a human or a standing process owns the server; Amy checks if it's running but never starts, restarts, or stops it. If `true`, the pipeline owns the server's lifecycle: Frankie starts it himself from `devServer.start` before his mission-tail walk, confirms it's serving, and stops it when the walk ends — used when the repo needs a dedicated, isolated dev server (its own port, a scratch database) rather than a shared/standing one.
+- `surfaces`: How this repo is driven — `web` | `api` | `fixture-flow` | `golden-pair` | `hardware` | `cli`. Detected in Step 2, ratified in Step 4. Only `web` is drivable by Frankie today (`scripts/hooks/lib/qa-contract.js`'s `canFrankieDrive()`); other surfaces stay `hands-on` until a FlowSpec adapter ships.
+- `qa.seed`: The command that produces known test data — a pointer, detected from `package.json` scripts. `null` if none detected.
+- `qa.account.credential_env`: The env-var NAME holding the QA login credential, never the credential itself — a pointer, detected from `.env.example`. `null` if the repo has no authenticated surface.
+- `qa.drive`: The spec runner — a policy decision, default `"flowspec"`. Not an enum; a repo may declare a custom driver name.
+- `testing_level`: How much of the DoD Frankie graduates into permanent CI specs each mission — `smoke` | `critical-path` (default) | `full-dod`.
+- `evidence.prd_work` / `evidence.default`: What evidence Frankie bundles with a mission's PR — e.g. `"video+screenshots"` for the PRD's primary journey, `"screenshots"` (default) elsewhere.
+- `review_tier`: Josh's step when the mission's PR arrives — `hands-on` (default) | `evidence-only` | `auto`. **`auto` is never granted at setup — it's earned via the promotion ladder** (PRD 010 §2.6): a repo is promoted once its Frankie-accumulated CI specs cover its critical paths and its bug-at-Josh's-gate scoreboard has been zero for an agreed stretch.
+- `pricing`: Per-model token pricing consumed by `packages/kanban-viewer/src/lib/token-cost.ts` for cost estimation. Every model your agents actually use must be listed — a missing model silently falls back to the Sonnet rate (see `adr/0001-token-usage-accounting.md`, the documented root cause of Opus being priced as Sonnet).
 
 ### Step 7: Download `ateam` CLI Binary
 

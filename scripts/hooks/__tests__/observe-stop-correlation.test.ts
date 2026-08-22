@@ -141,8 +141,18 @@ describe('buildObserverPayload — correlationId override for stop events', () =
 
 describe('FIX 3 — observer failure logging', () => {
   let failureLog: string;
+  let prevProjectId: string | undefined;
 
   beforeEach(() => {
+    // sendObserverEvent early-returns (no POST, no failure log) unless
+    // ATEAM_PROJECT_ID is set — it treats an unattributable session as
+    // nothing-to-send. The FIX 3 tests exercise the POST/failure path, so
+    // they must set it explicitly rather than inherit it from the ambient
+    // shell (which is why they passed on a dev machine but failed in CI,
+    // where the var is unset). Save/restore the prior value so this block
+    // never leaks env into other tests.
+    prevProjectId = process.env.ATEAM_PROJECT_ID;
+    process.env.ATEAM_PROJECT_ID = 'test-project';
     // Point the failure log at an isolated temp dir.
     process.env.CLAUDE_PROJECT_DIR = join(tmpdir(), `ateam-fail-log-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(process.env.CLAUDE_PROJECT_DIR, { recursive: true });
@@ -152,6 +162,11 @@ describe('FIX 3 — observer failure logging', () => {
   afterEach(() => {
     try { rmSync(process.env.CLAUDE_PROJECT_DIR!, { recursive: true, force: true }); } catch {}
     delete process.env.CLAUDE_PROJECT_DIR;
+    if (prevProjectId === undefined) {
+      delete process.env.ATEAM_PROJECT_ID;
+    } else {
+      process.env.ATEAM_PROJECT_ID = prevProjectId;
+    }
   });
 
   it('logObserverFailure appends a structured JSON line', () => {

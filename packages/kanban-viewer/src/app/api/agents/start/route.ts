@@ -3,7 +3,7 @@
  *
  * Composite operation that allows an agent to start work on an item:
  * - Validates item is in ready stage
- * - Validates all item dependencies are in done stage
+ * - Validates all item dependencies are satisfied (staged or done — see WI-788)
  * - Creates agent claim
  * - Moves item to appropriate work stage (testing, implementing, or probing)
  * - Sets assignedAgent on the item
@@ -23,6 +23,7 @@ import {
   createWipLimitExceededError,
 } from '@/lib/errors';
 import { checkWipLimit } from '@/lib/validation';
+import { isDependencySatisfied } from '@ai-team/shared';
 import type { StageId } from '@/types/board';
 import { getAndValidateProjectId } from '@/lib/project-utils';
 import { transformItemWithRelationsToResponse } from '@/lib/item-transform';
@@ -43,7 +44,7 @@ import { logApiError } from '@/lib/api-logger';
  * - VALIDATION_ERROR (400): Missing or invalid request fields
  * - ITEM_NOT_FOUND (404): Item does not exist
  * - INVALID_STAGE (400): Item is not in ready stage
- * - DEPENDENCIES_NOT_MET (400): Not all dependencies are in done stage
+ * - DEPENDENCIES_NOT_MET (400): Not all dependencies are satisfied (staged or done — see WI-788)
  * - WIP_LIMIT_EXCEEDED (400): Target stage has reached WIP limit
  * - DATABASE_ERROR (500): Database operation failed
  */
@@ -150,9 +151,9 @@ export async function POST(
     // Only check dependencies and WIP for items coming from 'ready' stage
     // Items already in their work stage have already passed these checks upstream
     if (!isWorkStageClaim) {
-      // Validate all dependencies are in done stage
+      // Validate all dependencies are satisfied (staged or done — see WI-788)
       const unmetDependencies = item.dependsOn
-        .filter((dep) => dep.dependsOn.stageId !== 'done')
+        .filter((dep) => !isDependencySatisfied(dep.dependsOn.stageId as StageId))
         .map((dep) => dep.dependsOnId);
 
       if (unmetDependencies.length > 0) {

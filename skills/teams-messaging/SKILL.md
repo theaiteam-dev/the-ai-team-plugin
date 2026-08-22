@@ -85,7 +85,7 @@ SendMessage({
 
 ### DONE (any agent → Hannibal)
 
-Used instead of the peer handoff pattern for blocked items, non-advance stops, or terminal agents (Amy, Tawnia, Stockwell).
+Used instead of the peer handoff pattern for blocked items, non-advance stops, or terminal agents (Amy, Tawnia, Stockwell, Frankie).
 
 ```javascript
 SendMessage({
@@ -271,7 +271,21 @@ SendMessage({
 })
 ```
 
-No START/ACK needed. On VERIFIED, `--advance` already moved the item to `done`. On FLAG, Amy calls `agentStop --outcome rejected --return-to <testing|implementing> --advance=false` per the earliest-flagged-stage principle (see the rejection-routing note below), sends `REJECTED` to the matching peer (`murdock-N` or `ba-N`), and sends `FYI` to Hannibal.
+No START/ACK needed. On VERIFIED, `--advance` already moved the item to `staged` — the per-item pipeline's real terminal stage (WI-786/787). On FLAG, Amy calls `agentStop --outcome rejected --return-to <testing|implementing> --advance=false` per the earliest-flagged-stage principle (see the rejection-routing note below), sends `REJECTED` to the matching peer (`murdock-N` or `ba-N`), and sends `FYI` to Hannibal.
+
+### Frankie → Hannibal (terminal — no downstream)
+
+Frankie runs once per mission — after ALL items reach `staged`, before Stockwell's Final Mission Review, before post-checks, before Tawnia. Not a pooled pipeline agent; no peer handoff. After `ateam agents-stop agentStop`, send DONE to Hannibal:
+
+```javascript
+SendMessage({
+  to: "team-lead",
+  message: "DONE: FRANKIE-WALK - {checklist result, e.g. 8/8 PASS or 6/8 PASS} - evidence bundle at .qa-evidence/{missionId}/, {list any failing item IDs}",
+  summary: "Frankie's mission-tail walk complete"
+})
+```
+
+Frankie **reports** failures — he never moves an item himself. A failure names the responsible work item(s) in this message and halts the tail; Hannibal moves each named item out of `staged` to `testing` or `implementing` via a real, rejection-cap-counted `board-move` (earliest-flagged-stage rule, WI-794) — not a manual reopen — and does not dispatch Stockwell until every named item is back in `staged`. A Stockwell rejection later in the tail also restarts here, at Frankie, not at post-checks — so the evidence bundle Stockwell eventually reviews always reflects the final code.
 
 ### Tawnia → Hannibal (terminal — no downstream)
 

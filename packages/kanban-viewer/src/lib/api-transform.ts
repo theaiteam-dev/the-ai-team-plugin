@@ -27,6 +27,7 @@ const STAGE_ID_TO_UI_STAGE: Record<StageId, UiStage> = {
   implementing: 'implementing',
   probing: 'probing',
   review: 'review',
+  staged: 'staged',
   done: 'done',
   blocked: 'blocked',
 };
@@ -154,14 +155,21 @@ export function transformBoardStateToMetadata(boardState: BoardState): BoardMeta
   const mission = transformApiMissionToUiMission(boardState.currentMission);
   const wipLimits = buildWipLimitsFromStages(boardState.stages);
 
-  // Calculate stats from items
+  // Calculate stats from items.
+  //
+  // WI-792: 'staged' items count as in_progress here, matching stats.ts's
+  // calculateBoardStats — an item in staged is individually done but still
+  // awaiting mission-tail verification, not yet sealed to 'done' (Josh's
+  // refinement-gate decision). Without this, a staged item would be counted
+  // in total_items but invisible in every other bucket (completed +
+  // in_progress + blocked + backlog would undercount total_items).
   const items = boardState.items;
   const stats = {
     total_items: items.length,
     completed: items.filter(i => i.stageId === 'done').length,
     in_progress: items.filter(i =>
       i.stageId === 'testing' || i.stageId === 'implementing' ||
-      i.stageId === 'probing' || i.stageId === 'review'
+      i.stageId === 'probing' || i.stageId === 'review' || i.stageId === 'staged'
     ).length,
     blocked: items.filter(i => i.stageId === 'blocked').length,
     backlog: items.filter(i =>

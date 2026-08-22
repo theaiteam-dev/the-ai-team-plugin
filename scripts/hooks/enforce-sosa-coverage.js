@@ -24,6 +24,7 @@
 
 import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
+import { apiEventHeaders } from './lib/observer.js';
 
 // Read hook input from stdin
 let hookInput = {};
@@ -65,7 +66,7 @@ async function checkCoverage() {
 
     const itemsUrl = `${apiUrl}/api/items?stage=briefings`;
     const itemsResponse = await fetch(itemsUrl, {
-      headers: { 'X-Project-ID': projectId },
+      headers: apiEventHeaders(projectId),
     });
 
     if (!itemsResponse.ok) {
@@ -92,7 +93,7 @@ async function checkCoverage() {
   } else {
     const activityUrl = `${apiUrl}/api/activity`;
     const activityResponse = await fetch(activityUrl, {
-      headers: { 'X-Project-ID': projectId },
+      headers: apiEventHeaders(projectId),
     });
 
     if (!activityResponse.ok) {

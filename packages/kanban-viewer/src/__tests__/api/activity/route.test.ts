@@ -91,6 +91,52 @@ describe('GET /api/activity', () => {
     vi.restoreAllMocks();
   });
 
+  describe('limit parameter handling', () => {
+    // Regression (M-20260812-001 retro): the Go CLI serializes an unset --limit
+    // flag as limit=0, and the route honored it literally — take: 0 returned a
+    // silently empty feed indistinguishable from "no data exists".
+    async function getWithQuery(query: string): Promise<void> {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(null);
+      mockPrismaClient.activityLog.findMany.mockResolvedValue(mockActivityEntries);
+      const request = new NextRequest(`http://localhost:3000/api/activity${query}`, {
+        headers: { 'X-Project-ID': 'test-project' },
+      });
+      const response = await GET(request);
+      expect(response.status).toBe(200);
+    }
+
+    function expectTake(take: number): void {
+      expect(mockPrismaClient.activityLog.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ take })
+      );
+    }
+
+    it('defaults to 100 when limit is omitted', async () => {
+      await getWithQuery('');
+      expectTake(100);
+    });
+
+    it('falls back to 100 when limit=0 instead of returning an empty set', async () => {
+      await getWithQuery('?limit=0');
+      expectTake(100);
+    });
+
+    it('falls back to 100 for negative limits', async () => {
+      await getWithQuery('?limit=-5');
+      expectTake(100);
+    });
+
+    it('falls back to 100 for non-numeric limits', async () => {
+      await getWithQuery('?limit=abc');
+      expectTake(100);
+    });
+
+    it('honors an explicit positive limit', async () => {
+      await getWithQuery('?limit=50');
+      expectTake(50);
+    });
+  });
+
   describe('successful requests', () => {
     it('should return GetActivityResponse with entries array', async () => {
       mockPrismaClient.activityLog.findMany.mockResolvedValue(mockActivityEntries);

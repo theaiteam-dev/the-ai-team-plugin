@@ -124,6 +124,27 @@ describe('observe-stop — handoff-stop event', () => {
     }
   });
 
+  it('uses the resolved agentName when the CLI arg is absent (orchestrator session), never null', async () => {
+    // Regression (M-20260819-001): the main orchestrator session fires the
+    // generic hooks.json Stop hook with no agent argv, and handoff-stop was
+    // built from the raw arg — agentName: undefined — so the API 400'd every
+    // handoff-stop of the mission (84 events, 100% of stop telemetry).
+    const transcriptPath = makeTranscriptWithAgentStop('WI-004');
+    try {
+      runHook(STOP_HOOK, { hook_event_name: 'Stop', session_id: 'sess-4' }, [], transcriptPath);
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      const handoffStop = capturedEvents.find((e) => e.eventType === 'handoff-stop');
+      expect(handoffStop, 'expected a handoff-stop event').toBeTruthy();
+      // buildObserverPayload's resolve chain bottoms out at 'hannibal' — the
+      // event must carry that resolved name, not the raw (empty) CLI arg.
+      expect(handoffStop.agentName).toBe('hannibal');
+    } finally {
+      try { unlinkSync(transcriptPath); } catch { /* ignore */ }
+    }
+  });
+
   it('handoff-stop timestamp has millisecond precision (epoch ms, not just ISO string)', async () => {
     const transcriptPath = makeTranscriptWithAgentStop('WI-002');
     try {

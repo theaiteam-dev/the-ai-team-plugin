@@ -63,18 +63,23 @@ describe('AgentStatusBar', () => {
       expect(amyIndex).toBeLessThan(lynchIndex);
     });
 
-    it('should display Tawnia positioned last (after Lynch)', () => {
+    it('should display the mission tail in ADR 0004 order: Frankie, Stockwell, Tawnia last', () => {
       render(<AgentStatusBar agents={createAgentsStatus()} />);
 
       // Get all agent names in order
-      const agentNames = screen.getAllByText(/^(Hannibal|Face|Murdock|B\.A\.|Amy|Lynch|Tawnia)$/);
+      const agentNames = screen.getAllByText(
+        /^(Hannibal|Face|Murdock|B\.A\.|Amy|Lynch|Frankie|Stockwell|Tawnia)$/
+      );
       const nameTexts = agentNames.map(el => el.textContent);
 
-      // Find positions
-      const lynchIndex = nameTexts.indexOf('Lynch');
+      // Mission tail per ADR 0004: Frankie → Stockwell → Tawnia.
+      const frankieIndex = nameTexts.indexOf('Frankie');
+      const stockwellIndex = nameTexts.indexOf('Stockwell');
       const tawniaIndex = nameTexts.indexOf('Tawnia');
 
-      expect(tawniaIndex).toBeGreaterThan(lynchIndex);
+      expect(frankieIndex).toBeGreaterThan(nameTexts.indexOf('Lynch'));
+      expect(stockwellIndex).toBeGreaterThan(frankieIndex);
+      expect(tawniaIndex).toBeGreaterThan(stockwellIndex);
       expect(tawniaIndex).toBe(nameTexts.length - 1); // Should be last
     });
   });
@@ -153,12 +158,12 @@ describe('AgentStatusBar', () => {
   });
 
   describe('agents container', () => {
-    it('should render all 8 agents in the agents container', () => {
+    it('should render all 9 agents in the agents container', () => {
       render(<AgentStatusBar agents={createAgentsStatus()} />);
 
       const container = screen.getByTestId('agents-container');
       const agentElements = container.querySelectorAll('[data-testid^="agent-badge-"]');
-      expect(agentElements).toHaveLength(8);
+      expect(agentElements).toHaveLength(9);
     });
   });
 

@@ -129,7 +129,10 @@ LOOP CONTINUOUSLY:
 
             elif item was in probing:
                 # Amy has completed investigation
-                if VERIFIED: Bash("ateam board-move moveItem --itemId {item_id} --toStage done")
+                if VERIFIED: Bash("ateam board-move moveItem --itemId {item_id} --toStage staged")
+                # `staged` is the per-item pipeline's real terminal stage (WI-786/787) —
+                # not `done`. `done` is reached only later, via the mission tail's
+                # atomic promotion once Stockwell's Final Mission Review is APPROVED.
                 if FLAG:
                     # Amy has already called
                     # `ateam agents-stop agentStop --outcome rejected --return-to implementing --summary "..."`
@@ -138,7 +141,8 @@ LOOP CONTINUOUSLY:
                     # coverage) with Amy's diagnosis in the prompt.
                     dispatch appropriate agent with Amy's FLAG context
                     active_tasks[item_id] = new_task.id
-                # Moving to done may unlock Wave 2 items!
+                # Moving to staged may unlock Wave 2 items — dependency waits are on
+                # staged (or later), not done (WI-786/787).
 
     # ═══════════════════════════════════════════════════════════
     # PHASE 2: CHECK DEPENDENCY GATES - UNLOCK NEXT WAVE ITEMS
@@ -187,7 +191,9 @@ LOOP CONTINUOUSLY:
         new_task = dispatch Murdock in background
         active_tasks[item_id] = new_task.id
 
-    # When finalReviewReady: true → dispatch Lynch for Final Review
+    # When finalReviewReady: true → dispatch Frankie's mission-tail walk first
+    # (see "Frankie Mission-Tail Dispatch" below), then Stockwell for Final
+    # Mission Review — never skip straight to Stockwell.
 
     # Brief pause then repeat
 ```
@@ -261,9 +267,11 @@ T=90s   Poll e → COMPLETE! (Lynch approved)
         active_tasks = {001: f, 002: d}
 
 T=100s  Poll f → COMPLETE! (Amy verified)
-        → ateam board-move moveItem --itemId 001 --toStage done
-        ateam deps-check checkDeps --json → readyItems: [003]  ← 003's dep (001) now satisfied!
-        ateam board-move moveItem --itemId 003 --toStage ready  (004 still blocked - needs 002 done too)
+        → ateam board-move moveItem --itemId 001 --toStage staged  (staged is the per-item
+          pipeline's real terminal stage, WI-786/787 — done comes later, via the mission
+          tail's atomic promotion)
+        ateam deps-check checkDeps --json → readyItems: [003]  ← 003's dep (001) now satisfied (staged satisfies deps)!
+        ateam board-move moveItem --itemId 003 --toStage ready  (004 still blocked - needs 002 staged too)
         ateam board-move moveItem --itemId 003 --toStage testing --agent Murdock → dispatch Murdock (task_g)
         active_tasks = {002: d, 003: g}
 
@@ -276,15 +284,16 @@ T=120s  Poll h → COMPLETE! (Lynch approved 002)
         active_tasks = {002: i, 003: g}
 
 T=130s  Poll i → COMPLETE! (Amy verified 002)
-        → ateam board-move moveItem --itemId 002 --toStage done
+        → ateam board-move moveItem --itemId 002 --toStage staged
         ateam deps-check checkDeps --json → readyItems: [004]  ← 004's deps (001,002) now satisfied!
         ateam board-move moveItem --itemId 004 --toStage ready
 ```
 
 **KEY INSIGHTS:**
 1. Within Wave 0: 001 advances to review while 002 is still implementing (no stage batching)
-2. Between waves: 003 unlocks when 001 hits done, 004 unlocks when both 001+002 hit done
+2. Between waves: 003 unlocks when 001 hits staged, 004 unlocks when both 001+002 hit staged — dependency waits are on staged (or later), not done (WI-786/787)
 3. Pipeline stays full - new items enter as deps are satisfied
+4. `done` is reached later still, only via the mission tail's atomic promotion once Stockwell's Final Mission Review is APPROVED (WI-790) — it plays no part in dependency unlocking
 
 ## Agent Dispatch Workflows
 
@@ -423,9 +432,44 @@ Read current assignments from board:
 ateam board getBoard --json
 ```
 
+## Frankie Mission-Tail Dispatch
+
+**Drivability precondition — check this BEFORE dispatching Frankie.** Read the execution contract from the target repo's `ateam.config.json` and look at `surfaces`. `scripts/hooks/lib/qa-contract.js` is the executable definition — it exports `readExecutionContract()` (which defaults `surfaces` to `[]` when the file or field is missing/malformed) and `canFrankieDrive(surfaces)`, which returns true only when `surfaces` contains a drivable surface. **Only `web` is drivable today** — `api`, `fixture-flow`, `golden-pair`, `cli`, and `hardware` are not, and an empty or absent `surfaces` list is not.
+
+**If the repo has no drivable surface, SKIP Frankie entirely** — do not dispatch him, do not wait for an evidence bundle — and proceed directly to Final Mission Review Dispatch (below). Frankie cannot walk an app he cannot drive: dispatching him on a non-drivable repo deadlocks the mission tail, because he correctly self-reports a blocked walk (no dev server to drive) and the failure path below then HALTS the tail with no path forward. Skipping him is the same exemption already enforced by the completion gate in `scripts/hooks/enforce-final-review.js` (which only demands an evidence bundle when `canFrankieDrive(contract.surfaces)`) and stated in `agents/tawnia.md` (a skipped Frankie satisfies Tawnia's precondition vacuously). Note this in your status output so the operator knows Frankie was skipped by contract, not forgotten.
+
+Otherwise — when ALL items reach `staged` stage (the per-item pipeline's real terminal stage, WI-786/787 — not `done`) — dispatch Frankie BEFORE Stockwell's Final Mission Review — his evidence bundle and graduated specs must already be part of the diff Stockwell reviews, so evidence never ships stale. Fetch `prdPath` and the mission identifier (`missionId`) from `ateam missions-current getCurrentMission --json` — `missionId` also names Frankie's evidence directory, `.qa-evidence/{missionId}/`.
+
+**Always spawn a new Frankie agent** (not pre-warmed, runs once — like Stockwell and Tawnia):
+
+```
+Task(
+  subagent_type: "ai-team:frankie",
+  run_in_background: true,
+  description: "Frankie: mission-tail QA walk",
+  prompt: "You are Frankie, walking this mission's Definition of Done against the running app as a first-time user.
+
+  PRD path: {prdPath from ateam missions-current getCurrentMission}
+  Mission: {missionId}
+  Evidence dir: .qa-evidence/{missionId}/
+
+  Read the mission's DoD from the PRD and the execution contract from ateam.config.json. Walk every DoD statement from the user's front door, write the evidence bundle, and graduate specs per the contract's testing_level.
+
+  When done, report the checklist result, the evidence bundle path, and any failing work item IDs."
+)
+```
+
+Poll with TaskOutput as usual.
+
+**On success** (Frankie's report shows a clean walk, no failing items): proceed to Final Mission Review Dispatch (below).
+
+**On failure** (Frankie names one or more failing work items): the mission tail HALTS here — do NOT proceed to Stockwell. For each named item, move it out of `staged` using the SAME earliest-flagged-stage rule that already governs Lynch and Amy rejections: a named test gap routes to `testing`, an impl-only bug routes to `implementing`. Execute with `ateam board-move moveItem --itemId <id> --toStage <testing|implementing>` — WI-794 made this a first-class, rejection-cap-counted transition, so this is a real, automated backward move, not a manual reopen outside the pipeline.
+
+**Any rework** — whether triggered by a Frankie failure above or by the items Stockwell named in a FINAL REJECTED verdict (see below) — once every named item is back in `staged`, it RESTARTS the mission tail at Frankie. Frankie re-walks the FULL Definition of Done (every statement, not only the ones that previously failed), because a fix for one failure can break a neighboring statement.
+
 ## Final Mission Review Dispatch
 
-When ALL items reach `done` stage, fetch `prdPath` from `ateam missions-current getCurrentMission --json`, then dispatch:
+When ALL items reach `staged` stage AND Frankie's walk succeeded (see "Frankie Mission-Tail Dispatch" above — never dispatch Stockwell before Frankie), fetch `prdPath` from `ateam missions-current getCurrentMission --json`, then dispatch:
 
 ```
 Task(
@@ -444,16 +488,18 @@ Task(
   2. The mission's commits — correct, consistent, secure?
   3. Integration — do changes wire into the existing codebase?
 
-  Respond with:
-  VERDICT: FINAL APPROVED
-  or
-  VERDICT: FINAL REJECTED
+  Write the full report, then END it with the verdict line — the verdict is
+  read ONLY from the report's LAST non-empty line, and nothing may follow it:
+
   Items requiring fixes: 003, 007
-  Issues: [detailed list]"
+  Issues: [detailed list]
+  VERDICT: FINAL APPROVED   (or VERDICT: FINAL REJECTED)"
 )
 ```
 
 Poll with TaskOutput as usual.
+
+**If REJECTED:** do not proceed to post-checks. For each item Stockwell named, move it out of `staged` using the SAME earliest-flagged-stage rule as Frankie's own failure path above: a named test gap routes to `testing`, an impl-only bug routes to `implementing`. Execute with `ateam board-move moveItem --itemId <id> --toStage <testing|implementing>` — a real, rejection-cap-counted move (WI-794), executed automatically by Hannibal. Once every named item is back in `staged`, the mission tail restarts at Frankie (see "Frankie Mission-Tail Dispatch" above) — not at post-checks — so the evidence bundle Stockwell eventually reviews always reflects the final code.
 
 ## Tawnia Dispatch
 

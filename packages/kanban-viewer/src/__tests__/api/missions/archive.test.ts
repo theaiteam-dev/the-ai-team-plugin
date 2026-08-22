@@ -96,6 +96,89 @@ describe('POST /api/missions/archive', () => {
     vi.restoreAllMocks();
   });
 
+  // -------------------------------------------------------------------------
+  // Mission SELECTION — same unordered-findFirst defect as /api/missions/current
+  // and /api/missions/postcheck. Archiving is the close-out move, so it must
+  // NOT filter to active missions (the mission it retires is normally already
+  // `completed` or `failed`); what it needed was determinism.
+  // -------------------------------------------------------------------------
+  describe('which mission gets archived', () => {
+    it('asks for the newest non-archived mission — no state filter, explicit ordering', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockActiveMission);
+      mockPrismaClient.mission.update.mockResolvedValue(mockArchivedMission);
+      mockPrismaClient.item.count.mockResolvedValue(0);
+
+      await POST(
+        new NextRequest('http://localhost:3000/api/missions/archive', {
+          method: 'POST',
+          headers: { 'X-Project-ID': 'test-project' },
+        })
+      );
+
+      expect(mockPrismaClient.mission.findFirst).toHaveBeenCalledWith({
+        where: { projectId: 'test-project', archivedAt: null },
+        orderBy: { startedAt: 'desc' },
+      });
+    });
+
+    it('archives a COMPLETED mission — a state filter would make the common close-out case unarchivable', async () => {
+      // A mission reaches `completed` via a passing post-check and is archived
+      // afterwards. Copying /postcheck's active-only filter here would 404 on
+      // exactly the mission this route exists to retire.
+      const completed = { ...mockActiveMission, state: 'completed' };
+      mockPrismaClient.mission.findFirst.mockResolvedValue(completed);
+      mockPrismaClient.mission.update.mockResolvedValue(mockArchivedMission);
+      mockPrismaClient.item.count.mockResolvedValue(2);
+
+      const response = await POST(
+        new NextRequest('http://localhost:3000/api/missions/archive', {
+          method: 'POST',
+          headers: { 'X-Project-ID': 'test-project' },
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockPrismaClient.mission.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: completed.id } })
+      );
+    });
+
+    it('archives the NEWEST non-archived mission when several exist, not SQLite\'s lowest rowid', async () => {
+      const stale = {
+        ...mockActiveMission,
+        id: 'M-STALE',
+        state: 'completed',
+        startedAt: new Date('2026-01-01T00:00:00Z'),
+      };
+      const newest = {
+        ...mockActiveMission,
+        id: 'M-NEWEST',
+        startedAt: new Date('2026-02-01T00:00:00Z'),
+      };
+      mockPrismaClient.mission.findFirst.mockImplementation(
+        async (args: { orderBy?: { startedAt?: string } } = {}) => {
+          const rows = [stale, newest];
+          return args.orderBy?.startedAt === 'desc'
+            ? [...rows].sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0]
+            : rows[0];
+        }
+      );
+      mockPrismaClient.mission.update.mockResolvedValue(mockArchivedMission);
+      mockPrismaClient.item.count.mockResolvedValue(1);
+
+      await POST(
+        new NextRequest('http://localhost:3000/api/missions/archive', {
+          method: 'POST',
+          headers: { 'X-Project-ID': 'test-project' },
+        })
+      );
+
+      expect(mockPrismaClient.mission.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'M-NEWEST' } })
+      );
+    });
+  });
+
   describe('successful archiving', () => {
     it('should archive the current active mission', async () => {
       mockPrismaClient.mission.findFirst.mockResolvedValue(mockActiveMission);

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useState, useEffect, useRef } from "react";
 import { ChevronDown, Check, Search, X } from "lucide-react";
+import { AGENT_NAMES } from "./agent-status-bar";
 import type { TypeFilter, AgentFilter, StatusFilter } from "@/types";
 
 export interface FilterBarProps {
@@ -28,15 +29,13 @@ const TYPE_OPTIONS: TypeFilter[] = [
   "enhancement",
 ];
 
-const AGENT_OPTIONS: AgentFilter[] = [
+// Derived from the canonical status-bar roster so a new agent can never be
+// silently missing from the filter. Sosa is absent because the viewer's
+// AgentName type (src/types/agent.ts) does not include her — she is a
+// planning-phase critic and is never assigned to board items.
+export const AGENT_OPTIONS: AgentFilter[] = [
   "All Agents",
-  "Hannibal",
-  "Face",
-  "Murdock",
-  "B.A.",
-  "Amy",
-  "Lynch",
-  "Stockwell",
+  ...AGENT_NAMES,
   "Unassigned",
 ];
 

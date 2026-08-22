@@ -8,6 +8,7 @@ export const VALID_AGENTS = [
   'sosa',
   'tawnia',
   'stockwell',
+  'frankie',
 ] as const;
 
 export type AgentId = (typeof VALID_AGENTS)[number];
@@ -22,6 +23,7 @@ export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
   sosa: 'Sosa',
   tawnia: 'Tawnia',
   stockwell: 'Stockwell',
+  frankie: 'Frankie',
 };
 
 export function normalizeAgentName(raw: string): string {

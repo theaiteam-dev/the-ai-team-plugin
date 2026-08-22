@@ -31,6 +31,10 @@ const mockPrisma = {
   stage: {
     findUnique: vi.fn(),
   },
+  missionItem: {
+    findFirst: vi.fn(),
+    findMany: vi.fn(),
+  },
   $transaction: vi.fn(async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => {
     return callback(mockPrisma);
   }),
@@ -236,5 +240,174 @@ describe('POST /api/agents/stop — advance flag', () => {
       expect(data.data.blockedStage).toBe('implementing');
       expect(data.data.nextStage).toBe('testing'); // stays at current stage
     });
+  });
+});
+
+// ============ WI-789: probing -> staged advance + missionComplete re-key ============
+
+describe('POST /api/agents/stop — WI-789: probing -> staged advance and missionComplete re-keyed to staged', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('AC1: advancing from probing to staged moves the item and returns nextStage=staged', async () => {
+    setupMocksForSuccessfulStop('Amy', 'probing');
+    mockPrisma.stage.findUnique.mockResolvedValue(createMockStage('staged', null));
+    mockPrisma.missionItem.findFirst.mockResolvedValue(null); // no mission context needed for this assertion
+
+    const { POST } = await import('@/app/api/agents/stop/route');
+    const request = createRequest({
+      itemId: 'WI-001',
+      agent: 'Amy',
+      summary: 'Investigation complete, no issues found',
+      advance: true,
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    const data = await response.json();
+
+    expect(data.success).toBe(true);
+    expect(data.data.nextStage).toBe('staged');
+
+    const updateCall = mockPrisma.item.update.mock.calls[0];
+    expect(updateCall[0].data.stageId).toBe('staged');
+  });
+
+  it('AC2/AC6: missionComplete is true when this advance leaves zero items outside staged and done', async () => {
+    setupMocksForSuccessfulStop('Amy', 'probing');
+    mockPrisma.stage.findUnique.mockResolvedValue(createMockStage('staged', null));
+    mockPrisma.missionItem.findFirst.mockResolvedValue({ missionId: 'M-001' });
+    mockPrisma.missionItem.findMany.mockResolvedValue([{ itemId: 'WI-001' }, { itemId: 'WI-002' }]);
+    // Both mission items are now in staged/done — zero items outside that set.
+    mockPrisma.item.count.mockResolvedValue(0);
+
+    const { POST } = await import('@/app/api/agents/stop/route');
+    const request = createRequest({
+      itemId: 'WI-001',
+      agent: 'Amy',
+      summary: 'Investigation complete, mission tail should trigger',
+      advance: true,
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    expect(data.data.missionComplete).toBe(true);
+  });
+
+  it('AC2/AC6: missionComplete is not true while another mission item is still in review', async () => {
+    setupMocksForSuccessfulStop('Amy', 'probing');
+    mockPrisma.stage.findUnique.mockResolvedValue(createMockStage('staged', null));
+    mockPrisma.missionItem.findFirst.mockResolvedValue({ missionId: 'M-001' });
+    mockPrisma.missionItem.findMany.mockResolvedValue([{ itemId: 'WI-001' }, { itemId: 'WI-002' }]);
+    // WI-002 is still in review — one item outside the staged/done set.
+    mockPrisma.item.count.mockResolvedValue(1);
+
+    const { POST } = await import('@/app/api/agents/stop/route');
+    const request = createRequest({
+      itemId: 'WI-001',
+      agent: 'Amy',
+      summary: 'Investigation complete',
+      advance: true,
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    // The route omits missionComplete from the response entirely when false
+    // (conditional spread at route.ts:404) — pin that precisely, the same
+    // way this file already pins "field omitted" elsewhere (see the
+    // updateCall[0].data.stageId toBeUndefined() assertions above). A weaker
+    // .not.toBe(true) would also pass for a future bug that returns a
+    // truthy-but-not-strictly-true sentinel (1, 'true', etc.) on the single
+    // field that gates Frankie's entire mission-tail trigger.
+    expect(data.data.missionComplete).toBeUndefined();
+  });
+
+  it('AC3: missionComplete is not true while a mission item remains in blocked', async () => {
+    setupMocksForSuccessfulStop('Amy', 'probing');
+    mockPrisma.stage.findUnique.mockResolvedValue(createMockStage('staged', null));
+    mockPrisma.missionItem.findFirst.mockResolvedValue({ missionId: 'M-001' });
+    mockPrisma.missionItem.findMany.mockResolvedValue([{ itemId: 'WI-001' }, { itemId: 'WI-003' }]);
+    // WI-003 is blocked — a blocked item must never be silently counted as
+    // satisfying the mission-complete condition, even though blocked was
+    // never 'done' either before or after this item's re-keying.
+    mockPrisma.item.count.mockResolvedValue(1);
+
+    const { POST } = await import('@/app/api/agents/stop/route');
+    const request = createRequest({
+      itemId: 'WI-001',
+      agent: 'Amy',
+      summary: 'Investigation complete',
+      advance: true,
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    // Pinned precisely (field omitted, per route.ts:404's conditional
+    // spread) rather than .not.toBe(true) — see the AC2 test above for why.
+    expect(data.data.missionComplete).toBeUndefined();
+  });
+
+  it('AC5: WIP check treats staged wipLimit=null as unlimited — the count query never fires and wipExceeded never returns true', async () => {
+    setupMocksForSuccessfulStop('Amy', 'probing');
+    mockPrisma.stage.findUnique.mockResolvedValue(createMockStage('staged', null));
+    mockPrisma.missionItem.findFirst.mockResolvedValue(null);
+
+    const { POST } = await import('@/app/api/agents/stop/route');
+    const request = createRequest({
+      itemId: 'WI-001',
+      agent: 'Amy',
+      summary: 'Investigation complete',
+      advance: true,
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    // Same field-omitted idiom as missionComplete (route.ts:362's
+    // conditional spread) — pinned precisely per Lynch's consistency note.
+    expect(data.data.wipExceeded).toBeUndefined();
+    expect(data.data.nextStage).toBe('staged');
+    // wipLimit=null must short-circuit BEFORE any count query runs — proving
+    // the "unlimited" branch fired, not merely that a count happened to be
+    // under some limit.
+    expect(mockPrisma.item.count).not.toHaveBeenCalled();
+  });
+
+  it('AC4: does not silently advance a staged item to review when PIPELINE_STAGES has no entry for it', async () => {
+    setupMocksForSuccessfulStop('Amy', 'staged');
+    mockPrisma.stage.findUnique.mockResolvedValue(createMockStage('review', 3));
+    mockPrisma.missionItem.findFirst.mockResolvedValue(null);
+
+    const { POST } = await import('@/app/api/agents/stop/route');
+    const request = createRequest({
+      itemId: 'WI-001',
+      agent: 'Amy',
+      summary: 'attempted stop on an item already in staged',
+      advance: true,
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    // Whichever of the two AC-permitted outcomes occurs (a clear error, or
+    // the stage left unchanged), the ONE thing that must never happen is
+    // landing in 'review'. Inspect the actual persisted update, not just the
+    // response shape, so this still catches the hazard even if a future
+    // response format change hides it from the JSON body.
+    const updateCalls = mockPrisma.item.update.mock.calls;
+    const advancedToReview = updateCalls.some((call) => call[0]?.data?.stageId === 'review');
+    expect(advancedToReview).toBe(false);
+
+    if (data.success) {
+      expect(data.data.nextStage).not.toBe('review');
+    }
   });
 });

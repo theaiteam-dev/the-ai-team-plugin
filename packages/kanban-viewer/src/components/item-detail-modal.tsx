@@ -8,7 +8,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { WorkItem, AgentName } from "@/types";
-import type { WorkLogEntry } from "@/types/item";
+import type { WorkLogAction, WorkLogEntry } from "@/types/item";
 import {
   AlertTriangle,
   CheckCircle,
@@ -17,6 +17,7 @@ import {
   FileText,
   MessageSquare,
   PlayCircle,
+  RotateCcw,
   TestTube,
   X,
   XCircle,
@@ -54,6 +55,7 @@ const AGENT_TEXT_COLORS: Record<AgentName, string> = {
   'B.A.': 'text-red-500',
   'Amy': 'text-pink-500',
   'Lynch': 'text-blue-500',
+  'Frankie': 'text-violet-500',
   'Tawnia': 'text-teal-500',
   'Stockwell': 'text-gray-400',
 };
@@ -65,6 +67,7 @@ const AGENT_BULLET_COLORS: Record<AgentName, string> = {
   'B.A.': 'bg-red-500',
   'Amy': 'bg-pink-500',
   'Lynch': 'bg-blue-500',
+  'Frankie': 'bg-violet-500',
   'Tawnia': 'bg-teal-500',
   'Stockwell': 'bg-gray-700',
 };
@@ -75,7 +78,9 @@ interface WorkLogActionConfig {
   label: string;
 }
 
-const WORK_LOG_ACTION_CONFIG: Record<string, WorkLogActionConfig> = {
+// Exhaustive over WorkLogAction: adding a value to the union without a config
+// entry here is a compile error, not a silent fallback to the generic clock.
+const WORK_LOG_ACTION_CONFIG: Record<WorkLogAction, WorkLogActionConfig> = {
   started: {
     icon: PlayCircle,
     colorClass: "text-blue-400",
@@ -96,10 +101,17 @@ const WORK_LOG_ACTION_CONFIG: Record<string, WorkLogActionConfig> = {
     colorClass: "text-gray-400",
     label: "Note",
   },
+  // Mission-tail rework (WI-794): distinct from a Lynch/Amy rejection — an item
+  // moved back out of `staged` by Hannibal after a Frankie/Stockwell failure.
+  tail_rework: {
+    icon: RotateCcw,
+    colorClass: "text-amber-400",
+    label: "Tail rework",
+  },
 };
 
 function getWorkLogActionConfig(action: string): WorkLogActionConfig {
-  return WORK_LOG_ACTION_CONFIG[action] ?? {
+  return WORK_LOG_ACTION_CONFIG[action as WorkLogAction] ?? {
     icon: Clock,
     colorClass: "text-gray-400",
     label: action,

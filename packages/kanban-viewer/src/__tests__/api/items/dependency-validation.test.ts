@@ -330,6 +330,47 @@ describe('POST /api/items - Dependency Validation', () => {
       expect(data.data.dependencies).toContain('WI-002');
     });
 
+    it('accepts a dependency that is in staged stage as a valid dependency target (WI-788 AC5)', async () => {
+      // The dependency-target-existence check (route.ts:219-232, findMany
+      // with id: { in: dependencies }) has NO stage filter at all — it never
+      // has — so a staged item is already a valid dependency target with
+      // zero implementation change. This is a pinning/regression-guard test:
+      // route.ts:274's stageId: { not: 'done' } filter is a DIFFERENT
+      // concern entirely (it scopes the output-collision query below, not
+      // dependency-target validation), so it must NOT be touched or routed
+      // through the shared isDependencySatisfied helper for this AC — doing
+      // so would incorrectly change output-collision semantics, which is out
+      // of scope here.
+      const dependencies = ['WI-001'];
+
+      mockPrisma.item.findMany.mockResolvedValue([
+        createMockDbItem({ id: 'WI-001', stageId: 'staged' }),
+      ]);
+
+      mockPrisma.item.create.mockResolvedValue(
+        createMockDbItem({
+          id: 'WI-002',
+          dependsOn: [{ dependsOnId: 'WI-001' }],
+        })
+      );
+
+      const { POST } = await import('@/app/api/items/route');
+      const request = createPostRequest({
+        title: 'Item depending on a staged item',
+        description: 'Description',
+        type: 'feature',
+        priority: 'medium',
+        dependencies,
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(201);
+      expect(data.success).toBe(true);
+      expect(data.data.dependencies).toContain('WI-001');
+    });
+
     it('should skip dependency validation when no dependencies provided', async () => {
       mockPrisma.item.create.mockResolvedValue(
         createMockDbItem({ id: 'WI-001', dependsOn: [] })

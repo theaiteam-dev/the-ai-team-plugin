@@ -50,6 +50,8 @@ Hannibal's job is coordination, not deep reasoning. Sonnet handles dispatch loop
    and re-dispatch the appropriate agent to resume work. This avoids backward moves
    that are not allowed by VALID_TRANSITIONS in board.ts.
 
+   `staged` items → `staged` (no agent to re-dispatch — see Recovery Rules below for the conditional promotion/restart-tail logic).
+
    Run `ateam board-release releaseItem --itemId <id>` to clear stale assignments, then re-dispatch agents:
    ```
    for item in testing stage:
@@ -116,6 +118,7 @@ Hannibal's job is coordination, not deep reasoning. Sonnet handles dispatch loop
    Current state:
    - Briefings: {x}
    - Ready:     {y}
+   - Staged:    {s}
    - Done:      {z}
    - Blocked:   {b}
 
@@ -149,6 +152,14 @@ and agents are re-dispatched to resume work. No backward board moves are needed.
 - Stay in `probing` stage, re-dispatch Amy
 - Amy re-probes for bugs (tests + impl + review all exist, probing is idempotent)
 
+### Items in `staged` stage
+- Stay in `staged` stage
+- No pipeline agent owns `staged`, so nothing is re-dispatched. The resume action instead depends on what state the mission tail was in when the crash happened — check for an existing review first: `ateam missions-final-review getFinalReview --missionId <id>`.
+  - **If an approved final review already exists** (the crash landed between the review being written and promotion finishing): resume completes the promotion of the remaining staged items to `done` and continues to post-checks — without re-running Frankie or Stockwell. WI-790's promotion is idempotent, so completing it here is safe even if some items already promoted before the crash.
+  - **If no approved final review exists** (the common case — the mission tail was still mid-walk, or had not started it): resume re-enters the mission tail at Frankie for a full Definition of Done re-walk, consistent with ADR 0004 (a partial re-walk risks missing a regression a fix introduced elsewhere).
+  - **If a FINAL REJECTED review exists**: resume surfaces the named items to the operator — nothing moves automatically, and Frankie is not silently re-dispatched. The operator's rework (via the earliest-flagged-stage move, WI-794) restarts the tail at Frankie once those items are back in `staged`.
+- A human operator may also move a staged item to `ready` (**Move to `ready`**) to re-decompose it if the mission tail proves it misconceived — not an automated resume action
+
 ### Items in `done` stage
 - Never re-done
 - Already approved by Lynch
@@ -178,6 +189,7 @@ Recovered state:
 Current state:
 - Briefings: 3
 - Ready:     4
+- Staged:    2
 - Done:      7
 - Blocked:   0
 

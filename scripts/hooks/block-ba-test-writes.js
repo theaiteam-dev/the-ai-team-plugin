@@ -11,7 +11,7 @@
 
 import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
-import { sendDeniedEvent } from './lib/send-denied-event.js';
+import { denyAndExit } from './lib/send-denied-event.js';
 
 let hookInput = {};
 try {
@@ -32,7 +32,16 @@ try {
 
   const toolName = hookInput.tool_name || '';
   const toolInput = hookInput.tool_input || {};
-  const filePath = toolInput.file_path || '';
+  const filePath = toolInput.file_path || toolInput.notebook_path || '';
+
+  // Only gate write-capable tools. This hook is matcher-less (fires on every
+  // tool), and Read/Grep/Glob also carry a file_path — without this gate the
+  // test-file path check below falsely blocks B.A. from READING test files,
+  // not just from writing them.
+  const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+  if (!WRITE_TOOLS.has(toolName)) {
+    process.exit(0);
+  }
 
   if (!filePath) {
     process.exit(0);
@@ -41,11 +50,10 @@ try {
   // Block writes to test/spec files
   if (filePath.match(/\.(test|spec)\.(ts|js|tsx|jsx)$/)) {
     const reason = `BLOCKED: B.A. cannot modify test files: ${filePath}. Tests are Murdock's responsibility.`;
-    sendDeniedEvent({ agentName: agent, toolName, reason });
     process.stderr.write(`BLOCKED: B.A. cannot modify test files: ${filePath}\n`);
     process.stderr.write('Tests are Murdock\'s responsibility. Implement code that passes the existing tests.\n');
     process.stderr.write('If a test is genuinely broken, message Hannibal to have Murdock fix it.\n');
-    process.exit(2);
+    await denyAndExit({ agentName: agent, toolName, reason });
   }
 
   // Allow vitest.setup.ts, jest.setup.ts etc. — these are infrastructure, not tests

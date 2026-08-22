@@ -4,23 +4,51 @@
  *
  * Prevents mission from ending without:
  * 1. All items reaching done stage
- * 2. Final Mission Review being completed
- * 3. Post-mission checks passing (via mission_postcheck MCP tool)
+ * 2. Frankie's evidence bundle existing, fresh, and free of failing (❌) statements
+ * 3. Final Mission Review being completed — and not FINAL REJECTED (a
+ *    rejection blocks with the ADR 0004 restart-at-Frankie path)
+ * 4. Post-mission checks passing (via mission_postcheck MCP tool)
  *
  * Queries the A(i)-Team API instead of reading filesystem.
+ *
+ * The gate logic and API access live in lib/stop-gates.js, shared with
+ * enforce-orchestrator-stop.js — the two hooks must enforce the same rules,
+ * and only that hook binds when Hannibal runs in the main session.
  *
  * Environment variables:
  *   ATEAM_API_URL - Base URL for the A(i)-Team API
  *   ATEAM_PROJECT_ID - Project identifier
+ *   ATEAM_SKIP_FRANKIE_GATE - Set to 1 to override the Frankie evidence gate
+ *   ATEAM_SKIP_PROMOTION_GATE - Set to 1 to override the staged-not-promoted gate
+ *                              AND the orphaned-staged-item gate
  *
  * For testing:
  *   __TEST_MOCK_BOARD__ - JSON string for fake board response
  *   __TEST_MOCK_MISSION__ - JSON string for fake mission response
  *   __TEST_MOCK_NO_MISSION__ - Set to 'true' to simulate no active mission
+ *   __TEST_MOCK_MISSION_ITEMS__ - JSON array of the current mission's items
+ *     (mission membership; absent means "unknown", which falls back to the
+ *     project-wide board view)
  */
 
 import { readFileSync } from 'fs';
 import { resolveAgent, isKnownAgent } from './lib/resolve-agent.js';
+import {
+  fetchBoard,
+  fetchMission,
+  fetchMissionItems,
+  normalizeBoard,
+  normalizeMission,
+  countBoard,
+  scopeBoardToMission,
+  checkFrankieEvidence,
+  checkStagedNotPromoted,
+  checkOrphanStagedItems,
+  checkFinalReviewRejection,
+  checkMissingFinalReview,
+  checkUnparseableVerdict,
+  checkPostcheck,
+} from './lib/stop-gates.js';
 
 // Read hook input from stdin (optional — old callers may not pipe stdin)
 let hookInput = {};
@@ -33,6 +61,18 @@ try {
   // Can't read stdin — assume main session (Hannibal), continue enforcing
 }
 
+// Narrow re-entry guard: Claude Code sets stop_hook_active when the session is
+// stopping BECAUSE a Stop hook already blocked once. That matters for exactly
+// ONE gate — the staged-not-promoted check, which cannot be satisfied by
+// orchestrating harder when the API predates WI-790's promotion transaction or
+// the review's verdict parses as 'unknown' (block, resume, block, resume
+// forever). Bailing out here at the top instead degraded EVERY gate from
+// permanent to one-shot, including the always-satisfiable "items still active"
+// gate, letting the second stop end a mission mid-pipeline. The flag is
+// therefore carried down to that single gate (kept identical to
+// enforce-orchestrator-stop.js, its main-session twin).
+const reentryAfterBlock = !!hookInput && hookInput.stop_hook_active === true;
+
 // Only enforce for Hannibal (main session). Known non-hannibal agents pass through.
 const resolvedAgent = resolveAgent(hookInput);
 if (resolvedAgent !== null && resolvedAgent !== 'hannibal') {
@@ -44,6 +84,7 @@ const projectId = process.env.ATEAM_PROJECT_ID || '';
 const mockBoard = process.env.__TEST_MOCK_BOARD__;
 const mockMission = process.env.__TEST_MOCK_MISSION__;
 const mockNoMission = process.env.__TEST_MOCK_NO_MISSION__;
+const mockMissionItems = process.env.__TEST_MOCK_MISSION_ITEMS__;
 
 async function checkFinalReview() {
   // Simulate no active mission
@@ -56,8 +97,8 @@ async function checkFinalReview() {
 
   if (mockBoard !== undefined || mockMission !== undefined) {
     // Use test mocks
-    boardData = mockBoard ? JSON.parse(mockBoard) : { columns: {} };
-    missionData = mockMission ? JSON.parse(mockMission) : {};
+    boardData = normalizeBoard(mockBoard ? JSON.parse(mockBoard) : { columns: {} });
+    missionData = normalizeMission(mockMission ? JSON.parse(mockMission) : {}) || {};
   } else {
     // Query the API
     if (!apiUrl || !projectId) {
@@ -65,59 +106,20 @@ async function checkFinalReview() {
       process.exit(0);
     }
 
-    // Fetch board state
-    const boardUrl = `${apiUrl}/api/projects/${projectId}/board`;
-    const boardResp = await fetch(boardUrl, {
-      headers: { 'X-Project-ID': projectId },
-    });
-
-    if (!boardResp.ok) {
+    boardData = await fetchBoard(apiUrl, projectId);
+    if (!boardData) {
       // No board / API error, allow stop
       process.exit(0);
     }
 
-    boardData = await boardResp.json();
-
-    // Fetch mission state
-    const missionUrl = `${apiUrl}/api/projects/${projectId}/missions/current`;
-    const missionResp = await fetch(missionUrl, {
-      headers: { 'X-Project-ID': projectId },
-    });
-
-    if (!missionResp.ok) {
+    missionData = await fetchMission(apiUrl, projectId);
+    if (!missionData) {
       // No active mission, allow stop
       process.exit(0);
     }
-
-    missionData = await missionResp.json();
   }
 
-  const columns = boardData.columns || {};
-
-  // Check for items still in active stages
-  const activeStages = [
-    'briefings',
-    'ready',
-    'testing',
-    'implementing',
-    'review',
-    'probing',
-    'blocked',
-  ];
-  const activeCounts = {};
-  let totalActive = 0;
-
-  for (const stage of activeStages) {
-    const items = columns[stage] || [];
-    const count = items.length;
-    if (count > 0) {
-      activeCounts[stage] = count;
-      totalActive += count;
-    }
-  }
-
-  const doneItems = columns.done || [];
-  const doneCount = doneItems.length;
+  const { activeCounts, totalActive, doneCount } = countBoard(boardData.columns);
 
   // If items are still active, block stop
   if (totalActive > 0) {
@@ -133,32 +135,128 @@ async function checkFinalReview() {
     process.exit(2);
   }
 
-  // If all items done but no final review verdict, block stop
-  if (doneCount > 0 && !missionData.final_review_verdict) {
-    process.stderr.write('Final Mission Review required.\n');
-    process.stderr.write(
-      `All ${doneCount} items are done, but Lynch has not completed the final review.\n`
-    );
-    process.stderr.write(
-      'Dispatch Lynch for Final Mission Review before ending.\n'
-    );
+  // Scope the board's terminal columns to THIS mission's items — /api/board is
+  // project-wide but promotion only sweeps the current mission, so an orphaned
+  // staged item must not block this mission (see scopeBoardToMission; unknown
+  // membership falls back to the project-wide counts, fail closed). Identical
+  // to enforce-orchestrator-stop.js, its main-session twin.
+  //
+  // Mock mode never reaches the network: a fixture board/mission with no
+  // __TEST_MOCK_MISSION_ITEMS__ means "membership unknown", which is the
+  // project-wide fallback — not a live fetch against whatever ATEAM_API_URL
+  // happens to point at.
+  const missionItems =
+    mockMissionItems !== undefined
+      ? JSON.parse(mockMissionItems)
+      : mockBoard !== undefined || mockMission !== undefined
+        ? null
+        : await fetchMissionItems(apiUrl, projectId, missionData.id);
+  const scope = scopeBoardToMission(boardData.columns, missionItems);
+  const pendingCount = scope.stagedCount + scope.doneCount;
+
+  // Frankie's mission-tail walk precedes Stockwell's Final Mission Review —
+  // on a repo with a drivable surface, block until his evidence bundle
+  // exists on disk (only reached once totalActive === 0, i.e. every item is
+  // genuinely done — the check above already exited otherwise). Repos with
+  // no drivable surface are exempt. This gate uses the JSON decision-block
+  // format (never a nonzero exit code) — distinct from the pre-existing
+  // exit(2) gates below, which are untouched.
+  //
+  // The gate itself lives in lib/stop-gates.js so enforce-orchestrator-stop.js
+  // enforces exactly the same condition — that hook is the one that binds in
+  // the primary execution mode, where Hannibal runs in the main session.
+  const frankieBlock = checkFrankieEvidence({
+    missionId: missionData.id,
+    stagedCount: scope.stagedCount,
+    stagedItems: scope.stagedItems,
+  });
+  if (frankieBlock) {
+    console.log(JSON.stringify({ decision: 'block', additionalContext: frankieBlock }));
+    process.exit(0);
+  }
+
+  // WI-791 AC2: Frankie's evidence clearing does not mean promotion has run
+  // — that only happens via WI-790's atomic transaction when Stockwell's
+  // review is written. An all-staged board must never be treated as an
+  // empty (no-mission) board and allowed to stop. Uses the same exit(2)+
+  // stderr mechanism as the other pre-existing gates below (this is NOT the
+  // Frankie-specific JSON-decision sub-check, so ATEAM_SKIP_FRANKIE_GATE
+  // must not suppress it).
+  //
+  // This is the one gate the stop_hook_active re-entry guard releases — the
+  // only one that can be genuinely unsatisfiable. Reaching it already implies
+  // totalActive === 0, so releasing it can never end a mission with items
+  // still mid-pipeline.
+  //
+  // The release covers THIS gate only. Every gate below keys on
+  // stagedCount + doneCount, not doneCount alone: nothing reaches done except
+  // through WI-790's promotion, so a doneCount-keyed gate is silent on exactly
+  // the all-staged board that reaches this point, and the second stop would end
+  // the mission with no review and no post-check.
+  const stagedBlock = checkStagedNotPromoted(scope.stagedCount, {
+    finalReview: missionData.final_review_verdict,
+    orphanStagedIds: scope.orphanStagedIds,
+  });
+  if (stagedBlock && !reentryAfterBlock) {
+    process.stderr.write(`${stagedBlock}\n`);
     process.exit(2);
   }
 
-  // If final review done but post-checks not run/passed, block stop
-  if (missionData.final_review_verdict) {
-    const postcheck = missionData.postcheck;
-    if (!postcheck || !postcheck.passed) {
-      process.stderr.write('Post-mission checks required.\n');
-      process.stderr.write(
-        'Final review is complete, but post-checks have not passed.\n'
-      );
-      process.stderr.write('\n');
-      process.stderr.write(
-        'Run ateam missions postcheck to verify lint, tests, and e2e all pass.\n'
-      );
-      process.exit(2);
-    }
+  // A staged item belonging to no mission must never vanish from the gates.
+  // Mission scoping is right for the promotion messages and wrong as a release:
+  // with this mission's own staged count at 0, an orphan dropped out of every
+  // count and both hooks allowed the FIRST stop. Blocks on its own, is NOT
+  // released by the re-entry guard (attach / move / archive is always
+  // available), and shares ATEAM_SKIP_PROMOTION_GATE as the override. Kept
+  // identical to enforce-orchestrator-stop.js, its main-session twin.
+  const orphanBlock = checkOrphanStagedItems(scope.orphanStagedIds);
+  if (orphanBlock) {
+    process.stderr.write(`${orphanBlock}\n`);
+    process.exit(2);
+  }
+
+  // Items finished the per-item pipeline (staged and/or done) but no review.
+  const missingReviewBlock = checkMissingFinalReview({
+    pendingCount,
+    finalReview: missionData.final_review_verdict,
+  });
+  if (missingReviewBlock) {
+    process.stderr.write('Final Mission Review required.\n');
+    process.stderr.write(`${missingReviewBlock}\n`);
+    process.exit(2);
+  }
+
+  // A review exists but states no verdict on its last line — nothing was
+  // promoted and the mission's outcome is unknown. Fail CLOSED; the operator
+  // clears it by re-POSTing the report with the verdict as its final line.
+  const unparseableBlock = checkUnparseableVerdict(missionData.final_review_verdict);
+  if (unparseableBlock) {
+    process.stderr.write(`${unparseableBlock}\n`);
+    process.exit(2);
+  }
+
+  // An explicit FINAL REJECTED verdict is a completed review, but it must not
+  // fall through to the post-check gate ("run postcheck" would misdirect).
+  // Block with the ADR 0004 restart-at-Frankie path instead. Reviews with no
+  // recognizable verdict marker fall through unchanged (fail open).
+  const rejectionBlock = checkFinalReviewRejection(missionData.final_review_verdict);
+  if (rejectionBlock) {
+    process.stderr.write(`${rejectionBlock}\n`);
+    process.exit(2);
+  }
+
+  // If final review done but post-checks not run/passed, block stop. Fail
+  // closed: only an affirmative postcheck.passed === true (or a mission that
+  // has already reached an over state) releases this — see checkPostcheck().
+  const postcheckBlock = checkPostcheck({
+    finalReview: missionData.final_review_verdict,
+    postcheck: missionData.postcheck,
+    missionState: missionData.state,
+  });
+  if (postcheckBlock) {
+    process.stderr.write('Post-mission checks required.\n');
+    process.stderr.write(`${postcheckBlock}\n`);
+    process.exit(2);
   }
 
   // Mission complete with final review and passing post-checks - allow stop

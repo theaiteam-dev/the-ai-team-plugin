@@ -10,6 +10,7 @@ const VALID_STAGES: readonly Stage[] = [
   'implementing',
   'review',
   'probing',
+  'staged',
   'done',
   'blocked',
 ] as const;

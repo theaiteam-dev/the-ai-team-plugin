@@ -23,21 +23,26 @@ import type { AgentStopRequest, AgentStopResponse, ApiError } from '@/types/api'
 import type { AgentName } from '@/types/agent';
 import type { StageId } from '@/types/board';
 import type { WorkLogEntry, WorkLogAction } from '@/types/item';
-import { PIPELINE_STAGES, isValidAgent, type StageId as SharedStageId } from '@ai-team/shared';
+import {
+  ALL_STAGES,
+  PIPELINE_STAGES,
+  isDependencySatisfied,
+  isValidAgent,
+  type StageId as SharedStageId,
+} from '@ai-team/shared';
 import { logApiError } from '@/lib/api-logger';
+import { getRejectionEscalationThreshold } from '@/lib/rejection-cap';
 
 const VALID_OUTCOMES = ['completed', 'blocked', 'rejected'] as const;
 const VALID_RETURN_TO_STAGES: StageId[] = ['ready', 'testing', 'implementing', 'review', 'probing'];
 
-const DEFAULT_REJECTION_CAP = 4;
-
-function getRejectionEscalationThreshold(): number {
-  const raw = process.env.ATEAM_REJECTION_CAP;
-  if (raw === undefined || raw === '') return DEFAULT_REJECTION_CAP;
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_REJECTION_CAP;
-  return parsed;
-}
+// Stages that do NOT satisfy dependency completion (see WI-788's
+// isDependencySatisfied). Derived from the shared predicate rather than a
+// hardcoded ['staged', 'done'] literal so the mission-complete count below
+// can never drift from deps/check and agents/start.
+const UNSATISFIED_DEPENDENCY_STAGES: SharedStageId[] = ALL_STAGES.filter(
+  (stage) => !isDependencySatisfied(stage)
+);
 
 /**
  * POST /api/agents/stop
@@ -175,8 +180,26 @@ export async function POST(
       if (outcome === 'blocked') {
         nextStage = 'blocked';
       } else {
+        // PIPELINE_STAGES is a Partial<Record<...>>, so a missing key (or an
+        // entry with nextStage: null — e.g. 'staged', which deliberately has
+        // no owning agent) is NOT a compile error. Do not fall back to a
+        // guessed stage like 'review' here: that would silently move an item
+        // BACKWARDS through the pipeline. Fail closed with a clear error
+        // instead (see WI-789 AC4 / defensive-coding "fail closed").
         const pipelineInfo = PIPELINE_STAGES[item.stageId as SharedStageId];
-        nextStage = (pipelineInfo?.nextStage as StageId) ?? 'review';
+        if (!pipelineInfo?.nextStage) {
+          const errorResponse: ApiError = {
+            success: false,
+            error: {
+              code: 'INVALID_STAGE',
+              message: `No pipeline transition is defined for stage '${item.stageId}' — cannot determine a next stage for agentStop`,
+              details: { itemId: body.itemId, currentStage: item.stageId },
+            },
+          };
+          logApiError('POST /api/agents/stop', 400, 'INVALID_STAGE', errorResponse.error.message, { agent: body.agent, itemId: body.itemId, currentStage: item.stageId });
+          return NextResponse.json(errorResponse, { status: 400 });
+        }
+        nextStage = pipelineInfo.nextStage as StageId;
       }
       action = outcome === 'blocked' ? 'note' : 'completed';
     }
@@ -314,9 +337,14 @@ export async function POST(
     // Completed/blocked path — extract results from the transaction
     const { workLog, wipExceeded, shouldAdvance } = txResult;
 
-    // Check if all mission items are now in done stage (mission complete)
+    // Check if all mission items have reached a stage that satisfies the
+    // mission-tail trigger (staged or done — see WI-788/WI-789: the pipeline
+    // now ends at 'staged', so gating this on 'done' alone would mean
+    // missionComplete never fires and Frankie's walk never starts).
+    // A blocked item is never satisfied — it must keep missionComplete false
+    // exactly as it did before this re-key (AC3).
     let missionComplete = false;
-    if (shouldAdvance && nextStage === 'done') {
+    if (shouldAdvance && isDependencySatisfied(nextStage as SharedStageId)) {
       try {
         const missionItem = await prisma.missionItem.findFirst({
           where: { itemId: body.itemId },
@@ -328,10 +356,14 @@ export async function POST(
             select: { itemId: true },
           });
           const allItemIds = missionItemIds.map((mi) => mi.itemId);
+          // Count items NOT yet satisfied (i.e. neither staged nor done).
+          // Derived from the same shared predicate rather than hardcoding a
+          // second ['staged', 'done'] literal, so this can never drift from
+          // deps/check and agents/start (see WI-788).
           const nonDoneCount = await prisma.item.count({
             where: {
               id: { in: allItemIds },
-              stageId: { not: 'done' },
+              stageId: { in: UNSATISFIED_DEPENDENCY_STAGES },
               archivedAt: null,
             },
           });

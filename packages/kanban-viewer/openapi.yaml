@@ -39,7 +39,7 @@ components:
     # ── Enums ──────────────────────────────────────────────────────────────────
     StageId:
       type: string
-      enum: [briefings, ready, testing, implementing, review, probing, done, blocked]
+      enum: [briefings, ready, testing, implementing, review, probing, staged, done, blocked]
 
     ItemType:
       type: string
@@ -51,7 +51,7 @@ components:
 
     AgentName:
       type: string
-      enum: [Hannibal, Face, Murdock, B.A., Amy, Lynch, Stockwell, Sosa, Tawnia]
+      enum: [Hannibal, Face, Murdock, B.A., Amy, Lynch, Stockwell, Sosa, Tawnia, Frankie]
 
     MissionState:
       type: string
@@ -67,7 +67,13 @@ components:
 
     WorkLogAction:
       type: string
-      enum: [started, completed, rejected, note]
+      enum: [started, completed, rejected, note, tail_rework]
+      description: |
+        `tail_rework` (WI-794) is deliberately distinct from `rejected` — it
+        marks a mission-tail rework move out of `staged` (triggered by Frankie
+        or Stockwell, executed by Hannibal via `moveItem` since no agent holds
+        a claim by tail time), so retros can measure found-by-the-tail
+        separately from found-in-per-item-review.
 
     # ── Shared objects ─────────────────────────────────────────────────────────
     ItemOutputs:
@@ -356,6 +362,7 @@ components:
                 - MISSION_NOT_FOUND
                 - NO_ACTIVE_MISSION
                 - INVALID_MISSION_STATE
+                - MISSION_NOT_READY
                 - PROJECT_NOT_FOUND
                 - STAGE_NOT_FOUND
                 - CONFLICT
@@ -512,7 +519,16 @@ paths:
     post:
       operationId: moveItem
       summary: Move item to a new stage
-      description: Validates the transition matrix and WIP limits before moving.
+      description: |
+        Validates the transition matrix and WIP limits before moving.
+
+        A move out of `staged` to `testing` or `implementing` is a tail
+        rework (Hannibal executing a Frankie/Stockwell decision) and counts
+        against the same rejection cap `agentStop`'s rejection path uses
+        (default 4, override via `ATEAM_REJECTION_CAP` on the API server).
+        Those moves return `rejectionCount` and `escalated`; when the cap is
+        reached the item is moved to `blocked` instead of the requested
+        stage and `escalated` is `true`.
       tags: [board]
       parameters:
         - $ref: '#/components/parameters/ProjectId'
@@ -555,6 +571,20 @@ paths:
                         $ref: '#/components/schemas/StageId'
                       wipStatus:
                         $ref: '#/components/schemas/WipStatus'
+                      rejectionCount:
+                        type: integer
+                        minimum: 0
+                        description: |
+                          Present on tail-rework moves
+                          (`staged -> testing|implementing`). The new total
+                          rejection count for this item after this move.
+                      escalated:
+                        type: boolean
+                        description: |
+                          Present on tail-rework moves. `true` when the
+                          rejection count reached the escalation threshold and
+                          the item was moved to `blocked` instead of the
+                          requested stage.
         '400':
           description: VALIDATION_ERROR · INVALID_TRANSITION · WIP_LIMIT_EXCEEDED
           content:
@@ -738,6 +768,13 @@ paths:
           schema:
             type: string
           description: Filter by assigned agent name, or "null" for unassigned
+        - name: missionId
+          in: query
+          schema:
+            type: string
+          description: |
+            Only items belonging to this mission (via the MissionItem join) — the
+            same membership promotion and the health report use.
         - name: includeArchived
           in: query
           schema:
@@ -1867,12 +1904,23 @@ paths:
     get:
       operationId: getCurrentMission
       summary: Get the active mission
+      description: |
+        Selection precedence (both tiers exclude archived missions):
+
+        1. The newest ACTIVE mission — `state` not in
+           (`completed`, `failed`, `archived`), ordered by `startedAt` descending.
+        2. Only when no active mission exists: the newest non-archived mission
+           (i.e. the just-finished one), ordered by `startedAt` descending.
+
+        Tier 2 keeps a just-completed mission addressable for `/ai-team:retro`,
+        which reads this endpoint after post-checks move the mission to
+        `completed`. Consumers that must distinguish the two cases read `state`.
       tags: [missions]
       parameters:
         - $ref: '#/components/parameters/ProjectId'
       responses:
         '200':
-          description: Active mission or null
+          description: Current mission (active if one exists, else the newest non-archived one) or null
           content:
             application/json:
               schema:
@@ -2103,6 +2151,20 @@ paths:
         Stores the markdown final review report on the mission record.
         The lookup is scoped to the requesting project so missions cannot
         be read or overwritten across project boundaries.
+
+        When the report's verdict is FINAL APPROVED, the same transaction
+        that persists the review also promotes every non-archived item
+        belonging to THIS mission that sits in `staged` to `done` (WI-790) —
+        the write and the promotion succeed or roll back together, so a crash
+        mid-promotion never leaves a stored review beside a half-promoted
+        board. Items belonging to other missions (or to no mission) are never
+        touched.
+
+        A FINAL APPROVED verdict is only accepted once the whole mission has
+        finished the per-item pipeline: if any non-archived item of the
+        mission is still in a stage other than `staged` or `done` (including
+        `blocked`), the call is rejected with 409 MISSION_NOT_READY, the
+        review is NOT stored, and nothing is promoted.
       tags: [missions]
       requestBody:
         required: true
@@ -2129,18 +2191,37 @@ paths:
                     enum: [true]
                   data:
                     type: object
-                    required: [missionId]
+                    required: [missionId, promotedCount]
                     properties:
                       missionId:
                         type: string
+                      promotedCount:
+                        type: integer
+                        minimum: 0
+                        description: |
+                          How many `staged` items this call promoted to `done`
+                          as part of the same transaction (WI-790). Always `0`
+                          when the review's verdict is not FINAL APPROVED.
         '400':
-          description: VALIDATION_ERROR — finalReview body field is required
+          description: |
+            VALIDATION_ERROR — the request body is not valid JSON, or the
+            finalReview field is missing/not a string
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
           description: MISSION_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: |
+            MISSION_NOT_READY — a FINAL APPROVED verdict was submitted while
+            the mission still has non-archived items short of `staged`/`done`.
+            Neither the review nor the promotion is persisted.
+            `error.details.pendingItemIds` lists the offending item IDs.
           content:
             application/json:
               schema:
@@ -2274,6 +2355,10 @@ paths:
           schema:
             type: integer
             default: 100
+            minimum: 1
+          description: >-
+            Maximum entries to return. Non-positive or non-numeric values fall
+            back to the default rather than returning an empty set.
         - name: missionId
           in: query
           schema:

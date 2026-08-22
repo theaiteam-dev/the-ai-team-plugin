@@ -12,14 +12,30 @@
  *   - Type definition files: *.d.ts
  *   - Files inside /types/ directories
  *   - Vitest/Jest setup files: vitest.setup.*, jest.setup.*
- *   - Files in /tmp/ (throwaway scripts)
+ *   - Files in the system temp dirs (throwaway scripts) — canonicalized
+ *     before the allowlist test (see lib/scratch-path.js), so
+ *     `/tmp/../<repo>/src/app.ts` is not treated as scratch, and neither is
+ *     anything under the project root when the repo itself lives under /tmp.
  *
  * Claude Code sends hook context via stdin JSON (tool_name, tool_input).
  */
 
 import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
-import { sendDeniedEvent } from './lib/send-denied-event.js';
+import { isScratchPath, TMP_ONLY_SCRATCH_ROOTS } from './lib/scratch-path.js';
+import { denyAndExit } from './lib/send-denied-event.js';
+
+/**
+ * Project root for the scratch-space exclusion. Claude Code sends the session
+ * cwd in the hook payload; the hook process is started there too, so
+ * process.cwd() is the fallback. Passed EXPLICITLY into isScratchPath so a
+ * repo that lives under a temp root (macOS $TMPDIR, a /tmp worktree, a CI
+ * sandbox) never gets a scratch allowance for its own files.
+ */
+function projectRootFrom(input) {
+  const fromPayload = input && typeof input.cwd === 'string' ? input.cwd : '';
+  return fromPayload !== '' ? fromPayload : process.cwd();
+}
 
 let hookInput = {};
 try {
@@ -54,8 +70,11 @@ try {
     process.exit(0);
   }
 
-  // Allow writes to /tmp/ (throwaway scripts, debugging artifacts)
-  if (filePath.startsWith('/tmp/')) {
+  // Allow writes to the temp dirs (throwaway scripts, debugging artifacts) —
+  // only where the path REALLY resolves under one of them AND outside this
+  // project. Murdock's allowlist has never included /var/tmp, so keep it to
+  // /tmp and $TMPDIR alone.
+  if (isScratchPath(filePath, TMP_ONLY_SCRATCH_ROOTS, projectRootFrom(hookInput))) {
     process.exit(0);
   }
 
@@ -96,11 +115,10 @@ try {
 
   // Block everything else — this is implementation territory
   const reason = `BLOCKED: Murdock cannot write implementation files: ${filePath}. Implementation is B.A.'s job.`;
-  sendDeniedEvent({ agentName: agent, toolName, reason });
   process.stderr.write(`BLOCKED: Murdock cannot write implementation files: ${filePath}\n`);
   process.stderr.write('Implementation is B.A.\'s job. Murdock writes tests and type definitions ONLY.\n');
   process.stderr.write('If you need a type, create a .d.ts file or place it in a /types/ directory.\n');
-  process.exit(2);
+  await denyAndExit({ agentName: agent, toolName, reason });
 } catch {
   // Fail open on any unexpected error
   process.exit(0);

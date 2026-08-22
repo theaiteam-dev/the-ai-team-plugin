@@ -1,6 +1,6 @@
 # Agent Prompts
 
-Defines behavior contracts for 8 A(i)-Team agents. Each `.md` file is a prompt loaded at dispatch time — not code, but the instructions that shape agent behavior. Does NOT contain implementation logic (that's in the `ateam` CLI binary).
+Defines behavior contracts for 12 A(i)-Team agents. Each `.md` file is a prompt loaded at dispatch time — not code, but the instructions that shape agent behavior. Does NOT contain implementation logic (that's in the `ateam` CLI binary).
 
 ## Frontmatter Contract
 
@@ -33,6 +33,7 @@ The `skills:` key is optional and lists skill files (from `skills/`) to load whe
 | **B.A.** | `defensive-coding`, `security-input` |
 | **Lynch** | `test-writing`, `defensive-coding`, `security-input`, `code-patterns` |
 | **Amy** | `defensive-coding` |
+| **Frankie** | `ateam-cli`, `agent-lifecycle`, `teams-messaging`, `a11y`, `perspective-test` |
 | **Stockwell** | `test-writing`, `defensive-coding`, `security-input`, `code-patterns` |
 
 Skills live in `skills/<name>/SKILL.md`. The available skills are:
@@ -48,12 +49,13 @@ Skills live in `skills/<name>/SKILL.md`. The available skills are:
 | **Hannibal** | Orchestration only | `src/**`, tests | `block-hannibal-writes`, `block-raw-mv`, `enforce-final-review` |
 | **Face** | Work items via ateam CLI | Tests, implementation | observers only |
 | **Sosa** | Review reports | Work items directly | None |
-| **Murdock** | Tests + types | Implementation code | `block-raw-echo-log`, `enforce-completion-log` |
+| **Murdock** | Tests + types | Implementation code | `block-raw-echo-log`, `enforce-handoff` |
 | **B.A.** | Implementation | Tests | Same as Murdock |
 | **Lynch** | Review verdicts | Any code | Same as Murdock + `block-lynch-writes`, `block-lynch-browser` |
-| **Stockwell** | Final review verdicts | Any code | Same as Lynch (per-feature) |
+| **Stockwell** | Final review verdicts | Any code | `block-raw-echo-log`, `block-lynch-browser`, `enforce-completion-log` |
 | **Amy** | Debug scripts only | Production code, tests | Same as Murdock + `track-browser-usage`, `enforce-browser-verification` |
-| **Tawnia** | Docs (CHANGELOG, README) | `src/**`, tests | Same as Murdock |
+| **Frankie** | Evidence bundle (`.qa-evidence/`), NEW `specs/` files | Implementation, tests, existing `specs/` files | `block-raw-echo-log`, `block-frankie-writes` |
+| **Tawnia** | Docs (CHANGELOG, README) | `src/**`, tests | `block-raw-echo-log`, `enforce-completion-log` |
 
 **Hooks enforce these boundaries at runtime.** Agents physically cannot violate them.
 
@@ -68,14 +70,27 @@ Scripts in `scripts/hooks/` run at lifecycle points. Exit code 0 = allow, non-ze
 
 These fire on every tool invocation and always exit 0 (never block). The agent name is passed as a CLI argument so the API can attribute activity to the right agent.
 
-**Working agents** (Murdock, B.A., Lynch, Amy, Tawnia) all share enforcement hooks in addition to the observers:
+**Working agents** (Murdock, B.A., Lynch, Amy, Frankie, Stockwell, Tawnia) all share one enforcement hook in addition to the observers:
 - `PreToolUse(Bash)` → `block-raw-echo-log.js` — forces `ateam activity createActivityEntry` instead of raw echo
-- `Stop` → `enforce-completion-log.js` — blocks exit until `ateam agents-stop agentStop` is called
+
+Their **Stop** enforcement, though, splits three ways by role — there is no single completion hook they all carry:
+
+| Agents | Stop hook | What it requires |
+|--------|-----------|------------------|
+| Murdock, B.A., Lynch, Amy | `enforce-handoff.js` | Both `ateam agents-stop agentStop` **and** the peer-to-peer handoff message. A strict superset of completion logging, so these four deliberately do *not* also carry `enforce-completion-log.js` (swapped in `1f143ce`). |
+| Stockwell, Tawnia | `enforce-completion-log.js` | Blocks exit until `agentStop` is logged — terminal agents that hand off to nobody. |
+| Frankie | *(observer only)* | Gated instead by the evidence-bundle check inside Hannibal's `enforce-final-review.js`. |
+
+`enforce-completion-log.js` is **item-scoped**: it scrapes a `WI-XXX` id out of the agent's last message and asks the API for that item's `work_log`. That makes it a poor fit for mission-scoped agents, whose lifecycle ids are sentinels (`FRANKIE-WALK`, `FINAL-REVIEW`, `docs`) rather than item rows — the API answers `ITEM_NOT_FOUND` for those, and the hook fails open (see `prd/drafts/mission-phase-lifecycle.md`). Frankie omits it entirely because activating it would be worse than inert: his Failure Path *requires* him to name failing `WI-XXX` ids in his final message, so the hook would latch onto an unrelated item and block him for not logging against someone else's work. His completion gate reads the filesystem (`.qa-evidence/<mission>/report.md`) instead, which needs no item row. Stockwell keeps the hook registered but is likewise absent from its `TARGET_AGENTS` list, so it is currently a no-op for him too.
 
 **Hannibal** has unique enforcement hooks:
 - `PreToolUse(Write|Edit)` → `block-hannibal-writes.js` — prevents writing to source/test files
 - `PreToolUse(Bash)` → `block-raw-mv.js` — prevents raw `mv` on mission files
 - `Stop` → `enforce-final-review.js` — blocks exit until final review + post-checks pass
+
+Because Hannibal runs in the MAIN session, his frontmatter hooks never fire in the primary execution mode. Two plugin-level, matcher-less hooks cover him there instead:
+- `PreToolUse` (no matcher) → `enforce-orchestrator-boundary.js` — main-session allowlist (`ateam.config.json`, `.claude/**`, `/tmp/**`, `/var/**`) for `Write`/`Edit`, plus a block on Playwright browser tools; only enforced while a mission is active
+- `Stop` (no matcher) → `enforce-orchestrator-stop.js` — the plugin-wide twin of `enforce-final-review.js`, running the same shared gates from `scripts/hooks/lib/stop-gates.js`
 
 **Lynch** has additional hooks:
 - `PreToolUse(Write|Edit)` → `block-lynch-writes.js` — blocks Lynch from writing or editing any project files; `/tmp/` and `/var/` are allowed as scratch space
@@ -85,6 +100,9 @@ These fire on every tool invocation and always exit 0 (never block). The agent n
 - `PreToolUse(mcp__plugin_playwright)` → `track-browser-usage.js` — tracks Playwright tool usage without blocking; used for telemetry to verify Amy actually performed browser verification
 - `PreToolUse(Skill)` → `track-browser-usage.js` — same tracking when Amy invokes browser via a Skill
 - `Stop` → `enforce-browser-verification.js` — blocks Amy from completing without evidence of browser verification for UI features (checks work log for browser activity before allowing exit)
+
+**Frankie** has an additional hook:
+- `PreToolUse` (no matcher, plugin level only) → `block-frankie-writes.js` — blocks writes to implementation, tests, or existing `specs/` files; only his evidence bundle (`.qa-evidence/`) and NEW spec files are allowed. Registered matcher-less in `hooks/hooks.json` and deliberately NOT in `agents/frankie.md`: besides `Write`/`Edit` it also scans `Bash` commands for write-shaped operations (redirection, `tee`, `mv`/`cp` destinations, `rm`, `ln`, `sed -i`, `touch`, `truncate`, `dd of=`) targeting a protected path, which a `"Write|Edit"` matcher would never deliver to it. A mission-level agent (not per-feature) — runs once, after all items reach `staged` and before Stockwell's Final Mission Review. He reports failures to Hannibal rather than moving items himself — that boundary is enforced regardless of the fact that a real path out of `staged` exists now (Hannibal executes the move via a real `board-move`, using the earliest-flagged-stage rule).
 
 ## Dual-Registration Pattern
 
@@ -108,11 +126,11 @@ Hook scripts share utilities in `scripts/hooks/lib/`:
 **`resolve-agent.js`** — canonical agent identification:
 - `resolveAgent(hookInput)` — extracts agent name from Claude Code hook stdin JSON; returns lowercase agent name (e.g. `"ba"`, `"murdock"`) or `null`
 - `isKnownAgent(name)` — checks against `KNOWN_AGENTS` list; use for fail-open on unknown/system agents (Explore, Plan, etc.)
-- `KNOWN_AGENTS` — `['hannibal', 'face', 'sosa', 'murdock', 'ba', 'lynch', 'stockwell', 'amy', 'tawnia']`
+- `KNOWN_AGENTS` — `['hannibal', 'face', 'sosa', 'murdock', 'ba', 'lynch', 'stockwell', 'amy', 'tawnia', 'frankie']`
 
 **`send-denied-event.js`** — denied event telemetry:
-- `sendDeniedEvent({ agentName, toolName, reason })` — fire-and-forget POST to API with `status: "denied"`
-- All enforcement hooks call this before `process.exit(2)` (and before JSON block response for `block-raw-echo-log.js`)
+- `sendDeniedEvent({ agentName, toolName, reason })` — fire-and-forget POST to API with `status: "denied"`. Never call it directly before `process.exit()`: the process tears down before the POST's socket work runs, so the event is silently lost.
+- `denyAndExit(event, message?, options?)` — what every enforcement hook actually calls: writes the agent-facing message, awaits the POST (bounded by a 500ms flush timeout via `flushDeniedEvent()`), then exits (default exit code `2`, stderr; `block-raw-echo-log.js` passes `{ exitCode: 0, stream: 'stdout' }` for its JSON block response)
 - Events appear in Raw Agent View with status "denied"; silently ignores network failures
 
 **`observer.js`** — observer utilities:
@@ -141,10 +159,10 @@ In both modes, `ateam` CLI commands are the source of truth. Communication tools
 
 **Pipeline flow (all stages mandatory):**
 ```
-briefings → ready → testing → implementing → review → probing → done
+briefings → ready → testing → implementing → review → probing → staged
                       Murdock    B.A.          Lynch    Amy
 ```
-Then: Final Review (Stockwell, opus, PRD+diff) → Post-Checks → Documentation (Tawnia, haiku) → Complete.
+`staged` is the per-item pipeline's real terminal stage (WI-786/787). Then: Frankie (mission-tail QA walk, evidence bundle + graduated specs; skipped on repos whose execution contract declares no drivable surface — see `scripts/hooks/lib/qa-contract.js`) → Final Review (Stockwell, opus, PRD+diff, includes Frankie's evidence) → an APPROVED verdict atomically promotes every `staged` item to `done` (WI-790) → Post-Checks → Documentation (Tawnia, haiku) → Complete. A Stockwell rejection moves the named items out of `staged` via the earliest-flagged-stage rule and restarts the tail at Frankie once they're back in `staged`, not at Post-Checks.
 
 ## Related Context
 

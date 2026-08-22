@@ -395,7 +395,7 @@ spawn_lane(1)
 # Lane 2 spawned exactly when needed.
 ```
 
-Tawnia and Stockwell are NOT pre-warmed (each runs once at mission end — caching won't help).
+Tawnia, Stockwell, and Frankie are NOT pre-warmed (each runs once at mission end — caching won't help).
 
 ## Instance Selection
 
@@ -487,29 +487,34 @@ LOOP CONTINUOUSLY:
         })
 
     on MISSION_COMPLETE message from {instanceName} (Amy):
-        # Amy's agentStop response contained missionComplete:true — ALL items are in done stage.
+        # Amy's agentStop response contained missionComplete:true — ALL items are in staged stage
+        # (the per-item pipeline's real terminal stage, WI-786/787 — `done` is reached only
+        # later, via the mission tail's atomic promotion once Stockwell approves).
         # This is the PRIMARY trigger for the final review sequence.
-        # Amy already advanced the item to done and released her claim.
+        # Amy already advanced the item to staged and released her claim.
         item_id = extract WI-XXX from message
         del active_instances[item_id]
 
-        # IMMEDIATELY check dep gates — this item reaching done may have unblocked others
+        # IMMEDIATELY check dep gates — this item reaching staged may have unblocked others
         deps_result = Bash("ateam deps-check checkDeps --json")
         for dep_item_id in deps_result.readyItems:
             if dep_item is in briefings stage:
                 Bash("ateam board-move moveItem --itemId {dep_item_id} --toStage ready")
 
-        # Proceed directly to Final Review sequence — skip Phase 4 completion detection
+        # Proceed to the mission tail — skip Phase 4 completion detection.
+        # Frankie's walk runs BEFORE Stockwell's Final Review (see "Frankie
+        # Mission-Tail Dispatch" below), so his evidence bundle and graduated
+        # specs are already part of the diff Stockwell reviews.
         finalReviewReady = true
-        break  # exit orchestration loop → proceed to Final Review
+        break  # exit orchestration loop → dispatch Frankie, then Final Review
 
     on FYI message from Amy {instanceName} (probing stage):
         # Amy verified an item but more items remain in the pipeline.
-        # Amy already advanced the item to done via agentStop --advance.
+        # Amy already advanced the item to staged via agentStop --advance.
         item_id = extract WI-XXX from message
         del active_instances[item_id]
 
-        # IMMEDIATELY check dep gates — this item reaching done may unblock others.
+        # IMMEDIATELY check dep gates — this item reaching staged may unblock others.
         # Do not wait for the next loop iteration. Run deps-check and unlock now.
         deps_result = Bash("ateam deps-check checkDeps --json")
         for dep_item_id in deps_result.readyItems:
@@ -631,28 +636,32 @@ LOOP CONTINUOUSLY:
     # ═══════════════════════════════════════════════════════════
     # PRIMARY trigger is MISSION_COMPLETE message from Amy (Phase 1).
     # This phase is a SAFETY NET for edge cases: missed messages,
-    # items moved to done externally, or blocked-then-unblocked items.
+    # items moved to staged externally, or blocked-then-unblocked items.
     #
     # Conditions for completion:
     # 1. active_instances is empty (no agents working on items)
     # 2. pending_alerts is empty (no queued handoffs waiting)
-    # 3. Board shows all items in done stage (or blocked)
+    # 3. Board shows all items in staged stage (or blocked) — staged is the
+    #    per-item pipeline's real terminal stage (WI-786/787); `done` is
+    #    reached only later, via the mission tail's atomic promotion.
 
     if active_instances is empty AND pending_alerts is empty:
         board = Bash("ateam board getBoard --json")
         all_items = board.stages.flatMap(s => s.items)
-        done_items = board.stages.find(s => s.name == "Done").items
+        staged_items = board.stages.find(s => s.name == "Staged").items
         blocked_items = board.stages.find(s => s.name == "Blocked").items
 
-        if len(done_items) + len(blocked_items) == len(all_items) AND len(done_items) > 0:
+        if len(staged_items) + len(blocked_items) == len(all_items) AND len(staged_items) > 0:
             if len(blocked_items) > 0:
                 # Some items blocked — report and wait for human intervention
                 Bash("ateam activity createActivityEntry --agent hannibal --message 'Pipeline drained but {len(blocked_items)} item(s) blocked — awaiting human intervention' --level warn")
                 # Do NOT dispatch Stockwell — blocked items need resolution first
             else:
-                # ALL items in done — dispatch Stockwell for Final Mission Review
+                # ALL items in staged — dispatch Frankie's mission-tail walk first,
+                # THEN Stockwell's Final Mission Review (see "Frankie
+                # Mission-Tail Dispatch" below) — never skip straight to Stockwell.
                 finalReviewReady = true
-                break  # exit orchestration loop → proceed to Final Review
+                break  # exit orchestration loop → dispatch Frankie, then Final Review
 
     # If not complete, loop back to Phase 1 (process next messages)
 ```
@@ -928,7 +937,7 @@ Agent(
 
   Execute the Raptor Protocol. Respond with VERIFIED or FLAG.
 
-  When done, run `ateam agents-stop agentStop --json --itemId {itemId} --agent \"amy-2\" --outcome completed --summary \"...\"`. Amy is terminal — no downstream handoff. Send FYI to Hannibal with verdict. For FLAG, use --outcome rejected --return-to implementing --advance=false, then send START to B.A. with bug details."
+  When done, run `ateam agents-stop agentStop --json --itemId {itemId} --agent \"amy-2\" --outcome completed --summary \"...\"`. Amy is terminal — no downstream handoff. Send FYI to team-lead (the orchestrator's address — never 'hannibal', which silently bounces; if team-lead errors as an invalid address in headless/print mode, resend to main and use main from then on) with verdict. For FLAG, use --outcome rejected --return-to implementing --advance=false, then send START to B.A. with bug details."
 )
 ```
 
@@ -949,7 +958,7 @@ Agent(
 
   Update documentation and create the final commit.
 
-  When done, run `ateam agents-stop agentStop --json`, then send DONE to Hannibal with commit hash."
+  When done, run `ateam agents-stop agentStop --json`, then send DONE to team-lead (the orchestrator's address — never 'hannibal', which silently bounces; if team-lead errors as an invalid address in headless/print mode, resend to main and use main from then on) with commit hash."
 )
 ```
 
@@ -970,7 +979,7 @@ Agent(
   produce the structured markdown report, and persist it via:
     ateam missions-retro writeRetro --missionId {missionId} --report \"...\"
 
-  When done, run `ateam agents-stop agentStop --json`, then send DONE to Hannibal."
+  When done, run `ateam agents-stop agentStop --json`, then send DONE to team-lead (the orchestrator's address — never 'hannibal', which silently bounces; if team-lead errors as an invalid address in headless/print mode, resend to main and use main from then on)."
 )
 ```
 
@@ -985,9 +994,10 @@ With CLI-automated pool handoffs, Hannibal receives **FYI** (successful handoff)
 "FYI: WI-003 → ba-1 (murdock-2)"          # successful handoff, no action needed
 "ALERT: WI-003 - no idle ba instance available (murdock-2)"  # queue for dispatch
 
-# Terminal agent messages (Amy, Tawnia, Stockwell → Hannibal):
+# Terminal agent messages (Amy, Frankie, Tawnia, Stockwell → Hannibal):
 "FYI: WI-003 - Probing complete. VERIFIED. (amy-1)"                          # More items remain
-"MISSION_COMPLETE: WI-007 - all items verified and in done stage. (amy-1)"   # ALL items done — triggers Stockwell
+"MISSION_COMPLETE: WI-007 - all items verified and in staged stage. (amy-1)"   # ALL items staged — triggers Frankie's mission-tail walk, then Stockwell
+"DONE: FRANKIE-WALK - 8/8 PASS, evidence bundle at .qa-evidence/{missionId}/"
 "DONE: docs - Updated README with commit abc123"
 "DONE: FINAL-REVIEW - FINAL APPROVED - all requirements met"
 
@@ -1059,7 +1069,7 @@ See `commands/healthcheck.md` for the full routine. Summary:
 2. Pull `ateam missions-health getHealthReport --json` (raw signals only — no thresholds).
 3. Inspect `/tmp/.ateam-pool/${ATEAM_MISSION_ID}/` for any suspicious item's `assignedAgent` (`.busy` / `.idle` / nothing).
 4. Investigate per item — `STATUS?` ping, pool release + re-dispatch, or no-op. No rigid escalation ladder.
-5. Skip the re-arm when all items are in `done`/`blocked` or the mission is exiting.
+5. Skip the re-arm when all items are in `staged`/`blocked` (nothing left for per-item pipeline workers to do) or the mission is exiting.
 6. Report a one-line summary.
 
 ## Peer-to-Peer Pool Handoffs
@@ -1199,9 +1209,42 @@ ateam pool destroy
 
 When `N=1`, instance names have no suffix (`murdock`, `ba`, `lynch`, `amy`). The pool directory still has `.idle` files (`murdock.idle`, `ba.idle`, etc.) and the claiming flow is identical — it just finds at most one file per type. The same code path handles both N=1 and N>1.
 
+## Frankie Mission-Tail Dispatch
+
+**Drivability precondition — check this BEFORE dispatching Frankie.** Read the execution contract from the target repo's `ateam.config.json` and look at `surfaces`. `scripts/hooks/lib/qa-contract.js` is the executable definition — it exports `readExecutionContract()` (which defaults `surfaces` to `[]` when the file or field is missing/malformed) and `canFrankieDrive(surfaces)`, which returns true only when `surfaces` contains a drivable surface. **Only `web` is drivable today** — `api`, `fixture-flow`, `golden-pair`, `cli`, and `hardware` are not, and an empty or absent `surfaces` list is not.
+
+**If the repo has no drivable surface, SKIP Frankie entirely** — do not spawn the agent, do not wait for an evidence bundle — and proceed directly to Final Mission Review Dispatch (below). Frankie cannot walk an app he cannot drive: dispatching him on a non-drivable repo deadlocks the mission tail, because he correctly self-reports a blocked walk (no dev server to drive) and the failure path below then HALTS the tail with no path forward. Skipping him is the same exemption already enforced by the completion gate in `scripts/hooks/enforce-final-review.js` (which only demands an evidence bundle when `canFrankieDrive(contract.surfaces)`) and stated in `agents/tawnia.md` (a skipped Frankie satisfies Tawnia's precondition vacuously). Note this in your status output so the operator knows Frankie was skipped by contract, not forgotten.
+
+Otherwise — when ALL items reach `staged` stage (the per-item pipeline's real terminal stage, WI-786/787 — not `done`) — dispatch Frankie BEFORE Stockwell's Final Mission Review — his evidence bundle and graduated specs must already be part of the diff Stockwell reviews, so evidence never ships stale. Fetch `prdPath` and the mission identifier (`missionId`) from `ateam missions-current getCurrentMission --json` (the same fields Stockwell reads below) — `missionId` also names Frankie's evidence directory, `.qa-evidence/{missionId}/`.
+
+**Always spawn a new Frankie agent** (not pre-warmed, runs once — like Stockwell and Tawnia):
+
+```text
+Agent(
+  name: "frankie",
+  subagent_type: "ai-team:frankie",
+  description: "Frankie: mission-tail QA walk",
+  prompt: "You are Frankie, walking this mission's Definition of Done against the running app as a first-time user.
+
+  PRD path: {prdPath}
+  Mission: {missionId}
+  Evidence dir: .qa-evidence/{missionId}/
+
+  Read the mission's DoD from the PRD and the execution contract from ateam.config.json. Walk every DoD statement from the user's front door, write the evidence bundle, and graduate specs per the contract's testing_level.
+
+  When done, send DONE to team-lead (the orchestrator's address — never 'hannibal', which silently bounces; if team-lead errors as an invalid address in headless/print mode, resend to main and use main from then on) with the checklist result, the evidence bundle path, and any failing work item IDs."
+)
+```
+
+**On success** (Frankie's terminal message reports a clean walk, no failing items): proceed to Final Mission Review Dispatch (below).
+
+**On failure** (Frankie names one or more failing work items): the mission tail HALTS here — do NOT proceed to Stockwell. For each named item, move it out of `staged` using the SAME earliest-flagged-stage rule that already governs Lynch and Amy rejections: a named test gap routes to `testing`, an impl-only bug routes to `implementing`. Execute with `ateam board-move moveItem --itemId <id> --toStage <testing|implementing>` — WI-794 made this a first-class, rejection-cap-counted transition, so this is a real, automated backward move, not a manual reopen outside the pipeline.
+
+**Any rework** — whether triggered by a Frankie failure above or by the items Stockwell named in a FINAL REJECTED verdict below — once every named item is back in `staged`, it RESTARTS the mission tail at Frankie. Frankie re-walks the FULL Definition of Done (every statement, not only the ones that previously failed), because a fix for one failure can break a neighboring statement.
+
 ## Final Mission Review Dispatch
 
-When ALL items reach `done` stage, fetch `prdPath` from `ateam missions-current getCurrentMission --json`.
+When ALL items reach `staged` stage AND Frankie's walk succeeded (see "Frankie Mission-Tail Dispatch" above — never dispatch Stockwell before Frankie), fetch `prdPath` from `ateam missions-current getCurrentMission --json`.
 
 **Always spawn a new Stockwell agent** (not pre-warmed, runs once):
 
@@ -1222,9 +1265,15 @@ Agent(
   2. The mission's commits — correct, consistent, secure?
   3. Integration — do changes wire into the existing codebase?
 
-  When done, run `ateam missions-final-review writeFinalReview --missionId {missionId} --report \"...\"` to persist the review, then send DONE to Hannibal with verdict."
+  End the report with the verdict line — `VERDICT: FINAL APPROVED` or
+  `VERDICT: FINAL REJECTED` must be its LAST non-empty line, with nothing after
+  it; that is the only place the verdict is read from.
+
+  When done, run `ateam missions-final-review writeFinalReview --missionId {missionId} --report \"...\"` to persist the review, then send DONE to team-lead (the orchestrator's address — never 'hannibal', which silently bounces; if team-lead errors as an invalid address in headless/print mode, resend to main and use main from then on) with verdict."
 )
 ```
+
+**If Stockwell rejects (FINAL REJECTED):** do not proceed to post-checks. For each item Stockwell named, move it out of `staged` using the SAME earliest-flagged-stage rule as Frankie's own failure path above: a named test gap routes to `testing`, an impl-only bug routes to `implementing`. Execute with `ateam board-move moveItem --itemId <id> --toStage <testing|implementing>` — a real, rejection-cap-counted move (WI-794), executed automatically by Hannibal. Once every named item is back in `staged`, the mission tail RESTARTS at Frankie (see "Frankie Mission-Tail Dispatch" above) — not at post-checks — so the evidence bundle Stockwell eventually reviews always reflects the final code.
 
 ## Concrete Example: N=2 Multi-Instance Pipeline with File-Based Routing
 

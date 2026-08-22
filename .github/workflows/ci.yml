@@ -16,32 +16,61 @@ jobs:
     name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
+      root: ${{ steps.filter.outputs.root }}
       shared: ${{ steps.filter.outputs.shared }}
       mcp-server: ${{ steps.filter.outputs.mcp-server }}
       kanban-viewer: ${{ steps.filter.outputs.kanban-viewer }}
+      ateam-cli: ${{ steps.filter.outputs.ateam-cli }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
         id: filter
         with:
           filters: |
+            root:
+              - 'scripts/**'
+              - 'playbooks/**'
+              - 'agents/**'
+              - 'commands/**'
+              - 'hooks/**'
+              - 'src/**'
+              - 'packages/shared/**'
+              - 'vitest.config.ts'
+              - 'package.json'
+              - 'bun.lock'
+              - '.github/workflows/**'
             shared:
               - 'packages/shared/**'
               - 'package.json'
-              - 'bun.lockb'
+              - 'bun.lock'
               - '.github/workflows/**'
             mcp-server:
               - 'packages/mcp-server/**'
               - 'packages/shared/**'
               - 'package.json'
-              - 'bun.lockb'
+              - 'bun.lock'
               - '.github/workflows/**'
             kanban-viewer:
               - 'packages/kanban-viewer/**'
               - 'packages/shared/**'
               - 'package.json'
-              - 'bun.lockb'
+              - 'bun.lock'
               - '.github/workflows/**'
+            ateam-cli:
+              - 'packages/ateam-cli/**'
+              - '.github/workflows/**'
+
+  root:
+    name: Root Test Suite
+    needs: [changes]
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.root == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      # Same script devs run via `bun run test` (root vitest suite).
+      - run: bun run test
 
   mcp-server:
     name: MCP Server
@@ -58,9 +87,8 @@ jobs:
         working-directory: .
       - run: bun run build
         working-directory: packages/shared
-      - run: bun run lint
-      - run: bunx tsc --noEmit
-      - run: bun run test
+      # Same script devs run: lint + typecheck + test for this package.
+      - run: bun run check
 
   shared:
     name: Shared Package
@@ -75,12 +103,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install
         working-directory: .
-      - run: bunx tsc --noEmit
+      # Same script devs run: typecheck + test for this package.
+      - run: bun run check
 
   dist-freshness-check:
     name: dist freshness check
     needs: [changes]
-    if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.shared == 'true' || needs.changes.outputs.mcp-server == 'true' }}
+    # mcp-server is deprecated pending removal; its dist is no longer checked.
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.shared == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -89,23 +119,38 @@ jobs:
       - name: Build shared package
         run: bun run build
         working-directory: packages/shared
-      - name: Build mcp-server package (tsc)
-        run: bun run build
-        working-directory: packages/mcp-server
-      - name: Bundle mcp-server (esbuild)
-        run: bun run bundle
-        working-directory: packages/mcp-server
       - name: Check dist is up-to-date
         run: |
-          if ! git diff --exit-code packages/shared/dist/ packages/mcp-server/dist/; then
-            echo "::error::dist/ is out of date. Run 'bun run build' in packages/shared and packages/mcp-server (and 'bun run bundle' in packages/mcp-server), then commit the result."
+          if ! git diff --exit-code packages/shared/dist/; then
+            echo "::error::dist/ is out of date. Run 'bun run build' in packages/shared, then commit the result."
             exit 1
           fi
-          if [ -n "$(git ls-files --others --exclude-standard -- packages/shared/dist packages/mcp-server/dist)" ]; then
+          if [ -n "$(git ls-files --others --exclude-standard -- packages/shared/dist)" ]; then
             echo "::error::dist/ contains untracked generated files. Run 'bun run build' and commit the result."
-            git ls-files --others --exclude-standard -- packages/shared/dist packages/mcp-server/dist
+            git ls-files --others --exclude-standard -- packages/shared/dist
             exit 1
           fi
+
+  ateam-cli:
+    name: Go CLI
+    needs: [changes]
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.ateam-cli == 'true' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/ateam-cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: packages/ateam-cli/go.sum
+      # Go isn't a JS workspace, so these live here rather than in a package.json
+      # script. The root `bun run check:cli` mirrors these exact three commands
+      # so `bun run check` covers the Go CLI locally too — keep the two in sync.
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
 
   kanban-viewer:
     name: Kanban Viewer
@@ -130,9 +175,8 @@ jobs:
       - run: bunx prisma migrate deploy --config prisma/prisma.config.ts
         env:
           DATABASE_URL: file:${{ github.workspace }}/packages/kanban-viewer/prisma/data/dev.db
-      - run: bun run lint
-      - run: bunx tsc --noEmit
-      - run: bun run test
+      # Same script devs run: lint + typecheck + test for this package.
+      - run: bun run check
         env:
           DATABASE_URL: file:${{ github.workspace }}/packages/kanban-viewer/prisma/data/dev.db
       - run: bun run build

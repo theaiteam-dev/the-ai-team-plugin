@@ -238,13 +238,37 @@ async function createItem(item: {
 }
 
 /**
+ * Read an item's current stage.
+ */
+async function getItemStage(itemId: string): Promise<string> {
+  const response = await apiRequest<{ success: true; data: { stageId: string } }>(
+    'GET',
+    `/api/items/${encodeURIComponent(itemId)}`
+  );
+  return response.data.stageId;
+}
+
+/**
  * Move an item to a different stage.
+ *
+ * No-ops when the item is already in the target stage. POST /api/board/move
+ * rejects self-transitions with INVALID_TRANSITION (400), and apiRequest
+ * throws on any non-2xx, so a redundant move would abort the seed run and
+ * leave a half-seeded board. agentStop advances the item to the next
+ * pipeline stage on its own (advance defaults to true), so the "move it to
+ * where the agent just left it" calls below are exactly that case.
  */
 async function moveItem(
   itemId: string,
   toStage: string,
   force = false
 ): Promise<void> {
+  const currentStage = await getItemStage(itemId);
+  if (currentStage === toStage) {
+    info(`Skipped move ${itemId} → ${toStage} (already there)`);
+    return;
+  }
+
   await apiRequest('POST', '/api/board/move', {
     itemId,
     toStage,
@@ -743,11 +767,23 @@ Implement email notifications for mission state changes and agent completions.
       timestamp: new Date().toISOString(),
     });
 
-    // Release Amy before moving to done
+    // Release Amy before moving out of probing
     await apiRequest('POST', '/api/board/release', { itemId: wi1 });
     await sleep(DELAY);
 
-    // WI-1: probing → done
+    // WI-1: probing → staged → done
+    //
+    // 'staged' is the per-item pipeline's real terminal stage: the transition
+    // matrix (packages/shared/src/stages.ts) allows probing → staged, and
+    // 'done' is reachable only from 'staged' at the mission tail. A direct
+    // probing → done move is INVALID_TRANSITION.
+    //
+    // The demo board is deliberately mid-mission (WI-2..WI-5 are still in
+    // flight), so it cannot seed an APPROVED final review to promote WI-1 the
+    // way a real mission would — POST /api/missions/:id/final-review rolls an
+    // approval back while any item is short of staged/done. This staged → done
+    // board-move is the only way to seed a 'done' card here.
+    await moveItem(wi1, 'staged', true);
     await moveItem(wi1, 'done', true);
     await trackedLogActivity('WI-1 complete! OAuth2 authentication shipped.', 'Hannibal');
     await sleep(DELAY);

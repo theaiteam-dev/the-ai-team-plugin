@@ -195,6 +195,14 @@ describe('Filter Utility Functions', () => {
         const item = createMockItem({ stage: 'implementing' });
         expect(matchesStatus(item, 'Completed')).toBe(false);
       });
+
+      // WI-792 (Josh's refinement-gate decision): staged is individually
+      // complete but not yet mission-tail-verified — it must NOT appear
+      // under the Completed filter. Only done is completion.
+      it('should return false for items in STAGED stage (staged is not Completed)', () => {
+        const item = createMockItem({ stage: 'staged' });
+        expect(matchesStatus(item, 'Completed')).toBe(false);
+      });
     });
   });
 

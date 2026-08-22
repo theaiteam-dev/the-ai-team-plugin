@@ -10,7 +10,7 @@
  * a trailing numeric instance suffix (`-<digits>`). It ONLY strips a numeric
  * suffix, so legitimately-distinct agent names are never mangled. No A(i)-Team
  * agent has a real name ending in `-<digits>` (hannibal, face, sosa, murdock,
- * ba, lynch, amy, stockwell, tawnia, retro), so this is unambiguous.
+ * ba, lynch, amy, frankie, stockwell, tawnia, retro), so this is unambiguous.
  *
  * Examples:
  *   baseAgentName('murdock-2')  → 'murdock'

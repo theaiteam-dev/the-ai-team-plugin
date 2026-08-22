@@ -18,7 +18,18 @@ import {
 describe('lib/agents - shared agent validation', () => {
   describe('VALID_AGENTS_LOWER', () => {
     it('contains all expected agent names', () => {
-      const expected = ['murdock', 'ba', 'lynch', 'amy', 'hannibal', 'face', 'sosa', 'tawnia', 'stockwell'];
+      const expected = [
+        'murdock',
+        'ba',
+        'lynch',
+        'amy',
+        'hannibal',
+        'face',
+        'sosa',
+        'tawnia',
+        'stockwell',
+        'frankie',
+      ];
       expect([...VALID_AGENTS_LOWER]).toEqual(expect.arrayContaining(expected));
       expect(VALID_AGENTS_LOWER).toHaveLength(expected.length);
     });
@@ -40,6 +51,7 @@ describe('lib/agents - shared agent validation', () => {
 
       // All uppercase
       expect(normalizeAgentName('HANNIBAL')).toBe('hannibal');
+      expect(normalizeAgentName('FRANKIE')).toBe('frankie');
     });
   });
 
@@ -50,17 +62,20 @@ describe('lib/agents - shared agent validation', () => {
       expect(AgentNameSchema.parse('ba')).toBe('B.A.');
       expect(AgentNameSchema.parse('lynch')).toBe('Lynch');
       expect(AgentNameSchema.parse('tawnia')).toBe('Tawnia');
+      expect(AgentNameSchema.parse('frankie')).toBe('Frankie');
 
       // Case-insensitive input
       expect(AgentNameSchema.parse('MURDOCK')).toBe('Murdock');
       expect(AgentNameSchema.parse('B.A.')).toBe('B.A.');
       expect(AgentNameSchema.parse('Face')).toBe('Face');
+      expect(AgentNameSchema.parse('FRANKIE')).toBe('Frankie');
     });
 
     it('rejects invalid agent names', () => {
       expect(() => AgentNameSchema.parse('invalid')).toThrow();
       expect(() => AgentNameSchema.parse('')).toThrow();
       expect(() => AgentNameSchema.parse('nobody')).toThrow();
+      expect(() => AgentNameSchema.parse('notanagent')).toThrow();
     });
   });
 });

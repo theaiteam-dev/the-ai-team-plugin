@@ -18,6 +18,7 @@ const AGENT_ROLES: Record<AgentName, string> = {
   'B.A.': 'Implementation',
   Amy: 'Investigation',
   Lynch: 'Review',
+  Frankie: 'QA / Demo',
   Stockwell: 'Final Review',
   Tawnia: 'Documentation',
 };
@@ -30,6 +31,12 @@ function getProgressText(status: string): string {
   switch (status) {
     case 'done':
       return 'Completed';
+    case 'staged':
+      // WI-792: individually done, awaiting mission-tail verification
+      // (Frankie + Stockwell) before the atomic promotion to done seals it.
+      return 'Awaiting mission verification';
+    case 'probing':
+      return 'Under investigation';
     case 'implementing':
       return 'In progress';
     case 'testing':

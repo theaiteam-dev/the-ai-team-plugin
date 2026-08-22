@@ -273,4 +273,53 @@ describe('Board Statistics Calculator', () => {
       expect(progress).toBeCloseTo(33.33, 1);
     });
   });
+
+  // WI-792 (Josh's refinement-gate decision): staged does NOT count as
+  // Completed — only done is completion. staged counts as in-progress in
+  // the stats breakdown (awaiting mission-tail verification, not yet
+  // sealed).
+  describe('staged stage handling (WI-792)', () => {
+    it('calculateBoardStats counts a staged item as in_progress, not completed', () => {
+      const items: WorkItem[] = [createWorkItem('001', 'staged')];
+      const stats = calculateBoardStats(items);
+
+      expect(stats.completed).toBe(0);
+      expect(stats.in_progress).toBe(1);
+    });
+
+    it('calculateBoardStats buckets sum to total_items even when items are staged (no item goes uncounted)', () => {
+      const items: WorkItem[] = [
+        createWorkItem('001', 'staged'),
+        createWorkItem('002', 'done'),
+        createWorkItem('003', 'testing'),
+        createWorkItem('004', 'blocked'),
+        createWorkItem('005', 'briefings'),
+      ];
+      const stats = calculateBoardStats(items);
+
+      expect(stats.total_items).toBe(5);
+      expect(stats.completed + stats.in_progress + stats.blocked + stats.backlog).toBe(5);
+    });
+
+    it('calculateProgress treats a fully-staged board as 0% complete (only done counts)', () => {
+      const items: WorkItem[] = [
+        createWorkItem('001', 'staged'),
+        createWorkItem('002', 'staged'),
+        createWorkItem('003', 'staged'),
+      ];
+
+      expect(calculateProgress(items)).toBe(0);
+    });
+
+    it('calculateProgress excludes staged items from the numerator even alongside done items', () => {
+      const items: WorkItem[] = [
+        createWorkItem('001', 'done'),
+        createWorkItem('002', 'staged'),
+        createWorkItem('003', 'staged'),
+      ];
+
+      // 1 of 3 done = 33.33%, not 100% and not counting staged as done.
+      expect(calculateProgress(items)).toBeCloseTo(33.33, 1);
+    });
+  });
 });

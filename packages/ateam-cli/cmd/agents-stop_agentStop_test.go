@@ -47,22 +47,59 @@ func successResponse() []byte {
 	return b
 }
 
-// wipLimitExceededResponse returns a 409 WIP_LIMIT_EXCEEDED API error body.
-func wipLimitExceededResponse() []byte {
+// wipExceededResponse returns the REAL shape /api/agents/stop emits when the
+// target stage is at WIP capacity: HTTP 200, the work log entry persisted, and
+// the skipped transition signalled via data.wipExceeded + data.blockedStage.
+// The endpoint never returns a WIP_LIMIT_EXCEEDED error envelope — only
+// /api/agents/start does.
+func wipExceededResponse() []byte {
 	resp := map[string]interface{}{
-		"success": false,
-		"error": map[string]interface{}{
-			"code":    "WIP_LIMIT_EXCEEDED",
-			"message": "WIP limit exceeded for stage implementing (limit: 3, current: 3)",
-			"details": map[string]interface{}{
-				"stageId": "implementing",
-				"limit":   3,
-				"current": 3,
+		"success": true,
+		"data": map[string]interface{}{
+			"itemId":       "WI-001",
+			"agent":        "Murdock",
+			"wipExceeded":  true,
+			"blockedStage": "implementing",
+			"workLogEntry": map[string]interface{}{
+				"id":        1,
+				"agent":     "Murdock",
+				"action":    "completed",
+				"summary":   "Tests written",
+				"timestamp": "2026-01-21T14:00:00Z",
 			},
 		},
 	}
 	b, _ := json.Marshal(resp)
 	return b
+}
+
+// captureStderr redirects os.Stderr for the duration of the test (the command
+// writes its WIP/pool warnings there directly, not through cobra's out/err
+// writers). The returned func stops capturing and yields what was written.
+func captureStderr(t *testing.T) func() string {
+	t.Helper()
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+	restored := false
+	restore := func() {
+		if restored {
+			return
+		}
+		restored = true
+		os.Stderr = orig
+		_ = w.Close()
+	}
+	t.Cleanup(restore)
+	return func() string {
+		restore()
+		buf := make([]byte, 8192)
+		n, _ := r.Read(buf)
+		return string(buf[:n])
+	}
 }
 
 // executeAgentStop runs the agentStop command with the given args against the mock server.
@@ -140,6 +177,48 @@ func TestAgentStopAdvanceFalseSendsFalse(t *testing.T) {
 	}
 }
 
+// TestAgentStopAcceptsFrankie verifies the client-side validate.Enum allowed-list
+// includes Frankie: the request must actually reach the mock server rather than
+// being rejected locally before any HTTP call (WI-774 AC6).
+func TestAgentStopAcceptsFrankie(t *testing.T) {
+	requestReceived := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestReceived = true
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(successResponse())
+	}))
+	defer srv.Close()
+
+	_, err := executeAgentStop(t, srv.URL, "--agent", "Frankie")
+	if err != nil {
+		t.Fatalf("unexpected error validating --agent Frankie: %v", err)
+	}
+	if !requestReceived {
+		t.Error("expected the mock server to receive the request, but client-side validation blocked it before the HTTP call")
+	}
+}
+
+// TestAgentStopRejectsUnknownAgent verifies an unrecognised --agent value is still
+// rejected by the client-side validate.Enum check, and never reaches the server
+// (WI-774 AC6's negative counterpart).
+func TestAgentStopRejectsUnknownAgent(t *testing.T) {
+	requestReceived := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestReceived = true
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(successResponse())
+	}))
+	defer srv.Close()
+
+	_, err := executeAgentStop(t, srv.URL, "--agent", "NotAnAgent")
+	if err == nil {
+		t.Fatal("expected an error for --agent NotAnAgent, got nil")
+	}
+	if requestReceived {
+		t.Error("expected client-side validation to reject before any HTTP call, but the mock server received a request")
+	}
+}
+
 // TestHandlePoolManagementReturnsNextAgentID verifies the forward handoff: a
 // completing Murdock claims the downstream B.A. instance from the pool and gets
 // back both the instance name AND its recorded agentId, so the START handoff can
@@ -204,26 +283,69 @@ func TestInjectPoolResultOmitsAgentIDWhenEmpty(t *testing.T) {
 	}
 }
 
-// TestAgentStopWipLimitExceededDisplayedDistinctly verifies that a WIP_LIMIT_EXCEEDED
-// response from the API is surfaced with an actionable message — not just a raw JSON dump —
-// so agents know to retry with --advance=false to skip the stage transition.
-func TestAgentStopWipLimitExceededDisplayedDistinctly(t *testing.T) {
+// TestAgentStopWipExceededSurfacesWarningWithoutError pins the REAL contract of
+// POST /api/agents/stop under WIP pressure: HTTP 200 with data.wipExceeded, work
+// already logged, item NOT advanced. The command must succeed (the stop itself
+// worked) while surfacing an actionable warning naming the blocked stage.
+func TestAgentStopWipExceededSurfacesWarningWithoutError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict) // 409
-		w.Write(wipLimitExceededResponse())
+		w.Write(wipExceededResponse()) // 200, not 409
 	}))
 	defer srv.Close()
 
-	output, err := executeAgentStop(t, srv.URL)
-	combined := output + err.Error()
+	readStderr := captureStderr(t)
+	out, err := executeAgentStop(t, srv.URL)
+	stderr := readStderr()
 
-	// The error must surface the WIP_LIMIT_EXCEEDED code AND hint that --advance=false
-	// is the escape hatch, so agents can act without waiting for Hannibal.
-	if !strings.Contains(combined, "WIP_LIMIT_EXCEEDED") {
-		t.Errorf("expected WIP_LIMIT_EXCEEDED in error output, got: %s", combined)
+	// The stop succeeded — only the stage transition was skipped, so returning
+	// an error here would make agents treat logged work as unrecorded.
+	if err != nil {
+		t.Fatalf("expected no error on a 200 wipExceeded response, got: %v (output: %s)", err, out)
 	}
-	if !strings.Contains(combined, "--advance=false") {
-		t.Errorf("expected '--advance=false' hint in WIP error output, got: %s", combined)
+	for _, want := range []string{"WIP_LIMIT_EXCEEDED", "implementing", "NOT advanced", "ALERT to Hannibal"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("expected %q in the WIP warning, got: %s", want, stderr)
+		}
+	}
+	// Retrying with --advance=false would double-log the work the API already
+	// recorded — the warning must never suggest it on this path.
+	if strings.Contains(stderr, "--advance=false") {
+		t.Errorf("WIP warning must not advise retrying with --advance=false (work is already logged), got: %s", stderr)
+	}
+}
+
+// TestAgentStopWipExceededSkipsNextAgentClaim verifies the pool consequence of
+// the same 200-with-wipExceeded response: because the item did NOT advance,
+// there is no handoff, so the downstream instance must be left idle rather than
+// claimed and stranded.
+func TestAgentStopWipExceededSkipsNextAgentClaim(t *testing.T) {
+	_, poolDir := withTempPoolRoot(t, "agentstop-wip-noclaim")
+	if err := os.MkdirAll(poolDir, 0755); err != nil {
+		t.Fatalf("mkdir pool: %v", err)
+	}
+	idleMarker := filepath.Join(poolDir, "ba-1.idle")
+	if err := os.WriteFile(idleMarker, []byte("a729de7264069a126"), 0644); err != nil {
+		t.Fatalf("writing idle marker: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(wipExceededResponse())
+	}))
+	defer srv.Close()
+
+	readStderr := captureStderr(t)
+	_, err := executeAgentStop(t, srv.URL)
+	_ = readStderr()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, statErr := os.Stat(idleMarker); statErr != nil {
+		t.Errorf("expected ba-1 to stay idle when the item did not advance, but the marker is gone: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(poolDir, "ba-1.busy")); statErr == nil {
+		t.Error("expected no next-agent claim on the wipExceeded path, but ba-1 was marked busy")
 	}
 }

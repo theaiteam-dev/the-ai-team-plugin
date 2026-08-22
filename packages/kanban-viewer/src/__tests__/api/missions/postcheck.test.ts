@@ -233,6 +233,198 @@ describe('POST /api/missions/postcheck', () => {
       expect(data.data.unitTestsFailed).toBe(2);
     });
 
+    it('should sum test counts across chained vitest invocations in one check output', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+      mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'completed' });
+
+      // Shape produced by e.g. "bun run test && (cd client && bun run test)":
+      // two complete vitest summaries in a single stdout. The regression this
+      // guards: only the first invocation was counted — and via its
+      // "Test Files" line, so the reported count was the file count (2).
+      const chainedStdout = [
+        ' ✓ src/__tests__/api.test.ts  (4 tests) 12ms',
+        '',
+        ' Test Files  2 passed (2)',
+        '      Tests  7 passed (7)',
+        '   Duration  1.02s',
+        '',
+        ' ✓ src/App.test.tsx  (15 tests) 210ms',
+        '',
+        ' Test Files  6 passed (6)',
+        '      Tests  79 passed (79)',
+        '   Duration  3.41s',
+      ].join('\n');
+
+      const body = {
+        passed: true,
+        blockers: [],
+        output: {
+          'unit-full': { stdout: chainedStdout, stderr: '', timedOut: false },
+        },
+      };
+
+      const response = await POST(makeRequest(body));
+      const data: PostcheckResponse = await response.json();
+
+      expect(data.data.unitTestsPassed).toBe(86);
+      expect(data.data.unitTestsFailed).toBe(0);
+    });
+
+    it("should parse vitest's failure-form summary line and ignore the Test Files line", async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+      mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'failed' });
+
+      const body = {
+        passed: false,
+        blockers: ['unit tests failing'],
+        output: {
+          unit: {
+            stdout: [
+              ' Test Files  1 failed | 5 passed (6)',
+              '      Tests  2 failed | 77 passed (79)',
+            ].join('\n'),
+            stderr: '',
+            timedOut: false,
+          },
+        },
+      };
+
+      const response = await POST(makeRequest(body));
+      const data: PostcheckResponse = await response.json();
+
+      expect(data.data.unitTestsPassed).toBe(77);
+      expect(data.data.unitTestsFailed).toBe(2);
+    });
+
+    it('should parse ANSI-colored vitest summary lines', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+      mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'completed' });
+
+      const esc = '\u001b';
+      const body = {
+        passed: true,
+        blockers: [],
+        output: {
+          unit: {
+            stdout: [
+              `${esc}[2m Test Files ${esc}[22m ${esc}[1m${esc}[32m6 passed${esc}[39m${esc}[22m${esc}[90m (6)${esc}[39m`,
+              `${esc}[2m      Tests ${esc}[22m ${esc}[1m${esc}[32m79 passed${esc}[39m${esc}[22m${esc}[90m (79)${esc}[39m`,
+            ].join('\n'),
+            stderr: '',
+            timedOut: false,
+          },
+        },
+      };
+
+      const response = await POST(makeRequest(body));
+      const data: PostcheckResponse = await response.json();
+
+      expect(data.data.unitTestsPassed).toBe(79);
+    });
+
+    it('should still parse runners without a "Tests" summary line (pytest-style fallback)', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+      mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'completed' });
+
+      const body = {
+        passed: true,
+        blockers: [],
+        output: {
+          unit: { stdout: '======== 8 passed in 1.24s ========', stderr: '', timedOut: false },
+        },
+      };
+
+      const response = await POST(makeRequest(body));
+      const data: PostcheckResponse = await response.json();
+
+      expect(data.data.unitTestsPassed).toBe(8);
+      expect(data.data.unitTestsFailed).toBe(0);
+    });
+
+    it('should sum both runners when a check chains vitest and pytest in one stdout', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+      mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'completed' });
+
+      // "bun run test && pytest": a vitest summary followed by a pytest banner.
+      // The regression this guards: returning early on the "Tests" lines dropped
+      // the pytest counts entirely, contradicting the sum-everything intent.
+      const chainedStdout = [
+        ' Test Files  6 passed (6)',
+        '      Tests  79 passed (79)',
+        '   Duration  3.41s',
+        '',
+        '==================== test session starts ====================',
+        'collected 10 items',
+        '=============== 1 failed, 9 passed in 2.10s ================',
+      ].join('\n');
+
+      const response = await POST(
+        makeRequest({
+          passed: true,
+          blockers: [],
+          output: { 'unit-full': { stdout: chainedStdout, stderr: '', timedOut: false } },
+        })
+      );
+      const data: PostcheckResponse = await response.json();
+
+      expect(data.data.unitTestsPassed).toBe(88);
+      expect(data.data.unitTestsFailed).toBe(1);
+    });
+
+    it('should sum both runners when pytest runs before vitest in one stdout', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+      mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'completed' });
+
+      const chainedStdout = [
+        '==================== test session starts ====================',
+        '===================== 8 passed in 1.24s =====================',
+        '',
+        ' Test Files  6 passed (6)',
+        '      Tests  79 passed (79)',
+      ].join('\n');
+
+      const response = await POST(
+        makeRequest({
+          passed: true,
+          blockers: [],
+          output: { 'unit-full': { stdout: chainedStdout, stderr: '', timedOut: false } },
+        })
+      );
+      const data: PostcheckResponse = await response.json();
+
+      expect(data.data.unitTestsPassed).toBe(87);
+      expect(data.data.unitTestsFailed).toBe(0);
+    });
+
+    it('should parse a Tests summary line prefixed with ANSI cursor-control codes', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+      mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'completed' });
+
+      // Output captured through a pty carries erase-line/column codes ahead of the
+      // summary; SGR-only stripping left them in place and broke the ^Tests anchor.
+      const esc = '\u001b';
+      const body = {
+        passed: true,
+        blockers: [],
+        output: {
+          unit: {
+            stdout: [
+              `${esc}[2K${esc}[1G Test Files  6 passed (6)`,
+              `${esc}[2K${esc}[1G      Tests  79 passed (79)`,
+            ].join('\n'),
+            stderr: '',
+            timedOut: false,
+          },
+        },
+      };
+
+      const response = await POST(makeRequest(body));
+      const data: PostcheckResponse = await response.json();
+
+      expect(data.data.unitTestsPassed).toBe(79);
+      expect(data.data.unitTestsFailed).toBe(0);
+    });
+
     it('should parse e2eTestsPassed and e2eTestsFailed from output.e2e', async () => {
       mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
       mockPrismaClient.mission.update.mockResolvedValue({ ...mockMission, state: 'failed' });
@@ -252,6 +444,82 @@ describe('POST /api/missions/postcheck', () => {
 
       expect(data.data.e2eTestsPassed).toBe(5);
       expect(data.data.e2eTestsFailed).toBe(1);
+    });
+
+    it('logs a warn-level "unmeasured" message when passed=true with no check output, instead of a false 0-count', async () => {
+      // Regression (M-20260819-001): a body without output closed the mission
+      // logging "Postcheck passed: 0 unit tests..." — false data that
+      // propagated into the retro as a parser bug.
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+
+      const response = await POST(makeRequest({ passed: true, blockers: [], output: {} }));
+      expect(response.status).toBe(200);
+
+      const resultLog = mockPrismaClient.activityLog.create.mock.calls
+        .map((c) => c[0].data)
+        .find((d) => d.message.startsWith('Postcheck passed'));
+      expect(resultLog).toBeTruthy();
+      expect(resultLog.message).toContain('unmeasured');
+      expect(resultLog.message).not.toContain('0 unit tests,');
+      expect(resultLog.level).toBe('warn');
+    });
+
+    it('logs a warn-level parse warning when non-lint output is submitted but yields zero test counts', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+
+      const body = {
+        passed: true,
+        blockers: [],
+        output: {
+          unit: { stdout: 'some runner output with no recognizable summary', stderr: '', timedOut: false },
+        },
+      };
+      const response = await POST(makeRequest(body));
+      expect(response.status).toBe(200);
+
+      const resultLog = mockPrismaClient.activityLog.create.mock.calls
+        .map((c) => c[0].data)
+        .find((d) => d.message.startsWith('Postcheck passed'));
+      expect(resultLog.message).toContain('no parsable test counts');
+      expect(resultLog.level).toBe('warn');
+    });
+
+    it('logs info (not warn) for a config with no test-shaped check, e.g. lint + typecheck', async () => {
+      // Regression: gating the parse warning on "any non-lint check" made every
+      // {lint, typecheck} / {lint, build} config warn on a clean postcheck —
+      // those checks never print test counts, so zero counts is correct, not suspect.
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+
+      const body = {
+        passed: true,
+        blockers: [],
+        output: {
+          lint: { stdout: '', stderr: '', timedOut: false },
+          'typecheck-full': { stdout: 'tsc --noEmit completed with no output', stderr: '', timedOut: false },
+        },
+      };
+      const response = await POST(makeRequest(body));
+      expect(response.status).toBe(200);
+
+      const resultLog = mockPrismaClient.activityLog.create.mock.calls
+        .map((c) => c[0].data)
+        .find((d) => d.message.startsWith('Postcheck passed'));
+      expect(resultLog).toBeTruthy();
+      expect(resultLog.message).not.toContain('no parsable test counts');
+      expect(resultLog.level).toBe('info');
+    });
+
+    it('logs the normal info-level message when real test counts are parsed', async () => {
+      mockPrismaClient.mission.findFirst.mockResolvedValue(mockMission);
+
+      const response = await POST(makeRequest(passingBody));
+      expect(response.status).toBe(200);
+
+      const resultLog = mockPrismaClient.activityLog.create.mock.calls
+        .map((c) => c[0].data)
+        .find((d) => d.message.startsWith('Postcheck passed'));
+      expect(resultLog.message).toBe('Postcheck passed: 10 unit tests, 0 e2e tests passing, 0 lint errors');
+      expect(resultLog.level).toBe('info');
     });
 
     it('should handle missing output keys gracefully with zero counts', async () => {
@@ -461,43 +729,103 @@ describe('POST /api/missions/postcheck', () => {
   });
 
   describe('invalid mission state', () => {
-    it('should only run postcheck on mission in running state', async () => {
-      mockPrismaClient.mission.findFirst.mockResolvedValue({
-        ...mockMission,
-        state: 'initializing' as MissionState,
+    /**
+     * Stands in for the real query: the route now filters on `state: 'running'`
+     * in the WHERE clause rather than fetching whatever findFirst returns and
+     * checking afterwards, so a mock that ignores the WHERE clause would report
+     * a pass no matter what the route asked for. This mock answers the query it
+     * was actually given, against a fixed table of missions.
+     */
+    function withMissions(missions: Mission[]) {
+      mockPrismaClient.mission.findFirst.mockImplementation(
+        async (args: { where?: { state?: string }; orderBy?: { startedAt?: string } } = {}) => {
+          let rows = missions.filter(
+            (m) => !args.where?.state || m.state === args.where.state
+          );
+          if (args.orderBy?.startedAt === 'desc') {
+            rows = [...rows].sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
+          }
+          return rows[0] ?? null;
+        }
+      );
+    }
+
+    for (const state of ['initializing', 'completed', 'failed'] as MissionState[]) {
+      it(`rejects postcheck with 400 INVALID_MISSION_STATE when the only mission is ${state}`, async () => {
+        withMissions([{ ...mockMission, state }]);
+
+        const response = await POST(makeRequest(passingBody));
+
+        expect(response.status).toBe(400);
+        const data: ApiError = await response.json();
+        expect(data.success).toBe(false);
+        expect(data.error.code).toBe('INVALID_MISSION_STATE');
+        expect(data.error.message, 'names the state the operator is actually in').toContain(state);
       });
+    }
+
+    it('returns 404 NO_ACTIVE_MISSION when the project has no non-archived mission at all', async () => {
+      withMissions([]);
 
       const response = await POST(makeRequest(passingBody));
 
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(404);
       const data: ApiError = await response.json();
-      expect(data.success).toBe(false);
+      expect(data.error.code).toBe('NO_ACTIVE_MISSION');
     });
 
-    it('should reject postcheck on completed mission', async () => {
-      mockPrismaClient.mission.findFirst.mockResolvedValue({
+    it('selects the RUNNING mission even when a stale completed one sorts first — an unordered, unfiltered findFirst 400d forever', async () => {
+      // The exact production trap: SQLite's findFirst with no state filter and
+      // no ordering returns the LOWEST rowid, so stale completed M1 shadowed
+      // running M2. This route is the only writer of state 'completed', and the
+      // only remediation the Stop gates can offer — so a permanent 400 here
+      // left the mission stuck 'running' and POST /api/missions 409ing.
+      const staleCompleted: Mission = {
         ...mockMission,
+        id: 'M-STALE',
         state: 'completed' as MissionState,
-      });
+        startedAt: new Date('2026-01-01T00:00:00Z'),
+      };
+      const runningNow: Mission = {
+        ...mockMission,
+        id: 'M-RUNNING',
+        state: 'running' as MissionState,
+        startedAt: new Date('2026-02-01T00:00:00Z'),
+      };
+      withMissions([staleCompleted, runningNow]);
 
       const response = await POST(makeRequest(passingBody));
 
-      expect(response.status).toBe(400);
-      const data: ApiError = await response.json();
-      expect(data.success).toBe(false);
+      expect(response.status).toBe(200);
+      expect(
+        mockPrismaClient.mission.update,
+        'the RUNNING mission is the one that gets post-checked'
+      ).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'M-RUNNING' } }));
     });
 
-    it('should reject postcheck on failed mission', async () => {
-      mockPrismaClient.mission.findFirst.mockResolvedValue({
-        ...mockMission,
-        state: 'failed' as MissionState,
-      });
+    it('picks the most recently started running mission when several are running', async () => {
+      withMissions([
+        { ...mockMission, id: 'M-OLD', startedAt: new Date('2026-01-01T00:00:00Z') },
+        { ...mockMission, id: 'M-NEW', startedAt: new Date('2026-03-01T00:00:00Z') },
+      ]);
 
       const response = await POST(makeRequest(passingBody));
 
-      expect(response.status).toBe(400);
-      const data: ApiError = await response.json();
-      expect(data.success).toBe(false);
+      expect(response.status).toBe(200);
+      expect(mockPrismaClient.mission.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'M-NEW' } })
+      );
+    });
+
+    it('asks the database for a running, non-archived mission newest-first — the filter is in the query, not an afterthought', async () => {
+      withMissions([mockMission]);
+
+      await POST(makeRequest(passingBody));
+
+      expect(mockPrismaClient.mission.findFirst).toHaveBeenCalledWith({
+        where: { projectId: 'test-project', archivedAt: null, state: 'running' },
+        orderBy: { startedAt: 'desc' },
+      });
     });
   });
 

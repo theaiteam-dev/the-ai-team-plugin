@@ -4,6 +4,8 @@ export interface AgentStatusBarProps {
   agents: Partial<Record<AgentName, AgentStatus>>;
 }
 
+// Pipeline order, ending with the mission tail per ADR 0004:
+// Frankie → Stockwell → Tawnia.
 export const AGENT_NAMES: AgentName[] = [
   'Hannibal',
   'Face',
@@ -11,8 +13,9 @@ export const AGENT_NAMES: AgentName[] = [
   'B.A.',
   'Amy',
   'Lynch',
-  'Tawnia',
+  'Frankie',
   'Stockwell',
+  'Tawnia',
 ];
 
 export const AGENT_INITIALS: Record<AgentName, string> = {
@@ -22,6 +25,8 @@ export const AGENT_INITIALS: Record<AgentName, string> = {
   'B.A.': 'B',
   Amy: 'A',
   Lynch: 'L',
+  // 'FR' rather than 'F' — Face already owns 'F'.
+  Frankie: 'FR',
   Tawnia: 'T',
   Stockwell: 'S',
 };
@@ -33,6 +38,7 @@ export const AGENT_COLORS: Record<AgentName, string> = {
   'B.A.': 'bg-red-500',
   Amy: 'bg-pink-500',
   Lynch: 'bg-blue-500',
+  Frankie: 'bg-violet-500',
   Tawnia: 'bg-teal-500',
   Stockwell: 'bg-gray-700',
 };

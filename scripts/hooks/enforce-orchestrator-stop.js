@@ -16,13 +16,66 @@
  * Stop hooks use JSON stdout format:
  *   { "decision": "block", "additionalContext": "..." } - block stop
  *   {} - allow stop
+ *
+ * The gate logic and API access live in lib/stop-gates.js, shared with
+ * enforce-final-review.js so the two hooks cannot drift apart. This is the
+ * hook that binds in the primary execution mode (Hannibal runs in the main
+ * session); enforce-final-review.js only binds for subagent sessions.
+ *
+ * Environment variables:
+ *   ATEAM_API_URL - Base URL for the A(i)-Team API
+ *   ATEAM_PROJECT_ID - Project identifier
+ *   ATEAM_SKIP_FRANKIE_GATE - Set to 1 to override the Frankie evidence gate
+ *   ATEAM_SKIP_PROMOTION_GATE - Set to 1 to override the staged-not-promoted gate
+ *                              AND the orphaned-staged-item gate (both answer
+ *                              "may this mission end with items still in staged?")
+ *
+ * For testing:
+ *   __TEST_MOCK_BOARD__ - JSON string for fake board response
+ *   __TEST_MOCK_MISSION__ - JSON string for fake mission response
+ *   __TEST_MOCK_MISSION_ITEMS__ - JSON array of the current mission's items
+ *     (mission membership; absent means "unknown", which falls back to the
+ *     project-wide board view)
  */
 
 import { readHookInput, lookupAgent } from './lib/observer.js';
 import { resolveAgent, isKnownAgent } from './lib/resolve-agent.js';
 import { isMissionActive } from './lib/mission-active.js';
+import {
+  fetchBoard,
+  fetchMission,
+  fetchMissionItems,
+  normalizeBoard,
+  normalizeMission,
+  countBoard,
+  scopeBoardToMission,
+  checkFrankieEvidence,
+  checkStagedNotPromoted,
+  checkOrphanStagedItems,
+  checkFinalReviewRejection,
+  checkMissingFinalReview,
+  checkUnparseableVerdict,
+  checkPostcheck,
+  parseFinalReviewVerdict,
+} from './lib/stop-gates.js';
 
 const hookInput = readHookInput();
+
+// --- Re-entry Guard (narrow) ---
+// Claude Code sets stop_hook_active when the session is stopping BECAUSE a
+// Stop hook already blocked once. That matters for exactly ONE gate: the
+// staged-not-promoted check, which CANNOT be satisfied by orchestrating
+// harder when the API predates WI-790's promotion transaction or the review's
+// verdict parses as 'unknown' — block, resume, block, resume forever.
+//
+// It is NOT a blanket bypass. Bailing out here at the top degraded every gate
+// from permanent to one-shot — most damagingly the always-satisfiable
+// "totalActive > 0 → continue orchestrating" gate, which would then let the
+// SECOND stop end a mission with items still mid-pipeline. So the flag is
+// carried down to the one gate it belongs to (see checkStagedNotPromoted
+// below); everything else — active items, Frankie's evidence, the missing
+// final review, an explicit rejection, post-checks — keeps enforcing.
+const reentryAfterBlock = !!hookInput && hookInput.stop_hook_active === true;
 
 // --- Agent Detection ---
 
@@ -63,6 +116,8 @@ if (!isMissionActive()) {
 const apiUrl = process.env.ATEAM_API_URL || '';
 const projectId = process.env.ATEAM_PROJECT_ID || '';
 const mockBoard = process.env.__TEST_MOCK_BOARD__;
+const mockMission = process.env.__TEST_MOCK_MISSION__;
+const mockMissionItems = process.env.__TEST_MOCK_MISSION_ITEMS__;
 
 // No API config and no mock = no active mission to enforce
 if (!mockBoard && (!apiUrl || !projectId)) {
@@ -74,53 +129,18 @@ async function checkCompletion() {
   let boardData;
 
   if (mockBoard !== undefined) {
-    boardData = JSON.parse(mockBoard);
+    boardData = normalizeBoard(JSON.parse(mockBoard));
   } else {
-    // Fetch board state
-    const boardResp = await fetch(
-      `${apiUrl.replace(/\/+$/, '')}/api/projects/${projectId}/board`,
-      { headers: { 'X-Project-ID': projectId } }
-    );
+    boardData = await fetchBoard(apiUrl, projectId);
 
-    if (!boardResp.ok) {
+    if (!boardData) {
       // API error — allow stop (don't trap the user)
       console.log(JSON.stringify({}));
       process.exit(0);
     }
-
-    boardData = await boardResp.json();
   }
 
-  const columns = boardData.columns || {};
-
-  // Check for items still in active stages
-  const activeStages = [
-    'briefings',
-    'ready',
-    'testing',
-    'implementing',
-    'review',
-    'probing',
-    'blocked',
-  ];
-  const activeCounts = {};
-  let totalActive = 0;
-
-  for (const stage of activeStages) {
-    const items = columns[stage] || [];
-    if (items.length > 0) {
-      activeCounts[stage] = items.length;
-      totalActive += items.length;
-    }
-  }
-
-  const doneCount = (columns.done || []).length;
-
-  // No items at all — no mission, allow stop
-  if (totalActive === 0 && doneCount === 0) {
-    console.log(JSON.stringify({}));
-    process.exit(0);
-  }
+  const { activeCounts, totalActive, doneCount, stagedCount } = countBoard(boardData.columns);
 
   // Items still active — block stop
   if (totalActive > 0) {
@@ -137,41 +157,147 @@ async function checkCompletion() {
     process.exit(0);
   }
 
-  // All items done — check final review and post-checks
-  const missionResp = await fetch(
-    `${apiUrl.replace(/\/+$/, '')}/api/projects/${projectId}/missions/current`,
-    { headers: { 'X-Project-ID': projectId } }
-  );
+  // All items done — check Frankie's walk, then final review and post-checks
+  let missionData;
 
-  if (!missionResp.ok) {
+  if (mockMission !== undefined) {
+    missionData = normalizeMission(JSON.parse(mockMission));
+  } else {
+    missionData = await fetchMission(apiUrl, projectId);
+  }
+
+  if (!missionData) {
     // No active mission — allow stop
     console.log(JSON.stringify({}));
     process.exit(0);
   }
 
-  const missionData = await missionResp.json();
+  // Scope the board's terminal columns to THIS mission's items. /api/board is
+  // project-wide, but promotion only ever sweeps the current mission — so an
+  // orphaned staged item (stranded by a force-ended earlier mission, or created
+  // while no mission was current) would otherwise block every future stop with
+  // advice no review could ever satisfy. Unknown membership falls back to the
+  // project-wide counts (fail closed).
+  //
+  // Mock mode never reaches the network: a fixture board/mission with no
+  // __TEST_MOCK_MISSION_ITEMS__ means "membership unknown", which is the
+  // project-wide fallback — not a live fetch against whatever ATEAM_API_URL
+  // happens to point at.
+  const missionItems =
+    mockMissionItems !== undefined
+      ? JSON.parse(mockMissionItems)
+      : mockBoard !== undefined || mockMission !== undefined
+        ? null
+        : await fetchMissionItems(apiUrl, projectId, missionData.id);
+  const scope = scopeBoardToMission(boardData.columns, missionItems);
+  const pendingCount = scope.stagedCount + scope.doneCount;
 
-  if (doneCount > 0 && !missionData.final_review_verdict) {
-    console.log(
-      JSON.stringify({
-        decision: 'block',
-        additionalContext: `All ${doneCount} items are done but Lynch has not completed the Final Mission Review. Dispatch Lynch for final review.`,
-      })
-    );
+  // A board with nothing on it at all. This used to be an unconditional early
+  // exit taken BEFORE the mission was even fetched ("no items = no mission"),
+  // which is precisely how the post-check gate got skipped: once an APPROVED
+  // review promoted every item to done and those items were archived, the
+  // board went empty and the mission was allowed to end `running`, with no
+  // post-check ever run. Whether a post-check is owed is a fact about the
+  // MISSION, so the empty board only releases the stop when this mission has
+  // no APPROVED review outstanding. Nothing is staged on an empty board, so
+  // there is nothing for the staged/orphan gates to say either way.
+  if (
+    totalActive === 0 &&
+    doneCount === 0 &&
+    stagedCount === 0 &&
+    parseFinalReviewVerdict(missionData.final_review_verdict) !== 'approved'
+  ) {
+    console.log(JSON.stringify({}));
     process.exit(0);
   }
 
-  if (
-    missionData.final_review_verdict &&
-    (!missionData.postcheck || !missionData.postcheck.passed)
-  ) {
-    console.log(
-      JSON.stringify({
-        decision: 'block',
-        additionalContext:
-          'Final review is complete but post-checks have not passed. Run ateam missions postcheck.',
-      })
-    );
+  // Frankie's mission-tail walk precedes Stockwell's Final Mission Review —
+  // same gate enforce-final-review.js applies, shared via lib/stop-gates.js.
+  // WI-791: keyed on stagedCount/stagedItems — items sit in staged awaiting
+  // the walk, not done (done now only happens via WI-790's atomic promotion).
+  const frankieBlock = checkFrankieEvidence({
+    missionId: missionData.id,
+    stagedCount: scope.stagedCount,
+    stagedItems: scope.stagedItems,
+  });
+  if (frankieBlock) {
+    console.log(JSON.stringify({ decision: 'block', additionalContext: frankieBlock }));
+    process.exit(0);
+  }
+
+  // WI-791 AC2: Frankie's evidence clearing does not mean promotion has run
+  // — that only happens via WI-790's atomic transaction when Stockwell's
+  // review is written. An all-staged board must never be treated as an
+  // empty (no-mission) board and allowed to stop.
+  //
+  // This is the one gate the stop_hook_active re-entry guard releases: it is
+  // the only one that can be genuinely unsatisfiable (see the guard's comment
+  // at the top of this file). Reaching it already implies totalActive === 0,
+  // so releasing it can never end a mission with items mid-pipeline.
+  //
+  // The release covers THIS gate only. Every gate below keys on
+  // stagedCount + doneCount, not doneCount alone — nothing reaches done except
+  // through promotion, so a doneCount-keyed gate is silent on exactly the
+  // all-staged board that reaches this point, and stop #2 would end the mission
+  // with no review and no post-check.
+  const stagedBlock = checkStagedNotPromoted(scope.stagedCount, {
+    finalReview: missionData.final_review_verdict,
+    orphanStagedIds: scope.orphanStagedIds,
+  });
+  if (stagedBlock && !reentryAfterBlock) {
+    console.log(JSON.stringify({ decision: 'block', additionalContext: stagedBlock }));
+    process.exit(0);
+  }
+
+  // A staged item that belongs to no mission must never vanish from the gates.
+  // Scoping the counts to this mission is right for the promotion messages and
+  // wrong as a release: with the mission's own staged count at 0, an orphan
+  // silently dropped out of every count and this hook emitted {} on the FIRST
+  // stop. Blocks on its own, is NOT released by the re-entry guard (attaching /
+  // moving / archiving an orphan is always available), and shares
+  // ATEAM_SKIP_PROMOTION_GATE as the operator override.
+  const orphanBlock = checkOrphanStagedItems(scope.orphanStagedIds);
+  if (orphanBlock) {
+    console.log(JSON.stringify({ decision: 'block', additionalContext: orphanBlock }));
+    process.exit(0);
+  }
+
+  const missingReviewBlock = checkMissingFinalReview({
+    pendingCount,
+    finalReview: missionData.final_review_verdict,
+  });
+  if (missingReviewBlock) {
+    console.log(JSON.stringify({ decision: 'block', additionalContext: missingReviewBlock }));
+    process.exit(0);
+  }
+
+  // A review exists but states no verdict in the one place the verdict is read
+  // from (its last line). Nothing was promoted and the mission's outcome is
+  // unknown — fail CLOSED with the trailer requirement, which the operator
+  // clears by re-POSTing the report with the verdict as its final line.
+  const unparseableBlock = checkUnparseableVerdict(missionData.final_review_verdict);
+  if (unparseableBlock) {
+    console.log(JSON.stringify({ decision: 'block', additionalContext: unparseableBlock }));
+    process.exit(0);
+  }
+
+  // An explicit FINAL REJECTED verdict is a completed review, but it must not
+  // fall through to the post-check gate ("run postcheck" would misdirect).
+  // Block with the ADR 0004 restart-at-Frankie path instead. Reviews with no
+  // recognizable verdict marker fall through unchanged (fail open).
+  const rejectionBlock = checkFinalReviewRejection(missionData.final_review_verdict);
+  if (rejectionBlock) {
+    console.log(JSON.stringify({ decision: 'block', additionalContext: rejectionBlock }));
+    process.exit(0);
+  }
+
+  const postcheckBlock = checkPostcheck({
+    finalReview: missionData.final_review_verdict,
+    postcheck: missionData.postcheck,
+    missionState: missionData.state,
+  });
+  if (postcheckBlock) {
+    console.log(JSON.stringify({ decision: 'block', additionalContext: postcheckBlock }));
     process.exit(0);
   }
 

@@ -163,6 +163,69 @@ const mockItemsReadyBlocked = [
   },
 ];
 
+// WI-788: dependency satisfaction now accepts 'staged' as complete, not just
+// 'done' — the pipeline ends at 'staged' and nothing reaches 'done' until the
+// mission tail promotes it, so wave-2+ items must not deadlock on 'staged'
+// dependencies.
+const mockItemsStagedDeps = [
+  {
+    id: 'WI-101',
+    title: 'Dep in staged',
+    stageId: 'staged',
+    archivedAt: null,
+    dependsOn: [],
+  },
+  {
+    id: 'WI-102',
+    title: 'Dep in done',
+    stageId: 'done',
+    archivedAt: null,
+    dependsOn: [],
+  },
+  {
+    id: 'WI-103',
+    title: 'Dep in probing (non-terminal)',
+    stageId: 'probing',
+    archivedAt: null,
+    dependsOn: [],
+  },
+  {
+    id: 'WI-104',
+    title: 'Dep in review (non-terminal)',
+    stageId: 'review',
+    archivedAt: null,
+    dependsOn: [],
+  },
+  {
+    id: 'WI-105',
+    title: 'Ready - single dependency staged',
+    stageId: 'ready',
+    archivedAt: null,
+    dependsOn: [{ dependsOnId: 'WI-101' }],
+  },
+  {
+    id: 'WI-106',
+    title: 'Ready - mixed dependencies (one staged, one done)',
+    stageId: 'ready',
+    archivedAt: null,
+    dependsOn: [{ dependsOnId: 'WI-101' }, { dependsOnId: 'WI-102' }],
+  },
+  {
+    id: 'WI-107',
+    title: 'Blocked - dependency in probing',
+    stageId: 'ready',
+    archivedAt: null,
+    dependsOn: [{ dependsOnId: 'WI-103' }],
+  },
+  {
+    id: 'WI-108',
+    title: 'Blocked - dependency in review',
+    stageId: 'ready',
+    archivedAt: null,
+    dependsOn: [{ dependsOnId: 'WI-104' }],
+  },
+];
+
 // Create mock Prisma client
 const mockPrisma = {
   item: {
@@ -578,6 +641,65 @@ describe('GET /api/deps/check', () => {
           }),
         })
       );
+    });
+  });
+
+  describe('WI-788: staged counts as complete for dependency-wave satisfaction', () => {
+    it('reports an item ready when its only dependency is in staged, and for a mixed staged+done graph', async () => {
+      mockPrisma.item.findMany.mockResolvedValue(mockItemsStagedDeps);
+
+      const { GET } = await import('@/app/api/deps/check/route');
+      const request = new NextRequest('http://localhost:3000/api/deps/check', {
+        headers: { 'X-Project-ID': 'test-project' }
+      });
+      const response = await GET(request);
+      const data = await response.json();
+
+      // WI-105 depends only on WI-101 (staged)
+      expect(data.data.readyItems).toContain('WI-105');
+      expect(data.data.blockedItems).not.toContain('WI-105');
+
+      // WI-106 depends on WI-101 (staged) AND WI-102 (done) — mixed graph (AC6)
+      expect(data.data.readyItems).toContain('WI-106');
+      expect(data.data.blockedItems).not.toContain('WI-106');
+    });
+
+    it('still reports an item blocked when a dependency is in probing or review (non-terminal stages)', async () => {
+      mockPrisma.item.findMany.mockResolvedValue(mockItemsStagedDeps);
+
+      const { GET } = await import('@/app/api/deps/check/route');
+      const request = new NextRequest('http://localhost:3000/api/deps/check', {
+        headers: { 'X-Project-ID': 'test-project' }
+      });
+      const response = await GET(request);
+      const data = await response.json();
+
+      // WI-107 depends on WI-103 (probing) — AC5/AC6
+      expect(data.data.blockedItems).toContain('WI-107');
+      expect(data.data.readyItems).not.toContain('WI-107');
+
+      // WI-108 depends on WI-104 (review) — AC5
+      expect(data.data.blockedItems).toContain('WI-108');
+      expect(data.data.readyItems).not.toContain('WI-108');
+    });
+
+    it('does not list items that are themselves in staged (or done) as ready or blocked (AC3)', async () => {
+      mockPrisma.item.findMany.mockResolvedValue(mockItemsStagedDeps);
+
+      const { GET } = await import('@/app/api/deps/check/route');
+      const request = new NextRequest('http://localhost:3000/api/deps/check', {
+        headers: { 'X-Project-ID': 'test-project' }
+      });
+      const response = await GET(request);
+      const data = await response.json();
+
+      // WI-101 is itself in staged — must be skipped entirely, same as done
+      expect(data.data.readyItems).not.toContain('WI-101');
+      expect(data.data.blockedItems).not.toContain('WI-101');
+
+      // WI-102 is itself in done — regression guard alongside the staged case
+      expect(data.data.readyItems).not.toContain('WI-102');
+      expect(data.data.blockedItems).not.toContain('WI-102');
     });
   });
 });

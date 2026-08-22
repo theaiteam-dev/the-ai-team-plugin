@@ -101,7 +101,7 @@ export interface FilterState {
 export type AgentStatus = 'watching' | 'active' | 'idle';
 
 // Stage definitions
-export type Stage = 'briefings' | 'ready' | 'testing' | 'implementing' | 'review' | 'probing' | 'done' | 'blocked';
+export type Stage = 'briefings' | 'ready' | 'testing' | 'implementing' | 'review' | 'probing' | 'staged' | 'done' | 'blocked';
 
 // Work item type definitions
 export type WorkItemType = 'implementation' | 'interface' | 'integration' | 'test';

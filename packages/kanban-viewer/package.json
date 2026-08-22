@@ -8,10 +8,13 @@
   "scripts": {
     "migrate:create": "prisma migrate dev --config ./prisma/prisma.config.ts --name",
     "dev": "if [ \"$SKIP_MIGRATE\" = \"1\" ]; then echo \"Skipping prisma migrate deploy (SKIP_MIGRATE=1)\"; next dev --port 5566; else prisma migrate deploy --config ./prisma/prisma.config.ts && next dev --port 5566; fi",
+    "dev:qa": "rm -f prisma/data/qa.db && DATABASE_URL=file:$(pwd)/prisma/data/qa.db prisma migrate deploy --config ./prisma/prisma.config.ts && DATABASE_URL=file:$(pwd)/prisma/data/qa.db npx tsx prisma/seed.ts && DATABASE_URL=file:$(pwd)/prisma/data/qa.db next dev --port 5567",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "bun run lint && bun run typecheck && bun run test"
   },
   "dependencies": {
     "@ai-team/shared": "workspace:*",

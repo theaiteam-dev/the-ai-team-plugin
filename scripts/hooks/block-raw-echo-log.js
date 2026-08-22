@@ -5,7 +5,7 @@
  * Blocks attempts to use raw `echo >> mission/activity.log` commands.
  * Redirects agents to use `ateam activity createActivityEntry` via Bash instead.
  *
- * Targets: murdock, ba, lynch, amy, tawnia
+ * Targets: murdock, ba, lynch, amy, frankie, stockwell, tawnia
  * Returns: { decision: "block" } JSON at exit 0 (NOT exit 2)
  *
  * Claude Code sends hook context via stdin JSON (tool_name, tool_input).
@@ -13,7 +13,7 @@
 
 import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
-import { sendDeniedEvent } from './lib/send-denied-event.js';
+import { denyAndExit } from './lib/send-denied-event.js';
 
 // Read hook input from stdin (Claude Code sends JSON)
 let hookInput = {};
@@ -29,7 +29,7 @@ try {
   const agent = resolveAgent(hookInput);
 
   // Only enforce for working agents
-  const TARGET_AGENTS = ['murdock', 'ba', 'lynch', 'amy', 'tawnia'];
+  const TARGET_AGENTS = ['murdock', 'ba', 'lynch', 'amy', 'frankie', 'stockwell', 'tawnia'];
   if (!agent || !TARGET_AGENTS.includes(agent)) {
     process.exit(0);
   }
@@ -48,7 +48,6 @@ try {
 
   if (isEchoToActivityLog) {
     const reason = 'BLOCKED: Do not use raw echo commands to write to activity.log. Use ateam activity createActivityEntry instead.';
-    sendDeniedEvent({ agentName: agent, toolName, reason });
 
     // Block and provide guidance (JSON decision, exit 0 — not exit 2)
     const response = {
@@ -68,8 +67,13 @@ This ensures proper formatting and API integration.
 `.trim(),
     };
 
-    console.log(JSON.stringify(response));
-    process.exit(0);
+    // Same payload console.log() would emit (JSON + trailing newline), but
+    // routed through denyAndExit so the denial telemetry is flushed before the
+    // process tears down. Exit code and stdout bytes are unchanged.
+    await denyAndExit({ agentName: agent, toolName, reason }, `${JSON.stringify(response)}\n`, {
+      exitCode: 0,
+      stream: 'stdout',
+    });
   }
 
   // Allow other commands

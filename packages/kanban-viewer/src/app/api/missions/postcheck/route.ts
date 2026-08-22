@@ -20,17 +20,79 @@ function parseLintErrors(stdout: string, stderr: string): number {
   return 0;
 }
 
+// Strips ANSI escape sequences. Broader than SGR-only (`\u001b[...m`) on purpose:
+// cursor-control codes such as `\u001b[2K` (erase line) or `\u001b[1G` (column 1) are
+// emitted by runners writing to a pty, and would otherwise sit in front of the
+// summary line and defeat the `^\s*Tests\b` anchor below.
+const ANSI_ESCAPE_RE = /\u001b\[[0-9;?]*[a-zA-Z]/g;
+
+// Check names that are expected to produce test counts. Used only to decide
+// whether a zero-count parse deserves a warning (see `unparsed` below) — the
+// routing of counts into unit vs e2e buckets is a separate heuristic.
+const TEST_SHAPED_CHECK_RE = /test|unit|e2e|spec|vitest|jest|pytest/i;
+
+// Vitest/Jest per-invocation summary line: "Tests  79 passed (79)",
+// "Tests: 2 failed, 8 passed, 10 total". Vitest's "Test Files  6 passed (6)"
+// line does NOT match (it is "Test Files", not "Tests").
+const VITEST_SUMMARY_RE = /^\s*Tests\b/;
+
+// pytest's banner summary: "======== 8 passed in 1.24s ========",
+// "=== 1 failed, 7 passed in 0.5s ===". Distinctive enough (leading run of "="
+// plus an "<n> passed/failed" phrase) to count safely alongside Tests lines.
+// pytest's other banners ("=== test session starts ===", "=== FAILURES ===")
+// carry no such phrase and are ignored.
+const PYTEST_BANNER_RE = /^\s*=+/;
+const COUNT_PHRASE_RE = /\d+\s+(?:passed|failed)/i;
+
 /**
  * Parses test output to extract pass/fail counts.
- * Looks for Vitest output patterns.
+ * Looks for Vitest/Jest and pytest output patterns.
+ *
+ * A single check command may chain several test invocations (e.g. ateam.config.json's
+ * `"unit-full": "bun run test && (cd client && bun run test)"`), producing one summary
+ * line per invocation in the same stdout — every summary line must be summed, and
+ * Vitest's "Test Files  N passed" line must not be mistaken for a test count.
+ *
+ * Chains may also mix runners (`vitest && pytest`, or `pytest && vitest`), so both the
+ * "Tests" summary lines and pytest's "=== N passed ===" banners are collected in one
+ * pass over the output. No line is counted twice: a line is either a Tests summary or a
+ * pytest banner, never both.
+ *
+ * Boundary (deliberately conservative): only these two shapes are summed. If NEITHER
+ * appears, the whole output falls back to a single generic `N passed` / `N failed`
+ * match — the historical behavior for unknown runners. That means an unknown runner
+ * chained after a recognized one contributes nothing rather than risking a
+ * double-count of lines already summed; widen the recognized shapes above rather than
+ * loosening the fallback.
  */
 function parseTestResults(stdout: string, stderr: string): { passed: number; failed: number } {
-  const combined = `${stdout} ${stderr}`;
+  const combined = `${stdout}\n${stderr}`.replace(ANSI_ESCAPE_RE, '');
 
   let passed = 0;
   let failed = 0;
 
-  // Match patterns like "8 passed" or "Tests: 8 passed, 2 failed"
+  const summaryLines = combined
+    .split('\n')
+    .filter(
+      (line) =>
+        VITEST_SUMMARY_RE.test(line) ||
+        (PYTEST_BANNER_RE.test(line) && COUNT_PHRASE_RE.test(line))
+    );
+  for (const line of summaryLines) {
+    const passedMatch = line.match(/(\d+)\s+passed/i);
+    if (passedMatch) {
+      passed += parseInt(passedMatch[1], 10);
+    }
+    const failedMatch = line.match(/(\d+)\s+failed/i);
+    if (failedMatch) {
+      failed += parseInt(failedMatch[1], 10);
+    }
+  }
+  if (summaryLines.length > 0) {
+    return { passed, failed };
+  }
+
+  // Fallback for runners with no recognized summary line (e.g. a bare "8 passed").
   const passedMatch = combined.match(/(\d+)\s+passed/i);
   if (passedMatch) {
     passed = parseInt(passedMatch[1], 10);
@@ -76,32 +138,53 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
     const projectId = projectValidation.projectId;
 
-    // Find active mission (not archived) for this project
+    // Select the mission this route can actually operate on: the most recently
+    // started RUNNING, non-archived mission.
+    //
+    // This used to be a bare `findFirst({ projectId, archivedAt: null })` with
+    // no state filter and no ordering, so SQLite returned the LOWEST rowid. A
+    // stale completed-but-unarchived M1 sitting in front of a running M2 made
+    // this route answer 400 INVALID_MISSION_STATE forever — and this route is
+    // the ONLY way a mission ever reaches `completed`, so it was also the only
+    // remediation the Stop gates could offer. Same unordered-findFirst defect
+    // that /api/missions/current already fixed; the fix has to follow the bug
+    // to every copy of the query.
     const mission = await prisma.mission.findFirst({
       where: {
         projectId,
         archivedAt: null,
+        state: 'running',
       },
+      orderBy: { startedAt: 'desc' },
     });
 
     if (!mission) {
-      const apiError: ApiError = {
-        success: false,
-        error: {
-          code: 'NO_ACTIVE_MISSION',
-          message: 'No active mission found',
-        },
-      };
-      return NextResponse.json(apiError, { status: 404 });
-    }
+      // Nothing runnable. Distinguish "this project has no mission at all"
+      // (404 NO_ACTIVE_MISSION) from "there is a mission but it is not in a
+      // post-checkable state" (400 INVALID_MISSION_STATE), reporting the state
+      // of the mission the operator most likely means — the newest one. Both
+      // error semantics predate this change and are preserved.
+      const newest = await prisma.mission.findFirst({
+        where: { projectId, archivedAt: null },
+        orderBy: { startedAt: 'desc' },
+      });
 
-    // Verify mission is in running state
-    if (mission.state !== 'running') {
+      if (!newest) {
+        const apiError: ApiError = {
+          success: false,
+          error: {
+            code: 'NO_ACTIVE_MISSION',
+            message: 'No active mission found',
+          },
+        };
+        return NextResponse.json(apiError, { status: 404 });
+      }
+
       const apiError: ApiError = {
         success: false,
         error: {
           code: 'INVALID_MISSION_STATE',
-          message: `Mission must be in running state to run postcheck. Current state: ${mission.state}`,
+          message: `Mission must be in running state to run postcheck. Current state: ${newest.state}`,
         },
       };
       return NextResponse.json(apiError, { status: 400 });
@@ -226,16 +309,40 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       },
     });
 
+    // A passing result with no measurable output must SAY so — "0 unit tests
+    // passing" read as real data in M-20260819-001's retro when the caller had
+    // simply omitted `output`. A 0/0 gate result must be distinguishable from
+    // "nothing was measured".
+    const outputEntries = Object.entries(output as Record<string, CheckOutput>);
+    const hasContent = ([, o]: [string, CheckOutput]): boolean =>
+      (o.stdout ?? '').trim() !== '' || (o.stderr ?? '').trim() !== '';
+    const hasSubmittedOutput = outputEntries.some(hasContent);
+    // Only a TEST-shaped check can be expected to yield test counts. Gating on
+    // "any non-lint check" made every {lint, typecheck} or {lint, build} config
+    // warn on a perfectly clean postcheck, since those checks never print counts.
+    const hasTestShapedOutput = outputEntries
+      .filter(([name]) => !name.includes('lint') && TEST_SHAPED_CHECK_RE.test(name))
+      .some(hasContent);
+    const totalTestCounts = unitTestsPassed + unitTestsFailed + e2eTestsPassed + e2eTestsFailed;
+    const unmeasured = passed && !hasSubmittedOutput;
+    const unparsed = passed && hasTestShapedOutput && totalTestCounts === 0;
+
+    let passedMessage = `Postcheck passed: ${unitTestsPassed} unit tests, ${e2eTestsPassed} e2e tests passing, ${lintErrors} lint errors`;
+    if (unmeasured) {
+      passedMessage =
+        'Postcheck passed: no check output submitted — test counts unmeasured (caller must run the configured checks and include their captured output)';
+    } else if (unparsed) {
+      passedMessage += ' — warning: submitted check output contained no parsable test counts';
+    }
+
     // Log postcheck results
     await prisma.activityLog.create({
       data: {
         projectId,
         missionId: mission.id,
         agent: null,
-        message: passed
-          ? `Postcheck passed: ${unitTestsPassed} unit tests, ${e2eTestsPassed} e2e tests passing, ${lintErrors} lint errors`
-          : `Postcheck failed: ${blockers.join(', ')}`,
-        level: passed ? 'info' : 'error',
+        message: passed ? passedMessage : `Postcheck failed: ${blockers.join(', ')}`,
+        level: passed ? (unmeasured || unparsed ? 'warn' : 'info') : 'error',
       },
     });
 

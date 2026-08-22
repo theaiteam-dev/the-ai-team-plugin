@@ -227,9 +227,19 @@ describe('enforce-final-review', () => {
   describe('API querying', () => {
     it('should use fetch to query the API for board and mission state', () => {
       const source = readFileSync(FINAL_REVIEW_HOOK, 'utf8');
-      expect(source).toMatch(/fetch\s*\(/);
+      // The fetch calls moved into lib/stop-gates.js, shared with
+      // enforce-orchestrator-stop.js so both hooks hit the same routes; the
+      // hook still reads the API config and delegates the queries there.
       expect(source).toMatch(/ATEAM_API_URL/);
       expect(source).toMatch(/ATEAM_PROJECT_ID/);
+      expect(source).toMatch(/fetchBoard/);
+      expect(source).toMatch(/fetchMission/);
+
+      const gateSource = readFileSync(
+        join(__dirname, '..', 'lib', 'stop-gates.js'),
+        'utf8'
+      );
+      expect(gateSource).toMatch(/fetch\s*\(/);
     });
   });
 
@@ -283,7 +293,7 @@ describe('enforce-final-review', () => {
         }),
         __TEST_MOCK_MISSION__: JSON.stringify({
           status: 'active',
-          final_review_verdict: 'approved',
+          final_review_verdict: '# Final Mission Review\n\nVERDICT: FINAL APPROVED',
           postcheck: { passed: false },
         }),
       });
@@ -301,14 +311,14 @@ describe('enforce-final-review', () => {
         }),
         __TEST_MOCK_MISSION__: JSON.stringify({
           status: 'active',
-          final_review_verdict: 'approved',
+          final_review_verdict: '# Final Mission Review\n\nVERDICT: FINAL APPROVED',
           postcheck: null,
         }),
       });
 
       expect(result.exitCode).toBe(2);
       // Must reference the ateam CLI command
-      expect(result.stderr).toMatch(/ateam missions postcheck/);
+      expect(result.stderr).toMatch(/ateam missions-postcheck/);
     });
 
     it('should NOT reference legacy mission-postcheck.js script', () => {
@@ -320,7 +330,7 @@ describe('enforce-final-review', () => {
         }),
         __TEST_MOCK_MISSION__: JSON.stringify({
           status: 'active',
-          final_review_verdict: 'approved',
+          final_review_verdict: '# Final Mission Review\n\nVERDICT: FINAL APPROVED',
           postcheck: null,
         }),
       });
@@ -341,7 +351,7 @@ describe('enforce-final-review', () => {
         }),
         __TEST_MOCK_MISSION__: JSON.stringify({
           status: 'active',
-          final_review_verdict: 'approved',
+          final_review_verdict: '# Final Mission Review\n\nVERDICT: FINAL APPROVED',
           postcheck: { passed: true },
         }),
       });
@@ -384,6 +394,7 @@ describe('block-amy-test-writes', () => {
   it('should block writes to .test.ts files', () => {
     const result = runHook(AMY_TEST_WRITES_HOOK, {}, {
       agent_type: 'ai-team:amy',
+      tool_name: 'Write',
       tool_input: { file_path: 'src/__tests__/feature-raptor.test.ts' },
     });
     expect(result.exitCode).toBe(2);
@@ -393,6 +404,7 @@ describe('block-amy-test-writes', () => {
   it('should block writes to .spec.tsx files', () => {
     const result = runHook(AMY_TEST_WRITES_HOOK, {}, {
       agent_type: 'ai-team:amy',
+      tool_name: 'Write',
       tool_input: { file_path: 'src/components/Button.spec.tsx' },
     });
     expect(result.exitCode).toBe(2);
@@ -402,6 +414,7 @@ describe('block-amy-test-writes', () => {
   it('should block writes to raptor files', () => {
     const result = runHook(AMY_TEST_WRITES_HOOK, {}, {
       agent_type: 'ai-team:amy',
+      tool_name: 'Write',
       tool_input: { file_path: 'src/raptor-investigation.js' },
     });
     expect(result.exitCode).toBe(2);
@@ -410,6 +423,7 @@ describe('block-amy-test-writes', () => {
 
   it('should allow non-test writes like /tmp/debug.js', () => {
     const result = runHook(AMY_TEST_WRITES_HOOK, {}, {
+      tool_name: 'Write',
       tool_input: { file_path: '/tmp/debug.js' },
     });
     expect(result.exitCode).toBe(0);
@@ -417,7 +431,17 @@ describe('block-amy-test-writes', () => {
 
   it('should allow writes with no file path', () => {
     const result = runHook(AMY_TEST_WRITES_HOOK, {}, {
+      tool_name: 'Write',
       tool_input: {},
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('should allow amy to READ a source/test file (not a write)', () => {
+    const result = runHook(AMY_TEST_WRITES_HOOK, {}, {
+      agent_type: 'ai-team:amy',
+      tool_name: 'Read',
+      tool_input: { file_path: 'src/__tests__/feature.test.ts' },
     });
     expect(result.exitCode).toBe(0);
   });

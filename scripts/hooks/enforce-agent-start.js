@@ -15,8 +15,11 @@
  * - This hook checks for that marker when agents-stop is attempted
  * - If missing, blocks with a clear message to call agentStart first
  *
- * Also blocks ateam activity log calls before agentStart, since logging
- * before claiming is a sign the agent skipped the lifecycle setup.
+ * Also blocks ateam activity createActivityEntry calls before agentStart,
+ * since logging before claiming is a sign the agent skipped the lifecycle
+ * setup. Read-only activity subcommands (listActivity) are NOT blocked:
+ * mission-scoped agents like retro have no item to claim, cannot satisfy
+ * agentStart, and legitimately need to read the feed.
  *
  * Hannibal never calls agents-start or agents-stop, so this hook
  * never fires for orchestrator sessions.
@@ -49,11 +52,15 @@ try {
   const ATEAM_CLI = /\bateam\s+[a-z-]+/;
   // Component-level matcher: a shell pipeline component is "an ateam
   // command needing prior start" when the FIRST verb of the component
-  // is literally `ateam` followed by `agents-stop` or `activity`.
+  // is literally `ateam` followed by `agents-stop` (any subcommand) or
+  // the write verb `activity createActivityEntry`. Read-only
+  // `activity listActivity` deliberately does not match — this is a
+  // write-intent gate, not a read gate.
   // This is anchored at the start of the component (after trimming) so
   // it doesn't match `ateam agents-stop` substrings inside an `echo` or
   // `printf` argument (whose first verb is `echo`/`printf`).
-  const ATEAM_NEEDS_START_AT_HEAD = /^ateam\s+(agents-stop|activity)\b/;
+  const ATEAM_NEEDS_START_AT_HEAD =
+    /^ateam\s+(agents-stop|activity\s+createActivityEntry)\b/;
 
   if (toolName !== 'Bash' || !ATEAM_CLI.test(command)) {
     process.exit(0);
@@ -81,7 +88,7 @@ try {
   // `ateam`; the second is `ateam agents-start`, which is not in the
   // needs-start list.
   const components = command.split(/;|&&|\|\||\n/);
-  let triggeringSubcommand = null; // 'agents-stop' | 'activity' | null
+  let triggeringSubcommand = null; // 'agents-stop' | 'activity createActivityEntry' | null
   for (const raw of components) {
     // Strip leading whitespace and full-line `#` comments.
     const trimmed = raw.replace(/^\s+/, '');
@@ -95,7 +102,7 @@ try {
 
   // Only enforce on commands that require a prior agentStart:
   // - agents-stop (will fail with NOT_CLAIMED without it)
-  // - activity log (sign of skipped lifecycle setup)
+  // - activity createActivityEntry (sign of skipped lifecycle setup)
   if (!triggeringSubcommand) {
     process.exit(0);
   }

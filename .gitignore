@@ -38,6 +38,10 @@ data/*.db-shm
 # Observer hook failure log (runtime telemetry, not source)
 .ateam-observer-failures.log
 
+# Tool-generated project metadata, not source (devtrack, project scaffolding)
+/devtrack.yaml
+/project.yaml
+
 # Private prod deployment runbook — references personal infra (arcane-k8s,
 # cluster URLs, GHCR org). Kept local; this is a public/OSS repo.
 docs/PROD-DEPLOY.md

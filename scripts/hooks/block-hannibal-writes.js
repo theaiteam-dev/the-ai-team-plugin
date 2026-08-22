@@ -11,7 +11,7 @@
 
 import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
-import { sendDeniedEvent } from './lib/send-denied-event.js';
+import { denyAndExit } from './lib/send-denied-event.js';
 
 let hookInput = {};
 try {
@@ -44,18 +44,16 @@ try {
 
   // Block writes to src/ directory (handle both absolute and relative paths)
   if (filePath.includes('/src/') || filePath.startsWith('src/')) {
-    sendDeniedEvent({ agentName: agent, toolName, reason: `BLOCKED: Hannibal cannot write to ${filePath}. Implementation code must be delegated to B.A.` });
     process.stderr.write(`BLOCKED: Hannibal cannot write to ${filePath}\n`);
     process.stderr.write('Implementation code must be delegated to B.A.\n');
-    process.exit(2);
+    await denyAndExit({ agentName: agent, toolName, reason: `BLOCKED: Hannibal cannot write to ${filePath}. Implementation code must be delegated to B.A.` });
   }
 
   // Block writes to test files
   if (filePath.match(/\.(test|spec)\.(ts|js|tsx|jsx)$/)) {
-    sendDeniedEvent({ agentName: agent, toolName, reason: `BLOCKED: Hannibal cannot write to ${filePath}. Test files must be delegated to Murdock.` });
     process.stderr.write(`BLOCKED: Hannibal cannot write to ${filePath}\n`);
     process.stderr.write('Test files must be delegated to Murdock.\n');
-    process.exit(2);
+    await denyAndExit({ agentName: agent, toolName, reason: `BLOCKED: Hannibal cannot write to ${filePath}. Test files must be delegated to Murdock.` });
   }
 
   // Allow other writes (mission/, ateam.config.json, etc.)

@@ -156,17 +156,7 @@ Adjacent tools: `curl` for direct API endpoint probes, `Bash` for running code/t
 cat ateam.config.json | grep -A3 devServer
 ```
 
-The config contains:
-```json
-{
-  "devServer": {
-    "url": "http://localhost:3000",
-    "start": "npm run dev",
-    "restart": "docker compose restart",
-    "managed": false
-  }
-}
-```
+The canonical `ateam.config.json` template — including the full `devServer` field reference — lives in `commands/setup.md` (Step 6); this file doesn't duplicate it (see `adr/0006-ateam-config-schema-deferred.md`). What the fields mean for your workflow: `devServer.url` is where you point the browser; `devServer.start` and `devServer.restart` are the user's commands — quote them in your messages, never run them; `devServer.managed: false` (the default) means the user manages the server — you check that it's running but never start or restart it. `devServer.managed: true` means the pipeline owns the server instead (Frankie starts and stops it around his mission-tail walk) — this doesn't change your workflow: you still only check that `devServer.url` is responding and never start, restart, or stop it yourself.
 
 **Before browser testing:**
 1. Check if server is running: `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000`
@@ -463,9 +453,9 @@ your investigation findings in the work_log (visible in the kanban UI).
 Amy is part of the **standard pipeline** - every feature passes through her:
 
 1. **Probing stage (standard)** - After Lynch approves
-   - Every feature gets probed before moving to done
+   - Every feature gets probed before moving to staged
    - Execute Raptor Protocol on the implementation
-   - VERIFIED -> done, FLAG -> back to `testing` or `implementing` (see "FLAG routing" below)
+   - VERIFIED -> staged, FLAG -> back to `testing` or `implementing` (see "FLAG routing" below)
 
 2. **Rejection diagnosis (optional)** - By Hannibal
    - When item is rejected, Amy can diagnose root cause
@@ -476,7 +466,7 @@ Amy is part of the **standard pipeline** - every feature passes through her:
 Follow the `ai-team:agent-lifecycle` skill for activity-log milestone messages and the `ai-team:teams-messaging` skill for START/ACK/FYI/ALERT/MISSION_COMPLETE formats. Both are loaded in Step 0.
 
 **Terminal-agent shutdown logic:** Amy has no downstream pool handoff. After `agentStop`:
-- **VERIFIED**: `--advance` already moved the item to `done`. If the `agentStop --json` response has `missionComplete: true`, send `MISSION_COMPLETE` to Hannibal to trigger final review. Otherwise, send `FYI` to Hannibal with verdict and one-line summary.
+- **VERIFIED**: `--advance` already moved the item to `staged` — the per-item pipeline's real terminal stage (WI-786/787). If the `agentStop --json` response has `missionComplete: true` (every item has now reached `staged`), send `MISSION_COMPLETE` to Hannibal to trigger the mission tail (Frankie, then Stockwell). Otherwise, send `FYI` to Hannibal with verdict and one-line summary.
 - **FLAG**: `agentStop --outcome rejected --return-to <stage> --advance=false` per the FLAG routing table below. Send `REJECTED` to the matching peer (`murdock-N` or `ba-N`), then `FYI` to Hannibal. Amy does not START anyone directly; the peer picks up the rejected item from the board.
 
 ### FLAG routing — earliest flagged stage wins

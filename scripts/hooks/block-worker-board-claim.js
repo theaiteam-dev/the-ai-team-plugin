@@ -6,14 +6,14 @@
  * Workers should use `ateam agents-start` to claim items, which handles both
  * the board claim and the assigned_agent metadata in one call.
  *
- * Targets: murdock, ba, lynch, lynch-final, amy, tawnia
+ * Targets: murdock, ba, lynch, lynch-final, stockwell, amy, frankie, tawnia
  *
  * Claude Code sends hook context via stdin JSON (tool_name, tool_input).
  */
 
 import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
-import { sendDeniedEvent } from './lib/send-denied-event.js';
+import { denyAndExit } from './lib/send-denied-event.js';
 
 let hookInput = {};
 try {
@@ -28,7 +28,7 @@ try {
   const agent = resolveAgent(hookInput);
 
   // Only enforce for working agents
-  const TARGET_AGENTS = ['murdock', 'ba', 'lynch', 'lynch-final', 'amy', 'tawnia'];
+  const TARGET_AGENTS = ['murdock', 'ba', 'lynch', 'lynch-final', 'stockwell', 'amy', 'frankie', 'tawnia'];
   if (!agent || !TARGET_AGENTS.includes(agent)) {
     process.exit(0);
   }
@@ -39,13 +39,9 @@ try {
 
   // Check for ateam board-claim CLI calls via Bash
   if (toolName === 'Bash' && command.includes('ateam') && command.includes('board-claim')) {
-    try {
-      sendDeniedEvent({ agentName: agent, toolName, reason: 'BLOCKED: Working agents cannot call ateam board-claim directly. Use ateam agents-start instead.' });
-    } finally {
-      process.stderr.write('BLOCKED: Working agents cannot call ateam board-claim directly.\n');
-      process.stderr.write('Use ateam agents-start to claim items — it handles both the board claim and metadata.\n');
-      process.exit(2);
-    }
+    process.stderr.write('BLOCKED: Working agents cannot call ateam board-claim directly.\n');
+    process.stderr.write('Use ateam agents-start to claim items — it handles both the board claim and metadata.\n');
+    await denyAndExit({ agentName: agent, toolName, reason: 'BLOCKED: Working agents cannot call ateam board-claim directly. Use ateam agents-start instead.' });
   }
 
   // Allow other tools

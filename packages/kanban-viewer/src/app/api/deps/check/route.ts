@@ -4,7 +4,8 @@
  * Validates the dependency graph and returns:
  * - valid: true if no cycles exist
  * - cycles: arrays of item IDs forming circular dependencies
- * - readyItems: item IDs where all dependencies are in done stage
+ * - readyItems: item IDs where all dependencies satisfy isDependencySatisfied
+ *   ('staged' or 'done' — see WI-788)
  * - blockedItems: item IDs waiting on incomplete dependencies
  */
 
@@ -13,6 +14,8 @@ import { prisma } from '@/lib/db';
 import { createServerError } from '@/lib/errors';
 import { getAndValidateProjectId } from '@/lib/project-utils';
 import type { DepsCheckResponse } from '@/types/api';
+import { isDependencySatisfied } from '@ai-team/shared';
+import type { StageId } from '@/types/board';
 
 /**
  * Item structure from database query with dependencies included.
@@ -88,8 +91,9 @@ function detectCycles(items: ItemWithDeps[]): string[][] {
 }
 
 /**
- * Identify items that are ready (all dependencies in done stage)
- * and items that are blocked (have dependencies not in done stage).
+ * Identify items that are ready (all dependencies satisfy
+ * isDependencySatisfied — 'staged' or 'done') and items that are blocked
+ * (have dependencies that don't).
  */
 function categorizeItems(items: ItemWithDeps[]): {
   readyItems: string[];
@@ -105,8 +109,9 @@ function categorizeItems(items: ItemWithDeps[]): {
   }
 
   for (const item of items) {
-    // Skip items already in done stage
-    if (item.stageId === 'done') {
+    // Skip items that are themselves already complete (staged or done) —
+    // they have nothing left to wait on and aren't "ready to start".
+    if (isDependencySatisfied(item.stageId as StageId)) {
       continue;
     }
 
@@ -115,13 +120,17 @@ function categorizeItems(items: ItemWithDeps[]): {
       // No dependencies means ready
       readyItems.push(item.id);
     } else {
-      // Check if all dependencies are done
-      const allDepsDone = item.dependsOn.every((dep) => {
+      // Check if all dependencies are satisfied (staged or done)
+      const allDepsSatisfied = item.dependsOn.every((dep) => {
         const depStage = stageMap.get(dep.dependsOnId);
-        return depStage === 'done';
+        // depStage is undefined when the dependency wasn't found in this
+        // project's item set; isDependencySatisfied(undefined) is false
+        // (Array.includes never matches undefined against StageId values),
+        // so an unresolved dependency correctly stays unsatisfied.
+        return isDependencySatisfied(depStage as StageId);
       });
 
-      if (allDepsDone) {
+      if (allDepsSatisfied) {
         readyItems.push(item.id);
       } else {
         blockedItems.push(item.id);

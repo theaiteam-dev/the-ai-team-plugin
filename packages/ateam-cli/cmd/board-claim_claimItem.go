@@ -41,9 +41,25 @@ var boardClaimClaimItemCmd = &cobra.Command{
 			if !json.Valid([]byte(boardClaimClaimItemCmdBody)) {
 				return fmt.Errorf("--body does not contain valid JSON")
 			}
-			var bodyObj interface{}
-			_ = json.Unmarshal([]byte(boardClaimClaimItemCmdBody), &bodyObj)
-			resp, err := c.Do("POST", "/api/board/claim", pathParams, queryParams, bodyObj)
+			var bodyFields map[string]interface{}
+			if err := json.Unmarshal([]byte(boardClaimClaimItemCmdBody), &bodyFields); err != nil {
+				return fmt.Errorf("--body must be a JSON object: %w", err)
+			}
+			agentVal, ok := bodyFields["agent"].(string)
+			if !ok || agentVal == "" {
+				return fmt.Errorf("--body must include a string \"agent\" field")
+			}
+			// Same allowed-agent validation as the flag path below (Frankie and
+			// Sosa deliberately excluded — see the boundary comment there). The
+			// raw-body branch must never reach c.Do with an agent outside this
+			// list; do not widen without widening the flag path's enum too.
+			if err := validate.Enum("agent", agentVal, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Tawnia"}); err != nil {
+				return err
+			}
+			// Send the original bytes unmodified (json.RawMessage's MarshalJSON
+			// returns itself) rather than re-marshaling bodyFields, so a valid
+			// body reaches the server byte-identical to what the caller passed.
+			resp, err := c.Do("POST", "/api/board/claim", pathParams, queryParams, json.RawMessage(boardClaimClaimItemCmdBody))
 			if err != nil {
 				return err
 			}
@@ -61,6 +77,10 @@ var boardClaimClaimItemCmd = &cobra.Command{
 		if err := validate.RequireFlags(cmd, "agent", "itemId"); err != nil {
 			return err
 		}
+		// Deliberately narrower than the openapi.yaml AgentName enum: Frankie
+		// never claims or moves board items — `done` is terminal (ADR 0005) —
+		// and Sosa is a planning-phase critic who never claims items either.
+		// Do not re-add them here on regeneration.
 		if err := validate.Enum("agent", boardClaimClaimItemCmd_agent, []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Tawnia"}); err != nil { return err }
 		bodyMap := map[string]interface{}{}
 		bodyMap["agent"] = boardClaimClaimItemCmd_agent
@@ -86,9 +106,11 @@ func init() {
 	boardClaimCmd.AddCommand(boardClaimClaimItemCmd)
 	boardClaimClaimItemCmd.Flags().StringVar(&boardClaimClaimItemCmdBody, "body", "", "Raw JSON body (overrides individual flags)")
 	boardClaimClaimItemCmd.Flags().StringVar(&boardClaimClaimItemCmdBodyFile, "body-file", "", "Path to JSON file to use as request body")
-	boardClaimClaimItemCmd.Flags().StringVar(&boardClaimClaimItemCmd_agent, "agent", "", "(Hannibal|Face|Murdock|B.A.|Amy|Lynch|Stockwell|Sosa|Tawnia)")
+	// Help text and completion mirror the validate.Enum list in RunE — no
+	// Sosa or Frankie (see the comment there before widening either).
+	boardClaimClaimItemCmd.Flags().StringVar(&boardClaimClaimItemCmd_agent, "agent", "", "(Hannibal|Face|Murdock|B.A.|Amy|Lynch|Stockwell|Tawnia)")
 	boardClaimClaimItemCmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Sosa", "Tawnia"}, cobra.ShellCompDirectiveNoFileComp
+		return []string{"Hannibal", "Face", "Murdock", "B.A.", "Amy", "Lynch", "Stockwell", "Tawnia"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	boardClaimClaimItemCmd.Flags().StringVar(&boardClaimClaimItemCmd_itemId, "itemId", "", "")
 	// NOTE: required-flag enforcement is done in RunE via validate.RequireFlags

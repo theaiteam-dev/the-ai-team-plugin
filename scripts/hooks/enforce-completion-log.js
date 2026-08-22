@@ -26,7 +26,7 @@
 
 import { readFileSync } from 'fs';
 import { resolveAgent, isKnownAgent } from './lib/resolve-agent.js';
-import { lookupAgent } from './lib/observer.js';
+import { lookupAgent, apiEventHeaders } from './lib/observer.js';
 
 // Read hook input from stdin
 let hookInput = {};
@@ -98,7 +98,7 @@ async function checkCompletion() {
 
     const url = `${apiUrl}/api/projects/${projectId}/items/${detectedItemId}`;
     const response = await fetch(url, {
-      headers: { 'X-Project-ID': projectId },
+      headers: apiEventHeaders(projectId),
     });
 
     if (!response.ok) {

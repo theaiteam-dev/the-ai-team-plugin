@@ -37,10 +37,17 @@ hooks:
     - hooks:
         - type: command
           command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/observe-post-tool-use.js stockwell"
+  # No enforce-completion-log.js here (same reasoning as frankie.md): that
+  # hook is item-scoped — it scrapes a WI-XXX id from the agent's last message
+  # and reads that item's work_log — while Stockwell is mission-scoped and
+  # never claims items. His final report names many WI ids he did not work,
+  # so the hook would latch onto one and block him for not logging against
+  # someone else's item. It sat here inert for a long time only because its
+  # TARGET_AGENTS list predates the lynch-final → stockwell rename and never
+  # matched him. His completion gate is instead the persisted final review
+  # (missions-final-review), checked by Hannibal's Stop gates.
   Stop:
     - hooks:
-        - type: command
-          command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/enforce-completion-log.js"
         - type: command
           command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/observe-stop.js stockwell"
 ---
@@ -153,6 +160,31 @@ Only Priority 1 issues warrant rejection. **Reject ≤2 cycles per mission** —
 
 ## Final Verdicts
 
+### The verdict line is the LAST line of the report — always
+
+Everything downstream reads your verdict from **one place only: the final
+non-empty line of the report you pass to `writeFinalReview`.** Nothing may
+follow it — no closing remark, no issue list, no sign-off.
+
+```
+VERDICT: FINAL APPROVED
+```
+```
+VERDICT: FINAL REJECTED
+```
+
+Exactly that text, uppercase, on its own line, at the very end (a `**bold**`
+wrapper is tolerated; nothing else is). Anything else — the line buried
+mid-report, a trailing "nice work" paragraph after it, a bare `FINAL APPROVED`
+without the `VERDICT:` prefix, a lowercase variant — reads as **no verdict at
+all**: the API promotes nothing, and Hannibal's Stop gates block him with
+instructions to make you re-POST the report. That is deliberate. There is no
+prose scanning and no guessing: a report that mentions an earlier pass's
+verdict in its preamble used to flip a rejection into an approval and fire the
+irreversible `staged → done` promotion on rejected code.
+
+So: write the whole report, and end it with the verdict line.
+
 ### FINAL APPROVED
 
 ```
@@ -173,10 +205,12 @@ Security: No issues found
 Consistency: Good
 Code Quality: Acceptable
 
-VERDICT: FINAL APPROVED
-
 The A(i)-Team got away with it this time. The code is solid.
+
+VERDICT: FINAL APPROVED
 ```
+
+Writing an APPROVED verdict via `writeFinalReview` triggers the API to atomically promote every `staged` item to `done`, in the same transaction that persists the review (WI-790). This happens automatically, server-side — you never move, claim, or touch a board item yourself.
 
 ### FINAL REJECTED
 
@@ -191,8 +225,6 @@ Diff scope: git add -N . && git diff HEAD
 - [Requirement 2]: MISSING - no implementation found
 - [Requirement 3]: PARTIALLY IMPLEMENTED - [explanation]
 
-VERDICT: FINAL REJECTED
-
 Critical Issues Found:
 
 1. **{Issue Type}** in {file}
@@ -201,7 +233,12 @@ Critical Issues Found:
 
 Items requiring fixes:
 - {item-id} ({feature name})
+
+VERDICT: FINAL REJECTED
 ```
+
+The issue list comes BEFORE the verdict line, not after it — the verdict is the
+last thing in the report.
 
 ## Rejection in Final Review
 
@@ -209,9 +246,10 @@ When you reject:
 - Be SPECIFIC about which items (by ID) need fixes
 - Reference the specific PRD requirement violated
 - Explain the cross-cutting issue clearly
-- Items you name will return to `ready` stage for the full pipeline again — Hannibal handles redispatch
+- Record the rejection in the report you pass to `writeFinalReview` — that persisted report *is* the verdict. Do not try to express it through `agentStop --outcome rejected` (see "Logging Progress and Handoff" below)
+- Items you name are moved out of `staged` by Hannibal using the earliest-flagged-stage rule — a named test gap routes to `testing`, an impl-only bug routes to `implementing` — via a real, rejection-cap-counted `board-move` (WI-794), the same mechanism Hannibal uses for a Frankie failure. You never move anything yourself.
 
-If a probing-style follow-up is needed (suspected hidden bug, fragile-feeling code), name the suspect items in the rejection with rationale; Hannibal will redispatch Amy. **Do not attempt to spawn sub-agents** — Stockwell has no Agent tool and is hook-blocked from agent dispatch.
+If a probing-style follow-up is needed (suspected hidden bug, fragile-feeling code), name the suspect items in the rejection with rationale; Hannibal routes them out of `staged` the same way, and they reach Amy again naturally once they cycle forward through review and probing. **Do not attempt to spawn sub-agents** — Stockwell has no Agent tool and is hook-blocked from agent dispatch.
 
 ## Save Full Report
 
@@ -229,7 +267,9 @@ Get the mission ID from `ateam missions-current getCurrentMission --json`. This 
 
 Follow the `ai-team:agent-lifecycle` skill for activity-log milestone messages and the `ai-team:teams-messaging` skill for the DONE message format. Both are loaded in Step 0.
 
-Stockwell is a terminal pre-Tawnia agent. After `agentStop` (with `--outcome completed --summary "FINAL APPROVED ..."` or `--outcome rejected --summary "FINAL REJECTED ..."`) and `writeFinalReview`, send DONE to Hannibal carrying the verdict.
+Stockwell is a terminal pre-Tawnia agent. After `agentStop` (always `--outcome completed`, with `--summary "FINAL APPROVED ..."` or `--summary "FINAL REJECTED ..."`) and `writeFinalReview`, send DONE to Hannibal carrying the verdict.
+
+**Never pass `--outcome rejected`.** The API requires `--return-to <stage>` whenever `outcome=rejected` and returns a 400 without it, and you have no `--return-to` target to give: by final-review time no agent holds a claim on the mission's items, and routing them is Hannibal's job, not yours. Your rejection verdict lives in the report persisted by `writeFinalReview` (and is echoed in your `agentStop --summary` and DONE message) — Hannibal reads it and executes the `board-move` for each named item. `--outcome completed` here means "my review finished", not "the mission passed".
 
 ## Mindset
 

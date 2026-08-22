@@ -2,8 +2,29 @@
 
 import * as React from "react";
 import { useState } from "react";
+import { AGENT_DISPLAY_NAMES, type AgentId } from "@ai-team/shared";
 import { cn } from "@/lib/utils";
 import type { HookEventSummary } from "@/types/hook-event";
+
+/**
+ * Agent ids offered by the raw-view agent filter, in pipeline order
+ * (planning → execution → mission tail per ADR 0004: Frankie → Stockwell →
+ * Tawnia). Typed against the shared registry so an id typo fails to compile;
+ * the agent-list-completeness test asserts every registry agent appears here.
+ * Labels come from the shared AGENT_DISPLAY_NAMES.
+ */
+export const RAW_AGENT_FILTER_AGENTS: readonly AgentId[] = [
+  "hannibal",
+  "face",
+  "sosa",
+  "murdock",
+  "ba",
+  "amy",
+  "lynch",
+  "frankie",
+  "stockwell",
+  "tawnia",
+];
 
 /**
  * Filter state interface for Raw Agent View
@@ -116,17 +137,9 @@ export function RawAgentFilters({
   onSetStatus,
   onReset,
 }: RawAgentFiltersProps) {
-  // Agent names in canonical order
-  const agents = ["hannibal", "face", "murdock", "ba", "amy", "lynch", "tawnia"];
-  const agentDisplayNames: Record<string, string> = {
-    hannibal: "Hannibal",
-    face: "Face",
-    murdock: "Murdock",
-    ba: "B.A.",
-    amy: "Amy",
-    lynch: "Lynch",
-    tawnia: "Tawnia",
-  };
+  // Agent names in canonical order (see RAW_AGENT_FILTER_AGENTS above)
+  const agents = RAW_AGENT_FILTER_AGENTS;
+  const agentDisplayNames = AGENT_DISPLAY_NAMES;
 
   // Common tool types
   const tools = ["Write", "Edit", "Read", "Bash", "Grep", "Glob"];

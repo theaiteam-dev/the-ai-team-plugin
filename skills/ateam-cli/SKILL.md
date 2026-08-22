@@ -11,7 +11,7 @@ The `ateam` binary is a Go CLI generated from the A(i)-Team OpenAPI spec. It pro
 
 Use `ateam` whenever you need to interact with the A(i)-Team API:
 
-- **Agent code**: Hannibal, Murdock, B.A., Lynch, Amy, Tawnia, Face, and Sosa ALL call `ateam` via the `Bash` tool for every API interaction (board moves, item updates, agent lifecycle, etc.)
+- **Agent code**: Hannibal, Murdock, B.A., Lynch, Amy, Frankie, Stockwell, Tawnia, Face, and Sosa ALL call `ateam` via the `Bash` tool for every API interaction (board moves, item updates, agent lifecycle, etc.)
 - **Debugging**: Inspecting board state, querying items, missions, or activity logs
 - **Scripts**: Automating API interactions or one-off queries
 

@@ -165,8 +165,12 @@ describe('isValidTransition', () => {
       expect(isValidTransition('probing', 'ready')).toBe(true);
     });
 
-    it('should allow probing -> done (verified)', () => {
-      expect(isValidTransition('probing', 'done')).toBe(true);
+    it('should reject probing -> done (must go through staged)', () => {
+      expect(isValidTransition('probing', 'done')).toBe(false);
+    });
+
+    it('should allow probing -> staged (verified)', () => {
+      expect(isValidTransition('probing', 'staged')).toBe(true);
     });
 
     it('should allow probing -> blocked', () => {

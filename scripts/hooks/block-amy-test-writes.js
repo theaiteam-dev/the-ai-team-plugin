@@ -11,7 +11,20 @@
 
 import { readFileSync } from 'fs';
 import { resolveAgent } from './lib/resolve-agent.js';
-import { sendDeniedEvent } from './lib/send-denied-event.js';
+import { isScratchPath } from './lib/scratch-path.js';
+import { denyAndExit } from './lib/send-denied-event.js';
+
+/**
+ * Project root for the scratch-space exclusion. Claude Code sends the session
+ * cwd in the hook payload; the hook process is started there too, so
+ * process.cwd() is the fallback. Passed EXPLICITLY into isScratchPath so a
+ * repo that lives under a temp root (macOS $TMPDIR, a /tmp worktree, a CI
+ * sandbox) never gets a scratch allowance for its own files.
+ */
+function projectRootFrom(input) {
+  const fromPayload = input && typeof input.cwd === 'string' ? input.cwd : '';
+  return fromPayload !== '' ? fromPayload : process.cwd();
+}
 
 let hookInput = {};
 try {
@@ -32,53 +45,61 @@ try {
 
   const toolName = hookInput.tool_name || '';
   const toolInput = hookInput.tool_input || {};
-  const filePath = toolInput.file_path || '';
+  const filePath = toolInput.file_path || toolInput.notebook_path || '';
+
+  // Only gate write-capable tools. This hook is matcher-less (fires on every
+  // tool), and Read/Grep/Glob also carry a file_path — without this gate the
+  // source-code/test/config path checks below falsely block Amy from READING
+  // source files to investigate, not just from writing them.
+  const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+  if (!WRITE_TOOLS.has(toolName)) {
+    process.exit(0);
+  }
 
   if (!filePath) {
     process.exit(0);
   }
 
-  // Allow writes to /tmp/ (throwaway debug scripts, investigation artifacts)
-  if (filePath.startsWith('/tmp/') || filePath.startsWith('/var/')) {
+  // Allow writes to the temp dirs (throwaway debug scripts, investigation
+  // artifacts) — only where the path REALLY resolves under them AND outside
+  // this project (lib/scratch-path.js collapses "..", follows symlinks, and
+  // excludes the project root first).
+  if (isScratchPath(filePath, undefined, projectRootFrom(hookInput))) {
     process.exit(0);
   }
 
   // Block writes to test/spec files
   if (filePath.match(/\.(test|spec)\.(ts|js|tsx|jsx)$/)) {
     const reason = `BLOCKED: Amy cannot write to ${filePath}. Test files are Murdock's responsibility.`;
-    sendDeniedEvent({ agentName: agent, toolName, reason });
     process.stderr.write(`BLOCKED: Amy cannot write to ${filePath}\n`);
     process.stderr.write('Test files are Murdock\'s responsibility.\n');
     process.stderr.write('Document your findings in the agent_stop summary instead.\n');
-    process.exit(2);
+    await denyAndExit({ agentName: agent, toolName, reason });
   }
 
   // Block writes to raptor files
   if (filePath.match(/raptor/i)) {
     const reason = `BLOCKED: Amy cannot write raptor files: ${filePath}`;
-    sendDeniedEvent({ agentName: agent, toolName, reason });
     process.stderr.write(`BLOCKED: Amy cannot write raptor files: ${filePath}\n`);
     process.stderr.write('Document your investigation in the agent_stop summary instead.\n');
-    process.exit(2);
+    await denyAndExit({ agentName: agent, toolName, reason });
   }
 
   // Block writes to project source code (src/, app/, lib/, components/, etc.)
   if (filePath.match(/\/(src|app|lib|components|pages|utils|services|hooks|styles|public)\//)) {
     const reason = `BLOCKED: Amy cannot modify project source code: ${filePath}`;
-    sendDeniedEvent({ agentName: agent, toolName, reason });
     process.stderr.write(`BLOCKED: Amy cannot modify project source code: ${filePath}\n`);
     process.stderr.write('Amy investigates and reports. She does NOT fix bugs or modify code.\n');
     process.stderr.write('Document your findings in the agent_stop summary instead.\n');
-    process.exit(2);
+    await denyAndExit({ agentName: agent, toolName, reason });
   }
 
   // Block writes to config files that affect the project
   if (filePath.match(/\/(package\.json|tsconfig.*|biome\.json|vitest\.config|next\.config|prisma\/schema)/)) {
     const reason = `BLOCKED: Amy cannot modify project config: ${filePath}`;
-    sendDeniedEvent({ agentName: agent, toolName, reason });
     process.stderr.write(`BLOCKED: Amy cannot modify project config: ${filePath}\n`);
     process.stderr.write('Report config issues in the agent_stop summary instead.\n');
-    process.exit(2);
+    await denyAndExit({ agentName: agent, toolName, reason });
   }
 
   // Allow other writes (files outside project directories)

@@ -73,7 +73,7 @@ function getById(id: string): User {
 The A(i)-Team enforces TDD through its pipeline stages. Each work item flows through stages in strict order:
 
 ```
-briefings → ready → testing (Murdock) → implementing (B.A.) → review (Lynch) → probing (Amy) → done
+briefings → ready → testing (Murdock) → implementing (B.A.) → review (Lynch) → probing (Amy) → staged
 ```
 
 The pipeline enforces the TDD contract:
@@ -82,6 +82,8 @@ The pipeline enforces the TDD contract:
 - B.A. refactors for clarity (REFACTOR phase)
 - Lynch verifies tests + implementation as a cohesive unit
 - Amy probes for bugs that tests missed
+
+This chain repeats per work item, ending at `staged` — the per-item pipeline's real terminal stage (WI-786/787), a holding pen awaiting mission-tail verification. Once EVERY item reaches `staged`, the mission continues with a separate, mission-level tail: Frankie walks the full Definition of Done against the running app and produces an evidence bundle, then Stockwell performs the Final Mission Review (including Frankie's evidence). An APPROVED verdict atomically promotes every staged item to `done` (WI-790), then post-checks run, then Tawnia documents and commits. A Frankie failure or Stockwell rejection moves the named items out of `staged` to `testing` or `implementing` via a real board-move (earliest-flagged-stage rule, WI-794) and restarts the mission tail at Frankie once they're back in `staged` — not at post-checks.
 
 ## Benefits of TDD in A(i)-Team
 

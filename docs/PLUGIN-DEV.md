@@ -39,7 +39,7 @@ The `@ai-team/shared` package provides TypeScript types and constants used by th
 ai-team/
 ├── .claude-plugin/plugin.json  # Plugin configuration
 ├── package.json             # Bun workspaces root (run `bun install`)
-├── bun.lockb                # Bun lock file
+├── bun.lock                 # Bun lock file
 ├── docker-compose.yml       # Docker setup for kanban-viewer
 ├── packages/                # Monorepo packages
 │   ├── shared/              # @ai-team/shared - Shared types and constants
@@ -146,6 +146,7 @@ ai-team/
 │       ├── block-lynch-browser.js       # Block Playwright (Lynch + Stockwell)
 │       ├── block-lynch-writes.js        # Block file writes (Lynch)
 │       ├── block-sosa-writes.js         # Block all writes (Sosa)
+│       ├── block-frankie-writes.js      # Block impl/test/existing-specs writes (Frankie)
 │       ├── block-worker-board-move.js   # Block board_move (workers)
 │       ├── block-worker-board-claim.js  # Block board_claim (workers)
 │       ├── enforce-agent-start.js       # Require agentStart before work (workers)
@@ -198,7 +199,7 @@ These hooks fire for all sessions where the plugin is enabled:
 - **SubagentStart/Stop** (no matcher): `observe-subagent.js` — logs subagent lifecycle events
 - **TeammateIdle/TaskCompleted** (no matcher): `observe-teammate.js` — logs native teams events
 
-### Shared Working Agent Hooks (Murdock, B.A., Lynch, Stockwell, Amy, Tawnia)
+### Shared Working Agent Hooks (Murdock, B.A., Lynch, Stockwell, Amy, Frankie, Tawnia)
 
 All working agents share these hooks in their frontmatter:
 
@@ -209,15 +210,18 @@ All working agents share these hooks in their frontmatter:
 - **PostToolUse(no matcher)** → `observe-post-tool-use.js {agent}`: Telemetry
 - **Stop** → `observe-stop.js {agent}`: Telemetry
 
-Pipeline workers (Murdock, B.A., Lynch, Amy) use `enforce-handoff.js` as their Stop hook — it validates both `agentStop` lifecycle AND peer-to-peer handoff routing. Terminal agents (Tawnia, Stockwell) use `enforce-completion-log.js` instead — they complete without forwarding.
+Pipeline workers (Murdock, B.A., Lynch, Amy) use `enforce-handoff.js` as their Stop hook — it validates both `agentStop` lifecycle AND peer-to-peer handoff routing. Terminal agents complete without forwarding, so they don't use it: Tawnia registers `enforce-completion-log.js` instead (that hook's `TARGET_AGENTS` is `murdock`, `ba`, `lynch`, `lynch-final`, `amy`, `tawnia`; it fails open for any agent outside that list). **Neither Frankie nor Stockwell registers a completion-log hook** — both are mission-scoped while the hook is item-scoped (it scrapes a `WI-XXX` id from the agent's last message and reads that item's `work_log`). Frankie runs under the sentinel id `FRANKIE-WALK` and Stockwell never claims items, so for either of them the hook would latch onto the item ids their reports are required to name and block them for not logging against someone else's work (see the comments in `agents/frankie.md` and `agents/stockwell.md`). His walk is gated at the mission level instead, by `enforce-final-review.js` on Hannibal's Stop — `checkFrankieEvidence()` (`scripts/hooks/lib/stop-gates.js`) reads `.qa-evidence/<missionId>/report.md` off the filesystem and blocks on a missing, stale, or ❌-bearing bundle (override: `ATEAM_SKIP_FRANKIE_GATE=1`). A second, independent gate in the same module — `checkStagedNotPromoted()` — blocks the stop while any item still sits in `staged`, since promotion to `done` only happens inside WI-790's atomic transaction. That one is a board-state fact rather than an environment check, so `ATEAM_SKIP_FRANKIE_GATE` does **not** release it; it has its own override, `ATEAM_SKIP_PROMOTION_GATE=1`, for operator recovery when the board cannot clear on its own (e.g. an APPROVED final review exists but the API never promoted — a server predating WI-790). The separation is deliberate: skipping a walk nobody can drive is a different decision from declaring a mission finished with items the API never promoted.
+
+The mission tail runs all-items-**staged** → Frankie → Stockwell → promotion to `done` → post-checks → Tawnia. Frankie runs once per mission (not a pooled pipeline agent, no peer handoff) and never moves items himself: he names the failing items, and Hannibal executes a real `ateam board-move moveItem --toStage <testing|implementing>` per item using the earliest-flagged-stage rule — a first-class, rejection-cap-counted transition (WI-794), not a manual reopen. `done` stays terminal (`adr/0005-done-is-terminal-no-in-mission-rework.md`); rework leaves from `staged`, which is exactly why items hold there until an APPROVED final review atomically promotes them (WI-790). A Stockwell rejection later in the tail moves items the same way and restarts the tail at Frankie, not at post-checks.
 
 ### Per-Agent Unique Hooks
 
 **Murdock**: `block-murdock-impl-writes.js` — prevents writing implementation files
 **B.A.**: `block-ba-bash-restrictions.js` + `block-ba-test-writes.js` + `lint-test-quality.js` — prevents test writes, restricted bash, and lints test quality
 **Lynch**: `block-lynch-writes.js` + `block-lynch-browser.js` — prevents file writes and browser tools
-**Stockwell**: `block-lynch-browser.js` — prevents browser tools (read-only reviewer)
+**Stockwell**: `block-lynch-writes.js` + `block-lynch-browser.js` — prevents file writes and browser tools (read-only reviewer; both hooks gate on the resolved names `lynch`, `lynch-final`, and `stockwell`)
 **Amy**: `block-amy-writes.js` + `track-browser-usage.js` + `enforce-browser-verification.js`
+**Frankie**: `block-frankie-writes.js` — prevents writing implementation, tests, or existing `specs/` files; only his evidence bundle and new spec files are allowed
 **Sosa**: `block-sosa-writes.js` + `enforce-sosa-coverage.js`
 **Hannibal**: `block-hannibal-writes.js` + `block-raw-mv.js` + `enforce-final-review.js`
 
