@@ -7,6 +7,7 @@ skills:
   - ateam-cli
   - work-breakdown
   - teams-messaging
+  - prd-reading
 hooks:
   PreToolUse:
     - matcher: "Write|Edit"
@@ -61,6 +62,7 @@ Skills are NOT preloaded. **Before responding to any work, invoke `Skill` for ev
 Skill("ai-team:ateam-cli")        # listItems, renderItem, deps-check, activity log
 Skill("ai-team:work-breakdown")   # AC quality, sizing, NO_TEST_NEEDED, integration-last — the standards you critique against
 Skill("ai-team:teams-messaging")  # report-to-Hannibal format, AskUserQuestion routing
+Skill("ai-team:prd-reading")      # complete-coverage read protocol (wc -l + paginate) — mandatory before the section-by-section PRD pass
 ```
 
 ## Expert Domain

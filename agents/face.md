@@ -7,6 +7,7 @@ skills:
   - ateam-cli
   - work-breakdown
   - a11y
+  - prd-reading
 hooks:
   PreToolUse:
     - hooks:
@@ -62,6 +63,7 @@ Skills are NOT preloaded. **Before responding to any work, invoke `Skill` for ev
 Skill("ai-team:ateam-cli")        # ateam CLI reference (createItem, updateItem, deps-check, board-move)
 Skill("ai-team:work-breakdown")   # item types, sizing, AC rules, NO_TEST_NEEDED, parallel groups, integration-last
 Skill("ai-team:a11y")             # accessibility ACs (per-trigger keyboard, focus, ARIA) for UI items
+Skill("ai-team:prd-reading")      # complete-coverage read protocol (wc -l + paginate) + PRD structure map
 ```
 
 ## Two-Pass Planning

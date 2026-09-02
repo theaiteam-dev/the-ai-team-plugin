@@ -119,7 +119,7 @@ describe('agents/frankie.md - mechanical frontmatter contract', () => {
 
     it('declares exactly the specified skill set', () => {
       expect([...skills].sort()).toEqual(
-        ['a11y', 'agent-lifecycle', 'ateam-cli', 'perspective-test', 'teams-messaging'].sort()
+        ['a11y', 'agent-lifecycle', 'ateam-cli', 'perspective-test', 'prd-reading', 'teams-messaging'].sort()
       );
     });
 
