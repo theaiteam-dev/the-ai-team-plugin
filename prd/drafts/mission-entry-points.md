@@ -87,16 +87,16 @@ The operator cannot quickly launch team-quality work for anything that isn't a P
 
 **Quality profiles**
 
-7. Planning shall resolve exactly one quality profile per mission — `quick`, `normal`, or `deep` — from, in precedence order: the `--quality`/`-q` flag, the entry point's default, and (for `/ai-team:plan`) the Face/Sosa recommendation ratified at the refinement gate.
-8. The resolved profile shall map onto the existing execution-contract enums: `quick` = `smoke` + `evidence-only`; `normal` = `critical-path` + `hands-on`; `deep` = `full-dod` + `hands-on` with deepened probing guidance. The exact bundle definitions shall live in one place, not be re-derived per consumer.
-9. The resolved contract shall be stored on the Mission record at creation, and every consumer of the execution contract (agents, playbooks, hooks) shall read the mission's contract first, falling back to `ateam.config.json` for missions without one.
+7. Planning shall resolve exactly one quality profile per mission — `quick`, `normal`, or `deep` — from, in precedence order: the `--quality`/`-q` flag, the entry point's default, and (for `/ai-team:plan`) the Face/Sosa recommendation ratified at the refinement gate. For `/ai-team:plan` the ratified recommendation *is* the entry point's default — it applies whenever `--quality` is absent.
+8. The resolved profile shall map onto the existing execution-contract enums: `quick` = `smoke` + `evidence-only`; `normal` = `critical-path` + `hands-on`; `deep` = `full-dod` + `hands-on`. Probing depth is deliberately **not** a profile dimension: Amy's standard probing pass runs unchanged at every profile — a cheaper mission is a less-tested, lighter-reviewed mission, never a less-probed one. `deep` additionally carries deepened probing guidance for Amy, defined as part of the bundle (prompt-level guidance, not a new config enum). The exact bundle definitions — both enums plus `deep`'s probing guidance text — shall live in one place, the canonical resolver (`qa-contract.js`, §9), and never be re-derived or restated per consumer.
+9. The resolved contract shall be stored on the Mission record **before execution begins**: at mission creation whenever the profile is already known (the evidence-derived entry points, or any invocation with `--quality`), and at refinement-gate ratification for a flag-less `/ai-team:plan`, whose mission record exists before the recommendation does. No consumer reads the contract during planning, so the stamp always precedes first use. Every consumer of the execution contract (agents, playbooks, hooks) shall read the mission's contract first, falling back to `ateam.config.json` for missions without one.
 10. `ateam.config.json`'s execution-contract fields shall remain the repo-fact source (surfaces, qa seeds, credentials, drivers) and the fallback for quality fields; no existing config is invalidated.
 
 **Learnings**
 
-11. Finding-derived work items (from `review` and `bug-stomp`) shall carry learning fields at creation: severity (mapped from review severity per the existing sweep table), attributed agent (earliest-flagged-stage rule), and fingerprint/pattern (matched against existing fingerprints or newly minted, per the existing match-or-create rule).
-12. The retro agent shall derive `RetroLearning` rows from completed items bearing learning fields, including outcome data from `rejection_count` and `work_log`; no learning shall be written at capture time.
-13. A finding disproven during the pipeline (fix agent demonstrates the flagged behavior is correct) shall surface in the derived learning as a false-positive outcome rather than being silently dropped.
+11. Finding-derived work items (from `review` and `bug-stomp`) shall carry learning fields at creation: severity (mapped from review severity per the sweep severity table, ported into the `/ai-team:review` command definition when sweep retires — currently `commands/sweep.md` step b), attributed agent (the earliest-flagged-stage rule, `packages/shared/src/stages.ts`), and fingerprint/pattern (the match-or-create rule as written in `agents/retro.md`: compare against the top-50 from `ateam learnings fingerprints --json`, reuse on a clear match, mint a new slug otherwise). Where sweep's and retro's versions of a rule could diverge, the retro agent's are canonical — they survive sweep's retirement.
+12. The retro agent shall derive `RetroLearning` rows from completed items bearing learning fields, including outcome data from `rejection_count` and `work_log`; no learning shall be written at capture time. Derivation is idempotent, keyed by the source work item ID: one derived row per finding-derived item, and a debrief that runs twice (retry, crash-resume, operator re-run) updates that item's existing row rather than inserting a second.
+13. A finding disproven during the pipeline (fix agent demonstrates the flagged behavior is correct) shall surface in the derived learning with an explicit false-positive outcome value in its outcome data — never silently dropped — and shall reference the disproving evidence: the `work_log` entry (agent + summary) in which the finding was refuted.
 
 ### Non-Functional Requirements
 
@@ -145,6 +145,6 @@ Evidence-derived entry points need less requirements critique than prose PRDs, s
 ### Open Questions
 - [ ] How much Sosa does each evidence-derived entry point get — a fixed light pass, or profile-dependent?
 - [ ] `bug-stomp` scope: whole branch vs. diff-against-base vs. operator-supplied paths?
-- [ ] Does `quick` shrink Amy's probing to a smoke pass, or is probing depth held constant and only testing/review tiers move?
+- [x] ~~Does `quick` shrink Amy's probing to a smoke pass?~~ **Decided (2026-09-02):** probing depth is held constant — only testing/review tiers move (FR-8).
 - [ ] `bug-fix` sources beyond GitHub issues (a pasted description, a failing test) — v1 or later?
 - [ ] Should `/ai-team:sweep` alias to `/ai-team:review` for one release, or be removed outright?
