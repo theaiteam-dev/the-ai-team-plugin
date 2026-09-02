@@ -12,6 +12,7 @@ skills:
   - teams-messaging
   - ateam-cli
   - agent-lifecycle
+  - prd-reading
 hooks:
   PreToolUse:
     - matcher: "Bash"
@@ -77,6 +78,7 @@ Skill("ai-team:perspective-test")    # static analysis + wiring trace (Layers 1-
 Skill("ai-team:teams-messaging")     # DONE / FINAL APPROVED / FINAL REJECTED format
 Skill("ai-team:ateam-cli")           # ateam CLI reference (renderItem, listItems, writeFinalReview)
 Skill("ai-team:agent-lifecycle")     # activity logging, completion signaling
+Skill("ai-team:prd-reading")         # complete-coverage read protocol (count lines + paginate) — never FINAL-review a partially-read PRD
 ```
 
 ## Tools
