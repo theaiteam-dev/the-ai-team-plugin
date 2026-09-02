@@ -50,7 +50,8 @@ function collectReadPathFiles(): string[] {
 
   const walk = (dir: string) => {
     for (const entry of readdirSync(join(REPO_ROOT, dir), { withFileTypes: true })) {
-      const rel = join(dir, entry.name);
+      // Forward slashes always, so keys match ALLOWLIST on Windows too.
+      const rel = `${dir}/${entry.name}`;
       if (entry.isDirectory()) {
         if (entry.name === 'node_modules') continue;
         walk(rel);
@@ -77,8 +78,8 @@ describe('Read-path prompt files stay under the Read tool cap', () => {
   const files = collectReadPathFiles();
 
   it('discovers the files this guard exists for', () => {
-    expect(files).toContain(join('playbooks', 'orchestration-native.md'));
-    expect(files).toContain(join('skills', 'test-writing', 'SKILL.md'));
+    expect(files).toContain('playbooks/orchestration-native.md');
+    expect(files).toContain('skills/test-writing/SKILL.md');
     expect(files.length).toBeGreaterThan(10);
   });
 

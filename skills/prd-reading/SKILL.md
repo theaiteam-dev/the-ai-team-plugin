@@ -13,19 +13,19 @@ The Read tool truncates a single call near **~25k tokens** — roughly 40–50KB
 
 Never analyze a PRD you haven't read to its last line. Before reading:
 
-1. **Measure first.** Get the ground-truth line count:
+1. **Measure first.** Get the ground-truth line count (this counts a final line even when the file has no trailing newline, which `wc -l` misses):
    ```bash
-   wc -l <prdPath>
+   awk 'END { print NR }' <prdPath>
    ```
-2. **Read, then verify.** Read the file. The result is line-numbered — compare the **last line number returned** against the `wc -l` count. If they match, you have the whole document.
+2. **Read, then verify.** Read the file. The result is line-numbered — compare the **last line number returned** against that count. If they match, you have the whole document.
 3. **Paginate if short.** If the Read stopped early, continue with offset/limit slices until you reach the final line:
-   ```
+   ```text
    Read(prdPath, offset=<last line returned + 1>, limit=1000)
    ```
-   Repeat until the last line number returned equals the `wc -l` count.
+   Repeat until the last line number returned equals the ground-truth count.
 4. **Only then analyze.** If you report on a PRD, your coverage claim is implicit — a section-by-section review, a DoD walk, or a requirements cross-reference performed on a partial read is a silent false negative for everything in the unread tail.
 
-This protocol is self-contained: it needs no size stamp from the dispatcher. The `wc -l` count is your ground truth even when the spawn prompt says nothing about the PRD's size.
+This protocol is self-contained: it needs no size stamp from the dispatcher. The measured line count is your ground truth even when the spawn prompt says nothing about the PRD's size.
 
 ## PRD Anatomy — the reader's map
 

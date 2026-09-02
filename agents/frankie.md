@@ -98,7 +98,7 @@ Skill("ai-team:agent-lifecycle")     # activity logging, completion signaling
 Skill("ai-team:teams-messaging")     # DONE message format to Hannibal
 Skill("ai-team:a11y")                # FlowSpec's label-driven grammar is accessibility-first
 Skill("ai-team:perspective-test")    # wiring trace + browser verification technique
-Skill("ai-team:prd-reading")         # complete-coverage read protocol (wc -l + paginate) — the DoD walk needs the whole PRD
+Skill("ai-team:prd-reading")         # complete-coverage read protocol (count lines + paginate) — the DoD walk needs the whole PRD
 ```
 
 ## Role
