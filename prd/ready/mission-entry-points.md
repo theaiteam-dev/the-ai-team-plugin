@@ -117,7 +117,7 @@ The operator cannot quickly launch team-quality work for anything that isn't a P
 
 The design principle: **the pipeline is already item-driven, so mission "types" are decomposition strategies, not pipeline variants.** Each entry point differs only in where items come from — a PRD (Face+Sosa), a code review (findings), a GitHub issue (repro analysis), or a bug hunt (investigation). All of them converge on the same two artifacts: a mission brief the tail agents review against, and typed work items the pipeline executes. Scrutiny scales in two emergent ways: item *types* carry their own test expectations (a board full of `bug` items is naturally a lighter mission), and the *quality profile* tunes how deeply the existing agents test, review, and evidence — chosen per mission, at kickoff, in one word.
 
-Evidence-derived entry points need less requirements critique than prose PRDs, so each command defines its own planning depth (a light second pass rather than the full Face→Sosa→Face cycle) without affecting the others.
+Every entry point runs the same planning cycle as `/ai-team:plan`: items are created, Sosa reviews every one of them, and her refinements are applied before anything moves to `ready`. Sosa is a fixed fixture, not a per-entry-point or per-profile dial — she costs on the order of $2–3 per mission (about 1% of spend on recent missions) and her checks (testable acceptance criteria, correct outputs paths, type selection, shared-file dependencies) are exactly what make a finding-derived `bug` item runnable by Murdock. What varies by entry point is where the items come from, never how hard they are scrutinized. `--skip-refinement` remains the operator's escape hatch, as it is today for `/ai-team:plan`.
 
 ## 9. Technical Considerations
 
@@ -143,7 +143,7 @@ Evidence-derived entry points need less requirements critique than prose PRDs, s
 | `general-purpose` bucket persists via other ad-hoc flows | Medium | Attribution win looks incomplete | Out of scope here; measure via the NULL-mission metric, not bucket size |
 
 ### Open Questions
-- [ ] How much Sosa does each evidence-derived entry point get — a fixed light pass, or profile-dependent?
+- [x] ~~How much Sosa does each evidence-derived entry point get — a fixed light pass, or profile-dependent?~~ **Decided (2026-09-03):** the full pass, every time. Sosa is a fixed fixture of every entry point's planning; neither entry point nor quality profile reduces her review (§8).
 - [ ] `bug-stomp` scope: whole branch vs. diff-against-base vs. operator-supplied paths?
 - [x] ~~Does `quick` shrink Amy's probing to a smoke pass?~~ **Decided (2026-09-02):** probing depth is held constant — only testing/review tiers move (FR-8).
 - [ ] `bug-fix` sources beyond GitHub issues (a pasted description, a failing test) — v1 or later?
