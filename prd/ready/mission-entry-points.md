@@ -63,7 +63,7 @@ The operator cannot quickly launch team-quality work for anything that isn't a P
 - **Quality profiles** `quick` / `normal` / `deep`: named bundles over the existing execution-contract enums, resolved at planning kickoff, stored on the Mission record, overridable per invocation via `--quality` / `-q`. Agents and hooks read the mission's contract first and fall back to `ateam.config.json`.
 - Entry-point default profiles: `bug-fix` → quick, `review` / `bug-stomp` → normal, `plan` → recommended by Face/Sosa from the PRD and ratified by the operator at the existing refinement gate.
 - **Learning fields on work items** (severity, attributed agent by the earliest-flagged-stage rule, fingerprint/pattern) stamped at decomposition on finding-derived items; the retro agent derives `RetroLearning` rows from completed items at debrief. Sweep's direct capture step is retired.
-- Retirement of `/ai-team:sweep` as a standalone review-fix-commit command (aliased or removed with a pointer to `/ai-team:review`).
+- Retirement of `/ai-team:sweep` as a standalone review-fix-commit command: for one release `commands/sweep.md` becomes a tombstone that prints a pointer to `/ai-team:review` (explaining that review creates a mission instead of autofixing) and stops — no forwarding, so nothing runs unattributed. It is deleted in the following release. The run command's end-of-mission tip and the tuning command's pointer move to `/ai-team:review` in the same release.
 
 ### Out of Scope
 - **Any change to `/ai-team:run` or the orchestration playbooks' pipeline structure.** All entry points feed the existing pipeline; scrutiny scales through item types and the quality profile, not stage masks.
@@ -79,8 +79,8 @@ The operator cannot quickly launch team-quality work for anything that isn't a P
 **Entry points**
 
 1. `/ai-team:review` shall run the `ai-team:code-review` skill against the current branch, convert Must Fix and Should Fix findings into typed work items (Consider findings are reported only), emit a mission brief from the findings report, and create a mission — leaving execution to `/ai-team:run`.
-2. `/ai-team:bug-fix <issue#>` shall read the referenced GitHub issue, produce a repro-oriented mission brief, and create one or more `bug`-type work items.
-3. `/ai-team:bug-stomp` shall investigate the current branch for defects, and file each confirmed defect as a `bug`-type work item with a repro description, under a mission brief inventorying the hunt.
+2. `/ai-team:bug-fix <issue#|"description">` shall accept either a GitHub issue number or a quoted free-text description, produce a repro-oriented mission brief, and create one or more `bug`-type work items. The issue form reads the issue via `gh` and applies the closed/non-bug stop rule; the description form has no metadata gate — the agent's own repro attempt is the gate, and a repro that cannot be reproduced is the FR-6 clean outcome. A failing-test source (`--test <path>`) is deferred to a later PRD.
+3. `/ai-team:bug-stomp` shall investigate the current branch for defects, and file each confirmed defect as a `bug`-type work item with a repro description, under a mission brief inventorying the hunt. Default scope follows the `code-review` skill's rules (uncommitted work when the tree is dirty, else `git diff <base>...HEAD`); `--paths <glob...>` narrows the hunt to named files and `--all` widens it to the whole codebase. A clean hunt is the FR-6 clean outcome.
 4. Every entry point (including `/ai-team:plan`) shall emit a mission brief document and set it as the mission's `prdPath`; a mission shall never be created without one.
 5. Work items created by any entry point shall satisfy the existing item contract (type, description, objective, acceptance, context, outputs) so that `/ai-team:run` requires no changes.
 6. A clean result (zero findings, zero bugs, issue already fixed) shall be a valid, complete outcome: the command reports it and creates no mission.
@@ -144,7 +144,7 @@ Every entry point runs the same planning cycle as `/ai-team:plan`: items are cre
 
 ### Open Questions
 - [x] ~~How much Sosa does each evidence-derived entry point get — a fixed light pass, or profile-dependent?~~ **Decided (2026-09-03):** the full pass, every time. Sosa is a fixed fixture of every entry point's planning; neither entry point nor quality profile reduces her review (§8).
-- [ ] `bug-stomp` scope: whole branch vs. diff-against-base vs. operator-supplied paths?
+- [x] ~~`bug-stomp` scope: whole branch vs. diff-against-base vs. operator-supplied paths?~~ **Decided (2026-09-03):** diff-first — the `code-review` skill's scope rules by default, `--paths` narrows, `--all` widens (FR-3). Consistent with `review`, bounded by default, one-word command still works.
 - [x] ~~Does `quick` shrink Amy's probing to a smoke pass?~~ **Decided (2026-09-02):** probing depth is held constant — only testing/review tiers move (FR-8).
-- [ ] `bug-fix` sources beyond GitHub issues (a pasted description, a failing test) — v1 or later?
-- [ ] Should `/ai-team:sweep` alias to `/ai-team:review` for one release, or be removed outright?
+- [x] ~~`bug-fix` sources beyond GitHub issues (a pasted description, a failing test) — v1 or later?~~ **Decided (2026-09-03):** issue number or quoted description in v1 — the description is the universal fallback for non-GitHub repos; failing-test source deferred (FR-2).
+- [x] ~~Should `/ai-team:sweep` alias to `/ai-team:review` for one release, or be removed outright?~~ **Decided (2026-09-03):** tombstone for one release — a stub that prints the pointer and stops, no forwarding (sweep autofixed and committed; review creates a mission, so a silent alias would surprise), then deleted (§5 In Scope).
