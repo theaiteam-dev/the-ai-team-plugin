@@ -12,11 +12,21 @@ Today the A(i)-Team has exactly one way in — a PRD through `/ai-team:plan` —
 
 ## Definition of Done
 
-<!-- Face rolls per-item acceptance criteria up into this section during planning; blessed at the refinement gate. -->
-
-- [ ]
-- [ ]
-- [ ]
+- [ ] Running `/ai-team:review` on a branch with review findings creates a mission whose board holds one work item per Must Fix and Should Fix finding, and reports Consider findings without creating items for them.
+- [ ] Running `/ai-team:review` on a branch with no findings reports the clean result and creates no mission.
+- [ ] Running `/ai-team:bug-fix <issue#>` on an open bug issue creates a mission with at least one `bug`-type work item describing the repro.
+- [ ] Running `/ai-team:bug-fix <issue#>` on an issue that does not exist, is closed as fixed, or is not a bug reports why it stopped and creates no mission.
+- [ ] Running `/ai-team:bug-fix "<description>"` with a quoted description creates the same shape of mission without consulting GitHub.
+- [ ] Running `/ai-team:bug-stomp` files each confirmed defect as a `bug`-type work item carrying a repro description; `--paths` narrows the hunt to the named files and `--all` widens it to the whole codebase; a hunt that finds nothing creates no mission.
+- [ ] Every entry point, including `/ai-team:plan`, leaves its mission with a `prdPath` pointing at a readable mission brief that contains a populated Definition of Done.
+- [ ] Passing `--quality deep` to any entry point produces a mission that tests at full-dod and reviews hands-on, with no edit to `ateam.config.json`.
+- [ ] Passing a `--quality` value that is not `quick`, `normal`, or `deep` is rejected with a message naming all three, and no mission is created.
+- [ ] Running `/ai-team:plan` without `--quality` surfaces a recommended profile in Sosa's refinement report at the existing gate, and the profile the operator ratifies is stored on the mission before any item reaches `ready`.
+- [ ] A mission created before this change, carrying no stored contract, runs exactly as it does today, taking its testing level and review tier from `ateam.config.json`.
+- [ ] Work items created by `/ai-team:review` and `/ai-team:bug-stomp` show their severity, attributed agent, and fingerprint on the board.
+- [ ] After a mission built from findings completes, the debrief produces exactly one learning per finding-derived item, carrying that item's rejection and work-log outcome; running the debrief a second time updates those learnings instead of duplicating them.
+- [ ] A finding that a fix agent disproves appears in its derived learning with an explicit false-positive outcome that names the work-log entry which refuted it.
+- [ ] Running `/ai-team:sweep` prints a pointer to `/ai-team:review` and does nothing else — no review, no fixes, no commit — and no other document still recommends `sweep` as a live command.
 
 ## 1. Context & Background
 

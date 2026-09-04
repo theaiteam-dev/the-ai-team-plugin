@@ -377,6 +377,16 @@ Each feature flows: **Murdock → B.A. → Lynch → Amy**
 3. Lynch reviews tests + implementation together
 4. Amy probes for bugs that slip past tests
 
+### Quality Profiles
+
+A mission's testing depth and review tier can travel with the mission itself instead of always coming from `ateam.config.json`. Naming a **quality profile** — `quick`, `normal`, or `deep` — resolves to a concrete `testing_level` + `review_tier` pair (`deep` also carries extra probing guidance for Amy; probing *depth* itself never changes across profiles). Every entry point accepts `--quality`/`-q`:
+
+- `/ai-team:plan` stores it at mission creation when given, or has Face recommend one from the PRD's scope and risk for you to ratify in Sosa's refinement report at the existing gate.
+- `/ai-team:review`, `/ai-team:bug-fix`, and `/ai-team:bug-stomp` accept `--quality` directly, each with its own sensible default (`normal`, `quick`, and `normal` respectively).
+- A mission with no stored profile behaves exactly as before, falling back to `ateam.config.json`.
+
+Every consumer — Frankie, Tawnia, both orchestration playbooks, and the mission-completion hooks — resolves the running mission's own contract first, falling back to the repo config only when the mission has none, so a `deep` mission tests and reviews more rigorously than a `quick` one from the moment it's created.
+
 ### Final Mission Review
 
 When ALL features reach `staged` — the per-item pipeline's real terminal stage (WI-786/787), not `done` — Frankie walks the mission's full Definition of Done against the running app first (a fresh, non-pre-warmed agent) and produces an evidence bundle. A failure halts the tail: Hannibal moves each named item out of `staged` to `testing` or `implementing` using the earliest-flagged-stage rule, via a real, rejection-cap-counted `board-move` (WI-794) — not a manual reopen. Once Frankie's walk is clean, Stockwell performs a holistic review of the entire codebase, including Frankie's evidence bundle and graduated specs:
@@ -460,14 +470,26 @@ This command:
 6. **Verifies API connectivity**
 7. **Checks for browser testing tools** (agent-browser preferred, Playwright fallback)
 
-### `/ai-team:plan <prd-file> [--skip-refinement]`
+### `/ai-team:plan <prd-file> [--skip-refinement] [--quality <quick|normal|deep>]`
 
 Initialize a mission from a PRD file with two-pass refinement:
-1. Face decomposes PRD into work items
-2. Sosa reviews and asks clarifying questions
+1. Face decomposes PRD into work items (and recommends a quality profile, unless `--quality` was given)
+2. Sosa reviews, asks clarifying questions, and reproduces the recommendation for you to ratify
 3. Face refines based on feedback and moves Wave 0 to `ready` stage
 
-Use `--skip-refinement` to bypass Sosa's review for simple PRDs.
+Use `--skip-refinement` to bypass Sosa's review for simple PRDs. Use `--quality`/`-q` (`quick`, `normal`, or `deep`) to set the mission's quality profile outright instead of ratifying a recommendation at the refinement gate — see [Quality Profiles](#quality-profiles) below.
+
+### `/ai-team:review`
+
+Runs the team's code-review skill against the current branch, turns each Must Fix/Should Fix finding into a `bug`-type work item stamped with its severity, attributed agent, and fingerprint, writes a mission brief from the findings, and creates a mission — then stops, leaving execution to `/ai-team:run`. The replacement front door for the retired `/ai-team:sweep`: unlike sweep, this command never fixes or commits anything itself, so the fixes get the full skill-loaded pipeline instead of a bare subagent. Defaults to the `normal` quality profile; override with `--quality`/`-q`.
+
+### `/ai-team:bug-fix <issue-number> | "<description>"`
+
+Turns a reported bug into a mission — no PRD required. Point it at a GitHub issue number (read via `gh`, gated on open/bug metadata) or a quoted free-text description (no GitHub consultation), and it produces a repro-oriented mission brief with one or more `bug`-type work items that `/ai-team:run` executes like any other mission. Defaults to the `quick` quality profile; override with `--quality`/`-q`.
+
+### `/ai-team:bug-stomp [--paths <glob...>] [--all] [--quality <quick|normal|deep>]`
+
+Turns the team loose on the current branch to proactively hunt for defects, filing each confirmed one as a `bug`-type work item with a repro description under a mission brief inventorying the hunt. Defaults to the `ai-team:code-review` skill's own scope; `--paths` narrows it to specific globs, `--all` widens it to the whole codebase. Like `/ai-team:review`, it never fixes or commits anything itself. Defaults to the `normal` quality profile.
 
 ### `/ai-team:run [--wip N] [--max-wip M]`
 

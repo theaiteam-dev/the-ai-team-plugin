@@ -453,7 +453,7 @@ Task(
   Mission: {missionId}
   Evidence dir: .qa-evidence/{missionId}/
 
-  Read the mission's DoD from the PRD and the execution contract from ateam.config.json. Walk every DoD statement from the user's front door, write the evidence bundle, and graduate specs per the contract's testing_level.
+  Read the mission's DoD from the PRD and the execution contract — resolve the mission's own stored contract first (ateam missions-current getCurrentMission --json, via resolveExecutionContract in scripts/hooks/lib/qa-contract.js), falling back to ateam.config.json when the mission has none. Walk every DoD statement from the user's front door, write the evidence bundle, and graduate specs per the contract's testing_level.
 
   When done, report the checklist result, the evidence bundle path, and any failing work item IDs."
 )

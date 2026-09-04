@@ -10,6 +10,8 @@ import { prisma } from '@/lib/db';
 import { getAndValidateProjectId, ensureProject } from '@/lib/project-utils';
 import { createDatabaseError, createMissionNotFoundError, createValidationError } from '@/lib/errors';
 import type { ApiError } from '@/types/api';
+import { SEVERITY_VALUES } from '@ai-team/shared';
+import type { Severity } from '@ai-team/shared';
 
 const REQUIRED_FIELDS = [
   'source',
@@ -24,8 +26,9 @@ const REQUIRED_FIELDS = [
 // The column vocabulary. Review-surface terms (Must Fix / Should Fix /
 // Consider) are mapped to these at the capture boundary (sweep/retro prompts),
 // never stored raw — a typo here would silently never match rank/tuning.
-const VALID_SEVERITIES = ['low', 'medium', 'high', 'critical'] as const;
-type Severity = (typeof VALID_SEVERITIES)[number];
+// Reuses the single shared source of truth — also used by Item.severity
+// (POST/PATCH /api/items, WI-936) so both surfaces validate identically.
+const VALID_SEVERITIES = SEVERITY_VALUES;
 
 /**
  * Prisma raises P2002 when an insert violates a unique constraint. We match on
@@ -51,6 +54,7 @@ interface LearningCaptureBody {
   title: string;
   detail?: string | null;
   missionId?: string | null;
+  sourceItemId?: string | null;
 }
 
 /**
@@ -99,6 +103,8 @@ export async function POST(request: Request) {
 
     const missionId = body.missionId === undefined || body.missionId === null ? null : body.missionId;
     const detail = body.detail === undefined || body.detail === null ? null : body.detail;
+    const sourceItemId =
+      body.sourceItemId === undefined || body.sourceItemId === null ? null : body.sourceItemId;
 
     const data = {
       projectId,
@@ -111,7 +117,30 @@ export async function POST(request: Request) {
       fingerprint: body.fingerprint as string,
       title: body.title as string,
       detail,
+      sourceItemId,
     };
+
+    // WI-936: when the capture names a source item, dedupe keys on
+    // (projectId, missionId, sourceItemId) instead of fingerprint — a
+    // source-item-derived capture updates its existing row even if the
+    // fingerprint changed between captures. Preserves the original
+    // fingerprint-keyed dedupe exactly for captures with no source item.
+    const dedupeWhere = sourceItemId !== null
+      ? { projectId, missionId, sourceItemId }
+      : { projectId, missionId, fingerprint: data.fingerprint };
+
+    // RetroLearning.fingerprint is a required FK to Fingerprint.slug, so the
+    // Fingerprint row must exist before ANY write that references it — the
+    // create below, but also the sourceItemId-keyed update path just below,
+    // which can rewrite `fingerprint` to a brand-new slug on a re-capture. Do
+    // this before the dedupe check so both writers are covered by one call;
+    // create carries this capture's pattern/severity, update is a no-op so we
+    // never clobber values another surface (e.g. a merge) may own.
+    await prisma.fingerprint.upsert({
+      where: { slug: data.fingerprint },
+      update: {},
+      create: { slug: data.fingerprint, pattern: data.pattern, severity: data.severity },
+    });
 
     // Dedupe only applies when a learning is attributed to a specific mission;
     // null-missionId rows (backfill) are always distinct inserts.
@@ -126,40 +155,50 @@ export async function POST(request: Request) {
         return NextResponse.json(createMissionNotFoundError(missionId).toResponse(), { status: 404 });
       }
 
-      const existing = await prisma.retroLearning.findFirst({
-        where: { projectId, missionId, fingerprint: data.fingerprint },
-      });
+      const existing = await prisma.retroLearning.findFirst({ where: dedupeWhere });
       if (existing) {
+        // Source-item-derived rows are re-captured across debrief re-runs
+        // (e.g. a fix bounces, then lands — the outcome in `detail` changes)
+        // — a re-run must UPDATE the stored content, not just report the
+        // same id back unchanged. Fingerprint-only (no sourceItemId) hits
+        // keep the original find-and-return-unchanged behavior exactly —
+        // that path is ad-hoc capture, not idempotent re-derivation, and is
+        // out of scope for this fix.
+        if (sourceItemId !== null) {
+          const mutableFields = {
+            source: data.source,
+            severity: data.severity,
+            attributedAgent: data.attributedAgent,
+            targetSurface: data.targetSurface,
+            pattern: data.pattern,
+            fingerprint: data.fingerprint,
+            title: data.title,
+            detail: data.detail,
+          };
+          await prisma.retroLearning.update({ where: { id: existing.id }, data: mutableFields });
+          return NextResponse.json(
+            { success: true, data: { id: existing.id, ...mutableFields } },
+            { status: 200 }
+          );
+        }
         return NextResponse.json({ success: true, data: { id: existing.id } }, { status: 200 });
       }
     }
 
-    // RetroLearning.fingerprint is a required FK to Fingerprint.slug, so the
-    // Fingerprint row must exist before the insert — otherwise a brand-new
-    // fingerprint slug fails the FK and surfaces as a 500 (this is exactly what
-    // broke on a fresh database). Ensure it here; create carries this capture's
-    // pattern/severity, update is a no-op so we never clobber values another
-    // surface (e.g. a merge) may own.
-    await prisma.fingerprint.upsert({
-      where: { slug: data.fingerprint },
-      update: {},
-      create: { slug: data.fingerprint, pattern: data.pattern, severity: data.severity },
-    });
-
     // The findFirst above is a fast-path, not a guarantee: two concurrent POSTs
-    // can both pass it before either inserts. The @@unique([projectId, missionId,
-    // fingerprint]) index is the real dedupe backstop — on a P2002 collision,
-    // re-fetch the row the winning insert created and return it (200), matching
-    // the deduped-row semantics instead of surfacing a 500. Null-missionId rows
-    // are never constrained, so this branch only fires for real missions.
+    // can both pass it before either inserts. The unique index matching
+    // dedupeWhere's key (either @@unique([projectId, missionId, fingerprint])
+    // or the sourceItemId-keyed one, WI-936) is the real dedupe backstop — on a
+    // P2002 collision, re-fetch the row the winning insert created and return
+    // it (200), matching the deduped-row semantics instead of surfacing a 500.
+    // Null-missionId rows are never constrained, so this branch only fires for
+    // real missions.
     try {
       const created = await prisma.retroLearning.create({ data });
       return NextResponse.json({ success: true, data: { id: created.id } }, { status: 201 });
     } catch (error) {
       if (isUniqueConstraintViolation(error) && missionId !== null) {
-        const existing = await prisma.retroLearning.findFirst({
-          where: { projectId, missionId, fingerprint: data.fingerprint },
-        });
+        const existing = await prisma.retroLearning.findFirst({ where: dedupeWhere });
         if (existing) {
           return NextResponse.json({ success: true, data: { id: existing.id } }, { status: 200 });
         }

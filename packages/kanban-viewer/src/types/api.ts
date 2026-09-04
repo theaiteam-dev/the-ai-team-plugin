@@ -10,6 +10,7 @@ import type { Item, ItemType, ItemPriority, ItemWithRelations, WorkLogEntry, Ite
 import type { AgentName, AgentClaim } from './agent';
 import type { Mission, PrecheckResult, PostcheckResult } from './mission';
 import type { ScalingRationale } from './mission-scaling';
+import type { ExecutionContract } from './mission-execution-contract';
 
 // ============ Board Endpoints ============
 
@@ -106,6 +107,12 @@ export interface CreateItemRequest {
   priority: ItemPriority;
   dependencies?: string[];
   outputs?: ItemOutputs;
+  /** Finding provenance (WI-936): 'low' | 'medium' | 'high' | 'critical'. */
+  severity?: string | null;
+  /** Finding provenance (WI-936): agent whose behavior the finding is about — free-form. */
+  attributedAgent?: string | null;
+  /** Finding provenance (WI-936): dedup slug the finding was derived from — free-form, no FK. */
+  fingerprint?: string | null;
 }
 
 /**
@@ -129,6 +136,12 @@ export interface UpdateItemRequest {
   priority?: ItemPriority;
   dependencies?: string[];
   outputs?: ItemOutputs;
+  /** Finding provenance (WI-936): 'low' | 'medium' | 'high' | 'critical'. */
+  severity?: string | null;
+  /** Finding provenance (WI-936): agent whose behavior the finding is about — free-form. */
+  attributedAgent?: string | null;
+  /** Finding provenance (WI-936): dedup slug the finding was derived from — free-form, no FK. */
+  fingerprint?: string | null;
 }
 
 /**
@@ -216,6 +229,7 @@ export interface CreateMissionRequest {
   prdPath: string;
   force?: boolean;
   scalingRationale?: ScalingRationale | null;
+  executionContract?: ExecutionContract | null;
 }
 
 /**

@@ -383,6 +383,7 @@ If you cannot resolve the error, **STOP and report the issue** to Hannibal. Do n
    - Parallel groups
    - **Judgment calls / decomposition rationale (REQUIRED)** — every non-obvious decomposition decision, stated with its reason: items merged ("merged FR-13 into WI-583 because..."), items kept as an intentional dependency hub ("WI-581 is a hub because..."), scope calls, etc. This is what Sosa reviews against — give it concrete claims to challenge, not intent to re-derive.
    - **Definition of Done outcome (REQUIRED)** — statement count (10–15) and the PRD path written to, e.g. "Appended 12 DoD statements to prd/ready/010-execution-stage.md"
+   - **Quality profile recommendation (REQUIRED, conditional)** — if `--quality` was already given, state exactly "N/A — already given via --quality" and skip the rest of this bullet. Otherwise recommend one (`quick` | `normal` | `deep`) derived from the PRD's scope and risk (not an arbitrary or hardcoded default), with a one-line rationale. Sosa's refinement report reproduces this for the operator's ratification at the existing gate — see the resolver (`resolveQualityProfile`, `scripts/hooks/lib/qa-contract.js`) for what each profile maps to; do not restate it here.
 
 ## Quality Gate
 

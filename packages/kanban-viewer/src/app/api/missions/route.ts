@@ -3,9 +3,11 @@ import { prisma } from '@/lib/db';
 import { createValidationError } from '@/lib/errors';
 import { getAndValidateProjectId, ensureProject } from '@/lib/project-utils';
 import { safeJsonParse } from '@/lib/json-utils';
+import { validateExecutionContract } from '@/lib/mission-execution-contract';
 import type { CreateMissionRequest, CreateMissionResponse, ApiError } from '@/types/api';
 import type { Mission, MissionState, MissionPrecheckOutput } from '@/types/mission';
 import type { ScalingRationale } from '@/types/mission-scaling';
+import type { ExecutionContract } from '@/types/mission-execution-contract';
 
 /**
  * GET /api/missions
@@ -64,6 +66,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       precheckBlockers: safeJsonParse<string[]>(m.precheckBlockers),
       precheckOutput: safeJsonParse<MissionPrecheckOutput>(m.precheckOutput),
       scalingRationale: safeJsonParse<ScalingRationale>(m.scalingRationale),
+      executionContract: safeJsonParse<ExecutionContract>(m.executionContract),
     }));
 
     return NextResponse.json({
@@ -147,6 +150,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     if (!body.prdPath) {
       return NextResponse.json(createValidationError('prdPath is required').toResponse(), { status: 400 });
+    }
+
+    const contractError = validateExecutionContract(body.executionContract);
+    if (contractError) {
+      return NextResponse.json(contractError.toResponse(), { status: contractError.httpStatus });
     }
 
     // Check for active mission (not archived and not completed) for this project
@@ -237,6 +245,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         startedAt: new Date(),
         ...(body.scalingRationale != null
           ? { scalingRationale: JSON.stringify(body.scalingRationale) }
+          : {}),
+        ...(body.executionContract != null
+          ? { executionContract: JSON.stringify(body.executionContract) }
           : {}),
       },
     });

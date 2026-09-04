@@ -28,6 +28,12 @@ export interface DbItem {
   outputTest: string | null;
   outputImpl: string | null;
   outputTypes: string | null;
+  // Optional (not just nullable): older callers/fixtures built before WI-936
+  // predate these fields entirely, so they must be safe to omit, not merely
+  // safe to set to null.
+  severity?: string | null;
+  attributedAgent?: string | null;
+  fingerprint?: string | null;
 }
 
 /**
@@ -91,6 +97,9 @@ export function transformItemToResponse(item: DbItem): Item {
     updatedAt: item.updatedAt,
     completedAt: item.completedAt,
     outputs: buildOutputs(item),
+    ...(item.severity && { severity: item.severity }),
+    ...(item.attributedAgent && { attributedAgent: item.attributedAgent }),
+    ...(item.fingerprint && { fingerprint: item.fingerprint }),
   };
 }
 
@@ -118,6 +127,9 @@ export function transformItemWithRelationsToResponse(
     updatedAt: item.updatedAt,
     completedAt: item.completedAt,
     outputs: buildOutputs(item),
+    ...(item.severity && { severity: item.severity }),
+    ...(item.attributedAgent && { attributedAgent: item.attributedAgent }),
+    ...(item.fingerprint && { fingerprint: item.fingerprint }),
     dependencies: (item.dependsOn ?? []).map((d) => d.dependsOnId),
     workLogs: (item.workLogs ?? []).map((log): WorkLogEntry => ({
       id: log.id,

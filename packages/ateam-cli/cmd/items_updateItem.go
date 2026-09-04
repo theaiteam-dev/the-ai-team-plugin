@@ -25,6 +25,9 @@ var (
 	itemsUpdateItemCmd_priority string
 	itemsUpdateItemCmd_title string
 	itemsUpdateItemCmd_type string
+	itemsUpdateItemCmd_severity string
+	itemsUpdateItemCmd_attributedAgent string
+	itemsUpdateItemCmd_fingerprint string
 )
 
 var itemsUpdateItemCmd = &cobra.Command{
@@ -39,6 +42,7 @@ var itemsUpdateItemCmd = &cobra.Command{
 		queryParams := map[string]string{}
 		if cmd.Flags().Changed("priority") { if err := validate.Enum("priority", itemsUpdateItemCmd_priority, []string{"critical", "high", "medium", "low"}); err != nil { return err } }
 		if cmd.Flags().Changed("type") { if err := validate.Enum("type", itemsUpdateItemCmd_type, []string{"feature", "bug", "enhancement", "task"}); err != nil { return err } }
+		if cmd.Flags().Changed("severity") { if err := validate.Enum("severity", itemsUpdateItemCmd_severity, []string{"low", "medium", "high", "critical"}); err != nil { return err } }
 		if itemsUpdateItemCmdBodyFile != "" {
 			fileData, err := os.ReadFile(itemsUpdateItemCmdBodyFile)
 			if err != nil {
@@ -128,6 +132,15 @@ var itemsUpdateItemCmd = &cobra.Command{
 		if cmd.Flags().Changed("type") {
 			bodyMap["type"] = itemsUpdateItemCmd_type
 		}
+		if cmd.Flags().Changed("severity") {
+			bodyMap["severity"] = itemsUpdateItemCmd_severity
+		}
+		if cmd.Flags().Changed("attributedAgent") {
+			bodyMap["attributedAgent"] = itemsUpdateItemCmd_attributedAgent
+		}
+		if cmd.Flags().Changed("fingerprint") {
+			bodyMap["fingerprint"] = itemsUpdateItemCmd_fingerprint
+		}
 		if len(bodyMap) == 0 {
 			return fmt.Errorf("no fields to update")
 		}
@@ -169,4 +182,10 @@ func init() {
 	itemsUpdateItemCmd.RegisterFlagCompletionFunc("type", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return []string{"feature", "bug", "enhancement", "task"}, cobra.ShellCompDirectiveNoFileComp
 	})
+	itemsUpdateItemCmd.Flags().StringVar(&itemsUpdateItemCmd_severity, "severity", "", "Finding provenance (low|medium|high|critical)")
+	itemsUpdateItemCmd.RegisterFlagCompletionFunc("severity", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"low", "medium", "high", "critical"}, cobra.ShellCompDirectiveNoFileComp
+	})
+	itemsUpdateItemCmd.Flags().StringVar(&itemsUpdateItemCmd_attributedAgent, "attributedAgent", "", "Finding provenance — agent whose behavior the finding is about (free-form)")
+	itemsUpdateItemCmd.Flags().StringVar(&itemsUpdateItemCmd_fingerprint, "fingerprint", "", "Finding provenance — dedup slug the finding was derived from (free-form)")
 }

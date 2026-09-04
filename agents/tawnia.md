@@ -340,6 +340,7 @@ Report back with:
 - Files modified/created
 - Commit hash
 - Summary of documentation changes
+- Review tier for this mission's PR — read the mission's stored execution contract first (falling back to `ateam.config.json` when the mission has none, per the same resolver every other consumer uses), and name the resolved value so the operator knows which review step this mission expects of them
 
 Example:
 ```
@@ -352,6 +353,8 @@ Files:
 
 Commit: a1b2c3d
 Message: feat: order-management-mission
+
+Review tier for this PR: {resolved review tier — from the mission's contract, else ateam.config.json}
 
 "The story is written. The mission is complete."
 ```
