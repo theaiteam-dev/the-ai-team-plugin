@@ -127,7 +127,7 @@ For each candidate learning surfaced in step 2 (a rejection pattern, an Amy find
 
 **A clean mission may emit zero rows. There is no quota.** If nothing rose above the noise floor (no rejections, no Amy findings, no Stockwell/PR issues, no tool/skill anomalies), emit nothing here and say so plainly in the report — do not manufacture a learning just to have one. The `retroReport` blob is written in step 6 regardless of whether any rows were emitted in this step.
 
-**Deriving learnings from finding-derived work items.** In addition to the ad-hoc candidates above, derive exactly one `RetroLearning` row for each COMPLETED work item that carries WI-936's learning fields — `severity`, `attributedAgent`, and `fingerprint` all non-null. An item that carries no learning fields (severity is null) is explicitly skipped — not every item in the mission produces a learning, only the finding-derived ones.
+**Deriving learnings from finding-derived work items.** In addition to the ad-hoc candidates above, derive exactly one `RetroLearning` row for each COMPLETED work item that carries WI-936's learning fields — `severity`, `attributedAgent`, and `fingerprint` all non-null. An item that is missing any of the three fields is explicitly skipped — not every item in the mission produces a learning, only the finding-derived ones.
 
 For each such item:
 

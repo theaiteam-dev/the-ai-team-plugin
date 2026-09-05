@@ -304,6 +304,11 @@ describe('POST /api/learnings', () => {
       // an inline object literal — message content is preserved.
       expect(data.error.message).toBe(`Mission '${missionId}' not found`);
       expect(mockPrisma.retroLearning.create).not.toHaveBeenCalled();
+      // A rejected mission must leave no side effect behind: the Fingerprint
+      // upsert (which runs before create's dedupe/insert path) must not have
+      // fired either, or a caller could mint arbitrary Fingerprint slugs via
+      // requests that are ultimately rejected.
+      expect(mockPrisma.fingerprint.upsert).not.toHaveBeenCalled();
 
       // The ownership lookup must be scoped to the requesting project.
       expect(mockPrisma.mission.findFirst).toHaveBeenCalledWith({
@@ -311,6 +316,24 @@ describe('POST /api/learnings', () => {
       });
     }
   );
+
+  it('does not provision a Project row for a nonexistent/foreign missionId on a never-before-seen project id', async () => {
+    // Same rule as the body-validation cases below, extended to the mission
+    // ownership check: a rejected (404) request must not leave a Project row
+    // behind either. The mission lookup filters on Mission.projectId directly
+    // and needs no Project row to exist, so ensureProject can safely run
+    // after it.
+    mockPrisma.project.findUnique.mockResolvedValue(null);
+    mockPrisma.mission.findFirst.mockResolvedValue(null);
+
+    const res = await POST(
+      buildRequest('never-seen-project-2', validBody({ missionId: 'm-missing' }))
+    );
+
+    expect(res.status).toBe(404);
+    expect(mockPrisma.project.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.project.create).not.toHaveBeenCalled();
+  });
 
   it.each(REQUIRED_FIELDS)(
     'returns 400 VALIDATION_ERROR when required field "%s" is missing',

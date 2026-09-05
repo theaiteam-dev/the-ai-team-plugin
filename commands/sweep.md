@@ -7,7 +7,7 @@ model: sonnet
 
 ## Usage
 
-```
+```text
 /ai-team:sweep
 ```
 

@@ -134,7 +134,7 @@ If all checks pass, continue silently.
 **Resolve the quality profile first, before creating the mission** — one of three cases applies:
 
 - **`--quality`/`-q` given:** validate it is one of `quick`, `normal`, `deep`. If it is none of the three, reject with a message naming all three valid names and create no mission — stop here, do not proceed to Face. If valid, resolve it via the resolver (`resolveQualityProfile`, `scripts/hooks/lib/qa-contract.js` — do not restate what quick/normal/deep map to) and pass the resulting `executionContract` (`testing_level`, `review_tier`, `profile`) on the `createMission` call itself, so the mission carries a contract from the moment it exists.
-- **`--quality` omitted, refinement NOT skipped:** create the mission with no `executionContract` yet — no recommendation exists until Sosa's refinement report (Step 5), so there is nothing to stamp here. Step 6 stamps the ratified profile onto this same mission before any item reaches ready.
+- **`--quality` omitted, refinement NOT skipped:** create the mission with no `executionContract` yet — no *ratified* contract exists yet at this point (Face produces the recommendation in Step 3's first pass; Sosa ratifies it in Step 5; Step 6 stamps it), so there is nothing to stamp here. Step 6 stamps the ratified profile onto this same mission before any item reaches ready.
 - **`--quality` omitted AND `--skip-refinement` given:** there is no refinement gate left to ratify a recommendation at, so apply `normal` as this command's concrete default and pass its resolved `executionContract` at creation, the same way an explicit `--quality normal` would — a skipped-refinement mission is never left without a contract.
 
 Run `ateam missions createMission` with ALL required parameters:
@@ -185,6 +185,12 @@ Agent(
 )
 ```
 
+**Capture Face's report.** Face's pass-1 summary (including its Quality Profile
+recommendation bullet, when `--quality` was omitted) is the Agent call's
+returned report text — hold onto it verbatim as `{face_report}`. Step 5 below
+threads it into Sosa's prompt so Sosa ratifies Face's actual recommendation
+instead of deriving a conflicting one of her own from the PRD.
+
 **Seed exploration, don't skip it.** If the PRD names concrete code touchpoints
 (specific files, modules, schemas, prior "Resolved Decisions" sections), include
 that list at the top of Face's prompt so it can jump straight to those locations
@@ -220,7 +226,12 @@ Agent(
 
   Review all work items in briefings stage.
 
-  Quality profile: {if --quality was given on this invocation: "Already given via --quality: {value}. Do NOT produce a quality-profile recommendation in your report — write N/A in the Quality Profile section." else: "No --quality was given — recommend one (quick/normal/deep) from the PRD in your Quality Profile section as usual, with a one-line rationale."}
+  Here is Face's first-pass report, including its Quality Profile
+  recommendation bullet (or N/A if --quality was already given):
+
+  {face_report}
+
+  Quality profile: {if --quality was given on this invocation: "Already given via --quality: {value}. Do NOT produce a quality-profile recommendation in your report — write N/A in the Quality Profile section." else: "No --quality was given — Face's report above already carries a recommended profile (quick/normal/deep) with a one-line rationale. State/ratify THAT SAME recommendation in your Quality Profile section — do not derive an independent one from the PRD yourself, since a conflicting profile would leave the mission with no single source of truth to stamp in Step 6."}
 
   Use AskUserQuestion to clarify any ambiguities with the human.
 

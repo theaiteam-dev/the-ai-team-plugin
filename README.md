@@ -481,7 +481,7 @@ Use `--skip-refinement` to bypass Sosa's review for simple PRDs. Use `--quality`
 
 ### `/ai-team:review`
 
-Runs the team's code-review skill against the current branch, turns each Must Fix/Should Fix finding into a `bug`-type work item stamped with its severity, attributed agent, and fingerprint, writes a mission brief from the findings, and creates a mission — then stops, leaving execution to `/ai-team:run`. The replacement front door for the retired `/ai-team:sweep`: unlike sweep, this command never fixes or commits anything itself, so the fixes get the full skill-loaded pipeline instead of a bare subagent. Defaults to the `normal` quality profile; override with `--quality`/`-q`.
+Runs the team's code-review skill against the current branch, turns each Must Fix/Should Fix finding into a `bug`-type work item stamped with its severity, attributed agent, and fingerprint, writes a mission brief from the findings, and creates a mission — then stops, leaving execution to `/ai-team:run`. The replacement front door for the retired `sweep` command: unlike sweep, this command never fixes or commits anything itself, so the fixes get the full skill-loaded pipeline instead of a bare subagent. Defaults to the `normal` quality profile; override with `--quality`/`-q`.
 
 ### `/ai-team:bug-fix <issue-number> | "<description>"`
 

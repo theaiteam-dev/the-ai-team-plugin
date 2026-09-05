@@ -13,7 +13,7 @@ import {
   createOutputCollisionError,
   createServerError,
 } from '@/lib/errors';
-import { validateDependencies, validateOutputCollisions } from '@/lib/validation';
+import { validateDependencies, validateOutputCollisions, isValidOptionalString } from '@/lib/validation';
 import type { OutputCollisionItem } from '@/lib/validation';
 import { getAndValidateProjectId, ensureProject } from '@/lib/project-utils';
 import { transformItemWithRelationsToResponse } from '@/lib/item-transform';
@@ -224,9 +224,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // Validate severity if provided (finding provenance, WI-936).
-    // attributedAgent and fingerprint are free-form — not enum-validated.
+    // attributedAgent and fingerprint are free-form — not enum-validated,
+    // but still must be a string (or null) before reaching Prisma.
     if (body.severity !== undefined && body.severity !== null && !SEVERITY_VALUES.includes(body.severity as (typeof SEVERITY_VALUES)[number])) {
       const error = createValidationError(`severity must be one of: ${SEVERITY_VALUES.join(', ')}`);
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
+    if (!isValidOptionalString(body.attributedAgent)) {
+      const error = createValidationError('attributedAgent must be a string');
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
+    if (!isValidOptionalString(body.fingerprint)) {
+      const error = createValidationError('fingerprint must be a string');
       return NextResponse.json(error.toResponse(), { status: 400 });
     }
 

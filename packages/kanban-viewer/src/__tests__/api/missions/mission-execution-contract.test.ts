@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createClient } from '@libsql/client';
 import type { Client } from '@libsql/client';
+import { TESTING_LEVEL_VALUES, REVIEW_TIER_VALUES } from '@/types/mission-execution-contract';
 
 /**
  * Tests for WI-934: Mission record stores a resolved execution contract.
@@ -51,10 +52,6 @@ const mockPrisma = vi.hoisted(() => ({
 vi.mock('@/lib/db', () => ({ prisma: mockPrisma }));
 
 // ============ Fixtures ============
-
-/** Reuses the exact enum vocabularies from scripts/hooks/lib/qa-contract.js. */
-const TESTING_LEVEL_VALUES = ['smoke', 'critical-path', 'full-dod'];
-const REVIEW_TIER_VALUES = ['hands-on', 'evidence-only', 'auto'];
 
 const EXECUTION_CONTRACT = {
   testing_level: 'critical-path',

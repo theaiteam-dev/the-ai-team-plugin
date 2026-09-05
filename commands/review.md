@@ -57,7 +57,7 @@ The mission now exists — create every work item against it in Step 4, never be
 
 ## Step 4: Map Severity and Create Work Items
 
-The review vocabulary maps onto the item contract's `--severity` values (WI-936) — the same mapping `/ai-team:sweep`'s capture step uses:
+The review vocabulary maps onto the item contract's `--severity` values (WI-936):
 
 | Review severity | `--severity` |
 |------------------|---------------|
@@ -96,7 +96,7 @@ ateam learnings fingerprints --json
 
 Compare each finding against the returned top-50 `{fingerprint, pattern, title, hitCount}` list: if an existing fingerprint clearly describes the same recurring pattern, reuse its `fingerprint` value — this is a recurrence, not a new one. Otherwise mint a new curated slug (short, kebab-case, descriptive). Don't default to "new" just because it's less effort than checking.
 
-**Assign `attributedAgent` by the earliest-flagged-stage convention** — see `skills/teams-messaging/SKILL.md` and `packages/shared/src/stages.ts`'s pipeline stage ordering (the same rule the retro agent and `/ai-team:sweep` use): attribute to the agent owning the earliest pipeline stage that could have prevented the finding. Do not restate the stage-to-agent mapping here — it lives in one place already.
+**Assign `attributedAgent` by the earliest-flagged-stage convention** — see `skills/teams-messaging/SKILL.md` and `packages/shared/src/stages.ts`'s pipeline stage ordering (the same rule the retro agent uses): attribute to the agent owning the earliest pipeline stage that could have prevented the finding. Do not restate the stage-to-agent mapping here — it lives in one place already.
 
 ## Step 5: Report
 

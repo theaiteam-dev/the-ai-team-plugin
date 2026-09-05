@@ -79,6 +79,21 @@ function allMissionBriefContent() {
     .join('\n\n');
 }
 
+/**
+ * Isolates the single Markdown list item introducing `entryPointTag` (e.g.
+ * "/ai-team:review") — from its own "- **`tag`**" bullet marker up to (but
+ * not including) the next sibling bullet or a blank line. Used to bind an
+ * assertion to ONE entry point's own DoD-derivation bullet instead of
+ * letting a document-wide search bleed into an adjacent entry point's
+ * bullet (see AC2's tightened describe block below).
+ */
+function entryPointBullet(content, entryPointTag) {
+  const escapedTag = entryPointTag.replace(/[/]/g, '\\/');
+  const pattern = new RegExp('- \\*\\*`' + escapedTag + '`\\*\\*[\\s\\S]*?(?=\\n- \\*\\*`|\\n\\n)');
+  const match = content.match(pattern);
+  return match ? match[0] : '';
+}
+
 describe('WI-935: skills/mission-brief/SKILL.md exists', () => {
   it('SKILL.md exists at skills/mission-brief/', () => {
     expect(existsSync(SKILL_MD_PATH)).toBe(true);
@@ -193,6 +208,45 @@ describe('AC2: Definition of Done population contract per entry point', () => {
       content,
       'expected the document to explicitly state the Definition of Done is never left empty/blank for evidence-derived entry points'
     ).toMatch(neverEmptyPattern);
+  });
+});
+
+// =============================================================================
+// AC2 (tightened): each entry point must be bound to its OWN evidence source
+// within its OWN bullet — not merely have both terms occur somewhere in the
+// aggregated document. A prior version of this suite (CodeRabbit, PR #67)
+// checked only document-wide presence, so a changed skill deriving
+// `/ai-team:review` from a repro (or `/ai-team:bug-fix` from findings) would
+// still pass because the OTHER entry points' bullets contained all the
+// required terms. These assertions isolate each entry point's own list item
+// via entryPointBullet() so a mismatched mapping is caught.
+// =============================================================================
+describe('AC2 (tightened): each entry point is bound to its Definition of Done evidence source within its own bullet', () => {
+  it('/ai-team:review derives from finding descriptions, within its own bullet', () => {
+    const content = allMissionBriefContent();
+    const bullet = entryPointBullet(content, '/ai-team:review');
+    expect(bullet, 'expected to find a "- **`/ai-team:review`**" bullet').not.toBe('');
+    expect(bullet).toMatch(/finding descriptions/i);
+  });
+
+  it('/ai-team:bug-stomp derives from finding descriptions, within its own bullet', () => {
+    const content = allMissionBriefContent();
+    const bullet = entryPointBullet(content, '/ai-team:bug-stomp');
+    expect(bullet, 'expected to find a "- **`/ai-team:bug-stomp`**" bullet').not.toBe('');
+    expect(bullet).toMatch(/finding descriptions/i);
+  });
+
+  it('/ai-team:bug-fix derives from the reported repro, within its own bullet', () => {
+    const content = allMissionBriefContent();
+    const bullet = entryPointBullet(content, '/ai-team:bug-fix');
+    expect(bullet, 'expected to find a "- **`/ai-team:bug-fix`**" bullet').not.toBe('');
+    expect(bullet).toMatch(/reported repro/i);
+  });
+
+  it('bug-fix\'s own bullet does not (also) claim finding descriptions as its source (discriminates against a swapped mapping)', () => {
+    const content = allMissionBriefContent();
+    const bullet = entryPointBullet(content, '/ai-team:bug-fix');
+    expect(bullet).not.toMatch(/finding descriptions/i);
   });
 });
 

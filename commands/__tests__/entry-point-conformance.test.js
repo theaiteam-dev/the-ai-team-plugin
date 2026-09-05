@@ -156,7 +156,7 @@ describe('AC1: every entry point sets prdPath to a mission brief; none creates a
     }
   });
 
-  it.each(entryPoints())("$name's --prdPath value points at a real .md brief file, not a placeholder-free flag", ({ name, get }) => {
+  it.each(entryPoints())("$name's --prdPath value ends in .md", ({ name, get }) => {
     const lines = createMissionInvocationLines(get());
     const hasMdPath = lines.some((line) => /--prdPath\s+"[^"]*\.md"/.test(line));
     expect(hasMdPath, `${name}: expected --prdPath to point at a ".md" file on the invocation line`).toBe(true);

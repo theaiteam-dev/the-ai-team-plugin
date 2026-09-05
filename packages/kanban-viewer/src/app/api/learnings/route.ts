@@ -96,12 +96,37 @@ export async function POST(request: Request) {
       );
     }
 
-    // Only provision the Project row once the payload is known-valid — otherwise
-    // a well-formed but invalid request from a never-before-seen project ID would
-    // still leave behind a Project row despite the 400.
+    const missionId = body.missionId === undefined || body.missionId === null ? null : body.missionId;
+
+    // Verify the mission exists AND belongs to the requesting project before
+    // ANY write — otherwise a foreign or nonexistent missionId either links a
+    // row across tenants, throws an unhandled FK violation, or (for the
+    // Fingerprint upsert and Project provisioning below) leaves a side effect
+    // behind despite the request being rejected. A single project-scoped
+    // lookup covers both cases without leaking which one occurred (both
+    // resolve to the same 404). Dedupe/writes only apply when a learning is
+    // attributed to a specific mission; null-missionId rows (backfill) are
+    // always distinct inserts and have no owner to check.
+    //
+    // This runs before ensureProject below: the lookup filters on
+    // Mission.projectId directly (a plain WHERE, not a FK join), so it needs
+    // no Project row to exist — only the eventual RetroLearning/Fingerprint
+    // writes do. Checking mission ownership first means a never-before-seen
+    // project ID with a bad missionId never provisions a Project row either,
+    // consistent with the rule below.
+    if (missionId !== null) {
+      const mission = await prisma.mission.findFirst({ where: { id: missionId, projectId } });
+      if (!mission) {
+        return NextResponse.json(createMissionNotFoundError(missionId).toResponse(), { status: 404 });
+      }
+    }
+
+    // Only provision the Project row once the payload and mission are
+    // known-valid — otherwise a well-formed but invalid request from a
+    // never-before-seen project ID would still leave behind a Project row
+    // despite the rejection.
     await ensureProject(projectId);
 
-    const missionId = body.missionId === undefined || body.missionId === null ? null : body.missionId;
     const detail = body.detail === undefined || body.detail === null ? null : body.detail;
     const sourceItemId =
       body.sourceItemId === undefined || body.sourceItemId === null ? null : body.sourceItemId;
@@ -135,26 +160,16 @@ export async function POST(request: Request) {
     // which can rewrite `fingerprint` to a brand-new slug on a re-capture. Do
     // this before the dedupe check so both writers are covered by one call;
     // create carries this capture's pattern/severity, update is a no-op so we
-    // never clobber values another surface (e.g. a merge) may own.
+    // never clobber values another surface (e.g. a merge) may own. This runs
+    // after the mission-ownership check above so a rejected request never
+    // leaves a Fingerprint row behind.
     await prisma.fingerprint.upsert({
       where: { slug: data.fingerprint },
       update: {},
       create: { slug: data.fingerprint, pattern: data.pattern, severity: data.severity },
     });
 
-    // Dedupe only applies when a learning is attributed to a specific mission;
-    // null-missionId rows (backfill) are always distinct inserts.
     if (missionId !== null) {
-      // Verify the mission exists AND belongs to the requesting project before
-      // touching RetroLearning — otherwise a foreign or nonexistent missionId
-      // either links a row across tenants or throws an unhandled FK violation.
-      // A single project-scoped lookup covers both cases without leaking which
-      // one occurred (both resolve to the same 404).
-      const mission = await prisma.mission.findFirst({ where: { id: missionId, projectId } });
-      if (!mission) {
-        return NextResponse.json(createMissionNotFoundError(missionId).toResponse(), { status: 404 });
-      }
-
       const existing = await prisma.retroLearning.findFirst({ where: dedupeWhere });
       if (existing) {
         // Source-item-derived rows are re-captured across debrief re-runs

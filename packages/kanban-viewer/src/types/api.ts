@@ -11,6 +11,7 @@ import type { AgentName, AgentClaim } from './agent';
 import type { Mission, PrecheckResult, PostcheckResult } from './mission';
 import type { ScalingRationale } from './mission-scaling';
 import type { ExecutionContract } from './mission-execution-contract';
+import type { Severity } from '@ai-team/shared';
 
 // ============ Board Endpoints ============
 
@@ -108,7 +109,7 @@ export interface CreateItemRequest {
   dependencies?: string[];
   outputs?: ItemOutputs;
   /** Finding provenance (WI-936): 'low' | 'medium' | 'high' | 'critical'. */
-  severity?: string | null;
+  severity?: Severity | null;
   /** Finding provenance (WI-936): agent whose behavior the finding is about — free-form. */
   attributedAgent?: string | null;
   /** Finding provenance (WI-936): dedup slug the finding was derived from — free-form, no FK. */
@@ -137,7 +138,7 @@ export interface UpdateItemRequest {
   dependencies?: string[];
   outputs?: ItemOutputs;
   /** Finding provenance (WI-936): 'low' | 'medium' | 'high' | 'critical'. */
-  severity?: string | null;
+  severity?: Severity | null;
   /** Finding provenance (WI-936): agent whose behavior the finding is about — free-form. */
   attributedAgent?: string | null;
   /** Finding provenance (WI-936): dedup slug the finding was derived from — free-form, no FK. */

@@ -758,6 +758,16 @@ describe('resolveQualityProfile() - invalid profile name fails loudly, no silent
     expect(() => resolveQualityProfile('')).toThrow();
     expect(() => resolveQualityProfile(undefined)).toThrow();
   });
+
+  it('throws for inherited property names instead of resolving to an empty spread object (CodeRabbit PR #67)', () => {
+    // QUALITY_PROFILES[profileName] resolves inherited Object.prototype
+    // members like "constructor" and "toString" without an own-property
+    // check — those names must fail loudly just like any other unknown
+    // profile, not bypass the error path and return `{}`.
+    expect(() => resolveQualityProfile('constructor')).toThrow(/quick/);
+    expect(() => resolveQualityProfile('toString')).toThrow(/quick/);
+    expect(() => resolveQualityProfile('__proto__')).toThrow(/quick/);
+  });
 });
 
 describe('resolveQualityProfile() - only deep carries probing guidance (AC4)', () => {
@@ -844,6 +854,33 @@ describe('resolveExecutionContract() - mission contract preferred over config (F
 
     expect(resolved.testing_level).toBe('critical-path');
     expect(resolved.review_tier).toBe('hands-on');
+  });
+
+  it('falls back to config when testing_level is not a member of TESTING_LEVEL_VALUES, even though review_tier is valid (CodeRabbit PR #67)', () => {
+    mockConfigFile(JSON.stringify({ testing_level: 'critical-path', review_tier: 'hands-on' }));
+
+    const resolved = resolveExecutionContract({ testing_level: 'invalid', review_tier: 'hands-on' });
+
+    expect(resolved.testing_level).toBe('critical-path');
+    expect(resolved.review_tier).toBe('hands-on');
+  });
+
+  it('falls back to config when review_tier is not a member of REVIEW_TIER_VALUES, even though testing_level is valid (CodeRabbit PR #67)', () => {
+    mockConfigFile(JSON.stringify({ testing_level: 'critical-path', review_tier: 'hands-on' }));
+
+    const resolved = resolveExecutionContract({ testing_level: 'full-dod', review_tier: 'invalid' });
+
+    expect(resolved.testing_level).toBe('critical-path');
+    expect(resolved.review_tier).toBe('hands-on');
+  });
+
+  it('overrides config only when BOTH testing_level and review_tier are valid enum members', () => {
+    mockConfigFile(JSON.stringify({ testing_level: 'critical-path', review_tier: 'hands-on' }));
+
+    const resolved = resolveExecutionContract({ testing_level: 'full-dod', review_tier: 'evidence-only' });
+
+    expect(resolved.testing_level).toBe('full-dod');
+    expect(resolved.review_tier).toBe('evidence-only');
   });
 });
 

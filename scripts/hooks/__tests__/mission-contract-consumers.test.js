@@ -225,6 +225,19 @@ describe('AC5: the end-of-mission report names the review tier as the operator\'
     expect(window).toMatch(/ateam\.config\.json|config/i);
   });
 
+  it('tawnia.md names the concrete retrieval command (missions-current getCurrentMission), not just "the mission\'s contract"', () => {
+    // board getBoard omits currentMission.executionContract — only the
+    // missions/current route returns it. Without naming the concrete
+    // command, Tawnia could read the board and silently fall back to
+    // ateam.config.json, reporting the wrong review tier.
+    expect(tawniaMd).toMatch(/missions-current\s+getCurrentMission/);
+
+    const idx = tawniaMd.search(/review_tier|review tier/i);
+    expect(idx).toBeGreaterThan(-1);
+    const window = tawniaMd.slice(Math.max(0, idx - 400), idx + 400);
+    expect(window).toMatch(/missions-current\s+getCurrentMission/);
+  });
+
   it('does not restate what hands-on/evidence-only/auto mean beyond naming the resolved value', () => {
     // AC3 applies here too: naming the tier is fine, restating the full
     // enum's meaning (a mini-glossary) is not — that belongs to the

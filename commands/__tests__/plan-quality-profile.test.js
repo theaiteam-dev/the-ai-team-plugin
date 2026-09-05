@@ -108,7 +108,12 @@ describe('AC1: explicit --quality stores the profile at mission creation, no rec
     // — threaded into Sosa's own dispatch prompt.
     const step5 = sectionAfter(planMd, /^### 5\. Invoke Sosa/m);
     expect(step5).not.toBe('');
-    expect(step5).toMatch(/--quality|-q\b|\{face_report\}|\{face_output\}|quality profile/i);
+    // Loose alternation (any of --quality / quality profile / etc.) passed
+    // even when Face's ACTUAL report/recommendation was never threaded
+    // through — Sosa could still recommend an independently-derived,
+    // possibly-conflicting profile from the PRD. Require the concrete
+    // placeholder carrying Face's own report/recommendation value.
+    expect(step5).toMatch(/\{face_report\}|\{face_output\}|\{face_recommendation\}/);
   });
 
   it("face.md's Output bullet is conditioned on whether --quality was already given, not unconditional", () => {
@@ -304,12 +309,17 @@ describe('AC5: --skip-refinement still yields a mission carrying a profile, neve
   });
 
   it('a skipped-refinement mission is never left without a contract', () => {
-    // Scan the whole document for the concept — the skip-refinement
-    // clause and the "never contract-less" guarantee may be documented in
-    // different places (Arguments vs. the mission-creation step), so this
-    // checks presence of both concepts rather than tight proximity.
-    expect(planMd).toMatch(/skip-refinement/);
-    expect(planMd).toMatch(/quick|normal|deep/i);
+    // Scoped to ### 2. Initialize mission specifically — a whole-document
+    // scan for "skip-refinement" + any profile name passes vacuously (e.g.
+    // if the skipped path merely NAMES "normal" in prose without ever
+    // passing executionContract fields to createMission). The guarantee
+    // this test protects is that the skip-refinement default actually
+    // reaches the createMission call with a concrete contract, not just
+    // that the word "normal" appears somewhere near "skip-refinement".
+    const creationStep = sectionAfter(planMd, /^### 2\. Initialize mission/m);
+    expect(creationStep).toMatch(/skip-refinement/);
+    expect(creationStep).toMatch(/\bnormal\b/i);
+    expect(creationStep).toMatch(/executionContract|testing_level|review_tier|profile/i);
   });
 });
 
@@ -354,7 +364,13 @@ describe('quality profile bundles are referenced, not restated (ADR 0009 naming-
       // not restatement by itself.
       const hasQuickPair = /\bsmoke\b/i.test(text) && /evidence-only/i.test(text);
       const hasDeepPair = /full-dod/i.test(text) && /hands-on/i.test(text) && /\bdeep\b/i.test(text);
+      // 'hands-on' is shared between normal and deep's review_tier, so the
+      // normal pair is scoped with 'critical-path' (normal's testing_level)
+      // + 'normal' itself to avoid double-counting a deep-bundle restatement
+      // as a normal one.
+      const hasNormalPair = /critical-path/i.test(text) && /hands-on/i.test(text) && /\bnormal\b/i.test(text);
       expect(hasQuickPair, `${name} restates the quick bundle (smoke + evidence-only)`).toBe(false);
+      expect(hasNormalPair, `${name} restates the normal bundle (critical-path + hands-on)`).toBe(false);
       expect(hasDeepPair, `${name} restates the deep bundle (full-dod + hands-on)`).toBe(false);
     });
   }

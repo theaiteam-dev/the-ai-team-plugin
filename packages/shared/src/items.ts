@@ -9,7 +9,7 @@ export type ItemPriority = (typeof ITEM_PRIORITIES)[number];
  * item's own finding provenance) and RetroLearning.severity — the single
  * source of truth both POST /api/items, PATCH /api/items/:id, and
  * POST /api/learnings validate against. Also matches the review-severity
- * mapping in commands/sweep.md.
+ * mapping in commands/review.md.
  */
 export const SEVERITY_VALUES = ['low', 'medium', 'high', 'critical'] as const;
 export type Severity = (typeof SEVERITY_VALUES)[number];

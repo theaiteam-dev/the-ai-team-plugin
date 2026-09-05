@@ -237,6 +237,43 @@ describe('POST /api/items — finding provenance fields', () => {
     }
     expect(mockPrisma.item.create).not.toHaveBeenCalled();
   });
+
+  it('rejects a numeric attributedAgent with a 400', async () => {
+    const response = await (
+      await import('@/app/api/items/route')
+    ).POST(makePostRequest({ ...BASE_VALID_ITEM_BODY, attributedAgent: 42 }));
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.success).toBe(false);
+    expect(mockPrisma.item.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects an object fingerprint with a 400', async () => {
+    const response = await (
+      await import('@/app/api/items/route')
+    ).POST(makePostRequest({ ...BASE_VALID_ITEM_BODY, fingerprint: { slug: 'nope' } }));
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.success).toBe(false);
+    expect(mockPrisma.item.create).not.toHaveBeenCalled();
+  });
+
+  it('accepts a null attributedAgent and fingerprint', async () => {
+    mockPrisma.item.create.mockResolvedValue(baseDbItem({ id: 'WI-003' }));
+
+    const response = await (
+      await import('@/app/api/items/route')
+    ).POST(makePostRequest({ ...BASE_VALID_ITEM_BODY, attributedAgent: null, fingerprint: null }));
+
+    expect(response.status).toBe(201);
+    expect(mockPrisma.item.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ attributedAgent: null, fingerprint: null }),
+      })
+    );
+  });
 });
 
 // ============ GET /api/items/:id and GET /api/items — fetch fields back (AC1) ============
@@ -394,6 +431,56 @@ describe('PATCH /api/items/:id — finding provenance fields', () => {
       expect(body.error.message).toContain(value);
     }
     expect(mockPrisma.item.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects a numeric attributedAgent on PATCH with a 400', async () => {
+    mockPrisma.item.findFirst.mockResolvedValue(baseDbItem());
+
+    const { PATCH } = await import('@/app/api/items/[id]/route');
+    const response = await PATCH(
+      makePatchRequest('WI-001', { attributedAgent: 42 }),
+      makeContext('WI-001')
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.success).toBe(false);
+    expect(mockPrisma.item.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects an object fingerprint on PATCH with a 400', async () => {
+    mockPrisma.item.findFirst.mockResolvedValue(baseDbItem());
+
+    const { PATCH } = await import('@/app/api/items/[id]/route');
+    const response = await PATCH(
+      makePatchRequest('WI-001', { fingerprint: { slug: 'nope' } }),
+      makeContext('WI-001')
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.success).toBe(false);
+    expect(mockPrisma.item.update).not.toHaveBeenCalled();
+  });
+
+  it('accepts a null attributedAgent and fingerprint on PATCH', async () => {
+    mockPrisma.item.findFirst.mockResolvedValue(
+      baseDbItem({ attributedAgent: 'ba', fingerprint: 'fp-old' })
+    );
+    mockPrisma.item.update.mockResolvedValue(baseDbItem({ attributedAgent: null, fingerprint: null }));
+
+    const { PATCH } = await import('@/app/api/items/[id]/route');
+    const response = await PATCH(
+      makePatchRequest('WI-001', { attributedAgent: null, fingerprint: null }),
+      makeContext('WI-001')
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockPrisma.item.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ attributedAgent: null, fingerprint: null }),
+      })
+    );
   });
 });
 
@@ -895,8 +982,10 @@ describe('POST /api/learnings — REAL DATABASE: sourceItemId dedupe vs the fing
   }, LEARNINGS_TEST_TIMEOUT_MS);
 
   afterEach(async () => {
-    await realPrisma.$disconnect();
-    await rm(tmpDir, { recursive: true, force: true });
+    await realPrisma?.$disconnect();
+    if (tmpDir) {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it(

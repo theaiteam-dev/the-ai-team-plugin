@@ -135,7 +135,7 @@ describe('ItemDetailModal — attributed agent and fingerprint (AC2)', () => {
     render(<ItemDetailModal isOpen={true} onClose={() => {}} item={item} />);
     // Exact-match text content, not a substring/loose match — proves the
     // component doesn't humanize or truncate the slug.
-    expect(screen.getByTestId('fingerprint').textContent).toContain('race-condition-in-concurrent-writes');
+    expect(screen.getByTestId('fingerprint').textContent).toBe('race-condition-in-concurrent-writes');
   });
 });
 

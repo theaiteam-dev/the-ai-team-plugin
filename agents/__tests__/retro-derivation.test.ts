@@ -88,7 +88,25 @@ describe('AC1: derives one learning per finding-derived item, none for items wit
     // not just "match-or-create for candidates" (the pre-existing ad-hoc
     // language), which alone doesn't establish the ONE-learning-per-item
     // system this AC requires.
-    expect(step3).toMatch(/no learning fields|carries? none|carries? no (severity|learning)/i);
+    expect(step3).toMatch(/missing any of the three fields|no learning fields|carries? none|carries? no (severity|learning)/i);
+  });
+
+  it('the skip rule covers all three fields, not just severity (WI-936: severity, attributedAgent, and fingerprint all required)', () => {
+    // A prior wording named only "severity is null" as the skip condition,
+    // so an item with a non-null severity but a null fingerprint matched
+    // neither the "derive" branch nor the "skip" branch (the emit command
+    // requires --fingerprint). Isolate the clause describing the skip
+    // condition itself (not the earlier sentence that lists all three
+    // fields as required for derivation) and confirm it doesn't single out
+    // severity alone.
+    const clauseMatch = step3.match(/An item[\s\S]*?is explicitly skipped/i);
+    expect(clauseMatch).not.toBeNull();
+    const clause = clauseMatch![0];
+    expect(clause).not.toMatch(/\(severity is null\)/i);
+    const namesAllThreeFields =
+      /severity/i.test(clause) && /attributedAgent|attributed-agent/i.test(clause) && /fingerprint/i.test(clause);
+    const referencesThreeFieldsGenerically = /missing any of the three fields/i.test(clause);
+    expect(namesAllThreeFields || referencesThreeFieldsGenerically).toBe(true);
   });
 });
 

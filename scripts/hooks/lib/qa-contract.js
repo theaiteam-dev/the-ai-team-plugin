@@ -123,12 +123,17 @@ function isPlainObject(value) {
  * @throws {Error} when profileName is not one of the three known profiles.
  */
 export function resolveQualityProfile(profileName) {
-  const bundle = QUALITY_PROFILES[profileName];
-  if (!bundle) {
+  // Object.prototype.hasOwnProperty (not `in`, and not a bare `QUALITY_PROFILES[profileName]`
+  // truthiness check) guards against inherited property names like "constructor"
+  // or "toString" resolving to a function reference instead of failing loudly —
+  // "__proto__" is special-cased by V8 as an accessor, not an own or inherited
+  // data property, so hasOwnProperty correctly rejects it too.
+  if (!Object.prototype.hasOwnProperty.call(QUALITY_PROFILES, profileName)) {
     throw new Error(
       `Unknown quality profile ${JSON.stringify(profileName)} — must be one of: quick, normal, deep`
     );
   }
+  const bundle = QUALITY_PROFILES[profileName];
   // Return a copy, not the shared module-level object, so a caller mutating
   // the result can never corrupt QUALITY_PROFILES for the next resolve.
   return { ...bundle };
@@ -248,11 +253,13 @@ export function readExecutionContractFrom(cwd) {
  * --json`), never fetched inside this function.
  *
  * `missionContract` wins ONLY for testing_level/review_tier, and ONLY when
- * both are present as strings — WI-934's Mission.executionContract never
- * stores anything else (surfaces/qa/evidence always come from config
- * either way). Anything else — undefined, null, or a malformed object
- * missing either field — falls back to config unchanged, fail-inert like
- * every other read in this module.
+ * both are present as strings AND each is a member of its own enum
+ * (TESTING_LEVEL_VALUES / REVIEW_TIER_VALUES) — WI-934's
+ * Mission.executionContract never stores anything else (surfaces/qa/evidence
+ * always come from config either way). Anything else — undefined, null, a
+ * malformed object missing either field, or a present-but-invalid/unknown
+ * string value for either field — falls back to config unchanged, fail-inert
+ * like every other read in this module.
  *
  * Does NOT touch or replace readExecutionContract() / readExecutionContractFrom(cwd)
  * — hooks with no mission contract to give keep calling those exactly as
@@ -269,8 +276,8 @@ export function resolveExecutionContract(missionContract, cwd = process.cwd()) {
 
   const hasMissionContract =
     isPlainObject(missionContract) &&
-    typeof missionContract.testing_level === 'string' &&
-    typeof missionContract.review_tier === 'string';
+    TESTING_LEVEL_VALUES.includes(missionContract.testing_level) &&
+    REVIEW_TIER_VALUES.includes(missionContract.review_tier);
 
   if (!hasMissionContract) {
     return configContract;
