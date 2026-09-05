@@ -14,14 +14,14 @@ import {
   createDependencyCycleError,
   createServerError,
 } from '@/lib/errors';
-import { validateDependencies } from '@/lib/validation';
+import { validateDependencies, isValidOptionalString } from '@/lib/validation';
 import { getAndValidateProjectId } from '@/lib/project-utils';
 import { transformItemWithRelationsToResponse } from '@/lib/item-transform';
 import type { ItemType, ItemPriority } from '@/types/item';
 import type { UpdateItemRequest } from '@/types/api';
-import { ITEM_TYPES, ITEM_PRIORITIES } from '@ai-team/shared';
+import { ITEM_TYPES, ITEM_PRIORITIES, SEVERITY_VALUES } from '@ai-team/shared';
 
-// Valid values for type and priority
+// Valid values for type, priority, and severity
 const VALID_TYPES: ItemType[] = ITEM_TYPES as unknown as ItemType[];
 const VALID_PRIORITIES: ItemPriority[] = ITEM_PRIORITIES as unknown as ItemPriority[];
 
@@ -151,6 +151,24 @@ export async function PATCH(
       return NextResponse.json(error.toResponse(), { status: 400 });
     }
 
+    // Validate severity if provided (finding provenance, WI-936).
+    // attributedAgent and fingerprint are free-form — not enum-validated,
+    // but still must be a string (or null) before reaching Prisma.
+    if (body.severity !== undefined && body.severity !== null && !SEVERITY_VALUES.includes(body.severity as (typeof SEVERITY_VALUES)[number])) {
+      const error = createValidationError(`severity must be one of: ${SEVERITY_VALUES.join(', ')}`);
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
+    if (!isValidOptionalString(body.attributedAgent)) {
+      const error = createValidationError('attributedAgent must be a string');
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
+    if (!isValidOptionalString(body.fingerprint)) {
+      const error = createValidationError('fingerprint must be a string');
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
     // Validate dependencies if provided
     if (body.dependencies !== undefined) {
       // Check for self-reference
@@ -242,6 +260,9 @@ export async function PATCH(
       outputTest?: string | null;
       outputImpl?: string | null;
       outputTypes?: string | null;
+      severity?: string | null;
+      attributedAgent?: string | null;
+      fingerprint?: string | null;
       updatedAt: Date;
     } = {
       updatedAt: new Date(),
@@ -274,6 +295,15 @@ export async function PATCH(
       updateData.outputTest = body.outputs.test || null;
       updateData.outputImpl = body.outputs.impl || null;
       updateData.outputTypes = body.outputs.types || null;
+    }
+    if (body.severity !== undefined) {
+      updateData.severity = body.severity || null;
+    }
+    if (body.attributedAgent !== undefined) {
+      updateData.attributedAgent = body.attributedAgent || null;
+    }
+    if (body.fingerprint !== undefined) {
+      updateData.fingerprint = body.fingerprint || null;
     }
 
     // Handle dependency updates in a transaction

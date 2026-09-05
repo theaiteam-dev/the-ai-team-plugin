@@ -397,6 +397,13 @@ Reproduce the mission PRD's `## Definition of Done` section verbatim, so it ride
 - [ ] Submitting a bad email shows the error state
 - [ ] ~~Statement depending on a live third-party response~~ — FLAGGED non-drivable, see Critical Issue #N
 
+### Quality Profile (for Josh's Blessing)
+
+If Face's Output indicates a profile was already given via `--quality` (Face's own bullet reads "N/A" in that case, per its conditional requirement), write exactly "Quality profile: N/A — already given via --quality, no recommendation to ratify" here and skip the rest of this section — there is nothing left on this axis for the operator to ratify. Only when Face DID produce a recommendation, state its recommended quality profile and rationale here, so it rides this report through the same human gate as the open questions and Definition of Done above — no new interruption point. The operator ratifies (or overrides) the recommendation when they review this report. Do not restate what a profile maps to — see the resolver (`resolveQualityProfile`, `scripts/hooks/lib/qa-contract.js`).
+
+**Recommended profile:** `normal` (or "N/A — already given via --quality" per the conditional above)
+**Rationale:** one sentence, grounded in the PRD's own scope and risk (not a generic justification) — omit when N/A
+
 ### Cross-Cutting Concerns
 
 - Observations that affect multiple items

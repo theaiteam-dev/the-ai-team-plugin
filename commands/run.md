@@ -474,7 +474,7 @@ WIP limits are **per stage** — each pipeline column independently caps how man
 [Tawnia] COMMITTED a1b2c3d - feat: Mission Name
 [Hannibal] Documentation complete.
 [Hannibal] Dispatching Debrief (retro) detached — not blocking completion.
-[Hannibal] Tip: run /ai-team:sweep for an independent branch review that captures and fixes what the pipeline missed.
+[Hannibal] Tip: run /ai-team:review for an independent branch review that turns what the pipeline missed into a mission.
 "I love it when a plan comes together."
 ```
 

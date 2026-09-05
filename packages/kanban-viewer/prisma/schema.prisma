@@ -61,6 +61,15 @@ model Item {
   outputImpl     String?                  // Path to implementation file output
   outputTypes    String?                  // Path to types file output
 
+  // Finding provenance (WI-936) — stamped at decomposition time from a
+  // review/bug-stomp finding or a bug-fix repro. fingerprint has NO FK
+  // (unlike RetroLearning.fingerprint): an item is stamped long before any
+  // Fingerprint row exists — see POST /api/learnings' own fingerprint.upsert,
+  // which is what makes a freshly minted slug safe THERE, not here.
+  severity        String?                 // 'low' | 'medium' | 'high' | 'critical'
+  attributedAgent String?                 // agent whose behavior the finding is about
+  fingerprint     String?                 // dedup slug the finding was derived from — no FK
+
   // Relations
   workLogs       WorkLog[]
   agentClaim     AgentClaim?
@@ -134,6 +143,7 @@ model Mission {
   retroReport       String?                   // Markdown retrospective report
   finalReview       String?                   // Markdown final review report (Stockwell)
   scalingRationale  String?                   // JSON blob: ScalingRationale
+  executionContract String?                   // JSON blob: ExecutionContract (testing_level, review_tier, profile)
 
   items               MissionItem[]
   activities          ActivityLog[]
@@ -277,6 +287,10 @@ model RetroLearning {
   pattern          String                   // short pattern slug
   fingerprint      String                   // dedup key, computed in application code
   fingerprintRef   Fingerprint @relation(fields: [fingerprint], references: [slug])
+  sourceItemId     String?                  // WI-936: the work item this learning was derived
+                                             // from, when capture is item-attributed rather than
+                                             // ad hoc — free-form, no FK (same reasoning as
+                                             // Item.fingerprint: no guaranteed row on the other end)
   title            String
   detail           String?
   status           String   @default("open")
@@ -288,9 +302,34 @@ model RetroLearning {
   @@index([projectId, status])
   @@index([fingerprint])
   @@index([missionId])
-  // Backs the per-mission dedupe in POST /api/learnings. SQLite treats NULLs as
-  // distinct, so null-missionId backfill rows are intentionally unconstrained.
-  @@unique([projectId, missionId, fingerprint])
+  // WI-936 rework (AC5): a second, independent dedupe key so a
+  // source-item-derived capture updates its existing row instead of
+  // duplicating. sourceItemId is nullable and SQLite treats every NULL as
+  // distinct in a unique index, so this plain @@unique already leaves rows
+  // with no source item unconstrained on THIS key — exactly the null-
+  // missionId backfill behavior described below, just on a different column.
+  @@unique([projectId, missionId, sourceItemId])
+  // NOTE — (projectId, missionId, fingerprint) dedupe is intentionally NOT
+  // declared as a `@@unique` here, even though it backs the per-mission
+  // dedupe in POST /api/learnings for captures with no sourceItemId.
+  //
+  // Unlike sourceItemId, `fingerprint` is NOT NULL on every row, so a plain
+  // @@unique on it would apply to ALL rows — including source-item-derived
+  // ones — and collide whenever two DIFFERENT source items happen to share
+  // one fingerprint, even though they're perfectly distinct under the
+  // constraint above. That collision is exactly what WI-936's AC5 forbids
+  // (see the migration rework this comment accompanies).
+  //
+  // The real constraint lives at the database level as a PARTIAL unique
+  // index — `UNIQUE (projectId, missionId, fingerprint) WHERE sourceItemId
+  // IS NULL` — scoping fingerprint-keyed dedupe back to exactly the rows it
+  // always governed (captures with no source item). Prisma's `@@unique`
+  // attribute cannot express a WHERE clause, so this constraint is created
+  // by raw SQL in prisma/migrations/20260903225506_add_source_item_to_retro_learning/
+  // instead of declared here. This is a deliberate, known drift between this
+  // file and the actual database for this one constraint — `prisma migrate
+  // diff` against this schema will propose "fixing" it; do not apply that
+  // migration, it would reintroduce the bug this rework fixed.
 }
 
 // The maintainer's AGREEMENT to act on one or more fingerprints. Global — NOT

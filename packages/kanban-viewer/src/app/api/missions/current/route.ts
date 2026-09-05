@@ -5,6 +5,7 @@ import { safeJsonParse } from '@/lib/json-utils';
 import type { GetCurrentMissionResponse, ApiError } from '@/types/api';
 import type { Mission } from '@/types/mission';
 import type { ScalingRationale } from '@/types/mission-scaling';
+import type { ExecutionContract } from '@/types/mission-execution-contract';
 
 /**
  * Mission lifecycle states that mean a mission is no longer in flight.
@@ -83,6 +84,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           completedAt: mission.completedAt,
           archivedAt: mission.archivedAt,
           scalingRationale: safeJsonParse<ScalingRationale>(mission.scalingRationale),
+          executionContract: safeJsonParse<ExecutionContract>(mission.executionContract),
         }
       : null;
 

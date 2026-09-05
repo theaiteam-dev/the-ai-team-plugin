@@ -25,6 +25,9 @@ var (
 	itemsCreateItemCmd_priority string
 	itemsCreateItemCmd_title string
 	itemsCreateItemCmd_type string
+	itemsCreateItemCmd_severity string
+	itemsCreateItemCmd_attributedAgent string
+	itemsCreateItemCmd_fingerprint string
 )
 
 var itemsCreateItemCmd = &cobra.Command{
@@ -73,6 +76,9 @@ var itemsCreateItemCmd = &cobra.Command{
 		}
 		if err := validate.Enum("priority", itemsCreateItemCmd_priority, []string{"critical", "high", "medium", "low"}); err != nil { return err }
 		if err := validate.Enum("type", itemsCreateItemCmd_type, []string{"feature", "bug", "enhancement", "task"}); err != nil { return err }
+		if cmd.Flags().Changed("severity") {
+			if err := validate.Enum("severity", itemsCreateItemCmd_severity, []string{"low", "medium", "high", "critical"}); err != nil { return err }
+		}
 		if !cmd.Flags().Changed("outputs.impl") &&
 			!cmd.Flags().Changed("outputs.test") &&
 			!cmd.Flags().Changed("outputs.types") {
@@ -126,6 +132,15 @@ var itemsCreateItemCmd = &cobra.Command{
 		bodyMap["priority"] = itemsCreateItemCmd_priority
 		bodyMap["title"] = itemsCreateItemCmd_title
 		bodyMap["type"] = itemsCreateItemCmd_type
+		if cmd.Flags().Changed("severity") {
+			bodyMap["severity"] = itemsCreateItemCmd_severity
+		}
+		if cmd.Flags().Changed("attributedAgent") {
+			bodyMap["attributedAgent"] = itemsCreateItemCmd_attributedAgent
+		}
+		if cmd.Flags().Changed("fingerprint") {
+			bodyMap["fingerprint"] = itemsCreateItemCmd_fingerprint
+		}
 		resp, err := c.Do("POST", "/api/items", pathParams, queryParams, bodyMap)
 		if err != nil {
 			return err
@@ -164,6 +179,12 @@ func init() {
 	itemsCreateItemCmd.RegisterFlagCompletionFunc("type", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return []string{"feature", "bug", "enhancement", "task"}, cobra.ShellCompDirectiveNoFileComp
 	})
+	itemsCreateItemCmd.Flags().StringVar(&itemsCreateItemCmd_severity, "severity", "", "Finding provenance (low|medium|high|critical)")
+	itemsCreateItemCmd.RegisterFlagCompletionFunc("severity", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"low", "medium", "high", "critical"}, cobra.ShellCompDirectiveNoFileComp
+	})
+	itemsCreateItemCmd.Flags().StringVar(&itemsCreateItemCmd_attributedAgent, "attributedAgent", "", "Finding provenance — agent whose behavior the finding is about (free-form)")
+	itemsCreateItemCmd.Flags().StringVar(&itemsCreateItemCmd_fingerprint, "fingerprint", "", "Finding provenance — dedup slug the finding was derived from (free-form)")
 	// NOTE: required-flag enforcement is done in RunE via validate.RequireFlags
 	// so that --body / --body-file can be used as an alternative to individual
 	// flags. Cobra's MarkFlagRequired runs before RunE and cannot be bypassed.

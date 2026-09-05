@@ -1,0 +1,40 @@
+ateam.config.json sha256[0:16] BEFORE : 33a015e0d13c0f43
+
+--- DoD 8: --quality deep => full-dod + hands-on ---
+{
+  "testing_level": "full-dod",
+  "review_tier": "hands-on",
+  "probing_guidance": "Go beyond the standard Raptor Protocol pass: actively probe boundary and off-by-one conditions, concurrent/race scenarios on any shared state, error paths and partial-failure recovery, and cross-feature interactions the tests do not exercise directly. Treat a clean run as insufficient evidence on its own — spend the extra scrutiny this profile was chosen for."
+}
+deep.testing_level === 'full-dod' : true
+deep.review_tier  === 'hands-on' : true
+deep carries probing_guidance    : true
+
+--- Other two profiles (bundle definitions, FR-8) ---
+quick  -> testing_level=smoke review_tier=evidence-only probing_guidance=false
+normal -> testing_level=critical-path review_tier=hands-on probing_guidance=false
+
+--- DoD 9: invalid --quality is rejected, naming all three ---
+  "deeep"      : threw; names=[quick,normal,deep] all3=true
+      message: Unknown quality profile "deeep" — must be one of: quick, normal, deep
+  "DEEP"       : threw; names=[quick,normal,deep] all3=true
+      message: Unknown quality profile "DEEP" — must be one of: quick, normal, deep
+  ""           : threw; names=[quick,normal,deep] all3=true
+      message: Unknown quality profile "" — must be one of: quick, normal, deep
+  "thorough"   : threw; names=[quick,normal,deep] all3=true
+      message: Unknown quality profile "thorough" — must be one of: quick, normal, deep
+
+--- DoD 11: mission WITHOUT a stored contract falls back to ateam.config.json ---
+config testing_level=critical-path review_tier=hands-on
+resolveExecutionContract(null) -> testing_level=critical-path review_tier=hands-on
+matches config exactly : true
+
+--- DoD 10: a stored mission contract WINS over config ---
+stored-contract mission -> testing_level=full-dod review_tier=hands-on
+overrides config('critical-path') : true
+
+--- Repo facts still come from config, not the profile (FR-10) ---
+surfaces=["web"] qa.drive=flowspec
+
+ateam.config.json sha256[0:16] AFTER  : 33a015e0d13c0f43
+config UNCHANGED by profile resolution : true

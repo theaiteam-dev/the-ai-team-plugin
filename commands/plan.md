@@ -8,13 +8,14 @@ Initialize a mission from a PRD file with two-pass refinement.
 ## Usage
 
 ```
-/ai-team:plan <prd-file> [--skip-refinement]
+/ai-team:plan <prd-file> [--skip-refinement] [--quality <quick|normal|deep>]
 ```
 
 ## Arguments
 
 - `prd-file` (required): Path to the PRD markdown file
 - `--skip-refinement` (optional): Skip Sosa's review for simple PRDs
+- `--quality` / `-q` (optional, `quick`|`normal`|`deep`): stores the profile at mission creation — no recommendation solicited when given. Omit it to have Face and Sosa recommend one from the PRD for you to ratify at the existing refinement gate (Step 5/6); see the resolver (`resolveQualityProfile`, `scripts/hooks/lib/qa-contract.js`) for what each profile maps to.
 
 ## Flow
 
@@ -130,10 +131,18 @@ If all checks pass, continue silently.
 
 ### 2. Initialize mission
 
+**Resolve the quality profile first, before creating the mission** — one of three cases applies:
+
+- **`--quality`/`-q` given:** validate it is one of `quick`, `normal`, `deep`. If it is none of the three, reject with a message naming all three valid names and create no mission — stop here, do not proceed to Face. If valid, resolve it via the resolver (`resolveQualityProfile`, `scripts/hooks/lib/qa-contract.js` — do not restate what quick/normal/deep map to) and pass the resulting `executionContract` (`testing_level`, `review_tier`, `profile`) on the `createMission` call itself, so the mission carries a contract from the moment it exists.
+- **`--quality` omitted, refinement NOT skipped:** create the mission with no `executionContract` yet — no *ratified* contract exists yet at this point (Face produces the recommendation in Step 3's first pass; Sosa ratifies it in Step 5; Step 6 stamps it), so there is nothing to stamp here. Step 6 stamps the ratified profile onto this same mission before any item reaches ready.
+- **`--quality` omitted AND `--skip-refinement` given:** there is no refinement gate left to ratify a recommendation at, so apply `normal` as this command's concrete default and pass its resolved `executionContract` at creation, the same way an explicit `--quality normal` would — a skipped-refinement mission is never left without a contract.
+
 Run `ateam missions createMission` with ALL required parameters:
 
 ```bash
 ateam missions createMission --name "Project Name" --prdPath "prd/drafts/my-feature.md" --force --json
+# Add the resolved executionContract fields to this same call whenever a
+# profile is already known at this point — see the three cases above.
 ```
 
 - `--name`: Project name extracted from PRD (first H1 header or filename)
@@ -149,6 +158,12 @@ This command:
 - Initializes empty board state
 - Logs mission start to activity feed
 
+When a profile is already known at this point (the `--quality`-given case, or the skip-refinement default), the actual invocation carries the resolved contract directly — resolving it in prose and then omitting it from the real call would silently ship a contract-less mission:
+
+```bash
+ateam missions createMission --name "Project Name" --prdPath "prd/drafts/my-feature.md" --force --testing-level {resolved.testing_level} --review-tier {resolved.review_tier} --profile {resolved profile name, e.g. normal} --json
+```
+
 ### 3. Invoke Face - First Pass
 
 ```
@@ -163,10 +178,18 @@ Agent(
 
   {prd_content}
 
+  Quality profile: {if --quality was given on this invocation: "Already given via --quality: {value}. Do NOT produce a quality-profile recommendation in your Output — state N/A there instead." else: "No --quality was given — recommend one (quick/normal/deep) from the PRD in your Output as usual, with a one-line rationale."}
+
   Create work items using the ateam CLI (ateam items createItem).
   When done, run ateam deps-check checkDeps and report summary."
 )
 ```
+
+**Capture Face's report.** Face's pass-1 summary (including its Quality Profile
+recommendation bullet, when `--quality` was omitted) is the Agent call's
+returned report text — hold onto it verbatim as `{face_report}`. Step 5 below
+threads it into Sosa's prompt so Sosa ratifies Face's actual recommendation
+instead of deriving a conflicting one of her own from the PRD.
 
 **Seed exploration, don't skip it.** If the PRD names concrete code touchpoints
 (specific files, modules, schemas, prior "Resolved Decisions" sections), include
@@ -202,6 +225,13 @@ Agent(
   prompt: "You are Sosa from the A(i)-Team. [full sosa.md prompt]
 
   Review all work items in briefings stage.
+
+  Here is Face's first-pass report, including its Quality Profile
+  recommendation bullet (or N/A if --quality was already given):
+
+  {face_report}
+
+  Quality profile: {if --quality was given on this invocation: "Already given via --quality: {value}. Do NOT produce a quality-profile recommendation in your report — write N/A in the Quality Profile section." else: "No --quality was given — Face's report above already carries a recommended profile (quick/normal/deep) with a one-line rationale. State/ratify THAT SAME recommendation in your Quality Profile section — do not derive an independent one from the PRD yourself, since a conflicting profile would leave the mission with no single source of truth to stamp in Step 6."}
 
   Use AskUserQuestion to clarify any ambiguities with the human.
 
@@ -266,9 +296,18 @@ SendMessage(
 
   After all updates:
   1. Run ateam deps-check checkDeps --json to get the readyItems list
-  2. Move items with NO dependencies to ready stage using ateam board-move moveItem
-  3. Leave items WITH dependencies in briefings stage
-  4. Record ADRs: if Sosa's 'ADR Candidates' section is anything other than
+  2. Stamp the ratified quality profile onto this mission via
+     `ateam missions updateMission <missionId> --testing-level <resolved>
+     --review-tier <resolved> --profile <name>` (WI-934's existing
+     PATCH /api/missions/{missionId} allow-list — do not build a new
+     endpoint), using the profile Sosa's refinement report recommended and
+     the operator ratified. Do this BEFORE moving anything to ready, so no
+     item ever executes against a contract-less mission. Skip this stamp
+     only when the mission already carries a profile from Step 2 (the
+     --quality path).
+  3. Move items with NO dependencies to ready stage using ateam board-move moveItem
+  4. Leave items WITH dependencies in briefings stage
+  5. Record ADRs: if Sosa's 'ADR Candidates' section is anything other than
      exactly 'ADR Candidates: none.' (the section is ALWAYS present, so its
      mere existence is not the signal — the sentinel is),
      write each as adr/NNNN-*.md in the target repo per your ADR Recording
@@ -311,9 +350,18 @@ Agent(
 
   After all updates:
   1. Run ateam deps-check checkDeps --json to get the readyItems list
-  2. Move items with NO dependencies to ready stage using ateam board-move moveItem
-  3. Leave items WITH dependencies in briefings stage
-  4. Record ADRs: if Sosa's 'ADR Candidates' section is anything other than
+  2. Stamp the ratified quality profile onto this mission via
+     `ateam missions updateMission <missionId> --testing-level <resolved>
+     --review-tier <resolved> --profile <name>` (WI-934's existing
+     PATCH /api/missions/{missionId} allow-list — do not build a new
+     endpoint), using the profile Sosa's refinement report recommended and
+     the operator ratified. Do this BEFORE moving anything to ready, so no
+     item ever executes against a contract-less mission. Skip this stamp
+     only when the mission already carries a profile from Step 2 (the
+     --quality path).
+  3. Move items with NO dependencies to ready stage using ateam board-move moveItem
+  4. Leave items WITH dependencies in briefings stage
+  5. Record ADRs: if Sosa's 'ADR Candidates' section is anything other than
      exactly 'ADR Candidates: none.' (the section is ALWAYS present, so its
      mere existence is not the signal — the sentinel is),
      write each as adr/NNNN-*.md per your ADR Recording procedure (the Glob/
@@ -371,6 +419,7 @@ With skip refinement:
 - **Invalid work item**: Missing required fields
 - **Refinement blocked**: Critical issues Sosa can't resolve
 - **API unavailable**: Cannot connect to A(i)-Team server
+- **Invalid `--quality` value**: Rejected, naming `quick`, `normal`, and `deep`; no mission created
 
 ## CLI Commands Used
 
@@ -382,6 +431,7 @@ With skip refinement:
 | `ateam items listItems --json` | List items by stage (Sosa review) |
 | `ateam board-move moveItem --itemId <id> --toStage <stage>` | Move items between stages (Face second pass) |
 | `ateam deps-check checkDeps --json` | Validate dependency graph |
+| `ateam missions updateMission <missionId> --testing-level <t> --review-tier <r> --profile <name>` | Stamp the ratified quality profile onto the mission before Wave 0 moves to ready (Face second pass, flag-less path only) |
 
 ## Agent Invocations
 

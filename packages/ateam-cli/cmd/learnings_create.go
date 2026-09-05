@@ -20,6 +20,7 @@ var (
 	learningsCreateCmdTitle           string
 	learningsCreateCmdDetail          string
 	learningsCreateCmdMissionId       string
+	learningsCreateCmdSourceItemId    string
 )
 
 var learningsCreateCmd = &cobra.Command{
@@ -46,6 +47,9 @@ var learningsCreateCmd = &cobra.Command{
 		}
 		if cmd.Flags().Changed("missionId") {
 			bodyMap["missionId"] = learningsCreateCmdMissionId
+		}
+		if cmd.Flags().Changed("source-item-id") {
+			bodyMap["sourceItemId"] = learningsCreateCmdSourceItemId
 		}
 		resp, err := c.Do("POST", "/api/learnings", pathParams, queryParams, bodyMap)
 		if err != nil {
@@ -75,6 +79,7 @@ func init() {
 	learningsCreateCmd.Flags().StringVar(&learningsCreateCmdTitle, "title", "", "Short title")
 	learningsCreateCmd.Flags().StringVar(&learningsCreateCmdDetail, "detail", "", "Optional longer detail")
 	learningsCreateCmd.Flags().StringVar(&learningsCreateCmdMissionId, "missionId", "", "Optional mission ID; omit for backfill rows (never deduped)")
+	learningsCreateCmd.Flags().StringVar(&learningsCreateCmdSourceItemId, "source-item-id", "", "Optional work item this learning was derived from — when set, dedupe keys on (missionId, sourceItemId) instead of fingerprint")
 	learningsCreateCmd.MarkFlagRequired("source")
 	learningsCreateCmd.MarkFlagRequired("severity")
 	learningsCreateCmd.MarkFlagRequired("attributedAgent")

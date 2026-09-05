@@ -127,6 +127,13 @@ export interface WorkItem {
   rejection_history?: RejectionHistoryEntry[];
   work_logs?: WorkLogEntry[];
   dependencies: string[];
+  // Finding provenance (WI-936): set when this item was derived from a
+  // review/bug-stomp finding or a bug-fix repro. attributed_agent is
+  // free-form (not the AgentName union) — it names whose behavior the
+  // finding is about, not who is currently assigned to the item.
+  severity?: 'critical' | 'high' | 'medium' | 'low';
+  attributed_agent?: string;
+  fingerprint?: string;
   outputs: {
     test?: string;
     impl?: string;

@@ -156,6 +156,20 @@ export function validateDependencies(
 }
 
 /**
+ * Check that a free-form, nullable provenance field (attributedAgent,
+ * fingerprint) is either absent, null, or a string before it reaches Prisma.
+ * These fields are not enum-validated like severity, but the runtime JSON
+ * shape still must not be trusted — a caller could send a number, object,
+ * or array where the TypeScript request interface promises a string.
+ *
+ * @param value - The raw value from the parsed request body
+ * @returns true if the value is undefined, null, or a string
+ */
+export function isValidOptionalString(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === 'string';
+}
+
+/**
  * Minimal item representation for output collision validation.
  */
 export interface OutputCollisionItem {

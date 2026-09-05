@@ -1,0 +1,47 @@
+# PROPOSED — deliberately NOT graduated into specs/ by Frankie's M-20260903-002 walk.
+#
+# Why it is parked here instead of in specs/:
+#   This flow asserts the board's finding-provenance rendering (DoD 12), which is
+#   the drivable critical-path spine of this mission. It passed by hand during the
+#   walk — but only against work items Frankie created by hand through POST /api/items.
+#
+#   packages/kanban-viewer/prisma/seed.ts creates stages and a project and NO items,
+#   and ateam.config.json declares "qa": { "seed": null }. So on a fresh `npm run dev:qa`
+#   this flow finds an empty board and goes red for a purely ENVIRONMENTAL reason —
+#   missing seed data — not because the feature regressed.
+#
+#   Graduating a spec that sits red for environmental reasons trains the team to
+#   ignore red. So it waits here.
+#
+# To graduate it (move this file to specs/board-finding-provenance.flow.yaml):
+#   Give the QA seed at least one finding-derived item whose severity DISAGREES with
+#   its priority — that disagreement is what makes the assertion meaningful, because a
+#   board that wrongly rendered `priority` would still pass if the two matched.
+#
+#   Suggested seed item (mirrors the walk's WI-003):
+#     title:           "Severity and priority deliberately disagree"
+#     type: bug        priority: low        severity: critical
+#     attributedAgent: "Murdock"
+#     fingerprint:     "missing-negative-path-test"
+#
+name: board-finding-provenance
+description: >
+  A finding-derived work item shows its severity on the board card, and its
+  attributed agent and fingerprint in the item detail modal. Verifies PRD
+  "Mission Entry Points & Quality Profiles" DoD statement 12. The seeded item
+  carries priority=low with severity=critical, so rendering `priority` instead
+  of `severity` fails this flow rather than silently passing.
+steps:
+  - visit: /?projectId=kanban-viewer
+  - wait_for: BRIEFINGS
+  - click: Severity and priority deliberately disagree
+  - wait_for: Attributed agent
+expect:
+  # Severity, not priority: the card/modal must show the severity value.
+  - visible: critical
+  - not_visible: low
+  # Provenance the modal must surface for a finding-derived item.
+  - visible: Attributed agent
+  - visible: Murdock
+  - visible: Fingerprint
+  - visible: missing-negative-path-test

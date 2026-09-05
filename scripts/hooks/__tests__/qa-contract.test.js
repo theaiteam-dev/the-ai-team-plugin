@@ -37,9 +37,12 @@ import { tmpdir } from 'os';
 import { describe, it, expect, vi, beforeEach, beforeAll, afterEach } from 'vitest';
 import {
   readExecutionContract,
+  readExecutionContractFrom,
   canFrankieDrive,
   isDriverExecutable,
   frankieDriveReadiness,
+  resolveQualityProfile,
+  resolveExecutionContract,
   _resetQaContractCache,
 } from '../lib/qa-contract.js';
 
@@ -679,5 +682,295 @@ describe('agents/frankie.md - graduated-spec rule is stated without overselling 
   it('names true filesystem-level immutability as a separate follow-up', () => {
     expect(content).toMatch(/filesystem-level immutability/i);
     expect(content).toMatch(/follow-up/i);
+  });
+});
+
+// =============================================================================
+// WI-937: quality profiles (quick/normal/deep) resolve to the execution
+// contract's existing enums (FR-8), and the mission's own stored contract is
+// preferred over ateam.config.json at read time (FR-9). Per ADR 0008, the
+// module stays synchronous — the caller supplies the mission's contract as an
+// argument, never fetched internally — so these are TWO separate, narrow
+// functions rather than one function that both bundles a profile name AND
+// prefers a mission contract:
+//
+//   resolveQualityProfile(profileName) — a pure name -> {testing_level,
+//   review_tier, probing_guidance?} bundle lookup, no fs access at all. Used
+//   ONCE, at mission-creation time, by whichever entry-point command computes
+//   what to stamp onto the Mission record (WI-934's executionContract field)
+//   — never by hooks or by the runtime "what's my effective contract" read.
+//
+//   resolveExecutionContract(missionContract, cwd) — the runtime read: prefer
+//   missionContract's testing_level/review_tier when supplied (they were
+//   already resolved from a profile once, at creation time — no need to
+//   re-bundle), else return ateam.config.json's contract unchanged via the
+//   EXISTING readExecutionContractFrom(cwd). surfaces/qa/evidence always come
+//   from config either way — WI-934's Mission.executionContract only ever
+//   stores testing_level/review_tier/profile, never the whole contract.
+//
+// This split keeps readExecutionContract()/readExecutionContractFrom(cwd)'s
+// signatures byte-for-byte unchanged (AC5's "hooks... keep working with no
+// change to how they call it") — hooks that have no mission contract to give
+// keep calling the two pre-existing functions exactly as before; only
+// mission-aware callers (agents, playbooks) adopt resolveExecutionContract().
+// =============================================================================
+
+describe('resolveQualityProfile() - the three profile bundles (FR-8, AC1)', () => {
+  it('quick resolves to smoke testing with evidence-only review', () => {
+    const bundle = resolveQualityProfile('quick');
+    expect(bundle.testing_level).toBe('smoke');
+    expect(bundle.review_tier).toBe('evidence-only');
+  });
+
+  it('normal resolves to critical-path testing with hands-on review', () => {
+    const bundle = resolveQualityProfile('normal');
+    expect(bundle.testing_level).toBe('critical-path');
+    expect(bundle.review_tier).toBe('hands-on');
+  });
+
+  it('deep resolves to full-dod testing with hands-on review', () => {
+    const bundle = resolveQualityProfile('deep');
+    expect(bundle.testing_level).toBe('full-dod');
+    expect(bundle.review_tier).toBe('hands-on');
+  });
+
+  it('every bundle value is drawn from the existing TESTING_LEVEL_VALUES / REVIEW_TIER_VALUES enums (invents no new values)', () => {
+    for (const profile of ['quick', 'normal', 'deep']) {
+      const bundle = resolveQualityProfile(profile);
+      expect(['smoke', 'critical-path', 'full-dod']).toContain(bundle.testing_level);
+      expect(['hands-on', 'evidence-only', 'auto']).toContain(bundle.review_tier);
+    }
+  });
+});
+
+describe('resolveQualityProfile() - invalid profile name fails loudly, no silent default (AC2)', () => {
+  it('throws naming quick, normal, and deep for an unrecognized profile name', () => {
+    expect(() => resolveQualityProfile('extreme')).toThrow(/quick/);
+    expect(() => resolveQualityProfile('extreme')).toThrow(/normal/);
+    expect(() => resolveQualityProfile('extreme')).toThrow(/deep/);
+  });
+
+  it('throws rather than silently falling back to a default profile', () => {
+    // The failure mode this AC explicitly forbids: a typo like "norma" or an
+    // empty string quietly resolving to 'normal' (or any other default)
+    // instead of surfacing the mistake.
+    expect(() => resolveQualityProfile('norma')).toThrow();
+    expect(() => resolveQualityProfile('')).toThrow();
+    expect(() => resolveQualityProfile(undefined)).toThrow();
+  });
+
+  it('throws for inherited property names instead of resolving to an empty spread object (CodeRabbit PR #67)', () => {
+    // QUALITY_PROFILES[profileName] resolves inherited Object.prototype
+    // members like "constructor" and "toString" without an own-property
+    // check — those names must fail loudly just like any other unknown
+    // profile, not bypass the error path and return `{}`.
+    expect(() => resolveQualityProfile('constructor')).toThrow(/quick/);
+    expect(() => resolveQualityProfile('toString')).toThrow(/quick/);
+    expect(() => resolveQualityProfile('__proto__')).toThrow(/quick/);
+  });
+});
+
+describe('resolveQualityProfile() - only deep carries probing guidance (AC4)', () => {
+  it('quick resolves with no probing guidance', () => {
+    const bundle = resolveQualityProfile('quick');
+    expect(bundle.probing_guidance).toBeFalsy();
+  });
+
+  it('normal resolves with no probing guidance', () => {
+    const bundle = resolveQualityProfile('normal');
+    expect(bundle.probing_guidance).toBeFalsy();
+  });
+
+  it('deep resolves with non-empty probing guidance text', () => {
+    const bundle = resolveQualityProfile('deep');
+    expect(typeof bundle.probing_guidance).toBe('string');
+    expect(bundle.probing_guidance.length).toBeGreaterThan(0);
+  });
+});
+
+describe('resolveQualityProfile() - the stored Mission.executionContract shape reaches the guidance via its profile field (PR #67 review)', () => {
+  // Entry points persist {testing_level, review_tier, profile} — never the
+  // guidance text itself — and resolveExecutionContract() deliberately
+  // propagates only testing_level/review_tier. Amy's consumer path is
+  // therefore: stored contract -> .profile -> resolveQualityProfile ->
+  // .probing_guidance. Pin that the stored shape round-trips to the SAME
+  // guidance text the bundle defines, and to nothing for the other profiles.
+  it("a stored deep contract's profile field resolves to deep's probing guidance", () => {
+    const stored = { testing_level: 'full-dod', review_tier: 'hands-on', profile: 'deep' };
+    const guidance = resolveQualityProfile(stored.profile).probing_guidance;
+    expect(typeof guidance).toBe('string');
+    expect(guidance).toBe(resolveQualityProfile('deep').probing_guidance);
+    expect(guidance).toMatch(/Raptor Protocol/);
+  });
+
+  it('a stored quick or normal contract resolves to no guidance (the standard probing pass)', () => {
+    for (const stored of [
+      { testing_level: 'smoke', review_tier: 'evidence-only', profile: 'quick' },
+      { testing_level: 'critical-path', review_tier: 'hands-on', profile: 'normal' },
+    ]) {
+      expect(resolveQualityProfile(stored.profile).probing_guidance ?? 'none').toBe('none');
+    }
+  });
+
+  it('resolveExecutionContract() still does not carry probing_guidance — the consumer must go through the profile', () => {
+    mockConfigFile(JSON.stringify({}));
+    const resolved = resolveExecutionContract({ testing_level: 'full-dod', review_tier: 'hands-on', profile: 'deep' });
+    expect(resolved).not.toHaveProperty('probing_guidance');
+  });
+});
+
+describe('resolveExecutionContract() - mission contract preferred over config (FR-9, AC3)', () => {
+  it("returns the mission's own testing_level and review_tier when a mission contract is supplied", () => {
+    mockConfigFile(
+      JSON.stringify({ testing_level: 'smoke', review_tier: 'evidence-only' })
+    );
+
+    const missionContract = { testing_level: 'full-dod', review_tier: 'hands-on', profile: 'deep' };
+    const resolved = resolveExecutionContract(missionContract);
+
+    expect(resolved.testing_level).toBe('full-dod');
+    expect(resolved.review_tier).toBe('hands-on');
+    // The mission's values win over config's — not merged, not averaged.
+    expect(resolved.testing_level).not.toBe('smoke');
+    expect(resolved.review_tier).not.toBe('evidence-only');
+  });
+
+  it('returns ateam.config.json values unchanged when no mission contract is supplied', () => {
+    mockConfigFile(
+      JSON.stringify({ testing_level: 'smoke', review_tier: 'evidence-only', surfaces: ['web'] })
+    );
+
+    const resolved = resolveExecutionContract(undefined);
+
+    expect(resolved.testing_level).toBe('smoke');
+    expect(resolved.review_tier).toBe('evidence-only');
+    expect(resolved.surfaces).toEqual(['web']);
+  });
+
+  it('returns ateam.config.json values unchanged when the mission contract is explicitly null', () => {
+    mockConfigFile(JSON.stringify({ testing_level: 'critical-path' }));
+
+    const resolved = resolveExecutionContract(null);
+
+    expect(resolved.testing_level).toBe('critical-path');
+  });
+
+  it('still returns surfaces/qa/evidence from config even when a mission contract overrides testing_level/review_tier', () => {
+    // Mission.executionContract (WI-934) only ever stores testing_level,
+    // review_tier, and profile — never the whole contract. Every other field
+    // must still come from ateam.config.json.
+    mockConfigFile(
+      JSON.stringify({
+        surfaces: ['web'],
+        qa: { drive: 'flowspec' },
+        evidence: { default: 'screenshots' },
+        testing_level: 'smoke',
+        review_tier: 'evidence-only',
+      })
+    );
+
+    const resolved = resolveExecutionContract({ testing_level: 'full-dod', review_tier: 'hands-on' });
+
+    expect(resolved.surfaces).toEqual(['web']);
+    expect(resolved.qa.drive).toBe('flowspec');
+    expect(resolved.evidence.default).toBe('screenshots');
+    expect(resolved.testing_level).toBe('full-dod');
+    expect(resolved.review_tier).toBe('hands-on');
+  });
+
+  it('falls back to config when the mission contract is malformed (missing testing_level/review_tier) — fail-inert like the rest of this module', () => {
+    mockConfigFile(JSON.stringify({ testing_level: 'critical-path', review_tier: 'hands-on' }));
+
+    const resolved = resolveExecutionContract({ profile: 'normal' }); // no testing_level/review_tier
+
+    expect(resolved.testing_level).toBe('critical-path');
+    expect(resolved.review_tier).toBe('hands-on');
+  });
+
+  it('falls back to config when testing_level is not a member of TESTING_LEVEL_VALUES, even though review_tier is valid (CodeRabbit PR #67)', () => {
+    mockConfigFile(JSON.stringify({ testing_level: 'critical-path', review_tier: 'hands-on' }));
+
+    const resolved = resolveExecutionContract({ testing_level: 'invalid', review_tier: 'hands-on' });
+
+    expect(resolved.testing_level).toBe('critical-path');
+    expect(resolved.review_tier).toBe('hands-on');
+  });
+
+  it('falls back to config when review_tier is not a member of REVIEW_TIER_VALUES, even though testing_level is valid (CodeRabbit PR #67)', () => {
+    mockConfigFile(JSON.stringify({ testing_level: 'critical-path', review_tier: 'hands-on' }));
+
+    const resolved = resolveExecutionContract({ testing_level: 'full-dod', review_tier: 'invalid' });
+
+    expect(resolved.testing_level).toBe('critical-path');
+    expect(resolved.review_tier).toBe('hands-on');
+  });
+
+  it('overrides config only when BOTH testing_level and review_tier are valid enum members', () => {
+    mockConfigFile(JSON.stringify({ testing_level: 'critical-path', review_tier: 'hands-on' }));
+
+    const resolved = resolveExecutionContract({ testing_level: 'full-dod', review_tier: 'evidence-only' });
+
+    expect(resolved.testing_level).toBe('full-dod');
+    expect(resolved.review_tier).toBe('evidence-only');
+  });
+});
+
+describe('resolveExecutionContract() - resolves against a caller-supplied cwd, mirroring readExecutionContractFrom (AC5)', () => {
+  it('accepts an explicit cwd the same way isDriverExecutable/frankieDriveReadiness do', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'qa-resolve-cwd-'));
+    try {
+      writeFileSync(
+        path.join(dir, 'ateam.config.json'),
+        JSON.stringify({ testing_level: 'full-dod' })
+      );
+      const resolved = resolveExecutionContract(undefined, dir);
+      expect(resolved.testing_level).toBe('full-dod');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('resolveQualityProfile() and resolveExecutionContract() answer synchronously — no network or database access (AC5)', () => {
+  it('resolveQualityProfile returns a plain value immediately, not a Promise', () => {
+    const result = resolveQualityProfile('normal');
+    expect(result).not.toBeInstanceOf(Promise);
+    expect(typeof result.then).not.toBe('function');
+  });
+
+  it('resolveExecutionContract returns a plain value immediately, not a Promise', () => {
+    mockConfigFile(JSON.stringify({}));
+    const result = resolveExecutionContract(undefined);
+    expect(result).not.toBeInstanceOf(Promise);
+    expect(typeof result.then).not.toBe('function');
+  });
+});
+
+describe('readExecutionContract() and readExecutionContractFrom() are unchanged by this item (AC5 regression guard)', () => {
+  it('readExecutionContract() still resolves against process.cwd() with the same documented shape', () => {
+    // A lightweight smoke check, not a re-test of the 683-line suite above —
+    // this guards specifically against WI-937 accidentally changing the
+    // EXISTING functions' signature or behavior while adding the new ones.
+    mockConfigFile(JSON.stringify({ testing_level: 'smoke', review_tier: 'auto' }));
+
+    const contract = readExecutionContract();
+
+    expect(contract.testing_level).toBe('smoke');
+    expect(contract.review_tier).toBe('auto');
+  });
+
+  it('readExecutionContractFrom(cwd) still resolves against an explicit directory with the same documented shape', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'qa-read-from-regression-'));
+    try {
+      writeFileSync(
+        path.join(dir, 'ateam.config.json'),
+        JSON.stringify({ testing_level: 'full-dod', review_tier: 'evidence-only' })
+      );
+      const contract = readExecutionContractFrom(dir);
+      expect(contract.testing_level).toBe('full-dod');
+      expect(contract.review_tier).toBe('evidence-only');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -12,7 +12,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
  *    projectId cannot redirect the write to another project.
  * 3. Dedupe is per-mission and at write time: a second POST with the same
  *    (missionId, fingerprint) does not create a second row and returns the
- *    existing one (200).
+ *    existing one (200). This fingerprint-keyed dedupe applies only among
+ *    ad-hoc rows (sourceItemId null) — an item-derived learning sharing the
+ *    fingerprint is a distinct row, matching the partial unique index.
  * 4. The dedupe key includes missionId — the same fingerprint under a different
  *    mission is a distinct row (recurrence is counted per mission).
  * 5. Null-missionId rows are ALWAYS inserted and never deduped against each
@@ -170,6 +172,40 @@ describe('POST /api/learnings', () => {
     expect(mockPrisma.retroLearning.create).toHaveBeenCalledTimes(1);
   });
 
+  it('an ad-hoc capture (no sourceItemId) never dedupes against an item-derived row sharing its fingerprint (PR #67 review)', async () => {
+    // The partial unique index behind the fingerprint-keyed branch is scoped
+    // `WHERE sourceItemId IS NULL` — an item-derived learning and an ad-hoc
+    // capture with the same fingerprint are deliberately two rows. The
+    // fast-path findFirst must carry that same `sourceItemId: null`
+    // restriction, or it matches the item-derived row and returns its id as
+    // a 200 "duplicate", silently dropping the ad-hoc learning. Simulate the
+    // database: an item-derived row exists for this fingerprint, and it is
+    // only visible to a lookup that does NOT restrict sourceItemId to null.
+    const itemDerivedRow = { id: 41, sourceItemId: 'WI-1', fingerprint: 'same' };
+    mockPrisma.retroLearning.findFirst.mockImplementation(
+      async ({ where }: { where: { sourceItemId?: string | null } }) =>
+        where.sourceItemId === null ? null : itemDerivedRow
+    );
+    mockPrisma.retroLearning.create.mockResolvedValue({ id: 42 });
+
+    const response = await POST(
+      buildRequest('project-a', validBody({ fingerprint: 'same', missionId: 'm-1' }))
+    );
+
+    expect(response.status).toBe(201);
+    expect((await response.json()).data.id).toBe(42);
+    expect(mockPrisma.retroLearning.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { projectId: 'project-a', missionId: 'm-1', fingerprint: 'same', sourceItemId: null },
+      })
+    );
+    expect(mockPrisma.retroLearning.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.retroLearning.create.mock.calls[0][0].data).toMatchObject({
+      fingerprint: 'same',
+      sourceItemId: null,
+    });
+  });
+
   it('creates separate rows for the same fingerprint under different missions', async () => {
     mockPrisma.retroLearning.findFirst.mockResolvedValue(null);
     mockPrisma.retroLearning.create
@@ -304,6 +340,11 @@ describe('POST /api/learnings', () => {
       // an inline object literal — message content is preserved.
       expect(data.error.message).toBe(`Mission '${missionId}' not found`);
       expect(mockPrisma.retroLearning.create).not.toHaveBeenCalled();
+      // A rejected mission must leave no side effect behind: the Fingerprint
+      // upsert (which runs before create's dedupe/insert path) must not have
+      // fired either, or a caller could mint arbitrary Fingerprint slugs via
+      // requests that are ultimately rejected.
+      expect(mockPrisma.fingerprint.upsert).not.toHaveBeenCalled();
 
       // The ownership lookup must be scoped to the requesting project.
       expect(mockPrisma.mission.findFirst).toHaveBeenCalledWith({
@@ -311,6 +352,24 @@ describe('POST /api/learnings', () => {
       });
     }
   );
+
+  it('does not provision a Project row for a nonexistent/foreign missionId on a never-before-seen project id', async () => {
+    // Same rule as the body-validation cases below, extended to the mission
+    // ownership check: a rejected (404) request must not leave a Project row
+    // behind either. The mission lookup filters on Mission.projectId directly
+    // and needs no Project row to exist, so ensureProject can safely run
+    // after it.
+    mockPrisma.project.findUnique.mockResolvedValue(null);
+    mockPrisma.mission.findFirst.mockResolvedValue(null);
+
+    const res = await POST(
+      buildRequest('never-seen-project-2', validBody({ missionId: 'm-missing' }))
+    );
+
+    expect(res.status).toBe(404);
+    expect(mockPrisma.project.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.project.create).not.toHaveBeenCalled();
+  });
 
   it.each(REQUIRED_FIELDS)(
     'returns 400 VALIDATION_ERROR when required field "%s" is missing',

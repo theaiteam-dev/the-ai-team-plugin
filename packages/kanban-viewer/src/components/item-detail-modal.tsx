@@ -383,6 +383,18 @@ export function ItemDetailModal({
             <span className="text-muted-foreground">Updated:</span>
             <span className="font-mono">{formatDate(item.updated_at)}</span>
           </div>
+          {item.attributed_agent !== undefined && (
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Attributed agent:</span>
+              <span className="font-medium" data-testid="attributed-agent">{item.attributed_agent}</span>
+            </div>
+          )}
+          {item.fingerprint !== undefined && (
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Fingerprint:</span>
+              <span className="font-mono" data-testid="fingerprint">{item.fingerprint}</span>
+            </div>
+          )}
         </div>
 
         {/* Dependencies section */}
