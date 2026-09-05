@@ -415,6 +415,8 @@ Task(
   - Implementation: {outputs.impl}
   - Types (if exists): {outputs.types}
 
+  Quality profile: {executionContract.profile from ateam missions-current getCurrentMission --json, or "none stored"} — resolve it via resolveQualityProfile in scripts/hooks/lib/qa-contract.js and apply any probing_guidance it carries on top of the Raptor Protocol (no profile or no guidance → the standard pass, unchanged).
+
   Execute the Raptor Protocol. Respond with VERIFIED or FLAG."
 )
 ```

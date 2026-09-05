@@ -114,6 +114,50 @@ describe('AC1: derives one learning per finding-derived item, none for items wit
 // AC2: outcome data from the source item's rejectionCount and work log.
 // =============================================================================
 
+// =============================================================================
+// PR #67 review: item derivation must be scoped to the DISPATCHED mission.
+// `ateam items listItems --json` returns every unarchived item in the project,
+// and a previous mission's completed items can remain unarchived when an entry
+// point created the next mission without --force — so a project-wide fetch
+// would derive an older mission's finding-derived items under the current
+// missionId, and per-mission dedupe would store them as fresh rows.
+// =============================================================================
+
+describe('PR #67 review: item derivation is scoped to the dispatched mission', () => {
+  function listItemsLinesIn(section: string): string[] {
+    return section.split('\n').filter((line) => /ateam items listItems/.test(line));
+  }
+
+  it('step 1 fetches work items with --missionId, never a project-wide listItems', () => {
+    const step1 = sectionAfter(retroMd, /^### 1\. Gather Mission Data/m, /^### /m);
+    const lines = listItemsLinesIn(step1);
+    expect(lines.length, 'expected step 1 to fetch work items via ateam items listItems').toBeGreaterThan(0);
+    for (const line of lines) {
+      expect(line).toMatch(/--missionId\s+\S+/);
+    }
+  });
+
+  it('step 1 includes archived items so a retrospective re-run after archival sees the same set', () => {
+    const step1 = sectionAfter(retroMd, /^### 1\. Gather Mission Data/m, /^### /m);
+    for (const line of listItemsLinesIn(step1)) {
+      expect(line).toMatch(/--includeArchived/);
+    }
+  });
+
+  it('no bare project-wide listItems invocation remains anywhere in retro.md', () => {
+    const bare = listItemsLinesIn(retroMd).filter((line) => !/--missionId/.test(line));
+    expect(bare).toEqual([]);
+  });
+
+  it('step 3 ties derivation to the dispatched mission\'s items (the mission-scoped fetch), not "every completed item"', () => {
+    const idx = step3.search(/Deriving learnings from finding-derived work items/);
+    expect(idx).toBeGreaterThan(-1);
+    const window = step3.slice(idx, idx + 600);
+    expect(window).toMatch(/dispatched mission|mission-scoped/i);
+    expect(window).toMatch(/--missionId/);
+  });
+});
+
 describe('AC2: derived learning carries outcome data from rejectionCount and work log', () => {
   it('reads rejectionCount from the source item', () => {
     expect(step3).toMatch(/rejectionCount/);

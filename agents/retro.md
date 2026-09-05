@@ -46,8 +46,15 @@ You receive a `missionId` from the dispatch prompt.
 Run these commands to collect all available data:
 
 ```bash
-# Work items with work logs
-ateam items listItems --json
+# Work items with work logs — scoped to THIS mission, never the whole project.
+# A bare `listItems` returns every unarchived item in the project, and a
+# previous mission's completed items can remain unarchived when an entry point
+# created this mission without --force — step 3 would then derive learnings
+# from an OLDER mission's finding-derived items under this missionId, and
+# since dedupe is keyed per mission those land as fresh rows that inflate
+# recurrence counts. --includeArchived keeps a retro re-run after archival
+# seeing the same item set the original run saw.
+ateam items listItems --missionId {missionId} --includeArchived --json
 
 # Activity feed
 ateam activity listActivity --json
@@ -127,7 +134,7 @@ For each candidate learning surfaced in step 2 (a rejection pattern, an Amy find
 
 **A clean mission may emit zero rows. There is no quota.** If nothing rose above the noise floor (no rejections, no Amy findings, no Stockwell/PR issues, no tool/skill anomalies), emit nothing here and say so plainly in the report — do not manufacture a learning just to have one. The `retroReport` blob is written in step 6 regardless of whether any rows were emitted in this step.
 
-**Deriving learnings from finding-derived work items.** In addition to the ad-hoc candidates above, derive exactly one `RetroLearning` row for each COMPLETED work item that carries WI-936's learning fields — `severity`, `attributedAgent`, and `fingerprint` all non-null. An item that is missing any of the three fields is explicitly skipped — not every item in the mission produces a learning, only the finding-derived ones.
+**Deriving learnings from finding-derived work items.** In addition to the ad-hoc candidates above, derive exactly one `RetroLearning` row for each COMPLETED work item of the dispatched mission — the items returned by step 1's mission-scoped `listItems --missionId {missionId} --includeArchived` fetch, never a project-wide list — that carries WI-936's learning fields — `severity`, `attributedAgent`, and `fingerprint` all non-null. An item that is missing any of the three fields is explicitly skipped — not every item in the mission produces a learning, only the finding-derived ones.
 
 For each such item:
 

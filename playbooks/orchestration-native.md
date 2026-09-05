@@ -935,6 +935,8 @@ Agent(
   - Implementation: {outputs.impl}
   - Types (if exists): {outputs.types}
 
+  Quality profile: {executionContract.profile from ateam missions-current getCurrentMission --json, or "none stored"} — resolve it via resolveQualityProfile in scripts/hooks/lib/qa-contract.js and apply any probing_guidance it carries on top of the Raptor Protocol (no profile or no guidance → the standard pass, unchanged).
+
   Execute the Raptor Protocol. Respond with VERIFIED or FLAG.
 
   When done, run `ateam agents-stop agentStop --json --itemId {itemId} --agent \"amy-2\" --outcome completed --summary \"...\"`. Amy is terminal — no downstream handoff. Send FYI to team-lead (the orchestrator's address — never 'hannibal', which silently bounces; if team-lead errors as an invalid address in headless/print mode, resend to main and use main from then on) with verdict. For FLAG, use --outcome rejected --return-to implementing --advance=false, then send START to B.A. with bug details."

@@ -788,6 +788,37 @@ describe('resolveQualityProfile() - only deep carries probing guidance (AC4)', (
   });
 });
 
+describe('resolveQualityProfile() - the stored Mission.executionContract shape reaches the guidance via its profile field (PR #67 review)', () => {
+  // Entry points persist {testing_level, review_tier, profile} — never the
+  // guidance text itself — and resolveExecutionContract() deliberately
+  // propagates only testing_level/review_tier. Amy's consumer path is
+  // therefore: stored contract -> .profile -> resolveQualityProfile ->
+  // .probing_guidance. Pin that the stored shape round-trips to the SAME
+  // guidance text the bundle defines, and to nothing for the other profiles.
+  it("a stored deep contract's profile field resolves to deep's probing guidance", () => {
+    const stored = { testing_level: 'full-dod', review_tier: 'hands-on', profile: 'deep' };
+    const guidance = resolveQualityProfile(stored.profile).probing_guidance;
+    expect(typeof guidance).toBe('string');
+    expect(guidance).toBe(resolveQualityProfile('deep').probing_guidance);
+    expect(guidance).toMatch(/Raptor Protocol/);
+  });
+
+  it('a stored quick or normal contract resolves to no guidance (the standard probing pass)', () => {
+    for (const stored of [
+      { testing_level: 'smoke', review_tier: 'evidence-only', profile: 'quick' },
+      { testing_level: 'critical-path', review_tier: 'hands-on', profile: 'normal' },
+    ]) {
+      expect(resolveQualityProfile(stored.profile).probing_guidance ?? 'none').toBe('none');
+    }
+  });
+
+  it('resolveExecutionContract() still does not carry probing_guidance — the consumer must go through the profile', () => {
+    mockConfigFile(JSON.stringify({}));
+    const resolved = resolveExecutionContract({ testing_level: 'full-dod', review_tier: 'hands-on', profile: 'deep' });
+    expect(resolved).not.toHaveProperty('probing_guidance');
+  });
+});
+
 describe('resolveExecutionContract() - mission contract preferred over config (FR-9, AC3)', () => {
   it("returns the mission's own testing_level and review_tier when a mission contract is supplied", () => {
     mockConfigFile(

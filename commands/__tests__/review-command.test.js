@@ -195,6 +195,56 @@ describe('AC3: zero findings reports a clean result and creates no mission', () 
 });
 
 // =============================================================================
+// PR #67 review: a Consider-only review has ZERO actionable findings — Step 3's
+// DoD and Step 4's work items are derived exclusively from Must Fix / Should
+// Fix, so a Consider-only run must stop before the brief or mission exists,
+// not create an empty mission with no valid Definition of Done.
+// =============================================================================
+
+describe('PR #67 review: Consider-only reviews stop before creating a brief or mission', () => {
+  function zeroActionableGuard() {
+    const step2 = sectionAfter(content, /^## Step 2: Review/m);
+    const idx = step2.search(/actionable/i);
+    return idx === -1 ? '' : step2.slice(Math.max(0, idx - 200), idx + 700);
+  }
+
+  it('Step 2 defines the stop condition as zero ACTIONABLE findings (Must Fix plus Should Fix), not zero findings of any kind', () => {
+    const guard = zeroActionableGuard();
+    expect(guard, 'expected Step 2 to define a zero-actionable-findings guard').not.toBe('');
+    expect(guard).toMatch(/must fix/i);
+    expect(guard).toMatch(/should fix/i);
+  });
+
+  it('names the Consider-only case explicitly as a stop', () => {
+    const guard = zeroActionableGuard();
+    expect(guard).toMatch(/consider/i);
+    expect(guard).toMatch(/only consider|consider-only|consider findings/i);
+  });
+
+  it('creates neither a brief nor a mission on a Consider-only result, and reports the Consider findings to the operator', () => {
+    const guard = zeroActionableGuard();
+    expect(guard).toMatch(/no brief|create no brief/i);
+    expect(guard).toMatch(/no mission|create no mission/i);
+    expect(guard).toMatch(/report/i);
+  });
+
+  it('the guard lives in Step 2, before the mission is created in Step 3', () => {
+    const guardIdx = content.search(/zero \*?\*?actionable\*?\*? findings/i);
+    const step3Idx = content.search(/^## Step 3: Create the Mission/m);
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(step3Idx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(step3Idx);
+  });
+
+  it('the Errors section lists the Consider-only case alongside the no-findings case', () => {
+    const errors = sectionAfter(content, /^## Errors/m);
+    expect(errors).toMatch(/actionable/i);
+    expect(errors).toMatch(/consider/i);
+    expect(errors).toMatch(/no mission/i);
+  });
+});
+
+// =============================================================================
 // AC4: mission brief prdPath with DoD derived from findings.
 // =============================================================================
 

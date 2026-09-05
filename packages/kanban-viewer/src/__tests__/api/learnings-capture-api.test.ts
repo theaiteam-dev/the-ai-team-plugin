@@ -12,7 +12,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
  *    projectId cannot redirect the write to another project.
  * 3. Dedupe is per-mission and at write time: a second POST with the same
  *    (missionId, fingerprint) does not create a second row and returns the
- *    existing one (200).
+ *    existing one (200). This fingerprint-keyed dedupe applies only among
+ *    ad-hoc rows (sourceItemId null) — an item-derived learning sharing the
+ *    fingerprint is a distinct row, matching the partial unique index.
  * 4. The dedupe key includes missionId — the same fingerprint under a different
  *    mission is a distinct row (recurrence is counted per mission).
  * 5. Null-missionId rows are ALWAYS inserted and never deduped against each
@@ -168,6 +170,40 @@ describe('POST /api/learnings', () => {
     expect((await second.json()).data.id).toBe(7);
     // create must have been called exactly once across both requests.
     expect(mockPrisma.retroLearning.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('an ad-hoc capture (no sourceItemId) never dedupes against an item-derived row sharing its fingerprint (PR #67 review)', async () => {
+    // The partial unique index behind the fingerprint-keyed branch is scoped
+    // `WHERE sourceItemId IS NULL` — an item-derived learning and an ad-hoc
+    // capture with the same fingerprint are deliberately two rows. The
+    // fast-path findFirst must carry that same `sourceItemId: null`
+    // restriction, or it matches the item-derived row and returns its id as
+    // a 200 "duplicate", silently dropping the ad-hoc learning. Simulate the
+    // database: an item-derived row exists for this fingerprint, and it is
+    // only visible to a lookup that does NOT restrict sourceItemId to null.
+    const itemDerivedRow = { id: 41, sourceItemId: 'WI-1', fingerprint: 'same' };
+    mockPrisma.retroLearning.findFirst.mockImplementation(
+      async ({ where }: { where: { sourceItemId?: string | null } }) =>
+        where.sourceItemId === null ? null : itemDerivedRow
+    );
+    mockPrisma.retroLearning.create.mockResolvedValue({ id: 42 });
+
+    const response = await POST(
+      buildRequest('project-a', validBody({ fingerprint: 'same', missionId: 'm-1' }))
+    );
+
+    expect(response.status).toBe(201);
+    expect((await response.json()).data.id).toBe(42);
+    expect(mockPrisma.retroLearning.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { projectId: 'project-a', missionId: 'm-1', fingerprint: 'same', sourceItemId: null },
+      })
+    );
+    expect(mockPrisma.retroLearning.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.retroLearning.create.mock.calls[0][0].data).toMatchObject({
+      fingerprint: 'same',
+      sourceItemId: null,
+    });
   });
 
   it('creates separate rows for the same fingerprint under different missions', async () => {

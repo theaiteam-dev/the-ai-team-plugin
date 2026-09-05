@@ -41,7 +41,7 @@ Invoke the `ai-team:code-review` skill and follow it in full: scope detection (d
 
 If the skill's scope detection reports a rule failure (e.g., nothing reviewable), report why and stop — create no mission.
 
-If the skill returns zero findings, that's a clean, complete result — report it and create no mission. Do not manufacture findings to have something to capture.
+If the skill returns zero **actionable** findings — no Must Fix and no Should Fix, whether the review came back with no findings at all or surfaced only Consider findings — that's a clean, complete result: report it (listing any Consider findings for the operator's discretion) and stop here. Create no brief and no mission. Step 3's Definition of Done and Step 4's work items are derived exclusively from Must Fix / Should Fix findings, so a Consider-only review would otherwise produce an empty mission with no valid Definition of Done. Do not manufacture findings to have something to capture, and never promote a Consider finding to Should Fix just to have a mission to create.
 
 ## Step 3: Create the Mission
 
@@ -100,7 +100,7 @@ Compare each finding against the returned top-50 `{fingerprint, pattern, title, 
 
 ## Step 5: Report
 
-Summarize for the operator: findings by severity (Must Fix / Should Fix / Consider), which work items were created and with what provenance (severity, attributedAgent, fingerprint — recurrence vs. new), the mission ID and brief path, the resolved quality profile, and the Consider items left for their discretion. If Step 1, Step 2's scope check, or a zero-findings result stopped the command early, report that outcome plainly instead — a refused mission, a scope-rule stop, and a clean review are all complete, successful runs of this command, not failures.
+Summarize for the operator: findings by severity (Must Fix / Should Fix / Consider), which work items were created and with what provenance (severity, attributedAgent, fingerprint — recurrence vs. new), the mission ID and brief path, the resolved quality profile, and the Consider items left for their discretion. If Step 1, Step 2's scope check, or a zero-actionable-findings result (nothing found, or Consider-only) stopped the command early, report that outcome plainly instead — a refused mission, a scope-rule stop, and a clean review are all complete, successful runs of this command, not failures.
 
 This command creates the mission and stops — it never fixes or commits anything itself. Leave execution to `/ai-team:run`.
 
@@ -108,7 +108,7 @@ This command creates the mission and stops — it never fixes or commits anythin
 
 - **Mission already active**: reported and refused at Step 1 — no second mission created.
 - **Code-review scope-rule failure** (e.g. nothing reviewable): reported at Step 2 — no mission created.
-- **Zero findings**: reported at Step 2 as a clean, complete result — no mission created.
+- **Zero actionable findings** (no findings at all, or Consider-only): reported at Step 2 as a clean, complete result, with any Consider findings listed for the operator — no brief written, no mission created.
 - **Invalid `--quality` value**: Rejected, naming `quick`, `normal`, and `deep`; no mission created.
 
 ## CLI Commands Used

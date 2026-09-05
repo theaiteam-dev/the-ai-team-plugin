@@ -287,6 +287,44 @@ describe('AC5 (NFR-1): no entry point creates work items before its mission exis
 // file; this is the one place that verifies it holds across all four at once.
 // =============================================================================
 
+// =============================================================================
+// PR #67 review (NFR-1 corollary): an evidence-derived entry point must never
+// create a mission whose Definition of Done would be empty. review.md is the
+// one entry point whose evidence source has a non-actionable severity tier
+// ("Consider" — reported only, never an item), so it is the one that can
+// reach Step 3 with zero item-producing findings. Its stop rule must count
+// ACTIONABLE findings (Must Fix + Should Fix), and it must sit before the
+// first createMission invocation.
+// =============================================================================
+
+describe('empty-mission guard: review.md stops on zero actionable findings (Consider-only) before creating a mission', () => {
+  it('review.md keys its clean-result stop on actionable (Must Fix / Should Fix) findings, and names the Consider-only case', () => {
+    const idx = reviewMd.search(/zero \*?\*?actionable\*?\*? findings/i);
+    expect(idx, 'expected review.md to define a zero-ACTIONABLE-findings stop').toBeGreaterThan(-1);
+    const window = reviewMd.slice(idx, idx + 700);
+    expect(window).toMatch(/must fix/i);
+    expect(window).toMatch(/should fix/i);
+    expect(window).toMatch(/consider/i);
+    expect(window).toMatch(/no mission|create no mission/i);
+  });
+
+  it("review.md's zero-actionable stop precedes its first createMission invocation", () => {
+    const guardIdx = reviewMd.search(/zero \*?\*?actionable\*?\*? findings/i);
+    const createIdx = reviewMd.search(/ateam missions createMission\s+--/);
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(createIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(createIdx);
+  });
+
+  it.each([
+    { name: 'commands/bug-fix.md', get: () => bugFixMd },
+    { name: 'commands/bug-stomp.md', get: () => bugStompMd },
+  ])('$name still documents its own no-evidence stop (no confirmed defect / nothing to fix → no mission), so no evidence-derived entry point creates an empty mission', ({ name, get }) => {
+    const content = get();
+    expect(content, `${name} should state that an empty result creates no mission`).toMatch(/create no mission|no mission (is )?created|creates? no mission/i);
+  });
+});
+
 describe('quality-profile flags are wired into every entry point\'s actual createMission invocation (consolidated across all four)', () => {
   it.each(entryPoints())("$name's createMission invocation line(s) carry --testing-level, --review-tier, and --profile together", ({ name, get }) => {
     const lines = createMissionInvocationLines(get());

@@ -1076,6 +1076,61 @@ describe('POST /api/learnings — REAL DATABASE: sourceItemId dedupe vs the fing
     },
     LEARNINGS_TEST_TIMEOUT_MS
   );
+
+  it(
+    'creates a DISTINCT row for an ad-hoc capture sharing an item-derived learning\'s fingerprint, against the real schema (PR #67 review)',
+    async () => {
+      // The partial unique index on (projectId, missionId, fingerprint) is
+      // scoped WHERE sourceItemId IS NULL, so the schema already treats an
+      // item-derived row and an ad-hoc row with the same fingerprint as two
+      // capture types. The route's fingerprint-keyed fast-path must agree —
+      // before the fix it matched the item-derived row and returned 200 with
+      // its id, never persisting the ad-hoc learning at all.
+      const { POST } = await import('@/app/api/learnings/route');
+
+      const itemDerived = await POST(
+        buildLearningRequest(
+          'proj-real',
+          validLearningBody({ missionId: 'm-real', sourceItemId: 'WI-080', fingerprint: 'fp-mixed-real' })
+        )
+      );
+      const itemDerivedBody = await itemDerived.json();
+      expect(itemDerived.status, `item-derived capture failed: ${JSON.stringify(itemDerivedBody)}`).toBe(201);
+
+      const adHoc = await POST(
+        buildLearningRequest(
+          'proj-real',
+          validLearningBody({ missionId: 'm-real', fingerprint: 'fp-mixed-real', title: 'Ad-hoc capture' })
+        )
+      );
+      const adHocBody = await adHoc.json();
+      expect(
+        adHoc.status,
+        `ad-hoc capture must be persisted as its own row, not deduped onto the item-derived one: ${JSON.stringify(adHocBody)}`
+      ).toBe(201);
+      expect(adHocBody.data.id).not.toBe(itemDerivedBody.data.id);
+
+      const rows = await realPrisma.retroLearning.findMany({
+        where: { projectId: 'proj-real', missionId: 'm-real', fingerprint: 'fp-mixed-real' },
+        orderBy: { id: 'asc' },
+      });
+      expect(rows).toHaveLength(2);
+      expect(rows.map((r) => r.sourceItemId)).toEqual(['WI-080', null]);
+      expect(rows[1].title).toBe('Ad-hoc capture');
+
+      // And the ad-hoc row still dedupes against ITSELF — a second identical
+      // ad-hoc capture returns the ad-hoc row (not the item-derived one).
+      const adHocAgain = await POST(
+        buildLearningRequest(
+          'proj-real',
+          validLearningBody({ missionId: 'm-real', fingerprint: 'fp-mixed-real', title: 'Ad-hoc capture' })
+        )
+      );
+      expect(adHocAgain.status).toBe(200);
+      expect((await adHocAgain.json()).data.id).toBe(adHocBody.data.id);
+    },
+    LEARNINGS_TEST_TIMEOUT_MS
+  );
 });
 
 describe('WI-936: Item finding-provenance migration SQL (existing database)', () => {

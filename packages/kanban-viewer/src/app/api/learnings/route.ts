@@ -149,10 +149,17 @@ export async function POST(request: Request) {
     // (projectId, missionId, sourceItemId) instead of fingerprint — a
     // source-item-derived capture updates its existing row even if the
     // fingerprint changed between captures. Preserves the original
-    // fingerprint-keyed dedupe exactly for captures with no source item.
+    // fingerprint-keyed dedupe for captures with no source item, but
+    // restricted to OTHER ad-hoc rows (`sourceItemId: null`): the partial
+    // unique index backing this branch is scoped `WHERE sourceItemId IS
+    // NULL`, so an ad-hoc capture and an item-derived learning sharing a
+    // fingerprint are deliberately two distinct rows. Without the null
+    // restriction, the fast-path findFirst would match the item-derived row
+    // and return its id as a 200 "duplicate", silently dropping the ad-hoc
+    // learning (PR #67 review).
     const dedupeWhere = sourceItemId !== null
       ? { projectId, missionId, sourceItemId }
-      : { projectId, missionId, fingerprint: data.fingerprint };
+      : { projectId, missionId, fingerprint: data.fingerprint, sourceItemId: null };
 
     // RetroLearning.fingerprint is a required FK to Fingerprint.slug, so the
     // Fingerprint row must exist before ANY write that references it — the

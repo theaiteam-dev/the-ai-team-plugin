@@ -205,6 +205,7 @@ Agents use `ateam` via `Bash` for all API operations. Here is the complete mappi
 | Create work item | `ateam items createItem --title "..." --type feature [flags]` |
 | Get item details | `ateam items getItem --id <id> --json` |
 | List all items | `ateam items listItems --json` |
+| List one mission's items (incl. archived) | `ateam items listItems --missionId <id> --includeArchived --json` |
 | Update item | `ateam items updateItem --id <id> [flags]` |
 | Render item as markdown | `ateam items renderItem --id <id>` |
 | Signal agent start | `ateam agents-start agentStart --itemId <id> --agent <name>` |

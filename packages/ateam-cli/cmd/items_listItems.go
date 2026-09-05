@@ -15,6 +15,7 @@ var (
 	itemsListItemsCmd_type string
 	itemsListItemsCmd_priority string
 	itemsListItemsCmd_agent string
+	itemsListItemsCmd_missionId string
 	itemsListItemsCmd_includeArchived bool
 )
 
@@ -32,6 +33,10 @@ var itemsListItemsCmd = &cobra.Command{
 		if cmd.Flags().Changed("type")     { queryParams["type"] = itemsListItemsCmd_type }
 		if cmd.Flags().Changed("priority") { queryParams["priority"] = itemsListItemsCmd_priority }
 		if cmd.Flags().Changed("agent")    { queryParams["agent"] = itemsListItemsCmd_agent }
+		// Only sent when set: the API's default (no filter) is "every item in the
+		// project", so an unset flag must not send an empty missionId= that the
+		// API could read as "items belonging to mission ''" (no rows).
+		if cmd.Flags().Changed("missionId") { queryParams["missionId"] = itemsListItemsCmd_missionId }
 		queryParams["includeArchived"] = strconv.FormatBool(itemsListItemsCmd_includeArchived)
 		if cmd.Flags().Changed("stage") { if err := validate.Enum("stage", itemsListItemsCmd_stage, []string{"briefings", "ready", "testing", "implementing", "review", "probing", "staged", "done", "blocked"}); err != nil { return err } }
 		if cmd.Flags().Changed("type") { if err := validate.Enum("type", itemsListItemsCmd_type, []string{"feature", "bug", "enhancement", "task"}); err != nil { return err } }
@@ -68,5 +73,6 @@ func init() {
 		return []string{"critical", "high", "medium", "low"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	itemsListItemsCmd.Flags().StringVar(&itemsListItemsCmd_agent, "agent", "", "Filter by assigned agent name, or \"null\" for unassigned")
+	itemsListItemsCmd.Flags().StringVar(&itemsListItemsCmd_missionId, "missionId", "", "Only items belonging to this mission (via the MissionItem join); omit for every item in the project")
 	itemsListItemsCmd.Flags().BoolVar(&itemsListItemsCmd_includeArchived, "includeArchived", false, "")
 }

@@ -566,6 +566,7 @@ Configure environment via `.claude/settings.local.json`:
 | `ateam items createItem --title "..." --type feature` | Create work item |
 | `ateam items getItem --id <id> --json` | Get item details |
 | `ateam items listItems --json` | List all items |
+| `ateam items listItems --missionId <id> --includeArchived --json` | List one mission's items, including archived ones |
 | `ateam items updateItem --id <id>` | Update item |
 | `ateam items renderItem --id <id>` | Render item as markdown |
 | `ateam agents-start agentStart --itemId <id> --agent <name>` | Signal agent start |

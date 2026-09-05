@@ -56,6 +56,7 @@ function sectionAfter(content, headingPattern, stopPattern = /^#{1,3}\s/m) {
 }
 
 let frankieMd;
+let amyMd;
 let hannibalMd;
 let tawniaMd;
 let runMd;
@@ -64,6 +65,7 @@ let orchestrationNativeMd;
 
 beforeAll(() => {
   frankieMd = read('agents/frankie.md');
+  amyMd = read('agents/amy.md');
   hannibalMd = read('agents/hannibal.md');
   tawniaMd = read('agents/tawnia.md');
   runMd = read('commands/run.md');
@@ -283,5 +285,102 @@ describe('both orchestration playbooks: Frankie dispatch prompt reads the missio
     // contract in between — require that specific gap to be filled.
     expect(sentence).toMatch(/mission'?s (stored |own )?(execution )?contract|missions-current|getCurrentMission|resolveExecutionContract/i);
     expect(sentence).toMatch(/ateam\.config\.json/);
+  });
+});
+
+// =============================================================================
+// PR #67 review: `deep`'s probing_guidance had a definition (qa-contract.js)
+// and unit tests, but NO consumer — entry points persist only testing_level/
+// review_tier/profile, resolveExecutionContract() never propagates guidance,
+// and neither Amy's instructions nor her dispatch read it. So `--quality deep`
+// changed testing/review settings but could not deliver FR-8's extra probing
+// scrutiny. Amy is the consumer: she reads the mission's stored profile,
+// resolves its canonical bundle, and applies the optional guidance on top of
+// the Raptor Protocol. WI-941 failure shape applies — every check below
+// anchors on the concrete mechanism (the fetch command, the field, the
+// resolver, the bundle key), never on "probing guidance" being mentioned.
+// =============================================================================
+
+describe('agents/amy.md — reads the mission profile and consumes probing_guidance (PR #67 review)', () => {
+  let profileSection;
+  beforeAll(() => {
+    profileSection = sectionAfter(amyMd, /^## Reading the Mission's Quality Profile/m, /^## /m);
+  });
+
+  it('has a dedicated section for reading the mission quality profile', () => {
+    expect(profileSection).not.toBe('');
+  });
+
+  it("fetches the profile from the mission's stored contract via missions-current getCurrentMission (not ateam.config.json, which never carries a profile)", () => {
+    expect(profileSection).toMatch(/missions-current\s+getCurrentMission/);
+    expect(profileSection).toMatch(/executionContract\.profile/);
+    expect(profileSection).not.toMatch(/read .*ateam\.config\.json/i);
+  });
+
+  it('resolves the profile through the canonical resolver and reads the probing_guidance key of the bundle', () => {
+    expect(profileSection).toMatch(/resolveQualityProfile/);
+    expect(profileSection).toMatch(/qa-contract\.js/);
+    expect(profileSection).toMatch(/probing_guidance/);
+  });
+
+  it('carries a concrete, runnable resolve command (the guidance text must be produced, not paraphrased from memory)', () => {
+    const fence = profileSection.match(/```bash[\s\S]*?```/);
+    expect(fence, 'expected a bash fence in the profile section').not.toBeNull();
+    expect(fence[0]).toMatch(/missions-current\s+getCurrentMission/);
+    expect(fence[0]).toMatch(/resolveQualityProfile\([^)]*\)\.probing_guidance/);
+  });
+
+  it('states the fallback: no stored contract / no profile / no guidance → the standard Raptor Protocol unchanged', () => {
+    expect(profileSection).toMatch(/no stored contract|no `?profile`?|no `?probing_guidance`?/i);
+    expect(profileSection).toMatch(/standard Raptor Protocol/);
+    expect(profileSection).toMatch(/unchanged/);
+  });
+
+  it('guidance only adds probes on top of the standard pass — never replaces it', () => {
+    expect(profileSection).toMatch(/floor|only ever adds|never removes/i);
+  });
+
+  it('the Raptor Protocol itself carries a guidance step that applies the resolved text on top of the standard steps', () => {
+    const raptor = sectionAfter(amyMd, /^## The Raptor Protocol/m, /^## /m);
+    const guidanceStep = sectionAfter(raptor, /^### \d+\. Profile Probing Guidance/m, /^#{2,3} /m);
+    expect(guidanceStep, 'expected a numbered Raptor Protocol step for profile probing guidance').not.toBe('');
+    expect(guidanceStep).toMatch(/probing_guidance/);
+    expect(guidanceStep).toMatch(/on top of|never instead of/i);
+  });
+
+  it('the investigation report has a Profile Probing Guidance section, so the guidance reaching the probing pass is evidenced per item', () => {
+    // The report template is a ```markdown fence whose own "## Investigation
+    // Report" heading would end a generic /^## / slice immediately — stop at
+    // the real next section instead.
+    const output = sectionAfter(amyMd, /^## Output Format/m, /^## Severity Levels/m);
+    expect(output).toMatch(/^### Profile Probing Guidance/m);
+    expect(output).toMatch(/applied|none/);
+  });
+
+  it('does not restate what any profile maps to (AC3 discipline — names the profile, never its testing_level/review_tier values)', () => {
+    for (const value of ['smoke', 'critical-path', 'full-dod', 'evidence-only']) {
+      expect(profileSection, `amy.md's profile section restates the enum value "${value}"`).not.toMatch(new RegExp(`\\b${value}\\b`, 'i'));
+    }
+  });
+});
+
+describe('both orchestration playbooks: the Amy dispatch prompt template forwards the profile and names the guidance read (PR #67 review)', () => {
+  it.each([
+    ['playbooks/orchestration-legacy.md', () => orchestrationLegacyMd],
+    ['playbooks/orchestration-native.md', () => orchestrationNativeMd],
+  ])("%s's \"Dispatching Amy\" prompt template names the profile source, the resolver, and probing_guidance", (_name, getContent) => {
+    const section = sectionAfter(getContent(), /^### Dispatching Amy/m, /^### /m);
+    expect(section, 'expected a "### Dispatching Amy" section').not.toBe('');
+    // Scoped to the actual prompt template (the quoted prompt: "..."), not the
+    // surrounding prose — the same vacuous-match trap the Frankie test above
+    // documents.
+    const promptIdx = section.search(/prompt:\s*"/);
+    expect(promptIdx, 'expected a prompt: "..." template in the Amy dispatch section').toBeGreaterThan(-1);
+    const prompt = section.slice(promptIdx);
+    expect(prompt).toMatch(/executionContract\.profile/);
+    expect(prompt).toMatch(/missions-current\s+getCurrentMission/);
+    expect(prompt).toMatch(/resolveQualityProfile/);
+    expect(prompt).toMatch(/probing_guidance/);
+    expect(prompt).toMatch(/Raptor Protocol/);
   });
 });
