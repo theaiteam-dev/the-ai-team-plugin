@@ -772,3 +772,183 @@ describe('ADR 0006: single canonical ateam.config.json template', () => {
     expect(blocks.some(looksLikeConfigTemplate)).toBe(true);
   });
 });
+
+// =============================================================================
+// WI-942 AC3: no consumer of the execution contract restates what the
+// quick/normal/deep quality profiles map to — every consumer resolves the
+// bundle through the ONE canonical resolver (resolveQualityProfile,
+// scripts/hooks/lib/qa-contract.js) so changing a bundle definition changes
+// every consumer at once. Sibling suite to the ADR 0006 sweep above, reusing
+// its collectMarkdownFiles()/allMarkdownFiles() helpers and its
+// sweep-plus-positive-control shape (per this item's own context — do NOT
+// bolt onto looksLikeConfigTemplate(), which detects an unrelated thing:
+// ateam.config.json template blocks, not profile-bundle prose).
+//
+// QUALITY PROCESS: this heuristic was run against the CURRENT repo state
+// before being trusted. Its first version (checking only smoke+evidence-only
+// for the "quick" bundle, without also requiring the word "quick" nearby —
+// unlike the normal/deep checks, which did require "normal"/"deep") false-
+// flagged commands/setup.md, which legitimately lists "smoke" and
+// "evidence-only" as independent enum options in its config-setup wizard,
+// not as a paired profile mapping. Fixed by requiring "quick" alongside the
+// pair, matching the normal/deep checks exactly, then re-verified at zero
+// offenders against the real repo.
+// =============================================================================
+describe('WI-942 AC3: no consumer restates a quality-profile bundle mapping (single-resolver discipline)', () => {
+  // allMarkdownFiles() is scoped inside the ADR 0006 describe block above,
+  // not at module level — redefined here from the module-scoped
+  // collectMarkdownFiles() (this file's own top-level helper) rather than
+  // reaching into that block.
+  function allMarkdownFiles() {
+    return [
+      ...['agents', 'commands', 'docs', 'playbooks', 'skills'].flatMap(collectMarkdownFiles),
+      'README.md',
+      'CLAUDE.md',
+    ];
+  }
+
+  /**
+   * A "bundle restatement" is a profile NAME co-occurring with BOTH of its
+   * mapped enum values in the same file — e.g. "quick" alongside both
+   * "smoke" and "evidence-only". A lone enum value (e.g. "smoke" appearing
+   * in a testing_level-only context, or "hands-on" in a review_tier-only
+   * context) is normal, necessary consumption, not restatement.
+   */
+  function looksLikeProfileBundleRestatement(content) {
+    const hasQuickPair = /\bsmoke\b/i.test(content) && /evidence-only/i.test(content) && /\bquick\b/i.test(content);
+    const hasNormalPair = /critical-path/i.test(content) && /hands-on/i.test(content) && /\bnormal\b/i.test(content);
+    const hasDeepPair = /full-dod/i.test(content) && /hands-on/i.test(content) && /\bdeep\b/i.test(content);
+    return hasQuickPair || hasNormalPair || hasDeepPair;
+  }
+
+  it('no markdown file restates a quality-profile bundle mapping (agents/commands/docs/playbooks/skills/README/CLAUDE.md)', () => {
+    const offenders = [];
+    for (const file of allMarkdownFiles()) {
+      if (looksLikeProfileBundleRestatement(read(file))) {
+        offenders.push(file);
+      }
+    }
+    expect(
+      offenders,
+      `these files restate a quality-profile bundle mapping instead of referencing scripts/hooks/lib/qa-contract.js's resolveQualityProfile: ${offenders.join(', ')}`
+    ).toEqual([]);
+  });
+
+  it('positive control: the heuristic still detects a known restatement shape (heuristic stays live)', () => {
+    // No real file should trip this (the sweep above already asserts
+    // that) — this proves the heuristic itself hasn't rotted into a
+    // vacuous no-op, mirroring the ADR 0006 positive control above.
+    expect(looksLikeProfileBundleRestatement('quick = smoke + evidence-only')).toBe(true);
+    expect(looksLikeProfileBundleRestatement('normal = critical-path + hands-on')).toBe(true);
+    expect(looksLikeProfileBundleRestatement('deep = full-dod + hands-on')).toBe(true);
+    // A lone enum value must NOT trip it.
+    expect(looksLikeProfileBundleRestatement('testing_level: smoke | critical-path | full-dod')).toBe(false);
+  });
+});
+
+// =============================================================================
+// WI-944 AC2: no document in the repo still recommends /ai-team:sweep as a
+// command to run — a repo-wide sweep, sibling to the two sweeps above,
+// reusing collectMarkdownFiles()/the allMarkdownFiles() file set (NOT
+// looksLikeConfigTemplate(), an unrelated heuristic) and the
+// positive-control pattern at :769-772.
+//
+// SCOPING: a bare "/ai-team:sweep" string search is too blunt.
+// commands/review.md (WI-938) and commands/bug-stomp.md (WI-940) — both
+// already reviewed, tested, and staged — legitimately mention
+// "/ai-team:sweep" in COMPARATIVE/historical framing describing their own
+// design lineage ("The replacement front door for `/ai-team:sweep`",
+// "mirroring `/ai-team:sweep`", "the same mapping `/ai-team:sweep`'s
+// capture step uses") — none of these recommend RUNNING sweep; they explain
+// what changed, and are not among the four live pointers this item's own
+// context names as needing a fix. commands/sweep.md itself legitimately
+// keeps its own name (heading, Usage block) as the tombstone. See
+// commands/__tests__/sweep-tombstone.test.js's file-header docblock for the
+// full grep trail this scoping decision is based on.
+// =============================================================================
+describe('WI-944 AC2: no document still recommends /ai-team:sweep as a command to run (repo-wide sweep)', () => {
+  function allMarkdownFiles() {
+    return [
+      ...['agents', 'commands', 'docs', 'playbooks', 'skills'].flatMap(collectMarkdownFiles),
+      'README.md',
+      'CLAUDE.md',
+    ];
+  }
+
+  // Legitimate, already-approved comparative/historical mentions of
+  // "/ai-team:sweep" that are NOT live recommendations to run it, plus the
+  // tombstone's own self-reference.
+  const KNOWN_HISTORICAL_OR_COMPARATIVE_MENTIONS = ['commands/sweep.md', 'commands/review.md', 'commands/bug-stomp.md'];
+
+  it('no markdown file outside the known historical/comparative exceptions still mentions /ai-team:sweep', () => {
+    const offenders = [];
+    for (const file of allMarkdownFiles()) {
+      if (KNOWN_HISTORICAL_OR_COMPARATIVE_MENTIONS.includes(file)) continue;
+      if (/\/ai-team:sweep/.test(read(file))) offenders.push(file);
+    }
+    expect(
+      offenders,
+      `these files still mention /ai-team:sweep as if it were a live command — redirect to /ai-team:review instead: ${offenders.join(', ')}`
+    ).toEqual([]);
+  });
+
+  it('positive control: the known exceptions still mention /ai-team:sweep (heuristic stays live, cannot pass vacuously)', () => {
+    for (const file of KNOWN_HISTORICAL_OR_COMPARATIVE_MENTIONS) {
+      expect(read(file), `${file} expected to still mention /ai-team:sweep`).toMatch(/\/ai-team:sweep/);
+    }
+  });
+});
+
+// =============================================================================
+// WI-945 AC2: sibling suite pinning the SAME no-restatement invariant as the
+// WI-942 sweep above, added because WI-945 is a separate work item with its
+// own AC2 ("No entry point restates the definition of quick, normal or
+// deep... so a bundle definition can be changed in one place") — an
+// integration item needs its own test for its own AC, not just implicit
+// coverage from a different item's suite (see
+// commands/__tests__/entry-point-conformance.test.js for WI-945's other four
+// ACs, which live there since they need each of the four entry-point files
+// read together). Reuses collectMarkdownFiles() and the WI-942
+// allMarkdownFiles()/looksLikeProfileBundleRestatement() shapes verbatim —
+// explicitly NOT looksLikeConfigTemplate() (ADR 0006's heuristic), which
+// detects ateam.config.json template blocks, an unrelated thing — and the
+// positive-control pattern at :769-772 so this sweep cannot pass vacuously.
+// =============================================================================
+describe('WI-945 AC2: no entry-point command file restates a quality-profile bundle mapping (integration item\'s own pin)', () => {
+  function allMarkdownFiles() {
+    return [
+      ...['agents', 'commands', 'docs', 'playbooks', 'skills'].flatMap(collectMarkdownFiles),
+      'README.md',
+      'CLAUDE.md',
+    ];
+  }
+
+  function looksLikeProfileBundleRestatement(content) {
+    const hasQuickPair = /\bsmoke\b/i.test(content) && /evidence-only/i.test(content) && /\bquick\b/i.test(content);
+    const hasNormalPair = /critical-path/i.test(content) && /hands-on/i.test(content) && /\bnormal\b/i.test(content);
+    const hasDeepPair = /full-dod/i.test(content) && /hands-on/i.test(content) && /\bdeep\b/i.test(content);
+    return hasQuickPair || hasNormalPair || hasDeepPair;
+  }
+
+  const ENTRY_POINT_FILES = ['commands/plan.md', 'commands/review.md', 'commands/bug-fix.md', 'commands/bug-stomp.md'];
+
+  it('none of the four entry-point command files restate a quality-profile bundle mapping', () => {
+    const offenders = ENTRY_POINT_FILES.filter((f) => looksLikeProfileBundleRestatement(read(f)));
+    expect(
+      offenders,
+      `these entry-point files restate a quality-profile bundle mapping instead of referencing scripts/hooks/lib/qa-contract.js's resolveQualityProfile: ${offenders.join(', ')}`
+    ).toEqual([]);
+  });
+
+  it('the sweep also holds across the full repo file set (shared regression guard with the WI-942 sweep above)', () => {
+    const offenders = allMarkdownFiles().filter((f) => looksLikeProfileBundleRestatement(read(f)));
+    expect(offenders, offenders.join(', ')).toEqual([]);
+  });
+
+  it('positive control: the heuristic still detects a known restatement shape (heuristic stays live, cannot pass vacuously)', () => {
+    expect(looksLikeProfileBundleRestatement('quick = smoke + evidence-only')).toBe(true);
+    expect(looksLikeProfileBundleRestatement('normal = critical-path + hands-on')).toBe(true);
+    expect(looksLikeProfileBundleRestatement('deep = full-dod + hands-on')).toBe(true);
+    expect(looksLikeProfileBundleRestatement('testing_level: smoke | critical-path | full-dod')).toBe(false);
+  });
+});

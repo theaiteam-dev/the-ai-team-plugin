@@ -5,6 +5,8 @@ model: sonnet
 
 Execute the mission with the pipeline flow.
 
+**Lane-agent workspace rule:** Murdock, B.A., Lynch, and Amy share the current mission checkout, including uncommitted tests and code. On every native `Agent` spawn, omit the `isolation` key entirely; `run_in_background: true` does not require worktree isolation. Check the actual arguments before each call, including batched spawns, retries, and resumes. Follow the shared-checkout spawn contract in `playbooks/orchestration-native.md`.
+
 ## Usage
 
 ```
@@ -474,7 +476,7 @@ WIP limits are **per stage** — each pipeline column independently caps how man
 [Tawnia] COMMITTED a1b2c3d - feat: Mission Name
 [Hannibal] Documentation complete.
 [Hannibal] Dispatching Debrief (retro) detached — not blocking completion.
-[Hannibal] Tip: run /ai-team:sweep for an independent branch review that captures and fixes what the pipeline missed.
+[Hannibal] Tip: run /ai-team:review for an independent branch review that turns what the pipeline missed into a mission.
 "I love it when a plan comes together."
 ```
 

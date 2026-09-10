@@ -274,6 +274,7 @@ Usage: `ateam <resource> <command> [flags]`
 | Create item | `ateam items createItem --title "..." --type feature --description "..." --objective "..." --acceptance "criterion 1" --acceptance "criterion 2" --context "..." ...` |
 | Get item | `ateam items getItem --id <id>` |
 | List items | `ateam items listItems --json` |
+| List one mission's items | `ateam items listItems --missionId <id> [--includeArchived] --json` |
 | Update item | `ateam items updateItem --id <id> [flags]` |
 | Render item | `ateam items renderItem --id <id>` |
 | Agent start | `ateam agents-start agentStart --itemId <id> --agent <name>` |

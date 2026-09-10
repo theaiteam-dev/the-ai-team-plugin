@@ -1,0 +1,45 @@
+# DoD 13 / 14 — direct qa.db verification (POST /api/learnings has no GET; read straight from SQLite)
+# captured: 2026-09-04T01:00:10Z
+
+## Captures POSTed against sourceItemId=WI-001, in order:
+  1. 201 created  — detail 'FIRST CAPTURE',  severity=high,     fingerprint=unencoded-url-path-segment
+  2. 200 updated  — detail 'SECOND CAPTURE', severity=critical, fingerprint=missing-encoding-test
+  3. 200 updated  — detail 'THIRD CAPTURE',  severity=medium,   fingerprint=unencoded-url-path-segment
+  4. 200 updated  — false-positive outcome naming the refuting work_log entry
+## Plus one capture for sourceItemId=WI-003 (201 created).
+
+## Row count for WI-001 after 4 captures (DoD 13: must be exactly 1):
+1
+
+## Total RetroLearning rows (DoD 13: one per finding-derived item => 2):
+2
+
+## Full persisted state:
+             id = 1
+   sourceItemId = WI-001
+       severity = low
+attributedAgent = B.A.
+  targetSurface = agents/ba.md
+    fingerprint = unencoded-url-path-segment
+          title = Unencoded URL path segment (FALSE POSITIVE)
+         detail = outcome: false-positive. Refuted by work_log entry from agent B.A. with summary: "DISPROVED: flagged unencoded path segment is already encoded upstream by buildUrl(); finding does not reproduce. No code change made." rejection_count=0.
+
+             id = 2
+   sourceItemId = WI-003
+       severity = critical
+attributedAgent = Murdock
+  targetSurface = agents/murdock.md
+    fingerprint = missing-negative-path-test
+          title = Missing negative-path test
+         detail = rejection_count=0; work_log: ba landed first try.
+
+## The refuting work_log entry referenced by the DoD-14 learning:
+     id = 1
+  agent = B.A.
+ action = started
+summary = Started work on item
+
+     id = 2
+  agent = B.A.
+ action = completed
+summary = DISPROVED: flagged unencoded path segment is already encoded upstream by buildUrl(); finding does not reproduce. No code change made.

@@ -170,6 +170,23 @@ components:
           type: string
           format: date-time
           nullable: true
+        severity:
+          $ref: '#/components/schemas/Severity'
+          nullable: true
+          description: Finding provenance (WI-936) — set when this item was derived from a review/bug-stomp finding or a bug-fix repro.
+        attributedAgent:
+          type: string
+          nullable: true
+          description: Finding provenance (WI-936) — agent whose behavior the finding is about. Free-form, not enum-validated.
+        fingerprint:
+          type: string
+          nullable: true
+          description: Finding provenance (WI-936) — dedup slug the finding was derived from. Free-form, no FK (an item is stamped before any Fingerprint row necessarily exists).
+
+    Severity:
+      type: string
+      enum: [low, medium, high, critical]
+      description: Finding-severity vocabulary shared by Item.severity and RetroLearning.severity.
 
     Stage:
       type: object
@@ -197,6 +214,23 @@ components:
         claimedAt:
           type: string
           format: date-time
+
+    ExecutionContract:
+      type: object
+      required: [testing_level, review_tier, profile]
+      description: |
+        A mission's resolved execution contract: testing level, review tier,
+        and the quality-profile name it was resolved from.
+      properties:
+        testing_level:
+          type: string
+          enum: [smoke, critical-path, full-dod]
+        review_tier:
+          type: string
+          enum: [hands-on, evidence-only, auto]
+        profile:
+          type: string
+          description: Free-form quality-profile name (not enum-validated).
 
     Mission:
       type: object
@@ -245,6 +279,14 @@ components:
           description: |
             JSON blob describing agent instance counts and the binding
             constraint for scaling decisions (see ScalingRationale type).
+        executionContract:
+          allOf:
+            - $ref: '#/components/schemas/ExecutionContract'
+          nullable: true
+          description: |
+            The mission's resolved execution contract (testing level, review
+            tier, and the quality-profile name it was resolved from), or
+            null when the mission was created without one.
 
     ActivityEntry:
       type: object
@@ -845,6 +887,18 @@ paths:
                     pattern: '^WI-\d{3}[a-z]?$'
                 outputs:
                   $ref: '#/components/schemas/ItemOutputs'
+                severity:
+                  $ref: '#/components/schemas/Severity'
+                  nullable: true
+                  description: Finding provenance (WI-936).
+                attributedAgent:
+                  type: string
+                  nullable: true
+                  description: Finding provenance (WI-936) — free-form, not enum-validated.
+                fingerprint:
+                  type: string
+                  nullable: true
+                  description: Finding provenance (WI-936) — free-form, no FK.
       responses:
         '201':
           description: Item created
@@ -962,6 +1016,18 @@ paths:
                     types:
                       type: string
                       nullable: true
+                severity:
+                  $ref: '#/components/schemas/Severity'
+                  nullable: true
+                  description: Finding provenance (WI-936).
+                attributedAgent:
+                  type: string
+                  nullable: true
+                  description: Finding provenance (WI-936) — free-form, not enum-validated.
+                fingerprint:
+                  type: string
+                  nullable: true
+                  description: Finding provenance (WI-936) — free-form, no FK.
       responses:
         '200':
           description: Updated item
@@ -1295,6 +1361,11 @@ paths:
         scoped per mission: a second call with the same (missionId, fingerprint)
         returns the existing row instead of creating a duplicate. A null
         missionId (backfill of stalled drafts) always inserts a new row.
+        When sourceItemId is present (WI-936), dedupe keys on
+        (missionId, sourceItemId) instead of fingerprint, so a source-item-
+        derived capture updates its existing row even across a changed
+        fingerprint — the fingerprint-keyed dedupe above still applies
+        unchanged to captures with no sourceItemId.
       tags: [learnings]
       requestBody:
         required: true
@@ -1331,6 +1402,13 @@ paths:
                   type: string
                   nullable: true
                   description: Null for backfill of stalled drafts; always inserted, never deduped
+                sourceItemId:
+                  type: string
+                  nullable: true
+                  description: |
+                    Finding provenance (WI-936) — the work item this learning
+                    was derived from. When present, dedupe keys on
+                    (missionId, sourceItemId) instead of fingerprint.
       responses:
         '201':
           description: New row created
@@ -1875,6 +1953,11 @@ paths:
                   type: boolean
                   default: false
                   description: Archive any existing active mission before creating
+                executionContract:
+                  allOf:
+                    - $ref: '#/components/schemas/ExecutionContract'
+                  nullable: true
+                  description: Optional resolved execution contract to stamp on create.
       responses:
         '201':
           description: Mission created
@@ -2125,6 +2208,63 @@ paths:
                     enum: [true]
                   data:
                     $ref: '#/components/schemas/Mission'
+        '404':
+          description: MISSION_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+    patch:
+      operationId: updateMission
+      summary: Update mission fields
+      description: |
+        Updates mission fields. Currently supports stamping
+        `scalingRationale` and `executionContract` onto an existing
+        mission — any other field in the body is silently ignored.
+      tags: [missions]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: missionId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^M-\d{8}-\d{3}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scalingRationale:
+                  type: object
+                  nullable: true
+                  description: JSON blob describing agent scaling rationale.
+                executionContract:
+                  allOf:
+                    - $ref: '#/components/schemas/ExecutionContract'
+                  nullable: true
+                  description: Resolved execution contract to stamp onto the mission.
+      responses:
+        '200':
+          description: Mission updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: '#/components/schemas/Mission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           description: MISSION_NOT_FOUND
           content:

@@ -42,6 +42,43 @@ const TESTING_LEVEL_VALUES = ['smoke', 'critical-path', 'full-dod'];
 const REVIEW_TIER_VALUES = ['hands-on', 'evidence-only', 'auto'];
 
 /**
+ * WI-937: the three named quality profiles, mapped onto the EXISTING
+ * TESTING_LEVEL_VALUES / REVIEW_TIER_VALUES enums above — no new knobs are
+ * invented here (PRD FR-8, Out of Scope "New quality knobs"). This map is
+ * the single place "what does 'quick' mean" is defined; every consumer
+ * (agents, playbooks, hooks) resolves it via resolveQualityProfile() rather
+ * than restating the bundle.
+ *
+ * `review_tier: 'auto'` is deliberately never a profile target here — it is
+ * earned via the promotion ladder (commands/setup.md), not chosen at
+ * kickoff. Only 'deep' carries `probing_guidance`: text Amy's probing pass
+ * reads to go beyond the standard Raptor Protocol checks. 'quick' and
+ * 'normal' omit the key entirely so every other profile gets the standard
+ * probing pass with no special-casing at the call site.
+ */
+const QUALITY_PROFILES = {
+  quick: {
+    testing_level: 'smoke',
+    review_tier: 'evidence-only',
+  },
+  normal: {
+    testing_level: 'critical-path',
+    review_tier: 'hands-on',
+  },
+  deep: {
+    testing_level: 'full-dod',
+    review_tier: 'hands-on',
+    probing_guidance:
+      'Go beyond the standard Raptor Protocol pass: actively probe boundary ' +
+      'and off-by-one conditions, concurrent/race scenarios on any shared ' +
+      'state, error paths and partial-failure recovery, and cross-feature ' +
+      'interactions the tests do not exercise directly. Treat a clean run ' +
+      'as insufficient evidence on its own — spend the extra scrutiny this ' +
+      'profile was chosen for.',
+  },
+};
+
+/**
  * The fully-defaulted execution contract, returned whenever a field is
  * absent, malformed, or the whole config file is missing/unreadable.
  */
@@ -66,6 +103,40 @@ let _cachedContract = null;
 
 function isPlainObject(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Resolves a named quality profile ('quick' | 'normal' | 'deep') to its
+ * bundle: `{ testing_level, review_tier, probing_guidance? }`. Pure name ->
+ * value lookup — no fs access at all — used ONCE, at mission-creation time,
+ * by whichever entry-point command computes what to stamp onto the
+ * Mission record's executionContract (WI-934). Never used by hooks or by
+ * the runtime "what's my effective contract" read — see
+ * resolveExecutionContract() for that.
+ *
+ * Never silently falls back to a default: an unrecognized profile name
+ * (a typo, an empty string, undefined) throws rather than guessing, per
+ * FR-8's "fails loudly" requirement.
+ *
+ * @param {string} profileName - 'quick' | 'normal' | 'deep'.
+ * @returns {{ testing_level: string, review_tier: string, probing_guidance?: string }}
+ * @throws {Error} when profileName is not one of the three known profiles.
+ */
+export function resolveQualityProfile(profileName) {
+  // Object.prototype.hasOwnProperty (not `in`, and not a bare `QUALITY_PROFILES[profileName]`
+  // truthiness check) guards against inherited property names like "constructor"
+  // or "toString" resolving to a function reference instead of failing loudly —
+  // "__proto__" is special-cased by V8 as an accessor, not an own or inherited
+  // data property, so hasOwnProperty correctly rejects it too.
+  if (!Object.prototype.hasOwnProperty.call(QUALITY_PROFILES, profileName)) {
+    throw new Error(
+      `Unknown quality profile ${JSON.stringify(profileName)} — must be one of: quick, normal, deep`
+    );
+  }
+  const bundle = QUALITY_PROFILES[profileName];
+  // Return a copy, not the shared module-level object, so a caller mutating
+  // the result can never corrupt QUALITY_PROFILES for the next resolve.
+  return { ...bundle };
 }
 
 function stringOrDefault(value, fallback) {
@@ -171,6 +242,52 @@ export function readExecutionContractFrom(cwd) {
   } catch {
     return normalizeContract(null);
   }
+}
+
+/**
+ * WI-937 / FR-9: the runtime "what's my effective execution contract" read,
+ * preferring a mission's own stored contract over the repo's
+ * ateam.config.json. Stays synchronous like the rest of this module (ADR
+ * 0008) — the mission's contract is supplied by the CALLER (agents and
+ * playbooks already shell out to `ateam missions-current getCurrentMission
+ * --json`), never fetched inside this function.
+ *
+ * `missionContract` wins ONLY for testing_level/review_tier, and ONLY when
+ * both are present as strings AND each is a member of its own enum
+ * (TESTING_LEVEL_VALUES / REVIEW_TIER_VALUES) — WI-934's
+ * Mission.executionContract never stores anything else (surfaces/qa/evidence
+ * always come from config either way). Anything else — undefined, null, a
+ * malformed object missing either field, or a present-but-invalid/unknown
+ * string value for either field — falls back to config unchanged, fail-inert
+ * like every other read in this module.
+ *
+ * Does NOT touch or replace readExecutionContract() / readExecutionContractFrom(cwd)
+ * — hooks with no mission contract to give keep calling those exactly as
+ * before; this is reused underneath, not duplicated.
+ *
+ * @param {{testing_level?: unknown, review_tier?: unknown}|null|undefined} missionContract
+ *   - A mission's stored executionContract (WI-934), or absent/malformed.
+ * @param {string} [cwd] - Directory containing ateam.config.json, mirroring
+ *   readExecutionContractFrom(cwd)'s parameterization.
+ * @returns {ReturnType<typeof normalizeContract>}
+ */
+export function resolveExecutionContract(missionContract, cwd = process.cwd()) {
+  const configContract = readExecutionContractFrom(cwd);
+
+  const hasMissionContract =
+    isPlainObject(missionContract) &&
+    TESTING_LEVEL_VALUES.includes(missionContract.testing_level) &&
+    REVIEW_TIER_VALUES.includes(missionContract.review_tier);
+
+  if (!hasMissionContract) {
+    return configContract;
+  }
+
+  return {
+    ...configContract,
+    testing_level: missionContract.testing_level,
+    review_tier: missionContract.review_tier,
+  };
 }
 
 /**

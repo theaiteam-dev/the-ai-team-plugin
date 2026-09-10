@@ -17,6 +17,9 @@ var (
 	missionsCreateMissionCmd_name string
 	missionsCreateMissionCmd_prdPath string
 	missionsCreateMissionCmd_concurrency int
+	missionsCreateMissionCmd_testingLevel string
+	missionsCreateMissionCmd_reviewTier string
+	missionsCreateMissionCmd_profile string
 )
 
 var missionsCreateMissionCmd = &cobra.Command{
@@ -69,12 +72,35 @@ var missionsCreateMissionCmd = &cobra.Command{
 		if concurrencySet && concurrencyValue < 1 {
 			return fmt.Errorf("--concurrency must be >= 1 when provided, got %d", concurrencyValue)
 		}
+
+		testingLevelSet := cmd.Flags().Changed("testing-level")
+		reviewTierSet := cmd.Flags().Changed("review-tier")
+		profileSet := cmd.Flags().Changed("profile")
+		if testingLevelSet || reviewTierSet || profileSet {
+			if err := validate.RequireFlags(cmd, "testing-level", "review-tier", "profile"); err != nil {
+				return fmt.Errorf("an execution contract requires --testing-level, --review-tier, and --profile together: %w", err)
+			}
+			if err := validate.Enum("testing-level", missionsCreateMissionCmd_testingLevel, []string{"smoke", "critical-path", "full-dod"}); err != nil {
+				return err
+			}
+			if err := validate.Enum("review-tier", missionsCreateMissionCmd_reviewTier, []string{"hands-on", "evidence-only", "auto"}); err != nil {
+				return err
+			}
+		}
+
 		bodyMap := map[string]interface{}{}
 		bodyMap["force"] = missionsCreateMissionCmd_force
 		bodyMap["name"] = missionsCreateMissionCmd_name
 		bodyMap["prdPath"] = missionsCreateMissionCmd_prdPath
 		if concurrencySet {
 			bodyMap["concurrencyOverride"] = concurrencyValue
+		}
+		if testingLevelSet || reviewTierSet || profileSet {
+			bodyMap["executionContract"] = map[string]interface{}{
+				"testing_level": missionsCreateMissionCmd_testingLevel,
+				"review_tier":   missionsCreateMissionCmd_reviewTier,
+				"profile":       missionsCreateMissionCmd_profile,
+			}
 		}
 		resp, err := c.Do("POST", "/api/missions", pathParams, queryParams, bodyMap)
 		if err != nil {
@@ -101,6 +127,15 @@ func init() {
 	missionsCreateMissionCmd.Flags().StringVar(&missionsCreateMissionCmd_name, "name", "", "")
 	missionsCreateMissionCmd.Flags().StringVar(&missionsCreateMissionCmd_prdPath, "prdPath", "", "")
 	missionsCreateMissionCmd.Flags().IntVar(&missionsCreateMissionCmd_concurrency, "concurrency", 0, "Override adaptive scaling with a fixed instance count (must be >= 1)")
+	missionsCreateMissionCmd.Flags().StringVar(&missionsCreateMissionCmd_testingLevel, "testing-level", "", "Execution contract testing level (smoke|critical-path|full-dod) — requires --review-tier and --profile")
+	missionsCreateMissionCmd.RegisterFlagCompletionFunc("testing-level", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"smoke", "critical-path", "full-dod"}, cobra.ShellCompDirectiveNoFileComp
+	})
+	missionsCreateMissionCmd.Flags().StringVar(&missionsCreateMissionCmd_reviewTier, "review-tier", "", "Execution contract review tier (hands-on|evidence-only|auto) — requires --testing-level and --profile")
+	missionsCreateMissionCmd.RegisterFlagCompletionFunc("review-tier", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"hands-on", "evidence-only", "auto"}, cobra.ShellCompDirectiveNoFileComp
+	})
+	missionsCreateMissionCmd.Flags().StringVar(&missionsCreateMissionCmd_profile, "profile", "", "Execution contract quality-profile name (free-form) — requires --testing-level and --review-tier")
 	// NOTE: required-flag enforcement is done in RunE via validate.RequireFlags
 	// so that --body / --body-file can be used as an alternative to individual
 	// flags. Cobra's MarkFlagRequired runs before RunE and cannot be bypassed.

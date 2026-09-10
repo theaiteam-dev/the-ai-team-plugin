@@ -46,8 +46,15 @@ You receive a `missionId` from the dispatch prompt.
 Run these commands to collect all available data:
 
 ```bash
-# Work items with work logs
-ateam items listItems --json
+# Work items with work logs — scoped to THIS mission, never the whole project.
+# A bare `listItems` returns every unarchived item in the project, and a
+# previous mission's completed items can remain unarchived when an entry point
+# created this mission without --force — step 3 would then derive learnings
+# from an OLDER mission's finding-derived items under this missionId, and
+# since dedupe is keyed per mission those land as fresh rows that inflate
+# recurrence counts. --includeArchived keeps a retro re-run after archival
+# seeing the same item set the original run saw.
+ateam items listItems --missionId {missionId} --includeArchived --json
 
 # Activity feed
 ateam activity listActivity --json
@@ -74,7 +81,7 @@ gh pr list --state all --search "{missionId}" --json number,url
 gh pr view {prNumber} --json reviews,comments
 ```
 
-**No code review of your own.** You ingest what Stockwell and PR reviewers already recorded — you do not read diffs and form independent opinions about code quality. Your job is pattern-mining across what already happened, not re-reviewing. The independent branch-vs-`main` review is a separate operator-initiated step (`/ai-team:sweep`) that files its own rows with `--source code-review` — you may see those fingerprints in the corpus, and that is expected, not a signal to review anything yourself.
+**No code review of your own.** You ingest what Stockwell and PR reviewers already recorded — you do not read diffs and form independent opinions about code quality. Your job is pattern-mining across what already happened, not re-reviewing. The independent branch-vs-`main` review is a separate operator-initiated entry point (`/ai-team:review`) that files `bug`-type work items stamped with finding provenance (severity, attributedAgent, fingerprint) rather than writing `RetroLearning` rows itself — your own item-derivation step above (Step 3) is what turns each completed one into a learning. You may see fingerprints recur across missions started this way, and that is expected, not a signal to review anything yourself.
 
 **Log unavailable review inputs — never silently skip them.** If `getFinalReview` returns no stored report, or no PR is found for the mission, note it explicitly in the report (e.g., "Stockwell final review: unavailable — mission has no persisted report" / "PR review comments: unavailable — no PR found for this mission"). Degrade gracefully to whichever surfaces *are* available (telemetry-only is a valid degraded mode) rather than treating a missing surface as "nothing to report."
 
@@ -127,6 +134,15 @@ For each candidate learning surfaced in step 2 (a rejection pattern, an Amy find
 
 **A clean mission may emit zero rows. There is no quota.** If nothing rose above the noise floor (no rejections, no Amy findings, no Stockwell/PR issues, no tool/skill anomalies), emit nothing here and say so plainly in the report — do not manufacture a learning just to have one. The `retroReport` blob is written in step 6 regardless of whether any rows were emitted in this step.
 
+**Deriving learnings from finding-derived work items.** In addition to the ad-hoc candidates above, derive exactly one `RetroLearning` row for each COMPLETED work item of the dispatched mission — the items returned by step 1's mission-scoped `listItems --missionId {missionId} --includeArchived` fetch, never a project-wide list — that carries WI-936's learning fields — `severity`, `attributedAgent`, and `fingerprint` all non-null. An item that is missing any of the three fields is explicitly skipped — not every item in the mission produces a learning, only the finding-derived ones.
+
+For each such item:
+
+- **Outcome from rejectionCount and work log.** Read the item's `rejectionCount` and its work log entries. A finding whose fix bounced (`rejectionCount > 0`) must be distinguishable in `detail` from one that landed first time (`rejectionCount === 0`) — state the outcome explicitly (e.g. "fixed on first pass" vs. "bounced twice before landing").
+- **False positives are recorded, never dropped.** If a work log entry shows a fix agent disproved the finding (the reported defect didn't actually reproduce, or was invalid), record an explicit false-positive outcome in `detail` — name the refuting entry's agent and its summary text. A disproved finding is signal, not noise; never silently drop its row.
+- **Key the row to the item, for idempotent re-runs.** Add `--source-item-id "{item.id}"` to the emit-row command below (step c) for every item-derived row. Re-running the debrief on the same mission updates the existing learning for each source item instead of inserting a duplicate.
+- **Match-or-create and attribution still apply.** Item-derived learnings go through the SAME steps a and b above — a fingerprint matching an already-open learning is a recurrence, not a new one, and `attributedAgent` still follows the earliest-flagged-stage convention. `--source-item-id` is additive alongside `--fingerprint`, never a replacement for the match-or-create step.
+
 For each learning you *do* want to record:
 
 **a. Match-or-create against existing fingerprints.**
@@ -159,11 +175,12 @@ ateam learnings create \
   --pattern "{fingerprint slug — matched or newly minted}" \
   --fingerprint "{same slug as --pattern unless you have a reason to diverge}" \
   --title "{short title}" \
-  --detail "{normalized description}" \
-  --missionId "{missionId}"
+  --detail "{normalized description, including outcome: first-time fix, bounced N times, or false positive}" \
+  --missionId "{missionId}" \
+  --source-item-id "{item.id — item-derived rows only; omit for ad-hoc candidates from step 2}"
 ```
 
-**`detail` is a normalized description, never a secret or a raw diff.** Summarize the pattern in your own words (what happened, why it matters). Never paste credentials, tokens, environment variable values, or verbatim diff/code blocks into `detail` — describe the shape of the problem, not its literal contents.
+**`detail` is a normalized description, never a secret or a raw diff — including when derived from an item's work log.** Summarize the pattern in your own words (what happened, why it matters). Never paste credentials, tokens, environment variable values, or verbatim diff/code blocks into `detail` — whether the source is an ad-hoc candidate or an item's work log entry — describe the shape of the problem, not its literal contents.
 
 ### 4. Handle Edge Cases
 

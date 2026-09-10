@@ -136,14 +136,24 @@ invent a QA recipe or describe app behavior from memory:
   BLOCKED walk to flag to Hannibal — Face's pass owed it — never a
   draft-your-own case (overrides the profile's standalone default in
   Inputs item 1).
-- **The execution contract** — read `ateam.config.json` at the repo root
-  and extract the same shape `scripts/hooks/lib/qa-contract.js` defines:
-  `surfaces`, `qa.seed`, `qa.account.credential_env`, `qa.drive`,
-  `testing_level`, `evidence`. The contract's seventh field,
-  `review_tier`, is deliberately excluded — it governs the operator's
-  step when the PR arrives, not your walk. `qa.account.credential_env`
-  is an env-var **name** — read the credential's value from that
-  environment variable, never from the config file itself.
+- **The execution contract** — fetch the mission's own stored contract
+  first via `ateam missions-current getCurrentMission --json` (or the
+  path/missionId already in your dispatch prompt) and resolve it with
+  `resolveExecutionContract` (`scripts/hooks/lib/qa-contract.js`) — do not
+  re-derive its merge rules here, that is the resolver's whole job. When
+  the mission has no stored contract, this falls back to reading
+  `ateam.config.json` at the repo root unchanged, extracting the same
+  shape `scripts/hooks/lib/qa-contract.js` defines: `surfaces`, `qa.seed`,
+  `qa.account.credential_env`, `qa.drive`, `testing_level`, `evidence`.
+  Regardless of which source resolves, `surfaces`, `qa.seed`,
+  `qa.account.credential_env`, and `qa.drive` are repo facts that always
+  come from `ateam.config.json` alone — a mission's stored contract never
+  carries them (it only ever stores `testing_level`, `review_tier`, and
+  `profile`). The contract's seventh field, `review_tier`, is deliberately
+  excluded from this read — it governs the operator's step when the PR
+  arrives, not your walk. `qa.account.credential_env` is an env-var
+  **name** — read the credential's value from that environment variable,
+  never from the config file itself.
 - **The dev server URL and lifecycle** — from the existing `devServer`
   block in `ateam.config.json` (the same fields Amy uses). Branch on
   `devServer.managed`:

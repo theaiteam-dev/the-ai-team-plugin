@@ -13,15 +13,15 @@ import {
   createOutputCollisionError,
   createServerError,
 } from '@/lib/errors';
-import { validateDependencies, validateOutputCollisions } from '@/lib/validation';
+import { validateDependencies, validateOutputCollisions, isValidOptionalString } from '@/lib/validation';
 import type { OutputCollisionItem } from '@/lib/validation';
 import { getAndValidateProjectId, ensureProject } from '@/lib/project-utils';
 import { transformItemWithRelationsToResponse } from '@/lib/item-transform';
 import type { ItemType, ItemPriority } from '@/types/item';
 import type { CreateItemRequest } from '@/types/api';
-import { ITEM_TYPES, ITEM_PRIORITIES } from '@ai-team/shared';
+import { ITEM_TYPES, ITEM_PRIORITIES, SEVERITY_VALUES } from '@ai-team/shared';
 
-// Valid values for type and priority
+// Valid values for type, priority, and severity
 const VALID_TYPES: ItemType[] = ITEM_TYPES as unknown as ItemType[];
 const VALID_PRIORITIES: ItemPriority[] = ITEM_PRIORITIES as unknown as ItemPriority[];
 
@@ -223,6 +223,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json(error.toResponse(), { status: 400 });
     }
 
+    // Validate severity if provided (finding provenance, WI-936).
+    // attributedAgent and fingerprint are free-form — not enum-validated,
+    // but still must be a string (or null) before reaching Prisma.
+    if (body.severity !== undefined && body.severity !== null && !SEVERITY_VALUES.includes(body.severity as (typeof SEVERITY_VALUES)[number])) {
+      const error = createValidationError(`severity must be one of: ${SEVERITY_VALUES.join(', ')}`);
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
+    if (!isValidOptionalString(body.attributedAgent)) {
+      const error = createValidationError('attributedAgent must be a string');
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
+    if (!isValidOptionalString(body.fingerprint)) {
+      const error = createValidationError('fingerprint must be a string');
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
     const dependencies = body.dependencies ?? [];
 
     // Validate that all dependencies exist and belong to the same project
@@ -368,6 +386,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         outputTest: body.outputs?.test || null,
         outputImpl: body.outputs?.impl || null,
         outputTypes: body.outputs?.types || null,
+        severity: body.severity || null,
+        attributedAgent: body.attributedAgent || null,
+        fingerprint: body.fingerprint || null,
         dependsOn: dependencies.length > 0
           ? {
               create: dependencies.map((depId) => ({

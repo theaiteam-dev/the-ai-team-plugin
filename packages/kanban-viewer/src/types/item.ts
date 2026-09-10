@@ -41,6 +41,12 @@ export interface Item {
   updatedAt: Date;
   completedAt: Date | null;
   outputs: ItemOutputs;
+  /** Finding provenance (WI-936): 'low' | 'medium' | 'high' | 'critical'. */
+  severity?: string;
+  /** Finding provenance (WI-936): agent whose behavior the finding is about — free-form. */
+  attributedAgent?: string;
+  /** Finding provenance (WI-936): dedup slug the finding was derived from — free-form, no FK. */
+  fingerprint?: string;
 }
 
 /**

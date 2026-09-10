@@ -23,6 +23,16 @@ const TYPE_BADGE_STYLES: Record<WorkItemFrontmatterType, string> = {
   task: 'bg-green-500/20 text-green-400 border border-green-500/50',
 };
 
+// Finding provenance (WI-936/WI-946): only present on items derived from a
+// review/bug-stomp finding or a bug-fix repro — same badge styling
+// vocabulary as TYPE_BADGE_STYLES above, not a new visual language.
+const SEVERITY_BADGE_STYLES: Record<NonNullable<WorkItem['severity']>, string> = {
+  critical: 'bg-red-500/20 text-red-400 border border-red-500/50',
+  high: 'bg-orange-500/20 text-orange-400 border border-orange-500/50',
+  medium: 'bg-amber-500/20 text-amber-400 border border-amber-500/50',
+  low: 'bg-slate-500/20 text-slate-400 border border-slate-500/50',
+};
+
 const STATUS_DOT_COLORS = {
   active: 'bg-green-500',
   blocked: 'bg-red-500',
@@ -78,6 +88,7 @@ export function WorkItemCard({
   const showBlocker = blockerCount !== undefined && blockerCount > 0;
   const showRejection = item.rejection_count > 0;
   const showAgent = item.assigned_agent !== undefined && ACTIVE_STAGES.includes(item.stage);
+  const showSeverity = item.severity !== undefined;
   const showDependencies = item.dependencies && item.dependencies.length > 0 && blockerCount === undefined;
   const dotColor = STATUS_DOT_COLORS[agentStatus ?? 'active'];
 
@@ -115,8 +126,8 @@ export function WorkItemCard({
         {item.title}
       </div>
 
-      {/* Type badge */}
-      <div>
+      {/* Type badge, plus severity badge when this item carries finding provenance */}
+      <div className="flex items-center gap-1.5">
         <span
           className={`
             inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium
@@ -125,6 +136,18 @@ export function WorkItemCard({
         >
           {item.type}
         </span>
+        {showSeverity && (
+          <span
+            data-testid="severity-badge"
+            data-severity={item.severity}
+            className={`
+              inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium
+              ${SEVERITY_BADGE_STYLES[item.severity!]}
+            `}
+          >
+            {item.severity}
+          </span>
+        )}
       </div>
 
       {/* Footer row: Agent (left) and Dependency/Blocker (right) */}

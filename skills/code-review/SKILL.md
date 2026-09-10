@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Reviews all unmerged code in the current branch for readability, security, correctness, types, and test quality. Produces findings by severity (Must Fix / Should Fix / Consider) with a parallelism estimate. Invoked standalone or as the review phase of /ai-team:sweep.
+description: Reviews all unmerged code in the current branch for readability, security, correctness, types, and test quality. Produces findings by severity (Must Fix / Should Fix / Consider) with a parallelism estimate. Invoked standalone or as the review phase of /ai-team:review.
 ---
 
 # Code Review

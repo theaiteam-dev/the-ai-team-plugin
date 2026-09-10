@@ -202,6 +202,14 @@ ateam pool init
 
 ## Agent Pre-Warming (Lazy)
 
+### Shared-checkout spawn contract
+
+All pipeline lane agents (`murdock-N`, `ba-N`, `lynch-N`, `amy-N`) work in **Hannibal's current mission checkout**, on the same branch and working tree. Murdock's uncommitted tests must be visible to B.A., and B.A.'s uncommitted implementation must be visible to Lynch and Amy. A separate worktree breaks this handoff even when every agent can access the same Kanban items and pool markers.
+
+**For every lane-agent `Agent` call, omit the `isolation` key entirely.** Do not set it to `"worktree"`, `null`, or an invented alternative. Background execution is requested with `run_in_background: true`; it does not require a separate checkout. This applies to initial pre-warming, additional lanes, direct dispatch, timeout retries, and mission resume. The mission checkout itself may be a worktree; do not create another one per agent.
+
+**Immediately before submitting each spawn call (including every call in a batch), check the actual arguments:** correct instance name and agent type, and no `isolation` key. Use the lane template below without adding isolation boilerplate. If a spawn result reports an unexpected isolated worktree, do not dispatch work to that instance or mark it idle. Stop that instance and respawn in the shared checkout; if it already received work, inspect and preserve its changes before attempting recovery. Do not delete its worktree automatically.
+
 Spawn instances **lazily, lane by lane, only when the pipeline actually needs them.** Each lane is the complete pipeline quartet for a single concurrency slot: `murdock-N`, `ba-N`, `lynch-N`, `amy-N`. Spawning 4 at once keeps the tmux pane count per window at exactly 4 — the tmux `after-split-window` hook breaks any 5th pane into a new window, so each lane lands in its own tmux window automatically.
 
 **Why lazy:** Eagerly spawning all N lanes at mission start over-provisions for DAG-shaped missions. A typical mission has a Wave 1 scaffold (1 item), then a fan-out wave, then a fan-in. Pre-warming all 4 lanes upfront leaves 3 lanes idle for Wave 1 and burns context budget on agents that may never receive work. Lazy spawning keeps the pool sized to actual demand.
@@ -241,6 +249,7 @@ function spawn_lane(lane_number):
         # and it is needed so peer handoffs address the START by agentId (friendly
         # instance names do not route between teammates; the message is silently
         # dropped). Store it on the instance for the mark-idle step below.
+        # Shared mission checkout: verify the arguments OMIT the isolation key.
         instance.agent_id = Agent(
             name:         instance.name,
             subagent_type: agentTypeToSubagent(instance.agentType),
@@ -350,7 +359,8 @@ if ready != lane_agents:
         Bash("ateam activity createActivityEntry --agent hannibal --message 'TIMEOUT: {agent} did not send READY within 60s — respawning' --level warning")
         # Kill the silent agent and respawn
         SendMessage(to: agent, message: {type: "shutdown_request", reason: "No READY received — shutting down for respawn"}, summary: "shutdown {agent}")
-        Agent(... same params as original spawn for this agent ...)
+        # Rebuild from the shared-checkout template; omit isolation on retries too.
+        Agent(... same params as original spawn for this agent, omitting isolation ...)
 
     # Wait another 60s for respawned agents only
     respawn_deadline = now() + 60s
@@ -681,6 +691,7 @@ function dispatch(instance, item_id):
             summary:   "New {instance.agentType} work for {item_id}"
         )
     else:
+        # Shared mission checkout: verify the arguments OMIT the isolation key.
         Agent(
             name:         instance.name,
             subagent_type: agentTypeToSubagent(instance.agentType),
@@ -723,7 +734,8 @@ function dispatch_with_timeout(instance, item_id):
 
     # Respawn and redispatch
     SendMessage(to: instance.name, message: {type: "shutdown_request", reason: "No ACK — shutting down for respawn"}, summary: "shutdown {instance.name}")
-    Agent(... same params as original spawn for this instance ...)
+    # Rebuild from the shared-checkout template; omit isolation on retries too.
+    Agent(... same params as original spawn for this instance, omitting isolation ...)
 
     # Wait 60s for the respawned agent's READY
     msg = receive next SendMessage (timeout: 60s)
@@ -934,6 +946,8 @@ Agent(
   - Test: {outputs.test}
   - Implementation: {outputs.impl}
   - Types (if exists): {outputs.types}
+
+  Quality profile: {executionContract.profile from ateam missions-current getCurrentMission --json, or "none stored"} — resolve it via resolveQualityProfile in scripts/hooks/lib/qa-contract.js and apply any probing_guidance it carries on top of the Raptor Protocol (no profile or no guidance → the standard pass, unchanged).
 
   Execute the Raptor Protocol. Respond with VERIFIED or FLAG.
 
@@ -1230,7 +1244,7 @@ Agent(
   Mission: {missionId}
   Evidence dir: .qa-evidence/{missionId}/
 
-  Read the mission's DoD from the PRD and the execution contract from ateam.config.json. Walk every DoD statement from the user's front door, write the evidence bundle, and graduate specs per the contract's testing_level.
+  Read the mission's DoD from the PRD and the execution contract — resolve the mission's own stored contract first (ateam missions-current getCurrentMission --json, via resolveExecutionContract in scripts/hooks/lib/qa-contract.js), falling back to ateam.config.json when the mission has none. Walk every DoD statement from the user's front door, write the evidence bundle, and graduate specs per the contract's testing_level.
 
   When done, send DONE to team-lead (the orchestrator's address — never 'hannibal', which silently bounces; if team-lead errors as an invalid address in headless/print mode, resend to main and use main from then on) with the checklist result, the evidence bundle path, and any failing work item IDs."
 )
@@ -1428,6 +1442,8 @@ Native teams are ephemeral — they don't survive session restarts. On resume:
    ```
 
 6. **Read board state and re-spawn at current stages, marking idle only on confirmed READY:**
+
+   Apply the shared-checkout spawn contract on resume too: every lane-agent `Agent` call below must omit `isolation`. Resume in the existing mission checkout, not a fresh per-agent worktree.
 
    Mirror normal startup: re-spawn the lane (`Agent` calls, capturing each returned agentId), wait for READY (use the same `wait_for_lane_ready(lane_number)` helper from "Lazy Lane Pre-Warming" above), and only then issue `ateam pool mark-idle <instance> --agent-id <its agentId>` for each agent that actually sent READY. Passing the freshly-captured agentId is essential on respawn: a respawned agent gets a NEW agentId, so a stale one would misroute handoffs. If a respawned agent fails to send READY within the 60s timeout, mark the lane failed (do NOT create its `.idle` file) and surface ALERT.
    ```

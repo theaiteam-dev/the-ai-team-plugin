@@ -3,9 +3,11 @@ import { prisma } from '@/lib/db';
 import { createValidationError, createDatabaseError, ApiError as ApiErrorClass, ErrorCodes } from '@/lib/errors';
 import { getAndValidateProjectId } from '@/lib/project-utils';
 import { safeJsonParse } from '@/lib/json-utils';
+import { validateExecutionContract } from '@/lib/mission-execution-contract';
 import type { ApiError } from '@/types/api';
 import type { MissionState, MissionPrecheckOutput } from '@/types/mission';
 import type { ScalingRationale } from '@/types/mission-scaling';
+import type { ExecutionContract } from '@/types/mission-execution-contract';
 
 /**
  * GET /api/missions/:missionId
@@ -56,6 +58,7 @@ export async function GET(
       precheckBlockers: safeJsonParse<string[]>(mission.precheckBlockers),
       precheckOutput: safeJsonParse<MissionPrecheckOutput>(mission.precheckOutput),
       scalingRationale: safeJsonParse<ScalingRationale>(mission.scalingRationale),
+      executionContract: safeJsonParse<ExecutionContract>(mission.executionContract),
     };
 
     return NextResponse.json({ success: true, data: responseData });
@@ -74,7 +77,8 @@ export async function GET(
 /**
  * PATCH /api/missions/:missionId
  *
- * Updates mission fields. Currently supports updating scalingRationale.
+ * Updates mission fields. Currently supports updating scalingRationale
+ * and stamping executionContract.
  * Requires X-Project-ID header.
  */
 export async function PATCH(
@@ -91,7 +95,7 @@ export async function PATCH(
     const projectId = projectValidation.projectId;
     const { missionId } = await params;
 
-    let body: { scalingRationale?: ScalingRationale };
+    let body: { scalingRationale?: ScalingRationale; executionContract?: ExecutionContract };
     try {
       body = await request.json();
     } catch {
@@ -102,6 +106,11 @@ export async function PATCH(
     if (body === null || typeof body !== 'object' || Array.isArray(body)) {
       const err = createValidationError('Request body must be a JSON object');
       return NextResponse.json(err.toResponse(), { status: err.httpStatus });
+    }
+
+    const contractError = validateExecutionContract(body.executionContract);
+    if (contractError) {
+      return NextResponse.json(contractError.toResponse(), { status: contractError.httpStatus });
     }
 
     const mission = await prisma.mission.findUnique({
@@ -117,6 +126,9 @@ export async function PATCH(
     if (body.scalingRationale !== undefined) {
       updateData.scalingRationale = JSON.stringify(body.scalingRationale);
     }
+    if (body.executionContract !== undefined) {
+      updateData.executionContract = JSON.stringify(body.executionContract);
+    }
 
     const updated = await prisma.mission.update({
       where: { id: missionId, projectId },
@@ -128,6 +140,7 @@ export async function PATCH(
       data: {
         ...updated,
         scalingRationale: safeJsonParse<ScalingRationale>(updated.scalingRationale),
+        executionContract: safeJsonParse<ExecutionContract>(updated.executionContract),
       },
     });
   } catch (error) {

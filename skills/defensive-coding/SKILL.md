@@ -64,6 +64,11 @@ Never use a bare `catch` that swallows errors silently. Log and either recover o
 
 Validate the same rules everywhere the same input enters the system — not just in the UI layer. Server-side validation is mandatory even when client-side validation exists. Inconsistent rules create exploitable gaps.
 
+When implementing, testing, or reviewing validation:
+
+- **Cover independent constraints separately.** One invalid example does not prove a whole validation rule. If a name has different rules for its first character and remaining characters, exercise each restriction independently, for both supplied names and requested names where applicable. Choose inputs that violate only the constraint being checked, so another guard cannot mask its absence.
+- **Distinguish validation scope from selection scope.** If the contract requires validating every supplied entry, an entry must not escape name or value-type validation merely because it was not requested or used. Include an invalid unselected entry alongside otherwise valid input, and with an empty selection when permitted. Assert the contract's validation error, not an unrelated missing-entry error. Validate only the scope the contract requires; do not invent restrictions on ignored fields.
+
 ```
 // BAD: UI validates but API does not — attacker bypasses UI
 // UI layer
@@ -457,13 +462,29 @@ Never assume single-threaded execution. Prefer the unique-constraint strategy (f
 
 ---
 
+## 15. Dictionary Presence Is Not Value Truthiness
+
+For dictionary-like lookups, distinguish explicitly supplied entries, absent entries, and inherited-only properties. When the contract requires supplied entries, inherited properties do not count as present. Determine presence independently of value truthiness: empty strings, zero, or false may be valid values under the contract. Do not reject a permitted name merely because it also exists on a prototype; an explicitly supplied entry with that name must still work.
+
+Apply this distinction when implementing, testing, and reviewing. Use the dictionary's membership operation appropriate to the contract (for example, `Object.hasOwn` for own entries in a JavaScript object, or `Map.has` for a Map). Tests and mocks must retain the relevant runtime lookup behavior and assert results or errors through the public interface, not a replacement lookup algorithm defined in the test. Cover supplied, absent, and inherited-only cases where applicable, plus contract-valid empty or false-like values; do not broaden the accepted value types beyond the contract.
+
+---
+
+## 16. Verify Branch Selection and Failure Scope
+
+When implementing, testing, or reviewing behavior selected by a default, override, or state predicate, trace the real selection rule with the actual inputs. A test title or a mock's name does not prove which branch ran. Exercise each contractually distinct path through the real selector, using observable results or calls at the operation boundary; do not mock away selection or assert on source text. If the intended path is not reached, correct the fixture or report the coverage gap.
+
+For operations that collect results or change state over a sequence, distinguish a local failure from an abort of subsequent work according to the contract. Include a failure after earlier work and assert both what changes and what must remain unchanged, including whether later operations run. A failure in the first position cannot demonstrate preservation of earlier results. Apply these checks to the implementation and review as well as test design; do not assume all failure sources have the same scope.
+
+---
+
 ## Self-Check Before Submitting
 
 For every function or module you write, verify:
 
 1. Preconditions are guarded at the top — invalid input cannot travel deeper.
 2. Every async call has explicit error handling — no unhandled rejections.
-3. Validation rules match on both the client and the server (or service boundary).
+3. Validation rules match on both the client and the server (or service boundary); tests distinguish independent constraints and cover the full contract-required input scope, including unselected entries where applicable.
 4. Dynamic values embedded in URLs are encoded with the correct encoder for their context.
 5. Every acquired resource is released in a `finally` block or equivalent.
 6. Transient UI/operation state is cleared before each new operation begins.
@@ -477,3 +498,5 @@ For every function or module you write, verify:
 14. A guard, wrapper, or validation rule added to one call site is applied to every sibling call site of the same operation.
 15. Mandatory gates fail closed on empty, missing, or ambiguous input — no early-exit branch implicitly counts as a pass.
 16. Any find-then-write "get-or-create" is atomic — inside a transaction, or backed by a DB unique constraint with the conflict error handled.
+17. Dictionary membership follows the contract independently of value truthiness; tests distinguish supplied and missing entries without hiding relevant prototype behavior.
+18. Branch fixtures exercise the actual selection rule; failure tests verify the contract's effect on earlier results and subsequent work, not just the failing operation.

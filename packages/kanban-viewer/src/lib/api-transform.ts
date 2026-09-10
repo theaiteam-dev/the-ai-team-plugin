@@ -62,6 +62,9 @@ function transformApiItemToWorkItem(item: ItemWithRelations): WorkItem {
     status: item.stageId === 'done' ? 'completed' : 'pending',
     assigned_agent: item.assignedAgent as WorkItem['assigned_agent'],
     rejection_count: item.rejectionCount,
+    severity: item.severity as WorkItem['severity'],
+    attributed_agent: item.attributedAgent,
+    fingerprint: item.fingerprint,
     rejection_history: [],
     work_logs: item.workLogs?.map((log): WorkLogEntry => ({
       id: log.id,

@@ -172,6 +172,24 @@ To read the config, run `ateam board getBoard --json` to get board state which i
 
 ---
 
+## Reading the Mission's Quality Profile (probing guidance)
+
+A mission can carry its own quality profile (`quick`, `normal`, or `deep`), stamped on the Mission record's `executionContract` by whichever entry point created it. Some profiles carry **probing guidance** — text describing scrutiny you must apply beyond the standard Raptor Protocol. It reaches you ONLY through this read: nothing else in the pipeline forwards it, so skipping this step silently downgrades a mission the operator explicitly asked to have probed harder. Read it from the mission itself before Phase 1, and never infer extra scrutiny from the profile name or restate what a profile maps to — the resolver owns that (`scripts/hooks/lib/qa-contract.js`).
+
+1. **Fetch the mission's stored contract** via `ateam missions-current getCurrentMission --json` — its `executionContract.profile` field names the profile (your dispatch prompt may already carry it; the command is the source of truth if they disagree).
+2. **Resolve the profile** with `resolveQualityProfile(profile)` from `scripts/hooks/lib/qa-contract.js` (the plugin root is `${CLAUDE_PLUGIN_ROOT}`). When the returned bundle carries a `probing_guidance` string, that text is a REQUIRED addition to your Raptor Protocol pass — step 8 below — and you record what you actually did with it under "Profile Probing Guidance" in your report.
+3. **Fallback:** when the mission has no stored contract, no `profile`, or the resolved bundle has no `probing_guidance`, run the standard Raptor Protocol unchanged and write `Profile probing guidance: none` in your report. The standard pass is the floor for every profile — guidance only ever ADDS probes, it never removes any (ADR 0009).
+
+```bash
+# 1. Read executionContract.profile from this output (may be absent — see fallback above)
+ateam missions-current getCurrentMission --json
+
+# 2. Resolve it; prints the guidance text, or "none" when there is no profile or it carries no guidance
+node -e "const p = process.argv[1]; import('${CLAUDE_PLUGIN_ROOT}/scripts/hooks/lib/qa-contract.js').then(m => console.log(p ? (m.resolveQualityProfile(p).probing_guidance ?? 'none') : 'none'))" "{profile}"
+```
+
+---
+
 ## Investigation Methodology
 
 ### Phase 1: Reconnaissance
@@ -264,6 +282,9 @@ What happens when dependencies fail?
 ### 7. Regression Sweep
 Did this break anything that was working?
 
+### 8. Profile Probing Guidance (when the mission's profile carries it)
+Apply the `probing_guidance` text resolved per "Reading the Mission's Quality Profile" above, on top of steps 1-7 — never instead of them. Turn each scrutiny area it names into concrete probes against THIS feature, document what was sent / expected / observed for each, and treat "all tests pass" as insufficient evidence for those areas. When the resolved bundle carries no guidance, this step is a no-op: record `none` and move on.
+
 ---
 
 ## Log Analysis Expertise
@@ -342,6 +363,7 @@ If the work item's PRD specifies non-functional requirements, verify them:
 2. **Read the feature item and outputs**
    - Understand what was built
    - Note the test file and implementation paths
+   - Resolve the mission's quality profile and any `probing_guidance` it carries (see "Reading the Mission's Quality Profile" above) — decide now which extra probes Raptor step 8 owes this feature
 
 3. **Run existing tests**
    - All tests should pass
@@ -381,6 +403,10 @@ If the work item's PRD specifies non-functional requirements, verify them:
 ### Unit Tests (for reference only - DO NOT TRUST)
 - Ran existing tests: [PASS/FAIL]
 - Note: Tests passing does NOT verify feature works from user perspective
+
+### Profile Probing Guidance
+- Profile: {quick|normal|deep, or "none stored"} — probing guidance: {applied|none}
+- {for each scrutiny area the guidance named: what was probed, what was expected, what happened}
 
 ### Additional Probes
 - [PASS/FAIL] Edge case: empty input -> handled gracefully
@@ -429,6 +455,14 @@ FLAG - [CRITICAL issue]: [brief description with file:line]
 - **Does NOT**: Call `ateam board-move` or `ateam board-claim` — enforced by hook
 
 If you find yourself writing actual fixes, STOP. Your job is to find and document issues, not fix them.
+
+## Required Coverage Gaps Are Actionable Handoffs
+
+When a contract-required behavior has no durable test, a successful temporary probe establishes current correctness but does not close the coverage gap. Report the requirement, missing scenario, expected observable result, and owning item. Use the existing test-gap FLAG route so Murdock writes the regression test; do not downgrade it to an optional future improvement merely because the implementation currently works. Do not require tests for speculative or out-of-scope behavior.
+
+Preserve the normal lifecycle: claim the item with `agentStart` before investigating, then record the FLAG through `agentStop --outcome rejected --return-to testing --advance=false`. Send `REJECTED` to the matching `murdock-N` and `FYI` to Hannibal using the existing team-messaging instructions. Do not move the board, write production code, or write test files yourself — even temporarily. Keep throwaway probe scripts in scratch space, not the source or test directories.
+
+If the implementation is correct, say so explicitly: the regression test may pass immediately, and B.A. need not change working code. After Murdock adds the test and the item follows the normal forward pipeline, verify the coverage independently before approving.
 
 ## Investigation Output
 

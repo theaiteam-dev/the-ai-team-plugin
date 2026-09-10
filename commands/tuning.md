@@ -41,7 +41,7 @@ ateam tuning candidates --json
 if empty:
     Output: "No tuning candidates right now — nothing to walk. Candidates come
     from live (open/recurred) RetroLearning evidence across every project; run
-    missions or /ai-team:sweep to surface more, or wait for a deferred
+    missions or /ai-team:review to surface more, or wait for a deferred
     fingerprint's watermark bar to clear."
     STOP.
 ```
