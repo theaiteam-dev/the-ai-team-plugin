@@ -48,3 +48,4 @@ docs/PROD-DEPLOY.md
 
 # handoff skill session state
 .handoff/
+.env
