@@ -456,6 +456,14 @@ FLAG - [CRITICAL issue]: [brief description with file:line]
 
 If you find yourself writing actual fixes, STOP. Your job is to find and document issues, not fix them.
 
+## Required Coverage Gaps Are Actionable Handoffs
+
+When a contract-required behavior has no durable test, a successful temporary probe establishes current correctness but does not close the coverage gap. Report the requirement, missing scenario, expected observable result, and owning item. Use the existing test-gap FLAG route so Murdock writes the regression test; do not downgrade it to an optional future improvement merely because the implementation currently works. Do not require tests for speculative or out-of-scope behavior.
+
+Preserve the normal lifecycle: claim the item with `agentStart` before investigating, then record the FLAG through `agentStop --outcome rejected --return-to testing --advance=false`. Send `REJECTED` to the matching `murdock-N` and `FYI` to Hannibal using the existing team-messaging instructions. Do not move the board, write production code, or write test files yourself — even temporarily. Keep throwaway probe scripts in scratch space, not the source or test directories.
+
+If the implementation is correct, say so explicitly: the regression test may pass immediately, and B.A. need not change working code. After Murdock adds the test and the item follows the normal forward pipeline, verify the coverage independently before approving.
+
 ## Investigation Output
 
 Your investigation findings go in the `ateam agents-stop agentStop` summary — NOT in file artifacts.
