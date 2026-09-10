@@ -8,6 +8,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getAndValidateProjectId, ensureProject } from '@/lib/project-utils';
+import { isValidOptionalString } from '@/lib/validation';
 import { createDatabaseError, createMissionNotFoundError, createValidationError } from '@/lib/errors';
 import type { ApiError } from '@/types/api';
 import { SEVERITY_VALUES } from '@ai-team/shared';
@@ -92,6 +93,19 @@ export async function POST(request: Request) {
     if (!VALID_SEVERITIES.includes(body.severity as Severity)) {
       return NextResponse.json(
         createValidationError(`severity must be one of: ${VALID_SEVERITIES.join(', ')}`).toResponse(),
+        { status: 400 }
+      );
+    }
+
+    // sourceItemId is a nullable String column, not enum-validated, but the
+    // runtime JSON shape still must not be trusted — a non-null, non-string
+    // value (e.g. a number or object) would otherwise reach
+    // prisma.retroLearning.findFirst/create below and surface as an
+    // unhandled Prisma validation error (500) instead of a 400. Reject it
+    // before ANY Prisma call, including the mission ownership lookup.
+    if (!isValidOptionalString(body.sourceItemId)) {
+      return NextResponse.json(
+        createValidationError('sourceItemId must be a string').toResponse(),
         { status: 400 }
       );
     }

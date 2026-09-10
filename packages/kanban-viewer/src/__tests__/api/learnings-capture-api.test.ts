@@ -485,4 +485,49 @@ describe('POST /api/learnings', () => {
       mockPrisma.retroLearning.create.mock.invocationCallOrder[0]
     );
   });
+
+  it.each([
+    ['a number', 123],
+    ['an object', {}],
+    ['an array', []],
+  ])(
+    'returns 400 VALIDATION_ERROR when sourceItemId is %s, before any Prisma call',
+    async (_label, sourceItemId) => {
+      const res = await POST(buildRequest('project-a', validBody({ sourceItemId })));
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.success).toBe(false);
+      expect(data.error.code).toBe('VALIDATION_ERROR');
+      expect(data.error.message).toContain('sourceItemId');
+
+      // Rejected before ANY Prisma call, including mission ownership.
+      expect(mockPrisma.mission.findFirst).not.toHaveBeenCalled();
+      expect(mockPrisma.project.findUnique).not.toHaveBeenCalled();
+      expect(mockPrisma.project.create).not.toHaveBeenCalled();
+      expect(mockPrisma.fingerprint.upsert).not.toHaveBeenCalled();
+      expect(mockPrisma.retroLearning.findFirst).not.toHaveBeenCalled();
+      expect(mockPrisma.retroLearning.create).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['missing (undefined)', undefined],
+    ['null', null],
+    ['a string', 'WI-042'],
+  ])('accepts sourceItemId when it is %s', async (_label, sourceItemId) => {
+    mockPrisma.retroLearning.findFirst.mockResolvedValue(null);
+    mockPrisma.retroLearning.create.mockResolvedValue({ id: 1 });
+
+    const body = validBody({ fingerprint: `fp-source-item-${String(sourceItemId)}` });
+    if (sourceItemId === undefined) {
+      delete (body as Record<string, unknown>).sourceItemId;
+    } else {
+      (body as Record<string, unknown>).sourceItemId = sourceItemId;
+    }
+
+    const res = await POST(buildRequest('project-a', body));
+
+    expect(res.status).toBe(201);
+  });
 });

@@ -1131,6 +1131,52 @@ describe('POST /api/learnings — REAL DATABASE: sourceItemId dedupe vs the fing
     },
     LEARNINGS_TEST_TIMEOUT_MS
   );
+
+  it(
+    'leaves no Fingerprint, Project, or RetroLearning row behind when a rejected (missionId not found) request is retried against the real schema (coderabbitai: test behavior, not the mock call sequence)',
+    async () => {
+      // Coverage note: learnings-capture-api.test.ts asserts this same
+      // rejection path via mocked Prisma call counts (e.g.
+      // `expect(mockPrisma.fingerprint.upsert).not.toHaveBeenCalled()`),
+      // which only proves the route didn't CALL a write method — not that no
+      // row actually exists. A route that performed a read-then-safe-rollback
+      // could satisfy that assertion while still leaving a row behind. This
+      // test queries the real migrated database directly to prove the
+      // rejection leaves zero persisted state, for both a never-before-seen
+      // X-Project-ID (so ensureProject's provisioning path is exercised too)
+      // and a nonexistent missionId.
+      const { POST } = await import('@/app/api/learnings/route');
+
+      const neverSeenProjectId = 'proj-real-never-seen-rejection';
+      const res = await POST(
+        buildLearningRequest(
+          neverSeenProjectId,
+          validLearningBody({
+            missionId: 'm-does-not-exist-real',
+            fingerprint: 'fp-should-not-persist-real',
+          })
+        )
+      );
+
+      const body = await res.json();
+      expect(res.status, `expected 404, got ${res.status}: ${JSON.stringify(body)}`).toBe(404);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('MISSION_NOT_FOUND');
+
+      // Queried directly from the database, not inferred from mock call
+      // counts: the never-before-seen project must never have been
+      // provisioned, the Fingerprint slug this request named must not
+      // exist, and no RetroLearning row of any kind was left behind.
+      expect(
+        await realPrisma.project.count({ where: { id: neverSeenProjectId } })
+      ).toBe(0);
+      expect(
+        await realPrisma.fingerprint.count({ where: { slug: 'fp-should-not-persist-real' } })
+      ).toBe(0);
+      expect(await realPrisma.retroLearning.count()).toBe(0);
+    },
+    LEARNINGS_TEST_TIMEOUT_MS
+  );
 });
 
 describe('WI-936: Item finding-provenance migration SQL (existing database)', () => {

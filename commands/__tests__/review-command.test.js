@@ -381,6 +381,40 @@ describe('quality profile is wired into the actual createMission call (WI-939 le
 });
 
 // =============================================================================
+// coderabbitai review comment (CWE-78): the branch name must be read into a
+// shell variable and passed as a quoted argument, not substituted as raw
+// shell text into the createMission invocation.
+// =============================================================================
+
+describe('branch name is passed as data, not shell text (coderabbitai CWE-78)', () => {
+  function step3Block() {
+    const step3 = sectionAfter(content, /^## Step 3: Create the Mission/m);
+    const match = step3.match(/```bash\n([\s\S]*?)```/);
+    return match ? match[1] : '';
+  }
+
+  it('reads the branch into a shell variable via git branch --show-current', () => {
+    const block = step3Block();
+    expect(block, 'expected a fenced bash block in Step 3').not.toBe('');
+    expect(block).toMatch(/branch="\$\(git branch --show-current\)"/);
+  });
+
+  it('the createMission invocation references ${branch} rather than a bare {branch} placeholder', () => {
+    // Excludes reference-table rows (e.g. the "CLI Commands Used" table),
+    // which document the call with literal "..." placeholders rather than
+    // the actual invocation.
+    const invocationLines = content
+      .split('\n')
+      .filter((line) => /ateam missions createMission/.test(line) && !line.trim().startsWith('|'));
+    expect(invocationLines.length, 'expected at least one createMission invocation line').toBeGreaterThan(0);
+    for (const line of invocationLines) {
+      expect(line, `expected --name to use \${branch}, not a bare {branch} placeholder: "${line}"`).not.toMatch(/(?<!\$)\{branch\}/);
+      expect(line, `expected --name to reference \${branch}: "${line}"`).toMatch(/\$\{branch\}/);
+    }
+  });
+});
+
+// =============================================================================
 // Does NOT port sweep's Autofix step — this command creates a mission and
 // stops, it never fixes or commits anything itself.
 // =============================================================================

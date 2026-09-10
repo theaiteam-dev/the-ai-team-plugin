@@ -318,6 +318,41 @@ describe('quality profile is wired into the actual createMission call (WI-939 le
 });
 
 // =============================================================================
+// coderabbitai review comment (CWE-78), applied identically to WI-938's
+// /ai-team:review: the branch name must be read into a shell variable and
+// passed as a quoted argument, not substituted as raw shell text into the
+// createMission invocation.
+// =============================================================================
+
+describe('branch name is passed as data, not shell text (coderabbitai CWE-78)', () => {
+  function step4Block() {
+    const step4 = sectionAfter(content, /^## Step 4: Create the Mission/m);
+    const match = step4.match(/```bash\n([\s\S]*?)```/);
+    return match ? match[1] : '';
+  }
+
+  it('reads the branch into a shell variable via git branch --show-current', () => {
+    const block = step4Block();
+    expect(block, 'expected a fenced bash block in Step 4').not.toBe('');
+    expect(block).toMatch(/branch="\$\(git branch --show-current\)"/);
+  });
+
+  it('the createMission invocation references ${branch} rather than a bare {branch} placeholder', () => {
+    // Excludes reference-table rows (e.g. the "CLI Commands Used" table),
+    // which document the call with literal "..." placeholders rather than
+    // the actual invocation.
+    const invocationLines = content
+      .split('\n')
+      .filter((line) => /ateam missions createMission/.test(line) && !line.trim().startsWith('|'));
+    expect(invocationLines.length, 'expected at least one createMission invocation line').toBeGreaterThan(0);
+    for (const line of invocationLines) {
+      expect(line, `expected --name to use \${branch}, not a bare {branch} placeholder: "${line}"`).not.toMatch(/(?<!\$)\{branch\}/);
+      expect(line, `expected --name to reference \${branch}: "${line}"`).toMatch(/\$\{branch\}/);
+    }
+  });
+});
+
+// =============================================================================
 // Never fixes or commits — creates a mission and stops, like every other
 // entry point.
 // =============================================================================

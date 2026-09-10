@@ -56,7 +56,8 @@ Write a mission brief following the `mission-brief` skill — a title, an Execut
 Write the brief to `.mission-briefs/<slug>.md`, then create the mission with `prdPath` pointing at it. Resolve the quality profile via `resolveQualityProfile()` (`scripts/hooks/lib/qa-contract.js`) — never restate what a profile maps to inline; that single bundle definition is the whole point of the resolver. This command defaults to `normal` unless the operator passed `--quality`/`-q` with `quick` or `deep`. If `--quality`/`-q` is invalid (not one of `quick`, `normal`, `deep`), reject with a message naming all three valid names and create no mission — stop here, do not proceed. Pass the resolved contract on the invocation itself — resolving it in prose and then omitting it from the actual call would silently ship every bug-stomp mission with no contract at all:
 
 ```bash
-ateam missions createMission --name "Bug stomp: {branch}" --prdPath ".mission-briefs/{slug}.md" --testing-level {resolved.testing_level} --review-tier {resolved.review_tier} --profile {resolved profile name, e.g. normal} --json
+branch="$(git branch --show-current)"
+ateam missions createMission --name "Bug stomp: ${branch}" --prdPath ".mission-briefs/{slug}.md" --testing-level {resolved.testing_level} --review-tier {resolved.review_tier} --profile {resolved profile name, e.g. normal} --json
 ```
 
 The mission now exists — create every work item against it in Step 5, never before.
