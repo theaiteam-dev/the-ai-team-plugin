@@ -55,3 +55,47 @@ describe('transformItemToResponse — acceptance field', () => {
     expect(item.acceptance).toBeUndefined();
   });
 });
+
+describe('transformItemToResponse — outputs field', () => {
+  it('omits keys whose column is null', () => {
+    const item = transformItemToResponse(makeDbItem());
+    expect(item.outputs).toEqual({});
+  });
+
+  it('preserves an empty-string test path as the NO_TEST_NEEDED marker', () => {
+    const item = transformItemToResponse(
+      makeDbItem({ outputTest: '', outputImpl: 'README.md' })
+    );
+    expect(item.outputs).toEqual({ test: '', impl: 'README.md' });
+    expect(item.outputs.test).toBe('');
+  });
+
+  it('distinguishes an empty-string path from an absent one', () => {
+    const empty = transformItemToResponse(makeDbItem({ outputTest: '' }));
+    const absent = transformItemToResponse(makeDbItem({ outputTest: null }));
+    expect('test' in empty.outputs).toBe(true);
+    expect('test' in absent.outputs).toBe(false);
+  });
+
+  it('preserves empty strings across all three output columns', () => {
+    const item = transformItemToResponse(
+      makeDbItem({ outputTest: '', outputImpl: '', outputTypes: '' })
+    );
+    expect(item.outputs).toEqual({ test: '', impl: '', types: '' });
+  });
+
+  it('passes through populated paths unchanged', () => {
+    const item = transformItemToResponse(
+      makeDbItem({
+        outputTest: 'src/__tests__/feature.test.ts',
+        outputImpl: 'src/services/feature.ts',
+        outputTypes: 'src/types/feature.ts',
+      })
+    );
+    expect(item.outputs).toEqual({
+      test: 'src/__tests__/feature.test.ts',
+      impl: 'src/services/feature.ts',
+      types: 'src/types/feature.ts',
+    });
+  });
+});

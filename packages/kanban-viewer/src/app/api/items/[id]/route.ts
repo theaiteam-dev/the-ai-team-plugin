@@ -290,11 +290,11 @@ export async function PATCH(
       updateData.priority = body.priority;
     }
     if (body.outputs !== undefined) {
-      // Update outputs - normalize undefined/null/empty-string to null so the
-      // collision detector never sees a shared empty-string path.
-      updateData.outputTest = body.outputs.test || null;
-      updateData.outputImpl = body.outputs.impl || null;
-      updateData.outputTypes = body.outputs.types || null;
+      // Merge per key: a key absent from the request leaves its column untouched.
+      // `??` (not `||`) so an empty string persists as a real value.
+      if (body.outputs.test !== undefined) updateData.outputTest = body.outputs.test ?? null;
+      if (body.outputs.impl !== undefined) updateData.outputImpl = body.outputs.impl ?? null;
+      if (body.outputs.types !== undefined) updateData.outputTypes = body.outputs.types ?? null;
     }
     if (body.severity !== undefined) {
       updateData.severity = body.severity || null;
