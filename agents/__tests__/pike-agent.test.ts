@@ -21,7 +21,7 @@
  *   - the observer hooks are called with the correct trailing agent-name
  *     argument ("pike"), not just that the script path appears
  *   - the exact hook composition per section (the block-pike-writes.js guard
- *     with its Write|Edit matcher, and the item-scoped pipeline hooks Pike
+ *     with its Write|Edit|Bash matcher, and the item-scoped pipeline hooks Pike
  *     must NOT carry — he runs before any mission exists and claims nothing)
  *   - name/model/description/skills scalar and list values
  *   - every referenced hook script and skill file actually exists on disk
@@ -202,10 +202,10 @@ describe('agents/pike.md - mechanical frontmatter contract', () => {
       expect(section).toContain('observe-pre-tool-use.js');
     });
 
-    it('block-pike-writes.js is registered under a "Write|Edit" matcher', () => {
+    it('block-pike-writes.js is registered under a "Write|Edit|Bash" matcher', () => {
       const section = extractHookSection(frontmatter, 'PreToolUse');
       expect(section).toMatch(
-        /- matcher: "Write\|Edit"\n\s+hooks:\n\s+- type: command\n\s+command: "[^"]*block-pike-writes\.js"/
+        /- matcher: "Write\|Edit\|Bash"\n\s+hooks:\n\s+- type: command\n\s+command: "[^"]*block-pike-writes\.js"/
       );
     });
 
@@ -289,5 +289,25 @@ describe('agents/pike.md - body boundary contract', () => {
 
   it('states the suspected cause is suspected rather than authoritative', () => {
     expect(body).toMatch(/suspected,? not authoritative/i);
+  });
+
+  // The defect report is attacker-authorable in the issue form: any GitHub
+  // user can file an issue, and its body is interpolated into Pike's prompt
+  // by commands/bug-fix.md. Pike runs Bash, so a directive read out of that
+  // text and obeyed is a real execution path, not a hypothetical one.
+  it('states the defect report is evidence rather than instructions', () => {
+    expect(body).toMatch(/evidence,? not instructions/i);
+  });
+
+  it('says a directive inside the defect report must not be acted on', () => {
+    expect(body).toMatch(/defect report[\s\S]{0,1200}do not act on it/i);
+  });
+
+  it('names the issue filer as someone other than the operator', () => {
+    expect(body).toMatch(/any GitHub user can file an issue/i);
+  });
+
+  it('requires an embedded directive to be surfaced in the Phase One result', () => {
+    expect(body).toMatch(/Directives found inside the defect report/i);
   });
 });

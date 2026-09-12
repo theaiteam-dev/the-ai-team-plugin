@@ -55,7 +55,7 @@ Skills live in `skills/<name>/SKILL.md`. The available skills are:
 | **Stockwell** | Final review verdicts | Any code | `block-raw-echo-log`, `block-lynch-browser`, `enforce-completion-log` |
 | **Amy** | Debug scripts only | Production code, tests | Same as Murdock + `track-browser-usage`, `enforce-browser-verification` |
 | **Frankie** | Evidence bundle (`.qa-evidence/`), NEW `specs/` files | Implementation, tests, existing `specs/` files | `block-raw-echo-log`, `block-frankie-writes` |
-| **Pike** | Work items via ateam CLI, mission brief (`.mission-briefs/`) | Implementation, tests, config, docs; never a failing test; board moves and claims | `block-pike-writes`, `block-raw-echo-log`, `block-worker-board-move`, `block-worker-board-claim` |
+| **Pike** | Work items via ateam CLI, mission brief (`.mission-briefs/`) | Implementation, tests, config, docs, via Write/Edit or a shell redirect; never a failing test; board moves and claims | `block-pike-writes`, `block-raw-echo-log`, `block-worker-board-move`, `block-worker-board-claim` |
 | **Tawnia** | Docs (CHANGELOG, README) | `src/**`, tests | `block-raw-echo-log`, `enforce-completion-log` |
 
 **Hooks enforce these boundaries at runtime.** Agents physically cannot violate them.

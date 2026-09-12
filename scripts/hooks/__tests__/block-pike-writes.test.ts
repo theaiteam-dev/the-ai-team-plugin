@@ -74,8 +74,11 @@ describe('block-pike-writes — static checks', () => {
 });
 
 // =============================================================================
-// Registration — dual: matcher-less in hooks/hooks.json, Write|Edit in
+// Registration — dual: matcher-less in hooks/hooks.json, Write|Edit|Bash in
 // agents/pike.md frontmatter (the documented pattern for per-agent guards).
+// The frontmatter matcher must name Bash: the matcher-less hooks.json entry
+// already delivers Bash events, but a narrower frontmatter matcher would read
+// as though the Bash branch below were dead code.
 // =============================================================================
 describe('block-pike-writes — registration', () => {
   it('is registered matcher-less in hooks/hooks.json PreToolUse', () => {
@@ -88,7 +91,7 @@ describe('block-pike-writes — registration', () => {
     expect(entries[0].hooks[0].command).toMatch(/\$\{CLAUDE_PLUGIN_ROOT\}/);
   });
 
-  it('is registered under a Write|Edit matcher in agents/pike.md frontmatter', () => {
+  it('is registered under a Write|Edit|Bash matcher in agents/pike.md frontmatter', () => {
     const content = readFileSync(PIKE_MD_PATH, 'utf8');
     const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
     expect(frontmatterMatch, 'expected agents/pike.md to have parseable frontmatter').not.toBeNull();
@@ -96,7 +99,7 @@ describe('block-pike-writes — registration', () => {
     expect(frontmatter).toMatch(/^name:\s*pike\s*$/m);
     const blocks = frontmatter.split(/^    - /m);
     const registered = blocks.some(
-      (block) => block.includes('matcher: "Write|Edit"') && block.includes('block-pike-writes.js')
+      (block) => block.includes('matcher: "Write|Edit|Bash"') && block.includes('block-pike-writes.js')
     );
     expect(registered).toBe(true);
   });
@@ -408,6 +411,209 @@ describe('block-pike-writes — non-write tools', () => {
       agent_type: 'pike',
       tool_name: 'Grep',
       tool_input: { pattern: 'TODO' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+});
+
+// =============================================================================
+// Pike — Bash bypass: write-shaped shell commands into project paths
+//
+// CodeRabbit finding: block-pike-writes.js gated only Write/Edit/MultiEdit/
+// NotebookEdit, so Pike could write any project file through shell
+// redirection, `tee`, `sed -i`, `cp`, or `mv` — none of it seen by the
+// Write/Edit guard above. The Bash branch reuses lib/bash-write-scan.js
+// (shared with block-frankie-writes.js) to extract write targets from a
+// shell command, then classifies each with the exact same
+// isScratchPath/isMissionBriefPath/looksLikeTestFile rule the Write/Edit
+// branch uses. A write-shaped statement whose target cannot be verified
+// (an inline interpreter, a mutating `find`, a destructive writer with
+// nothing extractable) is denied rather than assumed safe, matching
+// block-frankie-writes.js's precedent.
+// =============================================================================
+describe('block-pike-writes — Bash bypass: write-shaped shell commands into project paths', () => {
+  it('blocks `>` redirection into a project file (exit 2)', () => {
+    const result = runHook({
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: { command: 'echo "patched" > src/services/search.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+    expect(result.stderr).toMatch(/src\/services\/search\.ts/);
+  });
+
+  it('blocks `>>` append redirection into a project file (exit 2)', () => {
+    const result = runHook({
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: { command: 'echo "extra line" >> src/services/search.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('blocks `tee` writing into a project file (exit 2)', () => {
+    const result = runHook({
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: { command: 'echo "x" | tee src/services/search.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('blocks `sed -i` editing a project file (exit 2)', () => {
+    const result = runHook({
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: { command: "sed -i 's/foo/bar/' src/services/search.ts" },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('blocks `cp` whose destination is a project file (exit 2)', () => {
+    const result = runHook({
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: { command: 'cp /tmp/patched.ts src/services/search.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('blocks `mv` whose destination is a project file (exit 2)', () => {
+    const result = runHook({
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: { command: 'mv /tmp/patched.ts src/services/search.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('blocks `rm` targeting a project file (exit 2)', () => {
+    const result = runHook({
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: { command: 'rm src/services/search.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('blocks a heredoc writing a project file (exit 2, opener line still scanned)', () => {
+    const result = runHook({
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: {
+        command: ['cat > src/services/search.ts <<EOF', 'export const x = 1;', 'EOF'].join('\n'),
+      },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('blocks a ".." traversal out of .mission-briefs/ via a shell redirect (exit 2)', () => {
+    const result = runHook({
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: { command: 'echo "patched" > .mission-briefs/../src/app.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('blocks a test-file target reached via shell redirection, and names Murdock (exit 2)', () => {
+    const result = runHook({
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: { command: 'echo "it(\'x\')" > src/__tests__/x.test.ts' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+    expect(result.stderr).toMatch(/Murdock/);
+    expect(result.stderr).toMatch(/failing test/i);
+  });
+
+  it('allows a `>` redirect into a scratch dir (exit 0)', () => {
+    const result = runHook({
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: { command: 'echo "probe output" > /tmp/pike-probe-output.txt' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('allows a `>` redirect into .mission-briefs/foo.md (exit 0)', () => {
+    const result = runHook({
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: { command: 'echo "# Title" > .mission-briefs/foo.md' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('blocks an inline interpreter write as unverifiable (exit 2)', () => {
+    const result = runHook({
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: { command: "python3 -c \"open('src/services/search.ts','w').write('x')\"" },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+    expect(result.stderr).toMatch(/cannot verify/i);
+  });
+
+  it('blocks a piped destructive writer with no extractable target as unverifiable (exit 2)', () => {
+    const result = runHook({
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: { command: 'echo src/services/search.ts | xargs rm -f' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+    expect(result.stderr).toMatch(/cannot verify/i);
+  });
+
+  it('does not affect non-Pike agents running the same write-shaped Bash command (exit 0)', () => {
+    const result = runHook({
+      agent_type: 'ba',
+      tool_name: 'Bash',
+      tool_input: { command: 'echo "fine" > src/services/search.ts' },
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('still allows Pike\'s real repro tooling: curl, git status, gh issue view, ateam, dev-server commands (exit 0)', () => {
+    const commands = [
+      'curl -s http://localhost:5567/api/search?q=',
+      'git status',
+      'gh issue view 42',
+      'ateam deps-check checkDeps --json',
+      'ateam activity createActivityEntry --agent "Pike" --message "reproduced" --level info',
+      'npm run dev:qa &',
+      'cat src/services/search.ts',
+      "sed -n '1,40p' src/services/search.ts",
+      'grep -rn "TODO" src/',
+      'head -50 src/services/search.ts',
+    ];
+    for (const command of commands) {
+      const result = runHook({
+        agent_type: 'pike',
+        tool_name: 'Bash',
+        tool_input: { command },
+      });
+      expect(result.exitCode, `command=${command}`).toBe(0);
+    }
+  });
+
+  it('exits 0 when tool_input.command is missing (fail-open)', () => {
+    const result = runHook({
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: {},
     });
     expect(result.exitCode).toBe(0);
   });

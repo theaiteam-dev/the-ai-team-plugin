@@ -747,6 +747,80 @@ describe('terminal condition: a planning entry point that writes no code and han
   });
 });
 
+// =============================================================================
+// TRUST BOUNDARY (CodeRabbit finding): {report} carries a GitHub issue
+// title/body/URL that any GitHub user can author, or the operator's own
+// quoted description; {free_text} carries the operator's own words. Both are
+// interpolated into Pike's dispatch prompt. This section pins that the
+// dispatch prompt delimits both with an unambiguous boundary marker, labels
+// the delimited defect report as evidence rather than instructions, tells
+// Pike an embedded directive does not authorize an action, and keeps the
+// issue body (not from the operator) distinct from the operator's own free
+// text (already covered above by the Free-Text Precedence rule, reaffirmed
+// unchanged at the bottom of this section).
+// =============================================================================
+
+describe('trust boundary: the defect report is delimited, labeled as evidence, and distinguished from operator free text', () => {
+  it('delimits {report} inside the dispatch prompt with matching BEGIN/END boundary markers', () => {
+    const stepFour = sectionAfter(content, /^## Step 4:/m);
+    const beginIdx = stepFour.search(/BEGIN[^\n]*DEFECT REPORT/i);
+    const reportIdx = stepFour.indexOf('{report}');
+    const endIdx = stepFour.search(/END[^\n]*DEFECT REPORT/i);
+    expect(beginIdx, 'expected a BEGIN...DEFECT REPORT marker').toBeGreaterThan(-1);
+    expect(reportIdx, 'expected the {report} placeholder').toBeGreaterThan(-1);
+    expect(endIdx, 'expected an END...DEFECT REPORT marker').toBeGreaterThan(-1);
+    expect(beginIdx, 'the BEGIN marker must precede {report}').toBeLessThan(reportIdx);
+    expect(reportIdx, '{report} must precede the END marker').toBeLessThan(endIdx);
+  });
+
+  it('delimits {free_text} inside the dispatch prompt with matching BEGIN/END boundary markers', () => {
+    const stepFour = sectionAfter(content, /^## Step 4:/m);
+    const beginIdx = stepFour.search(/BEGIN[^\n]*(OPERATOR )?FREE TEXT/i);
+    const freeTextIdx = stepFour.search(/\{free_text/);
+    const endIdx = stepFour.search(/END[^\n]*(OPERATOR )?FREE TEXT/i);
+    expect(beginIdx, 'expected a BEGIN...FREE TEXT marker').toBeGreaterThan(-1);
+    expect(freeTextIdx, 'expected the {free_text} placeholder').toBeGreaterThan(-1);
+    expect(endIdx, 'expected an END...FREE TEXT marker').toBeGreaterThan(-1);
+    expect(beginIdx, 'the BEGIN marker must precede {free_text}').toBeLessThan(freeTextIdx);
+    expect(freeTextIdx, '{free_text} must precede the END marker').toBeLessThan(endIdx);
+  });
+
+  it('labels the delimited defect report as evidence to investigate, never instructions to follow', () => {
+    const stepFour = sectionAfter(content, /^## Step 4:/m);
+    expect(stepFour).toMatch(/evidence to investigate/i);
+    expect(stepFour).toMatch(/never\s+instructions to follow|not\s+instructions to follow/i);
+  });
+
+  it('states that a directive embedded in the report does not authorize Pike to act on it', () => {
+    const stepFour = sectionAfter(content, /^## Step 4:/m);
+    expect(stepFour).toMatch(/directive/i);
+    expect(stepFour).toMatch(/do not act on it/i);
+  });
+
+  it('tells Pike to name an embedded directive in its Phase One result block, scoped near the directive language', () => {
+    const stepFour = sectionAfter(content, /^## Step 4:/m);
+    const directiveIdx = stepFour.search(/directive/i);
+    expect(directiveIdx, 'expected "directive" language in the dispatch prompt').toBeGreaterThan(-1);
+    const window = stepFour.slice(directiveIdx, directiveIdx + 300);
+    expect(window).toMatch(/Phase One result block/i);
+  });
+
+  it('distinguishes the GitHub issue filer (not the operator) from the operator who typed the command', () => {
+    const stepFour = sectionAfter(content, /^## Step 4:/m);
+    expect(stepFour).toMatch(/whoever filed the GitHub issue/i);
+    expect(stepFour).toMatch(/not by the operator|not from (a )?github issue filer/i);
+  });
+
+  it('does not weaken the existing Free-Text Precedence rule in ## Arguments', () => {
+    expect(content).toMatch(/free-text precedence rule/i);
+    const ruleIdx = content.search(/free-text precedence rule/i);
+    const window = content.slice(ruleIdx, ruleIdx + 700);
+    expect(window).toMatch(/binding/i);
+    expect(window).toMatch(/never authorization to skip a step/i);
+    expect(window).toMatch(/stop and ask/i);
+  });
+});
+
 describe('the failing-test source flag stays out of scope, and Pike is forbidden from writing one', () => {
   it('states a failing-test source flag is out of scope and deferred to a later PRD', () => {
     expect(content).toMatch(/failing-test source flag[^.\n]{0,80}out of scope/i);
