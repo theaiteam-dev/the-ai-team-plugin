@@ -637,6 +637,39 @@ describe('Item Endpoints Integration', () => {
       expect(data.data.stageId).toBe('briefings');
     });
 
+    it('should persist an empty string on outputs.test at creation (NO_TEST_NEEDED fast-track, WI issue #68)', async () => {
+      const newItem = createMockItem({ id: 'WI-001', stageId: 'briefings' });
+
+      mockPrisma.item.findMany.mockResolvedValue([]);
+      mockPrisma.item.create.mockResolvedValue(newItem);
+
+      const { POST } = await import('@/app/api/items/route');
+      const request = new NextRequest('http://localhost:3000/api/items', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Project-ID': 'kanban-viewer',
+        },
+        body: JSON.stringify({
+          title: 'Doc-only item',
+          description: 'Description',
+          type: 'task',
+          priority: 'medium',
+          objective: 'Test objective',
+          acceptance: ['criterion 1'],
+          context: 'Test context',
+          outputs: { impl: 'README.md', test: '' },
+        }),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(201);
+
+      const createArgs = mockPrisma.item.create.mock.calls[0][0];
+      expect(createArgs.data.outputTest).toBe('');
+      expect(createArgs.data.outputImpl).toBe('README.md');
+    });
+
     it('should validate title is required and max 200 chars', async () => {
       const { POST } = await import('@/app/api/items/route');
 
@@ -775,6 +808,86 @@ describe('Item Endpoints Integration', () => {
 
       const data = await response.json();
       expect(data.data.title).toBe('Updated Title');
+    });
+
+    it('should persist an empty string on outputs.test without wiping sibling outputs fields (WI issue #68)', async () => {
+      const mockItem = createMockItem({
+        id: 'WI-001',
+        outputImpl: 'README.md',
+        outputTest: null,
+        outputTypes: null,
+        dependsOn: [],
+        workLogs: [],
+      });
+
+      mockPrisma.item.findFirst.mockResolvedValue({ ...mockItem, dependsOn: [] });
+      const txItemUpdate = vi.fn().mockResolvedValue({ ...mockItem, outputTest: '' });
+      mockPrisma.$transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) => {
+        const tx = {
+          itemDependency: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }), createMany: vi.fn() },
+          item: { update: txItemUpdate },
+        };
+        return callback(tx);
+      });
+
+      const { PATCH } = await import('@/app/api/items/[id]/route');
+      const request = new NextRequest('http://localhost:3000/api/items/WI-001', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Project-ID': 'kanban-viewer',
+        },
+        body: JSON.stringify({ outputs: { test: '' } }),
+      });
+
+      const response = await PATCH(request, { params: Promise.resolve({ id: 'WI-001' }) });
+      expect(response.status).toBe(200);
+
+      const updateArgs = txItemUpdate.mock.calls[0][0];
+      expect(updateArgs.data.outputTest).toBe('');
+      // Sibling outputs fields weren't part of this request — they must not
+      // appear in the Prisma update payload, or Prisma would null them out.
+      expect(updateArgs.data).not.toHaveProperty('outputImpl');
+      expect(updateArgs.data).not.toHaveProperty('outputTypes');
+    });
+
+    it('should update multiple outputs fields together in one request', async () => {
+      const mockItem = createMockItem({
+        id: 'WI-001',
+        outputImpl: null,
+        outputTest: null,
+        outputTypes: null,
+        dependsOn: [],
+        workLogs: [],
+      });
+
+      mockPrisma.item.findFirst.mockResolvedValue({ ...mockItem, dependsOn: [] });
+      const txItemUpdate = vi.fn().mockResolvedValue({ ...mockItem, outputTest: 'a.test.ts', outputImpl: 'a.ts' });
+      mockPrisma.$transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) => {
+        const tx = {
+          itemDependency: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }), createMany: vi.fn() },
+          item: { update: txItemUpdate },
+        };
+        return callback(tx);
+      });
+
+      const { PATCH } = await import('@/app/api/items/[id]/route');
+      const request = new NextRequest('http://localhost:3000/api/items/WI-001', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Project-ID': 'kanban-viewer',
+        },
+        body: JSON.stringify({ outputs: { test: 'a.test.ts', impl: 'a.ts' } }),
+      });
+
+      const response = await PATCH(request, { params: Promise.resolve({ id: 'WI-001' }) });
+      expect(response.status).toBe(200);
+
+      const updateArgs = txItemUpdate.mock.calls[0][0];
+      expect(updateArgs.data.outputTest).toBe('a.test.ts');
+      expect(updateArgs.data.outputImpl).toBe('a.ts');
+      expect(updateArgs.data).not.toHaveProperty('outputTypes');
     });
   });
 

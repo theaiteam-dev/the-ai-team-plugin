@@ -383,9 +383,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         objective: body.objective,
         acceptance: JSON.stringify(body.acceptance),
         context: body.context,
-        outputTest: body.outputs?.test || null,
-        outputImpl: body.outputs?.impl || null,
-        outputTypes: body.outputs?.types || null,
+        // "" is a legitimate stored value for outputs.test (NO_TEST_NEEDED
+        // fast-track, WI issue #68); only null/undefined collapse to null.
+        outputTest: body.outputs?.test ?? null,
+        outputImpl: body.outputs?.impl ?? null,
+        outputTypes: body.outputs?.types ?? null,
         severity: body.severity || null,
         attributedAgent: body.attributedAgent || null,
         fingerprint: body.fingerprint || null,
