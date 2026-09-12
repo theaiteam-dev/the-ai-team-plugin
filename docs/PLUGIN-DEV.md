@@ -77,6 +77,7 @@ ai-team/
 │   ├── amy.md               # Investigator (PreToolUse + PostToolUse + Stop hooks)
 │   ├── tawnia.md            # Documentation writer (PreToolUse + PostToolUse + Stop hooks)
 │   ├── retro.md             # Retrospective agent (post-mission analysis)
+│   ├── pike.md              # Bug triage/investigator for /ai-team:bug-fix (PreToolUse + PostToolUse + Stop hooks)
 │   └── __tests__/           # Agent hook contract tests
 ├── commands/                # Slash command definitions
 │   ├── setup.md, plan.md, run.md, status.md, resume.md, unblock.md
@@ -147,6 +148,7 @@ ai-team/
 │       ├── block-lynch-writes.js        # Block file writes (Lynch)
 │       ├── block-sosa-writes.js         # Block all writes (Sosa)
 │       ├── block-frankie-writes.js      # Block impl/test/existing-specs writes (Frankie)
+│       ├── block-pike-writes.js         # Block all repo writes except .mission-briefs/ (Pike)
 │       ├── block-worker-board-move.js   # Block board_move (workers)
 │       ├── block-worker-board-claim.js  # Block board_claim (workers)
 │       ├── enforce-agent-start.js       # Require agentStart before work (workers)
@@ -222,6 +224,7 @@ The mission tail runs all-items-**staged** → Frankie → Stockwell → promoti
 **Stockwell**: `block-lynch-writes.js` + `block-lynch-browser.js` — prevents file writes and browser tools (read-only reviewer; both hooks gate on the resolved names `lynch`, `lynch-final`, and `stockwell`)
 **Amy**: `block-amy-writes.js` + `track-browser-usage.js` + `enforce-browser-verification.js`
 **Frankie**: `block-frankie-writes.js` — prevents writing implementation, tests, or existing `specs/` files; only his evidence bundle and new spec files are allowed
+**Pike**: `block-pike-writes.js` — prevents writing anything in the repo except the mission brief under `.mission-briefs/`; scratch dirs outside the project are allowed. Test-file writes get a message naming Murdock: Pike triages, he never writes the failing test. He is also in the target list of `block-raw-echo-log.js`, `block-worker-board-move.js`, and `block-worker-board-claim.js`: the items he files stay unassigned in `briefings`, so both board commands are denied with a Pike-specific message rather than the worker one pointing at `agentStop`.
 **Sosa**: `block-sosa-writes.js` + `enforce-sosa-coverage.js`
 **Hannibal**: `block-hannibal-writes.js` + `block-raw-mv.js` + `enforce-final-review.js`
 

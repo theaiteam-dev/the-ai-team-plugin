@@ -5,6 +5,8 @@ model: sonnet
 
 Turns the team loose on the current branch to hunt for defects. Investigates within scope, files each CONFIRMED defect as a `bug`-type work item with a repro description, writes a mission brief inventorying the hunt, and creates a mission — then stops, leaving execution to `/ai-team:run`. Like `/ai-team:review`, it never fixes or commits anything itself.
 
+**This command hunts inline; it does not dispatch Pike.** `/ai-team:bug-fix` starts from one defect reported from outside the team and needs a single reproduction traced to a suspected cause, which is the investigation Pike (`agents/pike.md`) owns. A bug stomp sweeps a branch for many independent defects with no external report to reproduce, so the hunt stays in this command, at Step 3. Both entry points converge on the same output: `bug`-type work items in `briefings` against a mission created from a brief.
+
 ## Usage
 
 ```

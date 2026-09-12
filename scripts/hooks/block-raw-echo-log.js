@@ -29,7 +29,7 @@ try {
   const agent = resolveAgent(hookInput);
 
   // Only enforce for working agents
-  const TARGET_AGENTS = ['murdock', 'ba', 'lynch', 'amy', 'frankie', 'stockwell', 'tawnia'];
+  const TARGET_AGENTS = ['murdock', 'ba', 'lynch', 'amy', 'frankie', 'stockwell', 'tawnia', 'pike'];
   if (!agent || !TARGET_AGENTS.includes(agent)) {
     process.exit(0);
   }

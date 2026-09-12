@@ -14,6 +14,17 @@
  * flag names, referenced concepts) and assert their presence/relationships,
  * never pin exact sentence wording B.A. is free to phrase differently.
  *
+ * PIKE REWRITE (later in the same branch): commands/bug-fix.md no longer
+ * reproduces the defect or files items itself. It now dispatches Pike
+ * (agents/pike.md, subagent_type `ai-team:pike`) in two phases — phase one
+ * reproduces on a scratch surface and writes the brief, the MAIN AGENT
+ * creates the mission from that brief, then the SAME Pike instance is
+ * resumed via SendMessage for phase two to file the `bug` items. The
+ * original suites below still hold (they pin the command's outward
+ * contract); the suites under the "PIKE REWRITE" banner at the bottom of
+ * this file pin the two-phase split, its ordering, and the boundaries that
+ * keep the main agent out of orchestration.
+ *
  * Two Sosa W1 fixes are folded into this item's ACs (not separate items):
  *   - an already-active mission must be reported and refused, never a second
  *     mission forced into existence (contrast with commands/plan.md's
@@ -356,5 +367,398 @@ describe('quality profile is referenced, not restated (ADR 0009 naming-layer dis
 describe('--test <path> (failing-test source) is explicitly out of scope for this item', () => {
   it('does not implement a --test flag (deferred to a later PRD)', () => {
     expect(content).not.toMatch(/--test\s+<path>/);
+  });
+});
+
+// =============================================================================
+// PIKE REWRITE (this section covers the two-phase Pike flow that replaced the
+// original single-agent command). The command no longer reproduces the defect
+// or files items itself: it dispatches Pike (agents/pike.md, subagent_type
+// `ai-team:pike`) for phase one (repro + brief), creates the mission itself
+// from that brief, then resumes the SAME Pike instance for phase two (item
+// creation). Everything below asserts that split, its ordering, and the
+// boundaries that keep the main agent from drifting into orchestration.
+//
+// Helpers below follow the existing section-slicing convention in this file;
+// the sibling doc-contract tests (commands/__tests__/bug-stomp-command.test.js,
+// commands/__tests__/entry-point-conformance.test.js) use the same approach.
+// =============================================================================
+
+/** The single line containing `pattern`, or '' if no line matches. */
+function lineWith(pattern) {
+  return content.split('\n').find((line) => pattern.test(line)) ?? '';
+}
+
+/**
+ * Parses the `## Who Does What` responsibility table into
+ * { step, mainAgent, pike } cells. The table's two agent columns are the
+ * machine-readable statement of which side of the split owns each action, so
+ * a row's EMPTY cell is as load-bearing as its filled one.
+ */
+function whoDoesWhatRows() {
+  const section = sectionAfter(content, /^## Who Does What/m);
+  if (!section) return [];
+  return section
+    .split('\n')
+    .filter((line) => line.trim().startsWith('|'))
+    .map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()))
+    .filter((cells) => cells.length === 3 && !/^-+$/.test(cells[0]))
+    .map(([step, mainAgent, pike]) => ({ step, mainAgent, pike }));
+}
+
+describe('Pike dispatch: the command delegates the investigation to subagent_type ai-team:pike', () => {
+  it('names agents/pike.md as the investigator it dispatches', () => {
+    expect(content).toMatch(/agents\/pike\.md/);
+  });
+
+  it('dispatches Pike by the ai-team:pike subagent_type', () => {
+    expect(content).toMatch(/subagent_type:\s*["']ai-team:pike["']/);
+  });
+
+  it('declares the subagent_type exactly once — the phase-one dispatch is the only Agent() spawn in the happy path', () => {
+    const declarations = content.match(/subagent_type:/g) ?? [];
+    expect(
+      declarations.length,
+      `expected exactly one subagent_type declaration (phase one); found ${declarations.length}`
+    ).toBe(1);
+  });
+
+  it('the dispatch lives in the phase-one investigation step, not the mission-creation step', () => {
+    const stepFour = sectionAfter(content, /^## Step 4:/m);
+    const stepFive = sectionAfter(content, /^## Step 5:/m);
+    expect(stepFour, 'expected a ## Step 4 section').not.toBeNull();
+    expect(stepFour).toMatch(/subagent_type:\s*["']ai-team:pike["']/);
+    expect(stepFive, 'expected a ## Step 5 section').not.toBeNull();
+    expect(stepFive, 'mission creation must not dispatch an agent').not.toMatch(/subagent_type/);
+  });
+
+  it('does not dispatch any pipeline agent (no ai-team:murdock/ba/lynch/amy/hannibal subagent types)', () => {
+    expect(content).not.toMatch(/ai-team:(murdock|ba|lynch|amy|hannibal|stockwell|frankie|tawnia)\b/i);
+    expect(content).toMatch(/do not dispatch any pipeline agent/i);
+  });
+});
+
+describe('two-phase split: phase one writes the brief only, phase two files items after the mission exists', () => {
+  it('phase one is labelled as such in the dispatch prompt', () => {
+    const stepFour = sectionAfter(content, /^## Step 4:/m);
+    expect(stepFour).toMatch(/PHASE ONE/i);
+  });
+
+  it('phase one is told NOT to create the mission and NOT to create work items', () => {
+    const stepFour = sectionAfter(content, /^## Step 4:/m);
+    expect(stepFour).toMatch(/do NOT create the mission/i);
+    expect(stepFour).toMatch(/do NOT create\s+work items/i);
+  });
+
+  it('phase one produces the brief at .mission-briefs/<slug>.md', () => {
+    const stepFour = sectionAfter(content, /^## Step 4:/m);
+    expect(stepFour).toMatch(/\.mission-briefs\//);
+    expect(stepFour).toMatch(/slug/i);
+  });
+
+  it('phase one files no items: ateam items createItem does not appear in the phase-one step', () => {
+    const stepFour = sectionAfter(content, /^## Step 4:/m);
+    expect(stepFour, 'item creation must not appear in the phase-one dispatch').not.toMatch(/ateam items createItem/);
+  });
+
+  it('phase two is labelled as such and runs against an existing mission id', () => {
+    const stepSix = sectionAfter(content, /^## Step 6:/m);
+    expect(stepSix, 'expected a ## Step 6 section').not.toBeNull();
+    expect(stepSix).toMatch(/PHASE TWO/i);
+    expect(stepSix).toMatch(/mission exists/i);
+    expect(stepSix).toMatch(/mission_id|mission id/i);
+  });
+
+  it('phase two creates the bug items and leaves them in briefings', () => {
+    const stepSix = sectionAfter(content, /^## Step 6:/m);
+    expect(stepSix).toMatch(/ateam items createItem/);
+    expect(stepSix).toMatch(/briefings/);
+    expect(stepSix).toMatch(/no board moves|leave every item in briefings/i);
+  });
+
+  it('orders the phases: phase-one dispatch, then mission creation, then phase-two item creation', () => {
+    const dispatchIdx = content.search(/^## Step 4:/m);
+    const missionIdx = content.search(/^## Step 5:/m);
+    const itemsIdx = content.search(/^## Step 6:/m);
+    expect(dispatchIdx).toBeGreaterThan(-1);
+    expect(missionIdx).toBeGreaterThan(dispatchIdx);
+    expect(itemsIdx).toBeGreaterThan(missionIdx);
+    // And the real invocations follow the same order, not just the headings.
+    expect(content.search(/ateam missions createMission/)).toBeLessThan(content.search(/ateam items createItem/));
+  });
+
+  it('states explicitly that items are created against the mission, never before it', () => {
+    expect(content).toMatch(/never before|after the mission exists|the mission now exists/i);
+  });
+});
+
+describe('mission creation belongs to the main agent, which never becomes Hannibal', () => {
+  it('the mission-creation step is attributed to the main agent in its heading', () => {
+    expect(content).toMatch(/^## Step 5: Create the Mission \(Main Agent\)/m);
+  });
+
+  it('the main agent runs createMission inside that step', () => {
+    const stepFive = sectionAfter(content, /^## Step 5:/m);
+    expect(stepFive).toMatch(/ateam missions createMission/);
+    expect(stepFive).toMatch(/--prdPath/);
+  });
+
+  it('states the command does not become Hannibal and mirrors /ai-team:plan rather than /ai-team:run', () => {
+    const line = lineWith(/does not become Hannibal/i);
+    expect(line, 'expected a "does not become Hannibal" statement').not.toBe('');
+    expect(line).toMatch(/\/ai-team:plan/);
+    expect(line).toMatch(/main agent stays the main agent/i);
+  });
+
+  it('forbids loading an orchestration playbook', () => {
+    expect(content).toMatch(/do not load an orchestration playbook/i);
+  });
+
+  it('the Who Does What table assigns createMission to the main agent and leaves Pike\'s cell empty', () => {
+    const rows = whoDoesWhatRows();
+    expect(rows.length, 'expected a parsable ## Who Does What table').toBeGreaterThan(0);
+    const missionRow = rows.find((row) => /createMission/.test(row.step));
+    expect(missionRow, `expected a createMission row; rows: ${JSON.stringify(rows)}`).toBeTruthy();
+    expect(missionRow.mainAgent, 'createMission must be owned by the main agent').toMatch(/yes/i);
+    expect(missionRow.pike, 'Pike must not own mission creation').toBe('');
+  });
+
+  it('the Who Does What table assigns createItem to Pike (phase two) and leaves the main agent\'s cell empty', () => {
+    const rows = whoDoesWhatRows();
+    const itemsRow = rows.find((row) => /createItem/.test(row.step));
+    expect(itemsRow, `expected a createItem row; rows: ${JSON.stringify(rows)}`).toBeTruthy();
+    expect(itemsRow.pike, 'item creation must be owned by Pike in phase two').toMatch(/phase two/i);
+    expect(itemsRow.mainAgent, 'the main agent must not own item creation').toBe('');
+  });
+});
+
+describe('phase two resumes the same Pike instance, with a documented fresh-agent fallback', () => {
+  it('the default is resuming the phase-one instance via SendMessage, not a fresh spawn', () => {
+    const stepSix = sectionAfter(content, /^## Step 6:/m);
+    expect(stepSix).toMatch(/SendMessage/);
+    expect(stepSix).toMatch(/resume the phase-one instance|same (live )?instance/i);
+    expect(stepSix).toMatch(/rather than spawning fresh|not a fresh|only as fallback/i);
+  });
+
+  it('says why the same instance is preferred: it still holds the repro and the suspected cause', () => {
+    const stepSix = sectionAfter(content, /^## Step 6:/m);
+    expect(stepSix).toMatch(/still holds/i);
+    expect(stepSix).toMatch(/repro/i);
+  });
+
+  it('documents a fresh ai-team:pike fallback when the phase-one instance is gone', () => {
+    const stepSix = sectionAfter(content, /^## Step 6:/m);
+    expect(stepSix).toMatch(/fallback/i);
+    expect(stepSix).toMatch(/no longer available|is gone/i);
+    expect(stepSix).toMatch(/spawn a new `?ai-team:pike/i);
+  });
+
+  it('requires the fallback to be reported, since items filed from a summary carry less detail', () => {
+    const stepSix = sectionAfter(content, /^## Step 6:/m);
+    expect(stepSix).toMatch(/fallback was used/i);
+  });
+
+  it('the Agent Invocations table records the same-instance default and the fallback', () => {
+    const invocations = sectionAfter(content, /^## Agent Invocations/m);
+    expect(invocations, 'expected an ## Agent Invocations section').not.toBeNull();
+    expect(invocations).toMatch(/SendMessage/);
+    expect(invocations).toMatch(/fallback/i);
+    expect(invocations).toMatch(/ai-team:pike/);
+  });
+});
+
+describe('branching on the phase-one outcome: REPRODUCED continues, NOT_REPRODUCED and BLOCKED stop', () => {
+  it('phase one returns one of REPRODUCED / NOT_REPRODUCED / BLOCKED', () => {
+    for (const outcome of ['REPRODUCED', 'NOT_REPRODUCED', 'BLOCKED']) {
+      expect(content, `expected the ${outcome} outcome to be named`).toMatch(new RegExp(outcome));
+    }
+  });
+
+  it('NOT_REPRODUCED creates no mission and stops', () => {
+    const bullet = lineWith(/^-\s+\*\*NOT_REPRODUCED\*\*/);
+    expect(bullet, 'expected a NOT_REPRODUCED branch bullet').not.toBe('');
+    expect(bullet).toMatch(/create no mission|no mission/i);
+    expect(bullet).toMatch(/stop/i);
+  });
+
+  it('BLOCKED creates no mission, stops, and is not worked around by pointing Pike elsewhere', () => {
+    const bullet = lineWith(/^-\s+\*\*BLOCKED\*\*/);
+    expect(bullet, 'expected a BLOCKED branch bullet').not.toBe('');
+    expect(bullet).toMatch(/create no mission|no mission/i);
+    expect(bullet).toMatch(/stop/i);
+    expect(bullet).toMatch(/do not work around/i);
+  });
+
+  it('REPRODUCED is the only branch that continues to mission creation', () => {
+    const bullet = lineWith(/^-\s+\*\*REPRODUCED\*\*/);
+    expect(bullet, 'expected a REPRODUCED branch bullet').not.toBe('');
+    expect(bullet).toMatch(/continue to Step 5/i);
+  });
+
+  it('both stop-cases are restated in the ## Errors section as complete outcomes, not failures', () => {
+    const errors = sectionAfter(content, /^## Errors/m);
+    expect(errors, 'expected an ## Errors section').not.toBeNull();
+    expect(errors).toMatch(/cannot be reproduced/i);
+    expect(errors).toMatch(/blocked/i);
+    const reproLine = errors.split('\n').find((line) => /cannot be reproduced/i.test(line)) ?? '';
+    expect(reproLine).toMatch(/no mission/i);
+    const blockedLine = errors.split('\n').find((line) => /repro blocked/i.test(line)) ?? '';
+    expect(blockedLine).toMatch(/no mission/i);
+  });
+});
+
+describe('--quality is validated BEFORE Pike is dispatched (an invalid flag never spends investigation time)', () => {
+  it('has a dedicated validation step that precedes the Pike dispatch', () => {
+    const validationIdx = content.search(/^## Step 3:/m);
+    const dispatchIdx = content.search(/subagent_type:\s*["']ai-team:pike["']/);
+    expect(validationIdx, 'expected a ## Step 3 validation section').toBeGreaterThan(-1);
+    expect(dispatchIdx, 'expected a Pike dispatch').toBeGreaterThan(-1);
+    expect(
+      validationIdx,
+      'the --quality validation step must appear before the Pike dispatch, or an invalid flag is only caught after a repro attempt'
+    ).toBeLessThan(dispatchIdx);
+  });
+
+  it('the validation step names all three valid profiles and creates no mission on an invalid value', () => {
+    const stepThree = sectionAfter(content, /^## Step 3:/m);
+    expect(stepThree).toMatch(/quick/i);
+    expect(stepThree).toMatch(/normal/i);
+    expect(stepThree).toMatch(/deep/i);
+    expect(stepThree).toMatch(/no mission/i);
+  });
+
+  it('the validation step says Pike is not dispatched on an invalid value', () => {
+    const stepThree = sectionAfter(content, /^## Step 3:/m);
+    expect(stepThree).toMatch(/do not dispatch Pike/i);
+  });
+
+  it('states why validating first matters: the flag fails before a repro is attempted', () => {
+    const stepThree = sectionAfter(content, /^## Step 3:/m);
+    expect(stepThree).toMatch(/before a repro is attempted|before[^.\n]{0,60}repro/i);
+  });
+
+  it('the ## Errors section records the invalid-flag case as "Pike not dispatched"', () => {
+    const errors = sectionAfter(content, /^## Errors/m);
+    const qualityLine = errors.split('\n').find((line) => /quality/i.test(line)) ?? '';
+    expect(qualityLine, 'expected an invalid --quality row in ## Errors').not.toBe('');
+    expect(qualityLine).toMatch(/no mission/i);
+    expect(qualityLine).toMatch(/Pike not dispatched/i);
+  });
+
+  it('the issue-form metadata gate likewise stops before dispatching Pike', () => {
+    // Same ordering property one gate earlier: a closed/non-bug issue must
+    // not cost a repro attempt either.
+    expect(content).toMatch(/Do not dispatch Pike\./);
+  });
+});
+
+describe('free text: accepted as an argument, passed verbatim to Pike, never authorization to skip a step', () => {
+  it('documents free text as an optional trailing argument in ## Arguments', () => {
+    const args = sectionAfter(content, /^## Arguments/m);
+    expect(args).toMatch(/free text/i);
+    expect(args).toMatch(/optional/i);
+  });
+
+  it('the Usage lines show free text alongside the issue and description forms', () => {
+    const usage = sectionAfter(content, /^## Usage/m);
+    expect(usage).toMatch(/free text/i);
+  });
+
+  it('free text is passed to Pike verbatim as triage context', () => {
+    const args = sectionAfter(content, /^## Arguments/m);
+    expect(args).toMatch(/verbatim/i);
+    expect(args).toMatch(/triage context/i);
+    // And the input-resolution step preserves it verbatim for the prompt.
+    expect(sectionAfter(content, /^## Step 2:/m)).toMatch(/verbatim/i);
+  });
+
+  it('the Pike dispatch prompt carries the free text through as its own field', () => {
+    const stepFour = sectionAfter(content, /^## Step 4:/m);
+    expect(stepFour).toMatch(/free[_ ]text/i);
+    expect(stepFour).toMatch(/none/);
+  });
+
+  it('carries a binding precedence rule: triage context, never authorization to skip a step', () => {
+    expect(content).toMatch(/free-text precedence rule/i);
+    const ruleIdx = content.search(/free-text precedence rule/i);
+    const window = content.slice(ruleIdx, ruleIdx + 700);
+    expect(window).toMatch(/binding/i);
+    expect(window).toMatch(/never authorization to skip a step/i);
+  });
+
+  it('the precedence rule binds Pike as well as the command, and names the skips it forbids', () => {
+    const ruleIdx = content.search(/free-text precedence rule/i);
+    const window = content.slice(ruleIdx, ruleIdx + 700);
+    expect(window).toMatch(/on Pike|and on Pike/i);
+    expect(window).toMatch(/skip the repro/i);
+    expect(window).toMatch(/before the mission/i);
+    expect(window).toMatch(/stop and ask/i);
+  });
+
+  it('a free-text conflict is escalated to the operator, never resolved toward the faster path', () => {
+    const ruleIdx = content.search(/free-text precedence rule/i);
+    const window = content.slice(ruleIdx, ruleIdx + 700);
+    expect(window).toMatch(/do not resolve the conflict yourself|silently resolving/i);
+    const errors = sectionAfter(content, /^## Errors/m);
+    expect(errors).toMatch(/free-text conflict/i);
+    expect(errors).toMatch(/assumed answer/i);
+  });
+});
+
+describe('terminal condition: a planning entry point that writes no code and hands off to /ai-team:run', () => {
+  it('declares itself a PLANNING entry point with an explicit terminal condition', () => {
+    const terminal = lineWith(/\*\*Terminal condition/);
+    expect(terminal, 'expected a bolded terminal-condition statement').not.toBe('');
+    expect(terminal).toMatch(/planning entry point/i);
+  });
+
+  it('the terminal state is: a mission exists and bug items sit in briefings', () => {
+    const terminal = lineWith(/\*\*Terminal condition/);
+    expect(terminal).toMatch(/mission exists/i);
+    expect(terminal).toMatch(/briefings/);
+  });
+
+  it('the terminal state excludes implementation, tests, commits, and any item past briefings', () => {
+    const terminal = lineWith(/\*\*Terminal condition/);
+    expect(terminal).toMatch(/no implementation/i);
+    expect(terminal).toMatch(/no tests/i);
+    expect(terminal).toMatch(/no commits/i);
+    expect(terminal).toMatch(/no items past `?briefings/i);
+  });
+
+  it('names /ai-team:run as the successor and forbids starting it', () => {
+    expect(content).toMatch(/successor[^.\n]{0,40}\/ai-team:run/i);
+    expect(content).toMatch(/do not start it/i);
+  });
+
+  it('the final step verifies the board and the working tree before stopping', () => {
+    const stepSeven = sectionAfter(content, /^## Step 7:/m);
+    expect(stepSeven, 'expected a ## Step 7 section').not.toBeNull();
+    expect(stepSeven).toMatch(/ateam board getBoard/);
+    expect(stepSeven).toMatch(/briefings/);
+    expect(stepSeven).toMatch(/git status --short/);
+  });
+
+  it('treats an unexpected working-tree change as a self-detectable boundary violation, reported not reverted', () => {
+    const stepSeven = sectionAfter(content, /^## Step 7:/m);
+    expect(stepSeven).toMatch(/\.mission-briefs\//);
+    expect(stepSeven).toMatch(/violation/i);
+    expect(stepSeven).toMatch(/do not revert/i);
+  });
+});
+
+describe('the failing-test source flag stays out of scope, and Pike is forbidden from writing one', () => {
+  it('states a failing-test source flag is out of scope and deferred to a later PRD', () => {
+    expect(content).toMatch(/failing-test source flag[^.\n]{0,80}out of scope/i);
+    expect(content).toMatch(/deferred to a later PRD/i);
+  });
+
+  it('forbids Pike from writing a failing test as a repro artifact', () => {
+    expect(content).toMatch(/Pike is forbidden from writing a failing test/i);
+  });
+
+  it('states the command never writes implementation or tests, and that Pike is hook-blocked from doing so', () => {
+    expect(content).toMatch(/never writes implementation or tests/i);
+    expect(content).toMatch(/hook-blocked/i);
   });
 });

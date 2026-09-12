@@ -1,6 +1,6 @@
 # Agent Prompts
 
-Defines behavior contracts for 12 A(i)-Team agents. Each `.md` file is a prompt loaded at dispatch time — not code, but the instructions that shape agent behavior. Does NOT contain implementation logic (that's in the `ateam` CLI binary).
+Defines behavior contracts for 13 A(i)-Team agents. Each `.md` file is a prompt loaded at dispatch time — not code, but the instructions that shape agent behavior. Does NOT contain implementation logic (that's in the `ateam` CLI binary).
 
 ## Frontmatter Contract
 
@@ -55,6 +55,7 @@ Skills live in `skills/<name>/SKILL.md`. The available skills are:
 | **Stockwell** | Final review verdicts | Any code | `block-raw-echo-log`, `block-lynch-browser`, `enforce-completion-log` |
 | **Amy** | Debug scripts only | Production code, tests | Same as Murdock + `track-browser-usage`, `enforce-browser-verification` |
 | **Frankie** | Evidence bundle (`.qa-evidence/`), NEW `specs/` files | Implementation, tests, existing `specs/` files | `block-raw-echo-log`, `block-frankie-writes` |
+| **Pike** | Work items via ateam CLI, mission brief (`.mission-briefs/`) | Implementation, tests, config, docs; never a failing test; board moves and claims | `block-pike-writes`, `block-raw-echo-log`, `block-worker-board-move`, `block-worker-board-claim` |
 | **Tawnia** | Docs (CHANGELOG, README) | `src/**`, tests | `block-raw-echo-log`, `enforce-completion-log` |
 
 **Hooks enforce these boundaries at runtime.** Agents physically cannot violate them.
