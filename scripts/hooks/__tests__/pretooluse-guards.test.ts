@@ -158,6 +158,11 @@ describe('hooks/hooks.json — all PreToolUse hooks registered', () => {
     expect(raw).toMatch(/block-frankie-writes\.js/);
   });
 
+  it('registers block-pike-writes.js in PreToolUse', () => {
+    const raw = readFileSync(HOOKS_JSON_PATH, 'utf8');
+    expect(raw).toMatch(/block-pike-writes\.js/);
+  });
+
   it('all registered hook commands use ${CLAUDE_PLUGIN_ROOT} path prefix', () => {
     const raw = readFileSync(HOOKS_JSON_PATH, 'utf8');
     const json = JSON.parse(raw);
@@ -191,6 +196,7 @@ describe('PreToolUse hooks — static resolveAgent() usage', () => {
     'block-worker-board-claim.js',
     'block-worker-board-move.js',
     'block-frankie-writes.js',
+    'block-pike-writes.js',
   ];
 
   for (const hook of TARGETED_HOOKS) {
@@ -1113,6 +1119,18 @@ describe('block-raw-echo-log — agent guards (JSON block, exit 0)', () => {
     expect(output.decision).toBe('block');
   });
 
+  it('outputs { decision: "block" } JSON for pike echoing to activity.log', () => {
+    // Pike logs what he filed through `ateam activity createActivityEntry`.
+    const result = runHook(HOOK, {
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: { command: 'echo "filed WI-001" >> mission/activity.log' },
+    });
+    expect(result.exitCode).toBe(0);
+    const output = parseOutput(result.stdout);
+    expect(output.decision).toBe('block');
+  });
+
   it('outputs { decision: "block" } JSON for amy echoing to activity.log', () => {
     const result = runHook(HOOK, {
       agent_type: 'amy',
@@ -1280,6 +1298,27 @@ describe('block-worker-board-claim — agent guards', () => {
     expect(result.stderr).toMatch(/BLOCKED/i);
   });
 
+  it('blocks pike calling ateam board-claim via Bash (exit 2)', () => {
+    // Pike claims nothing: the items he files stay unassigned in `briefings`.
+    const result = runHook(HOOK, {
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-claim WI-001' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('tells pike he claims nothing, not to use agentStart', () => {
+    const result = runHook(HOOK, {
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-claim WI-001' },
+    });
+    expect(result.stderr).toMatch(/briefings/i);
+    expect(result.stderr).not.toMatch(/agents-start/i);
+  });
+
   it('blocks ba calling ateam board-claim via Bash (exit 2)', () => {
     const result = runHook(HOOK, {
       agent_type: 'ba',
@@ -1442,6 +1481,29 @@ describe('block-worker-board-move — agent guards', () => {
     });
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('blocks pike calling ateam board-move via Bash (exit 2)', () => {
+    // Pike files bug items before any mission exists; they stay in `briefings`
+    // for /ai-team:run. He holds no claim, so there is no legitimate move.
+    const result = runHook(HOOK, {
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-move WI-001 --to ready' },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/BLOCKED/i);
+  });
+
+  it('tells pike his items stay in briefings, not to use agentStop', () => {
+    // The generic worker message points at agentStop, which Pike never calls.
+    const result = runHook(HOOK, {
+      agent_type: 'pike',
+      tool_name: 'Bash',
+      tool_input: { command: 'ateam board-move WI-001 --to ready' },
+    });
+    expect(result.stderr).toMatch(/briefings/i);
+    expect(result.stderr).not.toMatch(/agentStop/i);
   });
 
   it('blocks lynch-final calling ateam board-move via Bash (exit 2)', () => {
