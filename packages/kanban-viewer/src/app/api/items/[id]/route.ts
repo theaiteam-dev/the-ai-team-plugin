@@ -290,11 +290,21 @@ export async function PATCH(
       updateData.priority = body.priority;
     }
     if (body.outputs !== undefined) {
-      // Update outputs - normalize undefined/null/empty-string to null so the
-      // collision detector never sees a shared empty-string path.
-      updateData.outputTest = body.outputs.test || null;
-      updateData.outputImpl = body.outputs.impl || null;
-      updateData.outputTypes = body.outputs.types || null;
+      // Merge into the existing outputs — only touch the keys the client
+      // actually sent, so setting outputs.test doesn't wipe outputs.impl.
+      // "" is a legitimate stored value (NO_TEST_NEEDED fast-track, WI issue #68);
+      // only null/undefined collapse to null. The collision detector already
+      // normalizes falsy outputs to `undefined` on read, so persisting ""
+      // here doesn't create a shared collision path.
+      if ('test' in body.outputs) {
+        updateData.outputTest = body.outputs.test ?? null;
+      }
+      if ('impl' in body.outputs) {
+        updateData.outputImpl = body.outputs.impl ?? null;
+      }
+      if ('types' in body.outputs) {
+        updateData.outputTypes = body.outputs.types ?? null;
+      }
     }
     if (body.severity !== undefined) {
       updateData.severity = body.severity || null;
