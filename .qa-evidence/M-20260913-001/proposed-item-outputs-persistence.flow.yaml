@@ -1,0 +1,60 @@
+# PROPOSED — deliberately NOT graduated into specs/ by Frankie's M-20260913-001 walk.
+#
+# Why it is parked here instead of in specs/:
+#   This flow asserts that a work item's stored `outputs` render in the board's item
+#   detail modal — the drivable critical-path spine of this mission (DoD statements 1-3,
+#   read through the transforms WI-968 fixed). It passed by hand during the walk, but
+#   only against work items Frankie created himself through the CLI and POST /api/items.
+#
+#   packages/kanban-viewer/prisma/seed.ts creates a project and the stages and NO items,
+#   and ateam.config.json declares "qa": { "seed": null }. On a fresh `npm run dev:qa`
+#   this flow finds an empty board and goes red for a purely ENVIRONMENTAL reason —
+#   missing seed data — not because the feature regressed.
+#
+#   Graduating a spec that sits red trains the team to ignore red. So it waits here.
+#
+#   NOTE: this is the SECOND mission blocked on the same gap. The M-20260903-002 walk
+#   parked proposed-board-finding-provenance.flow.yaml for exactly this reason. Seeding
+#   a handful of work items would unblock both at once.
+#
+# To graduate it (move this file to specs/item-outputs-persistence.flow.yaml):
+#   Give the QA seed one work item carrying ALL THREE outputs fields with distinct,
+#   recognizable paths — the three-way distinctness is what makes the assertion
+#   meaningful, because a regression to the old wholesale-replace behavior would leave
+#   exactly one row standing and still pass a one-field check.
+#
+#   Suggested seed item (mirrors the walk's WI-002):
+#     title:         "Outputs survive a partial update"
+#     type: feature  priority: high
+#     outputs.impl:  "src/services/widget-v2.ts"
+#     outputs.test:  "src/__tests__/widget.test.ts"
+#     outputs.types: "src/types/widget-v2.ts"
+#
+#   Then drive the partial update (PATCH outputs.test only) as a seed step, so the flow
+#   asserts the post-update state rather than merely the created state. Asserting only
+#   the created state would pass even if PATCH still wiped siblings.
+#
+# Known tooling quirk when running this: agent-browser's click auto-scrolls the target
+# under the board's fixed chrome. Cards low in a column need `scrollintoview` first or
+# the click silently does not open the modal. FlowSpec's `click` handles its own
+# scrolling, but if this flow ever fails to open the modal, that is the first thing to
+# check — it is not a UI defect.
+
+name: item-outputs-persistence
+description: >
+  A work item's stored outputs all render in the board's item detail modal. The
+  seeded item carries impl, test and types with three distinct paths, and the flow
+  runs after a partial update to outputs.test only — so the pre-WI-968 behavior
+  (a partial outputs write replacing the whole object and wiping its siblings)
+  fails this flow instead of silently passing. Graduated from Frankie's DoD walk
+  for mission M-20260913-001 (issue #68), DoD statements 1-3.
+steps:
+  - visit: /?project=kanban-viewer
+  - wait_for: BRIEFINGS
+  - click: Outputs survive a partial update
+  - wait_for: Outputs
+expect:
+  # All three siblings must survive the partial update and be displayed.
+  - visible: src/services/widget-v2.ts
+  - visible: src/__tests__/widget.test.ts
+  - visible: src/types/widget-v2.ts

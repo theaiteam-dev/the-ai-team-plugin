@@ -176,11 +176,13 @@ export async function GET(
       } catch { /* ignore invalid JSON */ }
     }
 
-    // Build outputs object
+    // Build outputs object. Filter out null/undefined only — an empty
+    // string is a valid, explicitly-set value and must survive (WI-968;
+    // same semantic as item-transform.ts's buildOutputs).
     const outputs: { test?: string; impl?: string; types?: string } = {};
-    if (item.outputTest) outputs.test = item.outputTest;
-    if (item.outputImpl) outputs.impl = item.outputImpl;
-    if (item.outputTypes) outputs.types = item.outputTypes;
+    if (item.outputTest != null) outputs.test = item.outputTest;
+    if (item.outputImpl != null) outputs.impl = item.outputImpl;
+    if (item.outputTypes != null) outputs.types = item.outputTypes;
 
     // Transform to render format
     const renderData = {

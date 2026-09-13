@@ -290,11 +290,19 @@ export async function PATCH(
       updateData.priority = body.priority;
     }
     if (body.outputs !== undefined) {
-      // Update outputs - normalize undefined/null/empty-string to null so the
-      // collision detector never sees a shared empty-string path.
-      updateData.outputTest = body.outputs.test || null;
-      updateData.outputImpl = body.outputs.impl || null;
-      updateData.outputTypes = body.outputs.types || null;
+      // Merge, don't replace: a partial outputs update (e.g. { test: '' })
+      // must leave the sibling fields (impl/types) exactly as stored, not
+      // wipe them to null. Each field is checked independently against
+      // `undefined` on body.outputs — only a field actually named in the
+      // request body is touched. `?? null` (not `||`) normalizes a named
+      // field's value so an explicitly-supplied empty string persists
+      // instead of being coerced away (WI-968).
+      updateData.outputTest =
+        body.outputs.test !== undefined ? body.outputs.test ?? null : existingItem.outputTest;
+      updateData.outputImpl =
+        body.outputs.impl !== undefined ? body.outputs.impl ?? null : existingItem.outputImpl;
+      updateData.outputTypes =
+        body.outputs.types !== undefined ? body.outputs.types ?? null : existingItem.outputTypes;
     }
     if (body.severity !== undefined) {
       updateData.severity = body.severity || null;
