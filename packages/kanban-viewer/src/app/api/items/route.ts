@@ -383,9 +383,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         objective: body.objective,
         acceptance: JSON.stringify(body.acceptance),
         context: body.context,
-        outputTest: body.outputs?.test || null,
-        outputImpl: body.outputs?.impl || null,
-        outputTypes: body.outputs?.types || null,
+        // Nullish coalescing (not `||`) so an explicitly-supplied empty
+        // string persists instead of being coerced to null (WI-968).
+        outputTest: body.outputs?.test ?? null,
+        outputImpl: body.outputs?.impl ?? null,
+        outputTypes: body.outputs?.types ?? null,
         severity: body.severity || null,
         attributedAgent: body.attributedAgent || null,
         fingerprint: body.fingerprint || null,

@@ -135,11 +135,13 @@ function dbItemToWorkItem(item: DbItem): WorkItem {
   // Direct mapping - no transformation needed
   const stage = item.stageId as Stage;
 
-  // Build outputs object from database fields
+  // Build outputs object from database fields. Filter out null/undefined
+  // only — an empty string is a valid, explicitly-set value and must
+  // survive (WI-968; same semantic as item-transform.ts's buildOutputs).
   const outputs: WorkItem['outputs'] = {};
-  if (item.outputTest) outputs.test = item.outputTest;
-  if (item.outputImpl) outputs.impl = item.outputImpl;
-  if (item.outputTypes) outputs.types = item.outputTypes;
+  if (item.outputTest != null) outputs.test = item.outputTest;
+  if (item.outputImpl != null) outputs.impl = item.outputImpl;
+  if (item.outputTypes != null) outputs.types = item.outputTypes;
 
   return {
     id: item.id,
