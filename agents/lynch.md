@@ -140,7 +140,11 @@ This is a full code review of the test file, not just a green-light check. Ask y
 
 **Known Anti-Patterns (flag immediately):** Apply the `ai-team:test-writing` skill's banned-patterns list as your rejection checklist. Any match is a Priority 1 reject.
 
-**"Only/never" qualifier check:** Scan each AC for exclusionary language ("only," "never," "exclusively," "must not"). Each match requires both a positive and negative test. If Murdock only wrote the positive case, flag as NOT COVERED.
+**Exclusionary-language check:** Scan each AC for exclusionary language. Keyword triggers: "only," "never," "exclusively," "must not," "should not." Silent triggers that mean the same thing and get missed far more often: "rather than," "instead of," "without," "preserves," "leaves untouched," "unchanged," "non-destructive." Each match requires both a positive and negative test. If Murdock only wrote the positive case, flag as NOT COVERED.
+
+**Preservation-invariant check:** If the exclusionary AC is about a *write* leaving something alone (a partial update that merges, a save that must not clear a sibling field, a sync that must not overwrite local state), the outcome assertion alone is insufficient and does NOT satisfy the check above. It cannot distinguish "never wrote the field" from "read it, held it, wrote it back unchanged," and the second implementation loses concurrent writes. Require a second assertion at the write boundary proving the payload carries only the fields the caller asked for. Flag as NOT COVERED if only one layer is present, in either direction: a payload-only suite never checks what the caller receives. See the `test-writing` skill's "Preservation Invariants Need Two Layers" section.
+
+**Discrimination check:** Before approving the test suite, name the cheapest alternative implementation that passes it. If you can describe an implementation that goes green against Murdock's suite and still violates the item's objective, the suite is under-specified: reject to `testing` with that implementation named explicitly, so Murdock knows which assertion is missing rather than being told to "add coverage." This is the earliest-flagged-stage rule in action, and it applies even when the suite's individual assertions are well-built. Design quality and specification adequacy are different axes.
 
 **Mocking — is it realistic?**
 - Flag over-mocked tests where every dependency is stubbed and there's no real logic being exercised
