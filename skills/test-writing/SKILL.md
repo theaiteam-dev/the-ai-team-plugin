@@ -615,6 +615,7 @@ it('leaves sibling outputs intact when only outputs.impl is updated', async () =
 
 // REQUIRED ALONGSIDE IT: mechanism. Fails against read-modify-write-back.
 it('does not write the outputs columns it was not asked to update', async () => {
+  const item = await createItem({ outputs: { test: 't.ts', impl: 'i.ts', types: 'ty.ts' } });
   const update = vi.spyOn(prisma.workItem, 'update');
   await updateItem(item.id, { outputs: { impl: 'new.ts' } });
   expect(Object.keys(update.mock.calls[0][0].data)).toEqual(['outputsImpl']);

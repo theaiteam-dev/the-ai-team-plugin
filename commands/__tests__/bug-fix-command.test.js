@@ -805,6 +805,18 @@ describe('trust boundary: the defect report is delimited, labeled as evidence, a
     expect(window).toMatch(/Phase One result block/i);
   });
 
+  it('requires the Phase One result block entry to state that Pike did not act on the directive, not merely name it', () => {
+    const stepFour = sectionAfter(content, /^## Step 4:/m);
+    const directiveIdx = stepFour.search(/directive/i);
+    expect(directiveIdx, 'expected "directive" language in the dispatch prompt').toBeGreaterThan(-1);
+    const window = stepFour.slice(directiveIdx, directiveIdx + 400);
+    const resultBlockIdx = window.search(/Phase One result block/i);
+    expect(resultBlockIdx, 'expected "Phase One result block" near the directive language').toBeGreaterThan(-1);
+    // The requirement to state non-action must be bound to the result-block
+    // clause itself, not merely present somewhere earlier in the sentence.
+    expect(window.slice(resultBlockIdx)).toMatch(/did not act on it/i);
+  });
+
   it('distinguishes the GitHub issue filer (not the operator) from the operator who typed the command', () => {
     const stepFour = sectionAfter(content, /^## Step 4:/m);
     expect(stepFour).toMatch(/whoever filed the GitHub issue/i);

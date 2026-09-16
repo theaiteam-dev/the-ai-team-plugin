@@ -310,4 +310,12 @@ describe('agents/pike.md - body boundary contract', () => {
   it('requires an embedded directive to be surfaced in the Phase One result', () => {
     expect(body).toMatch(/Directives found inside the defect report/i);
   });
+
+  it('requires the Phase One directive entry to state that Pike did not act on the directive', () => {
+    const headingIdx = body.search(/### Directives found inside the defect report/i);
+    expect(headingIdx, 'expected the Phase One directive entry heading').toBeGreaterThan(-1);
+    // Scope to the entry line(s) immediately under the heading, not the whole document.
+    const entrySection = body.slice(headingIdx, headingIdx + 200);
+    expect(entrySection).toMatch(/did not act on it/i);
+  });
 });
