@@ -19,6 +19,7 @@ The A(i)-Team is a Claude Code plugin for parallel agent orchestration. It trans
 - **Amy** (Investigator): Probes every feature for bugs beyond tests (bug-hunter subagent)
 - **Frankie** (QA/Demo Man): Walks the mission's Definition of Done against the running app once all items reach `staged`, producing an evidence bundle — verifies and evidences, never writes implementation, tests, or existing specs
 - **Stockwell** (Reviewer): Final Mission Review — holistic PRD+diff review of the entire codebase, run after Frankie's walk succeeds
+- **Pike** (Triage): Reproduces a reported defect on a scratch surface, writes the mission brief, and files `bug`-type work items in `briefings`. Dispatched by `/ai-team:bug-fix` (opus), the defect-shaped counterpart of Face: he runs before a mission exists, so he is not part of the per-item pipeline.
 - **Tawnia** (Documentation): Updates docs and makes final commit (clean-code-architect subagent)
 
 ### Pipeline Flow
@@ -151,6 +152,7 @@ The `outputs` field is critical - without it, Murdock and B.A. don't know where 
 - **B.A.**: Writes ONLY implementation. Tests already exist from Murdock. In native teams mode, ACKs Murdock's START, then sends a START to Lynch after `agentStop --advance`.
 - **Lynch / Stockwell**: Reviews only. Does NOT write code. In native teams mode, Lynch sends START to Amy (approved) or peer rejection to Murdock/B.A. (rejected), then FYI/ALERT to Hannibal.
 - **Amy**: Investigates only. Does NOT write production code or tests. Reports findings with proof. In native teams mode, sends FYI/ALERT to Hannibal only (no downstream peer handoff).
+- **Pike**: Triages a reported defect and files `bug`-type work items via the `ateam` CLI. Does NOT write implementation, tests, or config: the only file he writes is the mission brief under `.mission-briefs/` (enforced by `block-pike-writes.js`). Does NOT create the mission, which the `/ai-team:bug-fix` main agent does between Pike's two phases, and does NOT move or claim board items: the items he files stay in `briefings` for `/ai-team:run`.
 - **Frankie**: Verifies and evidences only. Does NOT write implementation, tests, or existing `specs/` files — walks the mission's DoD against the running app, writes his evidence bundle and new flow files, and reports failures to Hannibal. Never moves items himself: he reports the failing items, and Hannibal moves each one out of `staged` via a real `board-move` using the earliest-flagged-stage rule (WI-794).
 - **Tawnia**: Writes documentation only (CHANGELOG, README, docs/). Does NOT modify source code or tests. Makes the final commit.
 

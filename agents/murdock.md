@@ -105,7 +105,7 @@ Write ONLY tests and type definitions. **Do NOT write implementation code** - th
 
 ## Test Scope, Philosophy, and What NOT to Test
 
-The `ai-team:tdd-workflow` skill defines test scope by work item type. The `ai-team:test-writing` skill is the authoritative reference for what to test, what to never test (banned anti-patterns with examples), and the per-AC mandatory checks (failure paths, interaction completeness, concurrent execution, consumer wiring, only/never qualifiers, AC cross-product). Both are loaded in Step 0 — invoke them and apply their checklists to every test file you produce.
+The `ai-team:tdd-workflow` skill defines test scope by work item type. The `ai-team:test-writing` skill is the authoritative reference for what to test, what to never test (banned anti-patterns with examples), and the per-AC mandatory checks (failure paths, interaction completeness, concurrent execution, consumer wiring, only/never qualifiers, preservation invariants, AC cross-product). Both are loaded in Step 0 — invoke them and apply their checklists to every test file you produce.
 
 ## Handling NO_TEST_NEEDED Items
 
@@ -247,6 +247,8 @@ Before marking work complete, verify:
 - [ ] **AC wiring is tested at the trigger, not the helper** — if an AC describes a helper that must fire from a call path (bootstrap-on-absence, auto-create-on-missing), the test drives the call path and asserts the side effect, not just that the helper works standalone (see `test-writing` skill's "Trigger-Wiring Tests" section)
 - [ ] **Fixture values are valid against the real runtime contract** — UUIDs, IDs, tokens are generated the way the runtime would, not hand-typed; assumed runtime defaults (DB pragmas, driver behavior) are verified against the actual adapter, not assumed (see `test-writing` skill's "Fixture and Runtime-Assumption Validity" section)
 - [ ] **Tests asserting env-var absence explicitly stub/unset that var** (`vi.stubEnv`, `env -u`) — never rely on the ambient shell being clean
+- [ ] **Preservation ACs are asserted at both layers** — when an AC says a write leaves something it was not asked to touch alone ("merges rather than replaces," "does not clear," "must not overwrite"), one test asserts the resulting state/response AND a second asserts the write payload carries only the fields that were asked for. An outcome-only assertion cannot tell "never wrote it" from "read it and wrote it back unchanged," and the second one races (see `test-writing` skill's "Preservation Invariants Need Two Layers" section)
+- [ ] **Discrimination check run on the whole suite** — name, in one sentence, the cheapest alternative implementation that passes every test you wrote. If that implementation would violate the objective and your suite still goes green against it, add the assertion that kills it before handing off. A test budget of 2-3 tests is not a reason to skip this: it is a question about which assertions you chose, not how many
 
 ### AC Reconciliation (MANDATORY before agentStop)
 

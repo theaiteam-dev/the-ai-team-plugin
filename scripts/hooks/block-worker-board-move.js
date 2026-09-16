@@ -27,8 +27,11 @@ try {
 try {
   const agent = resolveAgent(hookInput);
 
-  // Only enforce for working agents
-  const TARGET_AGENTS = ['murdock', 'ba', 'lynch', 'lynch-final', 'stockwell', 'amy', 'frankie', 'tawnia'];
+  // Only enforce for agents that must never drive the board themselves.
+  // Pike is here for a different reason than the rest: he is not a working
+  // agent at all (he claims nothing, runs before a mission exists), and the
+  // items he files must stay in `briefings` for /ai-team:run to pick up.
+  const TARGET_AGENTS = ['murdock', 'ba', 'lynch', 'lynch-final', 'stockwell', 'amy', 'frankie', 'tawnia', 'pike'];
   if (!agent || !TARGET_AGENTS.includes(agent)) {
     process.exit(0);
   }
@@ -39,6 +42,11 @@ try {
 
   // Check for ateam board-move CLI calls via Bash
   if (toolName === 'Bash' && command.includes('ateam') && command.includes('board-move')) {
+    if (agent === 'pike') {
+      process.stderr.write('BLOCKED: Pike cannot call ateam board-move.\n');
+      process.stderr.write('The bug items you file stay in briefings; /ai-team:run advances them.\n');
+      await denyAndExit({ agentName: agent, toolName, reason: 'BLOCKED: Pike cannot call ateam board-move. Items he files stay in briefings for /ai-team:run to execute.' });
+    }
     process.stderr.write('BLOCKED: Working agents cannot call ateam board-move.\n');
     process.stderr.write('Use ateam agents-stop agentStop to complete work.\n');
     process.stderr.write('If the next stage is at WIP capacity, use --advance=false to release the claim without moving stages.\n');

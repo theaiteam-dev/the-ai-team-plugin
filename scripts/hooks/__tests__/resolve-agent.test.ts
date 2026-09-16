@@ -75,6 +75,10 @@ describe('resolveAgent()', () => {
     expect(resolveAgent({ agent_type: 'frankie-1' })).toBe('frankie');
   });
 
+  it('strips the pool suffix from pike too (pike-1 -> pike)', () => {
+    expect(resolveAgent({ agent_type: 'pike-1' })).toBe('pike');
+  });
+
   it('keeps the suffix on an unrecognised name (notanagent-1 stays as-is)', () => {
     expect(resolveAgent({ agent_type: 'notanagent-1' })).toBe('notanagent-1');
   });
@@ -89,13 +93,17 @@ describe('isKnownAgent()', () => {
     expect(isKnownAgent('frankie')).toBe(true);
   });
 
+  it('returns true for pike', () => {
+    expect(isKnownAgent('pike')).toBe(true);
+  });
+
   it('returns false for unknown/system agents', () => {
     expect(isKnownAgent('explore')).toBe(false);
   });
 });
 
 describe('KNOWN_AGENTS', () => {
-  it('contains all ten A(i)-Team agents', () => {
+  it('contains all eleven A(i)-Team agents', () => {
     expect(KNOWN_AGENTS).toEqual(
       expect.arrayContaining([
         'hannibal',
@@ -108,8 +116,9 @@ describe('KNOWN_AGENTS', () => {
         'amy',
         'tawnia',
         'frankie',
+        'pike',
       ])
     );
-    expect(KNOWN_AGENTS).toHaveLength(10);
+    expect(KNOWN_AGENTS).toHaveLength(11);
   });
 });

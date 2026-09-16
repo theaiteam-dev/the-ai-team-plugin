@@ -27,8 +27,10 @@ try {
 try {
   const agent = resolveAgent(hookInput);
 
-  // Only enforce for working agents
-  const TARGET_AGENTS = ['murdock', 'ba', 'lynch', 'lynch-final', 'stockwell', 'amy', 'frankie', 'tawnia'];
+  // Only enforce for agents that must never claim board items directly.
+  // Pike claims nothing at all: he files items and leaves them unassigned in
+  // `briefings`, so for him this is a total prohibition, not a routing rule.
+  const TARGET_AGENTS = ['murdock', 'ba', 'lynch', 'lynch-final', 'stockwell', 'amy', 'frankie', 'tawnia', 'pike'];
   if (!agent || !TARGET_AGENTS.includes(agent)) {
     process.exit(0);
   }
@@ -39,6 +41,11 @@ try {
 
   // Check for ateam board-claim CLI calls via Bash
   if (toolName === 'Bash' && command.includes('ateam') && command.includes('board-claim')) {
+    if (agent === 'pike') {
+      process.stderr.write('BLOCKED: Pike cannot call ateam board-claim.\n');
+      process.stderr.write('Pike claims nothing: the items he files stay unassigned in briefings.\n');
+      await denyAndExit({ agentName: agent, toolName, reason: 'BLOCKED: Pike cannot call ateam board-claim. He claims nothing; the items he files stay unassigned in briefings.' });
+    }
     process.stderr.write('BLOCKED: Working agents cannot call ateam board-claim directly.\n');
     process.stderr.write('Use ateam agents-start to claim items — it handles both the board claim and metadata.\n');
     await denyAndExit({ agentName: agent, toolName, reason: 'BLOCKED: Working agents cannot call ateam board-claim directly. Use ateam agents-start instead.' });

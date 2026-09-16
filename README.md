@@ -62,6 +62,7 @@ Agents interact with the API via the `ateam` CLI binary (`${CLAUDE_PLUGIN_ROOT}/
 | **Amy** | Investigator | `bug-hunter` | Probes every feature for bugs beyond tests. |
 | **Frankie** | QA / Demo Man | `ai-team:frankie` | Walks the mission's Definition of Done against the running app. Verifies and evidences — never fixes. |
 | **Stockwell** | Reviewer | `ai-team:stockwell` | Final Mission Review — holistic PRD+diff review of the whole codebase. |
+| **Pike** | Triage | `ai-team:pike` | Reproduces a reported defect, writes the mission brief, files `bug` work items. Triages, never fixes. |
 | **Tawnia** | Documentation | `clean-code-architect` | Updates docs and makes the final commit. |
 
 ## Getting Started
@@ -176,7 +177,7 @@ The dashboard provides two views:
 
 ### Raw Agent View (NEW)
 - **Real-time observability** into agent tool calls via observer hooks
-- **Swim lanes** showing each agent's activity (Hannibal, Face, Murdock, B.A., Amy, Lynch, Frankie, Stockwell, Tawnia)
+- **Swim lanes** showing each agent's activity (Hannibal, Face, Murdock, B.A., Amy, Lynch, Frankie, Stockwell, Pike, Tawnia)
 - **Tool call timeline** with PreToolUse, PostToolUse, and Stop events
 - **Duration tracking** showing how long each tool call took (e.g., "Write took 1.2s")
 - **Filtering controls** to view specific agents, tools, or event types
@@ -485,7 +486,7 @@ Runs the team's code-review skill against the current branch, turns each Must Fi
 
 ### `/ai-team:bug-fix <issue-number> | "<description>"`
 
-Turns a reported bug into a mission — no PRD required. Point it at a GitHub issue number (read via `gh`, gated on open/bug metadata) or a quoted free-text description (no GitHub consultation), and it produces a repro-oriented mission brief with one or more `bug`-type work items that `/ai-team:run` executes like any other mission. Defaults to the `quick` quality profile; override with `--quality`/`-q`.
+Turns a reported bug into a mission — no PRD required. Point it at a GitHub issue number (read via `gh`, gated on open/bug metadata) or a quoted free-text description (no GitHub consultation), and Pike reproduces the defect on a scratch surface before writing a repro-oriented mission brief with one or more `bug`-type work items that `/ai-team:run` executes like any other mission. Defaults to the `quick` quality profile; override with `--quality`/`-q`.
 
 ### `/ai-team:bug-stomp [--paths <glob...>] [--all] [--quality <quick|normal|deep>]`
 
@@ -644,6 +645,7 @@ ai-team/                     # Installed via marketplace or git submodule
 │   ├── ba.md                # Implementer (PreToolUse + PostToolUse + Stop hooks)
 │   ├── lynch.md             # Reviewer (PreToolUse + PostToolUse + Stop hooks)
 │   ├── amy.md               # Investigator (PreToolUse + PostToolUse + Stop hooks)
+│   ├── pike.md              # Bug triage/investigator for /ai-team:bug-fix (PreToolUse + PostToolUse + Stop hooks)
 │   └── tawnia.md            # Documentation writer (PreToolUse + PostToolUse + Stop hooks)
 ├── commands/
 │   ├── setup.md             # Configure project ID + permissions
@@ -697,6 +699,7 @@ ai-team/                     # Installed via marketplace or git submodule
 │       ├── block-lynch-browser.js       # Block Playwright (Lynch)
 │       ├── block-sosa-writes.js         # Block all writes (Sosa)
 │       ├── block-frankie-writes.js      # Block impl/test/existing-specs writes (Frankie)
+│       ├── block-pike-writes.js         # Block all repo writes except the mission brief (Pike)
 │       ├── block-worker-board-move.js   # Block board_move (workers)
 │       ├── block-worker-board-claim.js  # Block board_claim (workers)
 │       ├── track-browser-usage.js       # Track browser tool usage (Amy)
@@ -718,7 +721,8 @@ The plugin uses Claude Code's hook system to enforce workflow discipline. All ag
 **Boundary enforcement hooks** prevent agents from taking actions outside their role:
 - Hannibal cannot write to source or test files, cannot use raw `mv` for stage transitions, and cannot exit until final review and post-checks pass
 - Amy cannot create test files (findings belong in `ateam agents-stop agentStop` work_log, not as file artifacts)
-- All working agents (Murdock, B.A., Lynch, Amy, Tawnia) must use `ateam activity createActivityEntry` for activity logging (raw `echo` is blocked)
+- Pike cannot write anything in the repo except his mission brief under `.mission-briefs/`; a test-file write is blocked with a message naming Murdock
+- Every agent that logs (Murdock, B.A., Lynch, Amy, Frankie, Stockwell, Tawnia, Pike) must use `ateam activity createActivityEntry` for activity logging (raw `echo` is blocked)
 
 **Completion enforcement hooks** ensure proper handoff:
 - All working agents must run `ateam agents-stop agentStop` before exiting — the Stop hook blocks premature exit

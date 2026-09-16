@@ -544,7 +544,11 @@ These patterns apply to any framework with a testing library that supports role-
 
 ## "Only/Never" Qualifier Tests
 
-When an acceptance criterion contains exclusionary language — "only," "never," "exclusively," "must not" — it implies two test cases, not one:
+When an acceptance criterion contains exclusionary language, it implies two test cases, not one.
+The keyword triggers are "only," "never," "exclusively," "must not," "should not." The *silent* triggers
+carry the identical meaning with none of those words, and are the ones that get missed: "rather than,"
+"instead of," "without," "preserves," "leaves untouched," "unchanged," "non-destructive."
+
 
 1. **Positive test:** The thing happens when expected (Y → X)
 2. **Negative test:** The thing does NOT happen when the condition is absent (¬Y → ¬X)
@@ -573,7 +577,60 @@ it('does NOT show EmptyState after failed load', async () => {
 });
 ```
 
-**How to check:** After your 1:1 AC reconciliation, scan each criterion for "only," "never," "exclusively," "must not," or "should not." For each match, verify you have both the positive and negative test. If you only have one, add the other.
+**How to check:** After your 1:1 AC reconciliation, scan each criterion for BOTH trigger lists above: the keyword
+triggers ("only," "never," "exclusively," "must not," "should not") and the silent ones ("rather than," "instead of,"
+"without," "preserves," "leaves untouched," "unchanged," "non-destructive"). For each match, verify you have both the
+positive and negative test. If you only have one, add the other. If the criterion is about a *write* leaving something
+alone, the negative test is not enough on its own: see "Preservation Invariants Need Two Layers" below.
+
+---
+
+## Preservation Invariants Need Two Layers
+
+An AC saying that a write leaves alone something it was not asked to touch is a **preservation invariant**:
+"a partial update merges rather than replaces," "editing the title does not clear the tags," "sync must not
+overwrite local edits." Every one of these sentences has two readings, and they are not the same claim:
+
+- **Outcome:** after the operation, the untouched fields still hold their old values.
+- **Mechanism:** the operation never wrote the untouched fields at all.
+
+An outcome assertion cannot tell "never wrote it" apart from "read it, held it in memory, wrote it back unchanged."
+Both produce identical state in a single-threaded test. They are not identical in production: the
+read-modify-write-back version silently clobbers any concurrent writer, which is the exact bug the AC exists to
+prevent. A suite that asserts only the outcome passes against both the correct implementation and the racy one,
+so it has not specified the behavior.
+
+**Rule: a preservation AC needs an assertion at BOTH layers.** Response/state level for "the caller sees the right
+thing," write level for "we sent only the fields we were told to." Neither substitutes for the other.
+
+```typescript
+// AC: "a partial outputs update merges rather than replaces"
+
+// NECESSARY BUT INSUFFICIENT: outcome only. Passes against read-modify-write-back.
+it('leaves sibling outputs intact when only outputs.impl is updated', async () => {
+  const item = await createItem({ outputs: { test: 't.ts', impl: 'i.ts', types: 'ty.ts' } });
+  const updated = await updateItem(item.id, { outputs: { impl: 'new.ts' } });
+  expect(updated.outputs).toEqual({ test: 't.ts', impl: 'new.ts', types: 'ty.ts' });
+});
+
+// REQUIRED ALONGSIDE IT: mechanism. Fails against read-modify-write-back.
+it('does not write the outputs columns it was not asked to update', async () => {
+  const item = await createItem({ outputs: { test: 't.ts', impl: 'i.ts', types: 'ty.ts' } });
+  const update = vi.spyOn(prisma.workItem, 'update');
+  await updateItem(item.id, { outputs: { impl: 'new.ts' } });
+  expect(Object.keys(update.mock.calls[0][0].data)).toEqual(['outputsImpl']);
+});
+```
+
+This is the carve-out named in "Prefer behavior queries over spies when both detect the same thing" below. Here they
+do not detect the same thing, so the boundary assertion earns its place. It is not Ban #6 either: Ban #6 forbids
+asserting that a mock *you* stubbed was called, whereas this asserts what real production code sent to a real
+boundary. But the mechanism test never gets a promotion to sole coverage. A suite holding only the payload assertion
+never checks what the caller receives, and will happily green-light a fix that writes the right columns and returns
+the wrong response body.
+
+**Where this applies:** partial updates with PATCH or merge semantics, any read-modify-write cycle, cache and config
+merges, data migrations, "sync must not overwrite local," and anything whose failure mode is last-writer-wins.
 
 ---
 
@@ -905,6 +962,24 @@ A secondary check:
 
 If the answer is **no**, the test is not useful. Rewrite it to assert on real behavior.
 
+### The Discrimination Check (run this on the suite, not the test)
+
+The two questions above mutate the *correct* implementation and ask whether the suite notices. That misses the
+failure mode that costs the most in this pipeline, because the implementer is licensed to write the minimum that
+goes green, and the minimum is often not a bug in the correct implementation but a *different strategy* with
+identical observables under test. So before you submit, ask the opposite question:
+
+> "What is the cheapest alternative implementation that passes this entire suite? Does it satisfy the objective?"
+
+Name it concretely, in one sentence, for each item. "It could hardcode the happy-path response." "It could read the
+row, merge in memory, and write every column back." "It could recompute on every call instead of caching." If the
+alternative you named would violate the objective and your suite still goes green against it, the suite is
+under-specified, and you add the assertion that kills it before you hand off.
+
+Discriminating between a correct implementation and a plausible wrong one is the job a test suite exists to do.
+A suite that passes against both has specified nothing, no matter how well each individual assertion is built.
+Well-designed assertions pointed at the wrong layer still leave the behavior unspecified.
+
 ---
 
 ## Self-Check Before Submitting
@@ -920,7 +995,7 @@ For every test file, verify:
 7. No source files are read as strings for regex matching.
 8. No functions are redefined locally instead of imported.
 9. Scaffold/task items have at least one test verifying build output, not just file existence.
-10. Every AC with "only/never/exclusively" has both a positive and negative test.
+10. Every AC with exclusionary language has both a positive and negative test. Scan for the keyword triggers ("only," "never," "exclusively," "must not," "should not") AND the silent ones ("rather than," "instead of," "without," "preserves," "leaves untouched," "unchanged," "non-destructive").
 11. For composition components (shells, layouts, pages, containers), no immediate child is replaced via `vi.mock`, `.mockImplementation`, or `.mockReturnValue`. Children render for real; only external boundaries (API, network, timers) are mocked.
 12. No assertion depends on render count, effect-firing order, or mock invocation order. Asserting on mock *arguments* and "called exactly once" for re-entrancy guards is fine; asserting on relative timing is not.
 13. No utility-class string is asserted directly, and no test diffs class-token sets across states. Assert on user-visible output (text, role, aria, content swap).
@@ -936,6 +1011,8 @@ For every test file, verify:
 23. Fixture values (UUIDs, IDs, tokens) are generated via the real validator/ID factory, not hand-typed; assumed runtime defaults (FK pragmas, driver behavior) are verified against the actual adapter, not assumed by reputation.
 24. Every test asserting behavior when an env var is absent explicitly stubs/unsets that var (`vi.stubEnv`, `env -u`, `monkeypatch.delenv`) — never relies on the ambient shell.
 25. Every AC describing a helper wired into a call path (bootstrap-on-absence, auto-create-on-missing) has a test that drives the call path and asserts the side effect fires — not just a test that the helper works standalone.
+26. Every preservation AC (a write that must leave something it was not asked to touch alone) is asserted at BOTH layers: the resulting state/response, AND the write payload containing only the fields that were asked for. An outcome-only assertion cannot distinguish "never wrote it" from "wrote it back unchanged," and the second one races.
+27. For the suite as a whole, the cheapest alternative implementation that passes it has been named out loud, and it satisfies the objective. If a plausible wrong strategy goes green, the suite is under-specified.
 
 See `references/testing-anti-patterns.md` for extended examples of each banned pattern.
 See `references/testing-good-patterns.md` for positive examples of behavior-focused testing.
