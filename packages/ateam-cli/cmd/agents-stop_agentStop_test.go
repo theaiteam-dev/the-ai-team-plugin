@@ -233,7 +233,7 @@ func TestHandlePoolManagementReturnsNextAgentID(t *testing.T) {
 		t.Fatalf("writing idle marker: %v", err)
 	}
 
-	next, nextID, alert := handlePoolManagement("Murdock", "completed", true)
+	next, nextID, alert := handlePoolManagement("Murdock", "completed", true, "implementing")
 	if next != "ba-1" {
 		t.Errorf("expected claimedNext=ba-1, got %q", next)
 	}

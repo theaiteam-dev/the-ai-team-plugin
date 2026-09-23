@@ -179,13 +179,15 @@ POOL_DIR="/tmp/.ateam-pool/${MISSION_ID}"
 **Lifecycle:**
 - **Mission start:** Hannibal creates the directory upfront, then creates `.idle` files for each lane only after receiving READY messages from all 4 agents in that lane (see Agent Pre-Warming).
 - **Agent gets work (agentStart):** Agent `mv`s its own `.idle` → `.busy` via the `pool-handoff` skill (Step 1 — the only manual pool operation).
-- **Agent finishes work (agentStop --json):** The CLI automatically: (1) releases the agent's `.busy` → `.idle`, (2) claims an idle next-stage instance (`.idle` → `.busy`), (3) returns `claimedNext` in the JSON response. **Agents do NOT manually `mv` pool files on completion.**
+- **Agent finishes work (agentStop --json):** The CLI automatically: (1) releases the agent's `.busy` → `.idle` (single-use pool: deletes it, retiring the agent), (2) claims an idle next-stage instance (`.idle` → `.busy`), (3) returns `claimedNext` in the JSON response, plus `replenish` in a single-use pool. **Agents do NOT manually `mv` pool files on completion.**
 - **Mission end:** Tawnia removes the entire pool directory after the final commit.
 
 **Directory creation (Hannibal, before pre-warming):**
 ```bash
-ateam pool init
+ateam pool init --single-use
 # Resolves /tmp/.ateam-pool/${ATEAM_MISSION_ID} from the env var, idempotent.
+# --single-use: each instance works one item, then retires (see "Single-Use Lanes").
+# Omit it only to fall back to reusing instances across items.
 # .idle files are created per-lane after READY confirmation — see Agent Pre-Warming
 ```
 
@@ -195,6 +197,49 @@ ateam pool init
 > **Hannibal MAY use the validated `ateam pool` verbs** — `ateam pool init`, `ateam pool destroy`, `ateam pool mark-idle <instance>`, and `ateam pool release <instance>` — because they are deterministic, refuse on conflict, and are scoped to `$ATEAM_MISSION_ID`. They are the supported way to manage the pool's lifecycle around pre-warming, dispatch-timeout recovery, and mission shutdown.
 >
 > **Exception — ALERT recovery only:** If an agent sends an ALERT because the pool is in a bad state (e.g. orphaned `.busy` files from a crashed agent), Hannibal may `ls` the pool directory to diagnose the issue and fix it. This is reactive only — never preemptive. Query first (`ls`), fix only what's broken, then respond to the agent.
+
+## Single-Use Lanes
+
+Issue #74: reusing a lane agent across items grew its context to a 565k average and made the four pipeline agents 77% of mission cost. With `ateam pool init --single-use`, every pipeline instance works exactly one item:
+
+- Its `agentStop` deletes its pool marker, so it is never claimed again.
+- `agentStop` returns `replenish {agentType, count, demand, idle, busy, wipLimit}`, where `count` is how many fresh instances of that type the remaining board still needs: items in stages before that agent's stage, minus idle instances, capped by the stage's WIP limit.
+- The agent ends its FYI / ALERT / MISSION_COMPLETE with `replenish=<agentType>:<count>`.
+
+`count` is the only trigger for replacement spawns. When it is 0, spawn nothing, even if that type has no instances left. The lanes empty out as the mission ends.
+
+```text
+# Replacement names continue after the lane range, so lazily spawned lanes
+# (1..N) never collide with replacements. Names stay "<type>-<number>" because
+# the pool and the hooks resolve the agent type from that pattern.
+next_instance_number = {murdock: N+1, ba: N+1, lynch: N+1, amy: N+1}
+
+function spawn_fresh(agentType):
+    name = "{agentType}-{next_instance_number[agentType]}"
+    next_instance_number[agentType] += 1
+    # Same call and standby prompt as spawn_lane (shared checkout, no isolation
+    # key, capture the agentId), with this instance name.
+    agent_id = Agent(name: name, subagent_type: agentTypeToSubagent(agentType), run_in_background: true,
+                     description: "{name}: standby", prompt: <spawn_lane standby prompt for name>)
+    wait up to 60s for "READY: {name}"
+    if no READY: log error activity, return null
+    Bash("ateam pool mark-idle {name} --agent-id {agent_id}")
+    instance_pool.append({name, agentType})
+    return name
+
+function retire_and_replenish(message, sender):
+    SendMessage(to: sender, message: {type: "shutdown_request", reason: "Single-use: item finished"}, summary: "shutdown {sender}")
+    r = parse "replenish=<type>:<count>" from message
+    if r is missing or "unknown":
+        # agentStop could not read the board. Apply the same rule yourself from
+        # `ateam board getBoard --json` and `ateam pool status --json`.
+        r = computed count for sender's type
+    repeat r.count times: spawn_fresh(r.type)
+```
+
+**When no instance is idle, spawn instead of waiting.** In a single-use pool nothing ever returns to idle, so waiting for capacity would stall. Whenever Hannibal needs an instance of type T (Phase 1b ALERT drain, Phase 3 fill after all lanes are spawned, mission-tail rework) and `claimInstance(T)` returns null, call `spawn_fresh(T)` and dispatch to it. Stage WIP limits still apply: `agentStart` refuses work beyond them.
+
+**Rejections** need no extra orchestrator step. `agentStop --outcome rejected` claims a fresh instance of the return stage's agent, and the rejecting agent sends REJECTED to it. If none was idle, the agent ALERTs with the full rejection content, and Phase 1b spawns one and forwards the content.
 
 ## Team Initialization
 
@@ -267,6 +312,9 @@ function spawn_lane(lane_number):
                            Then await work item assignments via SendMessage.
                            When receiving work, use exactly '--agent \"{instance.name}\"' in all
                            ateam agents-start and ateam agents-stop commands.
+                           SINGLE-USE POOL: you work exactly ONE item. End your final message to
+                           team-lead with replenish=<agentType>:<count> from agentStop's
+                           data.replenish, then stop (teams-messaging → Single-Use Pools).
                            IMPORTANT: Always pass --json to agentStop. The CLI handles pool
                            management and returns claimedNext (the next instance name) plus
                            claimedNextAgentId (its agentId) in the response. If they are set,
@@ -483,6 +531,10 @@ LOOP CONTINUOUSLY:
         new_instance  = extract target instance name from message
         active_instances[item_id] = new_instance
 
+    # SINGLE-USE POOL: for every FYI, ALERT, or MISSION_COMPLETE from a pipeline
+    # instance, call retire_and_replenish(message, instanceName) FIRST, then
+    # handle the message as below (see "Single-Use Lanes").
+
     on ALERT message from {instanceName}:
         # e.g. "ALERT: No idle ba instance for WI-005 (murdock-1)"
         # No idle instance available — Hannibal must queue and dispatch later
@@ -549,6 +601,8 @@ LOOP CONTINUOUSLY:
     # Items that got ALERT (no idle instance) need dispatch when capacity opens.
     for alert in pending_alerts (oldest first):
         claimed = claimInstance(alert.target_agent_type)
+        if not claimed and pool is single-use:
+            claimed = spawn_fresh(alert.target_agent_type)  # nothing will free up on its own
         if claimed:
             pending_alerts.remove(alert)
             # NOTE: Do NOT call agentStart here — the dispatched agent owns agentStart as its first action
@@ -1020,7 +1074,7 @@ With CLI-automated pool handoffs, Hannibal receives **FYI** (successful handoff)
 "BLOCKED: WI-004 - Missing type definitions (murdock-1)"
 ```
 
-**Hannibal's role in native teams mode:** Monitor FYI messages passively. Act only on ALERT (queue item in `pending_alerts`, dispatch when capacity opens) and BLOCKED (investigate and intervene).
+**Hannibal's role in native teams mode:** Act on ALERT (queue item in `pending_alerts`, dispatch when capacity opens) and BLOCKED (investigate and intervene). In a reuse-mode pool, FYI messages need no action. In a single-use pool, every FYI, ALERT, and MISSION_COMPLETE from a pipeline instance also triggers `retire_and_replenish` (see "Single-Use Lanes"), and messages end with `replenish=<agentType>:<count>`, e.g. `FYI: WI-003 → ba-1 (murdock-2) replenish=murdock:1`.
 
 ## Minimizing Per-Cycle Token Spend
 
@@ -1043,10 +1097,12 @@ With CLI-automated pool handoffs, Hannibal receives **FYI** (successful handoff)
 - **Message** (preferred): Instance is idle but still alive
 - **Re-spawn** (fallback): Instance has shut down or was never spawned
 
+**Single-use pool:** an instance that has sent its final FYI / ALERT / MISSION_COMPLETE is retired. Shut it down and never send it new work. The idle-means-alive rule above applies only to instances that have not finished their item yet.
+
 ## All-Instances-Busy Handling
 
 **For Hannibal (Phase 3 — filling from ready):**
-When `claimInstance("murdock")` returns null (no `.idle` files), stop filling. Items stay in `ready` until a Murdock instance recreates its `.idle` file after completing work.
+When `claimInstance("murdock")` returns null (no `.idle` files), stop filling. Items stay in `ready` until a Murdock instance recreates its `.idle` file after completing work. In a single-use pool no instance ever returns to idle: once all lanes are spawned, call `spawn_fresh("murdock")` while the `testing` stage has WIP capacity (see "Single-Use Lanes").
 
 **For pipeline agents (peer handoffs):**
 When `ls ${POOL_DIR}/${NEXT_TYPE}-*.idle` returns no files, the completing agent sends an ALERT to the orchestrator (address: `team-lead`). Hannibal queues the item in `pending_alerts` and dispatches when an instance becomes available (Phase 1b).
@@ -1134,6 +1190,8 @@ RESULT=$(ateam agents-stop agentStop \
 # === Step 2: Parse the response ===
 CLAIMED_NEXT=$(echo "$RESULT" | jq -r '.data.claimedNext // ""')
 POOL_ALERT=$(echo "$RESULT" | jq -r '.data.poolAlert // ""')
+# Single-use pool: appended to the orchestrator-bound message below
+REPLENISH=$(echo "$RESULT" | jq -r 'if .data.replenish then "replenish=\(.data.replenish.agentType):\(.data.replenish.count)" else "replenish=unknown" end')
 
 # === Step 3: Hand off or alert ===
 if [ -n "$CLAIMED_NEXT" ]; then
@@ -1146,14 +1204,14 @@ if [ -n "$CLAIMED_NEXT" ]; then
     # Wait up to 20s for ACK, then notify the orchestrator (address: team-lead, NOT hannibal)
     SendMessage(
         to: "team-lead",
-        message: "FYI: WI-005 → ${CLAIMED_NEXT} (${MY_INSTANCE_NAME})",
+        message: "FYI: WI-005 → ${CLAIMED_NEXT} (${MY_INSTANCE_NAME}) ${REPLENISH}",
         summary: "FYI WI-005 → ${CLAIMED_NEXT}"
     )
 elif [ -n "$POOL_ALERT" ]; then
     # NO IDLE INSTANCE: Alert the orchestrator to queue (address: team-lead, NOT hannibal)
     SendMessage(
         to: "team-lead",
-        message: "ALERT: WI-005 - ${POOL_ALERT} (${MY_INSTANCE_NAME})",
+        message: "ALERT: WI-005 - ${POOL_ALERT} (${MY_INSTANCE_NAME}) ${REPLENISH}",
         summary: "ALERT WI-005"
     )
 fi
@@ -1181,7 +1239,7 @@ ateam agents-start agentStart --itemId "WI-005" --agent "${MY_INSTANCE_NAME}"
 
 1. The completing agent sends an ALERT to the orchestrator (`team-lead` — see claiming flow above).
 2. `team-lead` adds the item to `pending_alerts` (with timestamp).
-3. On every Phase 1b cycle, `team-lead` checks whether an idle instance is now available via `claimInstance()` and dispatches queued items.
+3. On every Phase 1b cycle, `team-lead` checks whether an idle instance is now available via `claimInstance()` and dispatches queued items. In a single-use pool, it spawns a fresh instance when none is idle (see "Single-Use Lanes").
 4. The item is **not dropped** — it stays in `pending_alerts` until dispatched.
 
 **Required ALERT/handoff contract format.** Queue latency (waiting in
@@ -1298,7 +1356,7 @@ Setup:
 
 ```text
 T=0s    HANNIBAL:
-        ateam pool init                              # creates /tmp/.ateam-pool/M1/
+        ateam pool init --single-use                 # creates /tmp/.ateam-pool/M1/
 
         Pre-warm lane 1: spawn murdock-1, ba-1, lynch-1, amy-1
         Wait for READY from all 4 → ateam pool mark-idle murdock-1 --agent-id <its agentId> (etc. for ba-1, lynch-1, amy-1)
@@ -1433,7 +1491,7 @@ Native teams are ephemeral — they don't survive session restarts. On resume:
 
 5. **Recreate pool directory shell only** (no `.idle` files yet):
    ```bash
-   ateam pool destroy && ateam pool init
+   ateam pool destroy && ateam pool init --single-use
    # Do NOT mass-create .idle files here. Marking instances idle before the
    # respawned agents have actually sent READY would reintroduce the
    # black-hole bug the lazy pre-warm flow exists to prevent — peers would

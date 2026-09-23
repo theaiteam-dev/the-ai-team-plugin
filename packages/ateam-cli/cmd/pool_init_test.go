@@ -42,6 +42,10 @@ func resetPersistentFlags(t *testing.T) {
 		_ = f.Value.Set(f.DefValue)
 		f.Changed = false
 	})
+	poolInitCmd.Flags().VisitAll(func(f *flag.Flag) {
+		_ = f.Value.Set(f.DefValue)
+		f.Changed = false
+	})
 }
 
 // withTempPoolRoot redirects /tmp/.ateam-pool/<missionId> to a per-test temp

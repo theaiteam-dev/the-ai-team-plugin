@@ -26,6 +26,16 @@ PEER_ID=$(cat /tmp/.ateam-pool/$ATEAM_MISSION_ID/<instance>.idle 2>/dev/null \
 
 This is a read-only `cat` — it does not violate the "never touch pool files directly" rule, which is about mutation (`mv`/`touch`/`rm`).
 
+## Single-Use Pools: One Item, Then Retire
+
+Native-mode missions initialize the pool with `ateam pool init --single-use` (issue #74). Each instance works exactly one item. When you call `agentStop`, the CLI deletes your pool marker instead of returning it to idle, and adds `data.replenish` to the JSON response: `{agentType, count, demand, idle, busy, wipLimit}`, where `count` is how many fresh instances of your type the remaining board still needs. Three rules follow:
+
+1. **Report the replenish fact.** End every orchestrator-bound message (FYI, ALERT, MISSION_COMPLETE) with `replenish=<agentType>:<count>`, e.g. `FYI: WI-005 → ba-3 (murdock-2) replenish=murdock:1`. If `data.replenish` is absent, end it with `replenish=unknown`. The orchestrator spawns replacements from this value alone.
+2. **Rejections go to the instance `agentStop` claimed.** On `--outcome rejected`, the CLI claims a fresh instance of the return stage's agent and returns it in `claimedNext` / `claimedNextAgentId`. Send REJECTED to `claimedNextAgentId`. The agent that last worked the item has retired and its pool marker is gone, so resolving it from the pool finds nothing. If `poolAlert` is set instead, send the full REJECTED content to `team-lead` as an ALERT. If both are empty, the item escalated to `blocked`: FYI only.
+3. **You are done after that message.** Do not wait for another START. The orchestrator shuts you down.
+
+Hannibal's spawn prompt tells you which mode the mission uses, and `ateam pool status --json` reports it as `singleUse`. In a reuse-mode pool none of this applies: no `replenish` is returned, rejections claim nothing, and backward messages resolve the target from its pool marker as above.
+
 ## Core Principle
 
 **`ateam` CLI commands are the source of truth for work tracking.** `SendMessage` is for coordination only. Always use `ateam agents-start`, `ateam agents-stop`, and `ateam activity createActivityEntry` to record work. In native teams mode, pipeline agents advance items atomically via `ateam agents-stop agentStop --advance` (or `--outcome rejected --return-to <stage>` for rejections). Hannibal uses `ateam board-move moveItem` only in legacy mode.
@@ -196,7 +206,7 @@ SendMessage({ to: "lynch", message: "ACK: {itemId}", summary: "ACK {itemId}" })
 
 **All rejections that return to `testing` route through Murdock** — both Lynch's review rejections and B.A.'s self-rejected TEST BUGs (see next section). Lynch retains a separate impl-only rejection path via `--return-to implementing` → `ba-N` for cases where tests are correct but the implementation is wrong (see "Rejection Routing Reference" table further down); this section covers only the `testing` route. See `agents/lynch.md` "Rejection Flow" and `agents/murdock.md` Step 2.5 for the rationale (TDD invariant: every defect becomes a failing test before code changes).
 
-After `ateam agents-stop agentStop --outcome rejected --return-to testing --advance=false`, notify Murdock directly, then send FYI to Hannibal. The message must be actionable without Lynch in the loop: name the AC, the observed gap, the test change to consider, and the code fix B.A. will need.
+After `ateam agents-stop agentStop --outcome rejected --return-to testing --advance=false`, notify Murdock directly (in a single-use pool, the instance in `claimedNextAgentId`), then send FYI to Hannibal. The message must be actionable without Lynch in the loop: name the AC, the observed gap, the test change to consider, and the code fix B.A. will need.
 
 ```javascript
 SendMessage({
@@ -231,7 +241,7 @@ SendMessage({
 })
 ```
 
-> **Backward/rejection routing: resolve the target's agentId from its pool marker** (see "Peer Addressing" above). Rejection is a backward hop the pool does not auto-claim, so no `claimedNextAgentId` is returned — but the marker content gives you the same id the forward path uses. Name-addressed backward messages silently drop in headless (`claude -p`) mode; either way rejections are also fire-and-forget (the returned item is picked up from the board), so a dropped rejection message degrades context, not correctness.
+> **Backward/rejection routing:** in a single-use pool, send REJECTED to `claimedNextAgentId` (see "Single-Use Pools" above). In a reuse-mode pool, **resolve the target's agentId from its pool marker** (see "Peer Addressing" above). Rejection is a backward hop the reuse-mode pool does not auto-claim, so no `claimedNextAgentId` is returned — but the marker content gives you the same id the forward path uses. Name-addressed backward messages silently drop in headless (`claude -p`) mode; either way rejections are also fire-and-forget (the returned item is picked up from the board), so a dropped rejection message degrades context, not correctness.
 
 ```javascript
 SendMessage({
