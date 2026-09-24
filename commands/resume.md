@@ -79,19 +79,16 @@ Hannibal's job is coordination, not deep reasoning. Sonnet handles dispatch loop
 
 4. **Load dispatch playbook and re-dispatch agents**
 
-   First, get the plugin root path from the `CLAUDE_PLUGIN_ROOT` environment variable:
-   ```
-   Bash("echo $CLAUDE_PLUGIN_ROOT")
-   ```
-
-   Then check the environment variable (same as `/ai-team:run`):
+   Check the environment variable (same as `/ai-team:run`):
    ```
    Bash("echo $CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")
    ```
 
-   Using the plugin root path from above:
-   - If "1": `Read("$CLAUDE_PLUGIN_ROOT/playbooks/orchestration-native.md")`
-   - Otherwise: `Read("$CLAUDE_PLUGIN_ROOT/playbooks/orchestration-legacy.md")`
+   Read the playbook at the path written here (the plugin root was filled in when this command loaded; `$CLAUDE_PLUGIN_ROOT` is not set in your Bash shell, so do not echo it or search the filesystem for another copy):
+   - If "1": `Read("${CLAUDE_PLUGIN_ROOT}/playbooks/orchestration-native.md")`
+   - Otherwise: `Read("${CLAUDE_PLUGIN_ROOT}/playbooks/orchestration-legacy.md")`
+
+   If that Read fails, STOP and report the missing path. Never substitute a playbook from `~/.claude/plugins/cache/` or any other location: it may be a different plugin version.
 
    Follow the playbook's resume/recovery section for dispatch mechanics.
 
