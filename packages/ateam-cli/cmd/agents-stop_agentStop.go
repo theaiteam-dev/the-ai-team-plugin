@@ -312,6 +312,7 @@ var agentsStopAgentStopCmd = &cobra.Command{
 			resp = injectPoolResult(resp, claimedNext, claimedNextAgentID, poolAlert)
 		}
 		resp = injectReplenish(resp, replenish)
+		resp = injectPoolMode(resp, currentPoolMode())
 
 		jsonMode, _ := cmd.Root().PersistentFlags().GetBool("json")
 		noColor, _ := cmd.Root().PersistentFlags().GetBool("no-color")

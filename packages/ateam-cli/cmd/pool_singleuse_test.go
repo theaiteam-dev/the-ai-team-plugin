@@ -336,6 +336,7 @@ func TestAgentStopSingleUseRetiresClaimsNextAndReportsReplenish(t *testing.T) {
 	var parsed struct {
 		Data struct {
 			ClaimedNext string        `json:"claimedNext"`
+			PoolMode    string        `json:"poolMode"`
 			Replenish   replenishInfo `json:"replenish"`
 		} `json:"data"`
 	}
@@ -344,6 +345,9 @@ func TestAgentStopSingleUseRetiresClaimsNextAndReportsReplenish(t *testing.T) {
 	}
 	if parsed.Data.ClaimedNext != "ba-1" {
 		t.Errorf("expected claimedNext=ba-1, got %q", parsed.Data.ClaimedNext)
+	}
+	if parsed.Data.PoolMode != "single-use" {
+		t.Errorf("expected poolMode=single-use, got %q", parsed.Data.PoolMode)
 	}
 	r := parsed.Data.Replenish
 	if r.AgentType != "murdock" || r.Demand != 2 || r.Idle != 0 || r.Count != 2 {
@@ -371,7 +375,25 @@ func TestAgentStopReuseModeReportsNoReplenish(t *testing.T) {
 	if strings.Contains(out, "replenish") {
 		t.Errorf("reuse mode must not report replenish, got %s", out)
 	}
+	if !strings.Contains(out, `"poolMode":"reuse"`) {
+		t.Errorf("reuse mode must report poolMode=reuse, got %s", out)
+	}
 	if !exists(filepath.Join(poolDir, "murdock-1.idle")) {
 		t.Error("reuse mode must return the slot to idle")
+	}
+}
+
+func TestAgentStopWithoutPoolReportsNoPoolMode(t *testing.T) {
+	t.Setenv("ATEAM_MISSION_ID", "M-no-pool-"+strings.ReplaceAll(t.Name(), "/", "_"))
+
+	srv := routedServer(t, successResponse(), boardJSON(t, []string{"ready"}, nil))
+	defer srv.Close()
+
+	out, err := runAgentStopJSON(t, srv.URL, "--agent", "murdock-1")
+	if err != nil {
+		t.Fatalf("agentStop: %v (%s)", err, out)
+	}
+	if strings.Contains(out, "poolMode") {
+		t.Errorf("a mission with no pool must not report poolMode, got %s", out)
 	}
 }

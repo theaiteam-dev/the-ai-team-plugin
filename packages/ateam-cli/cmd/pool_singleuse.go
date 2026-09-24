@@ -34,6 +34,52 @@ func poolIsSingleUse(poolDir string) bool {
 	return err == nil
 }
 
+// Pool modes reported to agents as data.poolMode on every agentStop response,
+// so an agent learns the mode from the response instead of assuming it.
+const (
+	poolModeSingleUse = "single-use"
+	poolModeReuse     = "reuse"
+)
+
+// currentPoolMode reports the mode of the current mission's pool, or "" when
+// ATEAM_MISSION_ID is unset or the mission has no pool directory.
+func currentPoolMode() string {
+	missionID := os.Getenv("ATEAM_MISSION_ID")
+	if missionID == "" {
+		return ""
+	}
+	poolDir := filepath.Join("/tmp/.ateam-pool", filepath.Base(missionID))
+	if info, err := os.Stat(poolDir); err != nil || !info.IsDir() {
+		return ""
+	}
+	if poolIsSingleUse(poolDir) {
+		return poolModeSingleUse
+	}
+	return poolModeReuse
+}
+
+// injectPoolMode merges data.poolMode into the API response JSON.
+func injectPoolMode(resp []byte, mode string) []byte {
+	if mode == "" {
+		return resp
+	}
+	var obj map[string]interface{}
+	if err := json.Unmarshal(resp, &obj); err != nil {
+		return resp
+	}
+	data, _ := obj["data"].(map[string]interface{})
+	if data == nil {
+		data = map[string]interface{}{}
+		obj["data"] = data
+	}
+	data["poolMode"] = mode
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return resp
+	}
+	return out
+}
+
 // agentStage maps a pipeline agent type to the stage it works in.
 var agentStage = map[string]string{
 	"murdock": "testing",

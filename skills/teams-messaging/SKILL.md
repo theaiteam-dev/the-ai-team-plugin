@@ -28,13 +28,13 @@ This is a read-only `cat` — it does not violate the "never touch pool files di
 
 ## Single-Use Pools: One Item, Then Retire
 
-Native-mode missions initialize the pool with `ateam pool init --single-use` (issue #74). Each instance works exactly one item. When you call `agentStop`, the CLI deletes your pool marker instead of returning it to idle, and adds `data.replenish` to the JSON response: `{agentType, count, demand, idle, busy, wipLimit}`, where `count` is how many fresh instances of your type the remaining board still needs. Three rules follow:
+Every `agentStop` response carries `data.poolMode`: `"single-use"` or `"reuse"`. **Read the mode from that field; never assume it** from this skill, your spawn prompt, or the CLI version. The rules in this section apply only when `poolMode` is `"single-use"` (issue #74). In that mode each instance works exactly one item: `agentStop` deletes your pool marker instead of returning it to idle, and adds `data.replenish` to the JSON response: `{agentType, count, demand, idle, busy, wipLimit}`, where `count` is how many fresh instances of your type the remaining board still needs. Three rules follow:
 
-1. **Report the replenish fact.** End every orchestrator-bound message (FYI, ALERT, MISSION_COMPLETE) with `replenish=<agentType>:<count>`, e.g. `FYI: WI-005 → ba-3 (murdock-2) replenish=murdock:1`. If `data.replenish` is absent, end it with `replenish=unknown`. The orchestrator spawns replacements from this value alone.
+1. **Report the replenish fact.** End every orchestrator-bound message (FYI, ALERT, MISSION_COMPLETE) with `replenish=<agentType>:<count>`, e.g. `FYI: WI-005 → ba-3 (murdock-2) replenish=murdock:1`. If `poolMode` is `"single-use"` but `data.replenish` is absent (the CLI could not read the board), end it with `replenish=unknown`. The orchestrator spawns replacements from this value alone.
 2. **Rejections go to the instance `agentStop` claimed.** On `--outcome rejected`, the CLI claims a fresh instance of the return stage's agent and returns it in `claimedNext` / `claimedNextAgentId`. Send REJECTED to `claimedNextAgentId`. The agent that last worked the item has retired and its pool marker is gone, so resolving it from the pool finds nothing. If `poolAlert` is set instead, send the full REJECTED content to `team-lead` as an ALERT. If both are empty, the item escalated to `blocked`: FYI only.
 3. **You are done after that message.** Do not wait for another START. The orchestrator shuts you down.
 
-Hannibal's spawn prompt tells you which mode the mission uses, and `ateam pool status --json` reports it as `singleUse`. In a reuse-mode pool none of this applies: no `replenish` is returned, rejections claim nothing, and backward messages resolve the target from its pool marker as above.
+When `poolMode` is `"reuse"`, none of this applies: your slot is back in idle, so stay alive and wait for the next START; add no `replenish=` suffix; rejections claim nothing, and backward messages resolve the target from its pool marker as above. If `poolMode` is missing (no pool for this mission), follow the reuse rules.
 
 ## Core Principle
 

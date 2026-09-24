@@ -187,9 +187,11 @@ POOL_DIR="/tmp/.ateam-pool/${MISSION_ID}"
 ateam pool init --single-use
 # Resolves /tmp/.ateam-pool/${ATEAM_MISSION_ID} from the env var, idempotent.
 # --single-use: each instance works one item, then retires (see "Single-Use Lanes").
-# Omit it only to fall back to reusing instances across items.
 # .idle files are created per-lane after READY confirmation — see Agent Pre-Warming
+ateam pool status --json | jq -e '.singleUse == true'
 ```
+
+If `pool init --single-use` errors or the status check does not print `true`, STOP and report it (the `ateam` binary is probably older than this playbook). Do not drop the flag and continue in reuse mode.
 
 > **CRITICAL: Hannibal MUST NOT touch pool files via raw `mv`/`touch`/`rm` after initialization.**
 > After creating `.idle` files for a lane, Hannibal does not shell out to `touch`, `mv`, `rm`, or otherwise hand-edit any file in `POOL_DIR`. Only the pipeline agents (Murdock, B.A., Lynch, Amy) manage their own `.idle`/`.busy` state during normal operation. Hannibal hand-editing pool files will contaminate state and break peer-to-peer handoffs.
@@ -1190,8 +1192,9 @@ RESULT=$(ateam agents-stop agentStop \
 # === Step 2: Parse the response ===
 CLAIMED_NEXT=$(echo "$RESULT" | jq -r '.data.claimedNext // ""')
 POOL_ALERT=$(echo "$RESULT" | jq -r '.data.poolAlert // ""')
-# Single-use pool: appended to the orchestrator-bound message below
-REPLENISH=$(echo "$RESULT" | jq -r 'if .data.replenish then "replenish=\(.data.replenish.agentType):\(.data.replenish.count)" else "replenish=unknown" end')
+# Single-use pool only: appended to the orchestrator-bound message below.
+# data.poolMode ("single-use" | "reuse") is authoritative; reuse mode gets no suffix.
+REPLENISH=$(echo "$RESULT" | jq -r 'if .data.poolMode != "single-use" then "" elif .data.replenish then "replenish=\(.data.replenish.agentType):\(.data.replenish.count)" else "replenish=unknown" end')
 
 # === Step 3: Hand off or alert ===
 if [ -n "$CLAIMED_NEXT" ]; then

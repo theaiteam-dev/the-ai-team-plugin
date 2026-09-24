@@ -73,6 +73,7 @@ ateam agents-stop agentStop \
 > - `data.claimedNextAgentId` — that instance's harness agentId. **Address the `START` to this**, not the instance name: friendly names do not route between teammates in native teams / headless (`claude -p`) mode (the message is silently dropped), while the agentId always delivers. Fall back to `claimedNext` only when `claimedNextAgentId` is empty.
 > - `data.poolAlert` — non-empty string when no idle next-stage instance was available. Send an `ALERT` to the orchestrator (`team-lead`) so it can queue the handoff.
 > - `data.wipExceeded` — `true` if the target stage hit its WIP limit. Work was logged but the item did NOT advance.
+> - `data.poolMode` — `"single-use"` or `"reuse"` (absent when the mission has no pool). The authoritative mode: in single-use you retire after this message; in reuse you stay alive for the next START.
 > - `data.replenish` — single-use pools only: `{agentType, count, ...}`, the number of fresh instances of your type the remaining board still needs. Report it to the orchestrator as `replenish=<agentType>:<count>` (see `teams-messaging` → "Single-Use Pools").
 >
 > Without `--json`, these fields are printed in a human table and cannot be parsed reliably.
