@@ -300,6 +300,8 @@ Lynch-specific gates:
 
    This claims the item AND records `assigned_agent` on the work item so the kanban UI shows you're working on it.
 
+   Do this on every START, including rework of an item you already worked while parked for it: no edit, test run, or probe comes before `agentStart`.
+
 2. **Follow the Review Process** (Steps 1-10 above)
 
 3. **Render verdict**
@@ -403,13 +405,13 @@ VERDICT: APPROVED/REJECTED
 
 Lynch receives `START` from B.A. or Hannibal. If from a peer, reply immediately with `ACK`.
 
-- **REJECTED**: call `agentStop --outcome rejected --return-to <testing|implementing>` with `--advance=false`, per the Rejection Flow routing table above. The CLI releases your pool slot but does NOT claim a next-agent. Send `REJECTED` directly to the matching peer (`murdock-N` for `testing`, `ba-N` for `implementing`) with the test change and/or code fix specified (per the rejection-message requirement in Step 1), then send `FYI` to Hannibal. See the `teams-messaging` skill for the REJECTED message template.
+- **REJECTED**: call `agentStop --outcome rejected --return-to <testing|implementing>` with `--advance=false`, per the Rejection Flow routing table above. In a single-use pool the CLI claims the return stage's agent (the instance parked for this item, which already worked it, else an idle one): send `REJECTED` to `claimedNextAgentId` (see `teams-messaging` → "Single-Use Pools"). Otherwise the CLI claims nothing, and you send `REJECTED` directly to the matching peer (`murdock-N` for `testing`, `ba-N` for `implementing`) with the test change and/or code fix specified (per the rejection-message requirement in Step 1), then send `FYI` to Hannibal. See the `teams-messaging` skill for the REJECTED message template.
 
 ## Logging Progress and Completion
 
 Follow the `ai-team:agent-lifecycle` skill for activity-log milestone messages and the `ai-team:pool-handoff` skill for the agentStop / pool-release / next-agent claim sequence. Both are loaded in Step 0.
 
-**REJECTED path:** call `agentStop --outcome rejected --return-to <testing|implementing> --advance=false` per the Rejection Flow routing table. The CLI releases your pool slot but does NOT claim a next-agent — send the REJECTED message directly to the matching peer (`murdock-N` or `ba-N`) per `teams-messaging`, then FYI to Hannibal.
+**REJECTED path:** call `agentStop --outcome rejected --return-to <testing|implementing> --advance=false` per the Rejection Flow routing table. In a single-use pool, send REJECTED to the instance in `claimedNextAgentId`; otherwise send it directly to the matching peer (`murdock-N` or `ba-N`) per `teams-messaging`. Then FYI to Hannibal.
 
 ## Mindset
 

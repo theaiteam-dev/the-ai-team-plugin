@@ -128,6 +128,8 @@ Run `ateam agents-start agentStart --itemId "XXX" --agent "murdock"` (replace XX
 
 This claims the item AND records `assigned_agent` on the work item so the kanban UI shows you're working on it.
 
+Do this on every START or REJECTED, including rework of an item you already worked while parked for it: no edit, test run, or probe comes before `agentStart`.
+
 ### Step 2: Reconnaissance
 
 - **Read the feature item** via `ateam items renderItem --id <id>`: The rendered markdown includes structured fields:

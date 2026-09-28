@@ -73,6 +73,10 @@ ateam agents-stop agentStop \
 > - `data.claimedNextAgentId` — that instance's harness agentId. **Address the `START` to this**, not the instance name: friendly names do not route between teammates in native teams / headless (`claude -p`) mode (the message is silently dropped), while the agentId always delivers. Fall back to `claimedNext` only when `claimedNextAgentId` is empty.
 > - `data.poolAlert` — non-empty string when no idle next-stage instance was available. Send an `ALERT` to the orchestrator (`team-lead`) so it can queue the handoff.
 > - `data.wipExceeded` — `true` if the target stage hit its WIP limit. Work was logged but the item did NOT advance.
+> - `data.poolMode` — `"single-use"` or `"reuse"` (absent when the mission has no pool). The authoritative mode: in single-use you work one item, parked for its rework until it leaves the pipeline; in reuse you stay alive for the next START.
+> - `data.replenish` — single-use pools only: `{agentType, count, ...}`, the number of fresh instances of your type the remaining board still needs. Report it to the orchestrator as `replenish=<agentType>:<count>` (see `teams-messaging` → "Single-Use Pools").
+> - `data.parkedFor` — single-use pools only: the item you are parked for. Stay alive; only rework for that item can reach you.
+> - `data.retire` — single-use pools only: `[{instance, agentId}]`, present when the item left the pipeline. Append `retire=<instance>,...` to your orchestrator message; the orchestrator shuts those instances down.
 >
 > Without `--json`, these fields are printed in a human table and cannot be parsed reliably.
 
@@ -168,7 +172,7 @@ Use `--outcome rejected` when you are rejecting an item and sending it back for 
 3. Releases your claim
 4. Automatically escalates the item to `blocked` when `rejectionCount` hits the configured rejection cap (default **4**, override via `ATEAM_REJECTION_CAP` on the API server)
 
-Rejection is a first-class outcome of `agentStop` — there is **no separate `rejectItem` command**. Pool management is skipped for rejections (no `claimedNext` is returned), because peer handoff goes backward, not forward.
+Rejection is a first-class outcome of `agentStop` — there is **no separate `rejectItem` command**. In a reuse-mode pool, rejections claim no next agent (no `claimedNext` is returned), because peer handoff goes backward, not forward. In a single-use pool, the CLI claims the return stage's agent (the instance parked for this item first, else an idle one) and returns it in `claimedNext` / `claimedNextAgentId`: send REJECTED there (see `teams-messaging` → "Single-Use Pools").
 
 `--return-to` specifies where the item goes:
 

@@ -15,14 +15,14 @@ import (
 )
 
 var (
-	agentsStopAgentStopCmdBody     string
-	agentsStopAgentStopCmdBodyFile string
-	agentsStopAgentStopCmd_agent   string
-	agentsStopAgentStopCmd_advance bool
-	agentsStopAgentStopCmd_itemId  string
-	agentsStopAgentStopCmd_outcome string
+	agentsStopAgentStopCmdBody      string
+	agentsStopAgentStopCmdBodyFile  string
+	agentsStopAgentStopCmd_agent    string
+	agentsStopAgentStopCmd_advance  bool
+	agentsStopAgentStopCmd_itemId   string
+	agentsStopAgentStopCmd_outcome  string
 	agentsStopAgentStopCmd_returnTo string
-	agentsStopAgentStopCmd_summary string
+	agentsStopAgentStopCmd_summary  string
 )
 
 // pipelineNext maps agent type → next agent type in the pipeline.
@@ -88,10 +88,14 @@ func claimIdleInstance(poolDir, agentType string) (instance, agentID string) {
 	return "", ""
 }
 
-// poolSelfRelease releases the agent's .busy file back to .idle.
-// This MUST run regardless of whether the API call succeeded — otherwise
-// an API error (e.g. NOT_CLAIMED) leaves orphaned .busy files that
-// permanently block the pool slot.
+// poolSelfRelease releases the agent's .busy file back to .idle, or, in a
+// single-use pool, retires the slot by deleting the marker so the used session
+// is never claimed again. (A single-use agent whose item is still in the
+// pipeline is parked by settleSingleUse before this runs, so no .busy is left.)
+// In reuse mode this MUST run regardless of whether the API call succeeded —
+// otherwise an API error (e.g. NOT_CLAIMED) leaves orphaned .busy files that
+// permanently block the pool slot. A single-use pool skips it on an API error
+// (see the deferred call in agentStop). It is safe to call more than once.
 func poolSelfRelease(agentName string) {
 	// Guard against empty agent name: the --body code path can leave agentName
 	// unset if the body JSON has no "agent" field. Without this guard, we'd
@@ -105,6 +109,12 @@ func poolSelfRelease(agentName string) {
 	}
 	poolDir := filepath.Join("/tmp/.ateam-pool", filepath.Base(missionID))
 	busyFile := filepath.Join(poolDir, agentName+".busy")
+	if poolIsSingleUse(poolDir) {
+		if err := os.Remove(busyFile); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "POOL_WARN: failed to retire %s slot: %v\n", agentName, err)
+		}
+		return
+	}
 	idleFile := filepath.Join(poolDir, agentName+".idle")
 	if err := os.Rename(busyFile, idleFile); err != nil && !os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "POOL_WARN: failed to release %s slot: %v\n", agentName, err)
@@ -117,8 +127,14 @@ func poolSelfRelease(agentName string) {
 // --agent-id) — the completing agent addresses its START handoff to this so the
 // message routes headless. poolAlert is non-empty when no idle next-agent
 // instance was available.
+//
+// nextStage is the stage the API reports the item moved to. In a single-use
+// pool every claim first tries the instance of the needed type parked for
+// itemID (it already worked this item), then an idle one. A rejection claims
+// the return stage's agent this way; a rejection that escalated to blocked
+// claims nothing.
 // NOTE: Self-release is handled separately by poolSelfRelease (called via defer).
-func handlePoolManagement(agentName, outcome string, advance bool) (claimedNext, claimedNextAgentID, poolAlert string) {
+func handlePoolManagement(agentName, itemID, outcome string, advance bool, nextStage string) (claimedNext, claimedNextAgentID, poolAlert string) {
 	missionID := os.Getenv("ATEAM_MISSION_ID")
 	if missionID == "" {
 		fmt.Fprintln(os.Stderr, "WARNING: ATEAM_MISSION_ID not set — pool management skipped (no claimedNext will be returned)")
@@ -126,6 +142,27 @@ func handlePoolManagement(agentName, outcome string, advance bool) (claimedNext,
 	}
 
 	poolDir := filepath.Join("/tmp/.ateam-pool", filepath.Base(missionID))
+	singleUse := poolIsSingleUse(poolDir)
+	claim := func(role string) (string, string) {
+		if singleUse {
+			if claimed, claimedID := claimParkedForItem(poolDir, role, itemID); claimed != "" {
+				return claimed, claimedID
+			}
+		}
+		return claimIdleInstance(poolDir, role)
+	}
+
+	if outcome == "rejected" && singleUse {
+		reworkType, ok := stageAgent[nextStage]
+		if !ok {
+			return "", "", "" // escalated to blocked, or not a pipeline stage
+		}
+		claimed, claimedID := claim(reworkType)
+		if claimed == "" {
+			return "", "", fmt.Sprintf("no idle %s instance available for rework", reworkType)
+		}
+		return claimed, claimedID, ""
+	}
 
 	// Only claim next when advancing forward through the pipeline on success
 	if !advance || outcome == "rejected" || outcome == "blocked" {
@@ -135,7 +172,7 @@ func handlePoolManagement(agentName, outcome string, advance bool) (claimedNext,
 	if !ok {
 		return "", "", "" // amy or unknown — no successor
 	}
-	claimed, claimedID := claimIdleInstance(poolDir, nextType)
+	claimed, claimedID := claim(nextType)
 	if claimed == "" {
 		return "", "", fmt.Sprintf("no idle %s instance available", nextType)
 	}
@@ -197,8 +234,9 @@ var agentsStopAgentStopCmd = &cobra.Command{
 		var resp []byte
 		var apiErr error
 
-		// agentName/outcome/advance used for pool management — resolved from flags or --body
+		// agentName/itemID/outcome/advance used for pool management — resolved from flags or --body
 		agentName := agentsStopAgentStopCmd_agent
+		itemID := agentsStopAgentStopCmd_itemId
 		outcome := agentsStopAgentStopCmd_outcome
 		advance := agentsStopAgentStopCmd_advance
 
@@ -210,6 +248,9 @@ var agentsStopAgentStopCmd = &cobra.Command{
 			if err := json.Unmarshal([]byte(agentsStopAgentStopCmdBody), &bodyObj); err == nil {
 				if v, ok := bodyObj["agent"].(string); ok && agentName == "" {
 					agentName = v
+				}
+				if v, ok := bodyObj["itemId"].(string); ok && itemID == "" {
+					itemID = v
 				}
 				if v, ok := bodyObj["outcome"].(string); ok && outcome == "" {
 					outcome = v
@@ -246,7 +287,13 @@ var agentsStopAgentStopCmd = &cobra.Command{
 		// Always release pool slot on exit — even if the API call fails.
 		// Registered here (after both --body and flags paths have resolved agentName)
 		// so the closure captures the final value, not the empty pre-parse value.
+		// Exception: a single-use pool keeps the .busy marker when the API call
+		// failed. Deleting it retires a session that is still alive; its retry
+		// would then park with no agentId, and rework could not route back to it.
 		defer func() {
+			if apiErr != nil && currentPoolMode() == poolModeSingleUse {
+				return
+			}
 			poolSelfRelease(agentName)
 		}()
 
@@ -265,9 +312,14 @@ var agentsStopAgentStopCmd = &cobra.Command{
 			Data struct {
 				WipExceeded  bool   `json:"wipExceeded"`
 				BlockedStage string `json:"blockedStage"`
+				NextStage    string `json:"nextStage"`
 			} `json:"data"`
 		}
 		wipExceeded := json.Unmarshal(resp, &parsed) == nil && parsed.Data.WipExceeded
+
+		// Single-use pool: park or retire this slot before claiming or counting,
+		// so the replenish fact sees the pool as it is after this agent is done.
+		singleUse := settleSingleUse(c, agentName, itemID, parsed.Data.NextStage)
 
 		// Pool management: next-agent claim only (self-release handled by defer)
 		// Skip next-agent claim when WIP exceeded — item didn't advance, no handoff needed
@@ -275,11 +327,15 @@ var agentsStopAgentStopCmd = &cobra.Command{
 		if !wipExceeded {
 			claimedNext, claimedNextAgentID, poolAlert = handlePoolManagement(
 				agentName,
+				itemID,
 				outcome,
 				advance,
+				parsed.Data.NextStage,
 			)
 			resp = injectPoolResult(resp, claimedNext, claimedNextAgentID, poolAlert)
 		}
+		resp = injectSingleUse(resp, singleUse)
+		resp = injectPoolMode(resp, currentPoolMode())
 
 		jsonMode, _ := cmd.Root().PersistentFlags().GetBool("json")
 		noColor, _ := cmd.Root().PersistentFlags().GetBool("no-color")
@@ -299,6 +355,19 @@ var agentsStopAgentStopCmd = &cobra.Command{
 		// Surface pool alert so agents know to send ALERT to Hannibal
 		if poolAlert != "" {
 			fmt.Fprintf(os.Stderr, "\nPOOL_ALERT: %s — send ALERT to Hannibal for manual dispatch.\n", poolAlert)
+		}
+
+		if singleUse != nil && singleUse.replenish != nil && singleUse.replenish.Count > 0 {
+			r := singleUse.replenish
+			fmt.Fprintf(os.Stderr, "\nPOOL_REPLENISH: spawn %d fresh %s instance(s) — %d item(s) still need this stage, %d idle.\n",
+				r.Count, r.AgentType, r.Demand, r.Idle)
+		}
+		if singleUse != nil && len(singleUse.retire) > 0 {
+			names := make([]string, len(singleUse.retire))
+			for i, r := range singleUse.retire {
+				names[i] = r.Instance
+			}
+			fmt.Fprintf(os.Stderr, "\nPOOL_RETIRE: %s — the item is out of the pipeline; the orchestrator shuts these instances down.\n", strings.Join(names, ","))
 		}
 
 		return nil

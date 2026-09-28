@@ -110,6 +110,8 @@ You receive a feature item that has already been through the testing stage:
 
    This claims the item AND records `assigned_agent` on the work item so the kanban UI shows you're working on it.
 
+   Do this on every START, including rework of an item you already worked while parked for it: no edit, test run, or probe comes before `agentStart`.
+
 2. **Read the feature item** via `ateam items renderItem --id <id>`
    - **Objective** — the one-liner for what the code should do
    - **Acceptance Criteria** — your done criteria alongside the tests
@@ -258,9 +260,12 @@ ateam agents-stop agentStop \
 Always start the summary with `TEST BUG:` so the failure mode is greppable in retrospectives. Name the file and line. Note whether your implementation is complete or partial — Murdock needs to know what to expect when re-running the suite.
 
 ```bash
-# Step 2: Send REJECTED peer message to a Murdock instance. The exact instance
-# name is in `claimedNext` from the agentStop response. If `poolAlert` is set
-# (no idle Murdock), send ALERT to Hannibal instead.
+# Step 2: Send REJECTED peer message to a Murdock instance. In a single-use
+# pool the CLI claims one (the Murdock that wrote these tests, if it is still
+# parked for this item) and returns it in `claimedNext` / `claimedNextAgentId`
+# (address the agentId). If `poolAlert` is set (no idle Murdock), send ALERT to
+# Hannibal instead. In a reuse-mode pool, resolve murdock-N from its pool marker
+# (see `teams-messaging` → "Peer Addressing").
 SendMessage to "murdock-N" with content:
   "REJECTED: ${ITEM_ID} — TEST BUG at <file:line>. <reason>. Test change needed: <what Murdock must change>. Impl status: <complete|partial>."
 

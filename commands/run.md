@@ -309,19 +309,16 @@ WIP limits are **per stage** — each pipeline column independently caps how man
 
 3. **Detect dispatch mode and load orchestration playbook**
 
-   First, get the plugin root path from the `CLAUDE_PLUGIN_ROOT` environment variable:
-   ```
-   Bash("echo $CLAUDE_PLUGIN_ROOT")
-   ```
-
-   Then check the environment variable:
+   Check the environment variable:
    ```
    Bash("echo $CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")
    ```
 
-   Using the plugin root path from above:
-   - If output is "1": `Read("$CLAUDE_PLUGIN_ROOT/playbooks/orchestration-native.md")`
-   - Otherwise: `Read("$CLAUDE_PLUGIN_ROOT/playbooks/orchestration-legacy.md")`
+   Read the playbook at the path written here (the plugin root was filled in when this command loaded; `$CLAUDE_PLUGIN_ROOT` is not set in your Bash shell, so do not echo it or search the filesystem for another copy):
+   - If output is "1": `Read("${CLAUDE_PLUGIN_ROOT}/playbooks/orchestration-native.md")`
+   - Otherwise: `Read("${CLAUDE_PLUGIN_ROOT}/playbooks/orchestration-legacy.md")`
+
+   If that Read fails, STOP and report the missing path. Never substitute a playbook from `~/.claude/plugins/cache/` or any other location: it may be a different plugin version.
 
    **Read exactly ONE playbook. Do not read both.**
    The playbook contains your complete orchestration loop, dispatch

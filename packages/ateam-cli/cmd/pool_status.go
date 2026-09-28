@@ -25,14 +25,18 @@ In --json mode the output shape is:
     "missionId":     "M-...",
     "poolDir":       "/tmp/.ateam-pool/M-...",
     "poolDirExists": true,
+    "singleUse":     false,
+    "lanes":         2,
     "idle":          ["ba-1", "lynch-2", ...],
     "busy":          ["murdock-1", ...],
+    "parked":        { "ba-3": "WI-007", ... },
     "byType":        { "murdock": {"idle": 1, "busy": 1}, ... }
   }
 
 When the pool dir does not exist, "poolDirExists" is false and the idle/busy/
 byType fields are empty — the schema stays stable so consumers can branch on
-the boolean rather than guessing.`,
+the boolean rather than guessing. "lanes" is present only when a lane count
+was configured via 'ateam pool init --single-use --lanes N'.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		missionID := os.Getenv("ATEAM_MISSION_ID")
@@ -56,7 +60,11 @@ the boolean rather than guessing.`,
 		noColor, _ := cmd.Root().PersistentFlags().GetBool("no-color")
 
 		var idle, busy []string
+		lanes := 0
+		parked := map[string]string{}
 		if poolDirExists {
+			lanes = poolLanes(poolDir)
+			parked = scanParked(poolDir)
 			var err error
 			idle, busy, err = scanPool(poolDir)
 			if err != nil {
@@ -72,9 +80,14 @@ the boolean rather than guessing.`,
 				"missionId":     missionID,
 				"poolDir":       poolDir,
 				"poolDirExists": poolDirExists,
+				"singleUse":     poolDirExists && poolIsSingleUse(poolDir),
 				"idle":          idle,
 				"busy":          busy,
+				"parked":        parked,
 				"byType":        summarizeByType(idle, busy),
+			}
+			if lanes > 0 {
+				out["lanes"] = lanes
 			}
 			b, err := json.MarshalIndent(out, "", "  ")
 			if err != nil {
@@ -89,7 +102,7 @@ the boolean rather than guessing.`,
 				"Pool dir does not exist: %s (run 'ateam pool init')\n", poolDir)
 			return nil
 		}
-		printPoolTable(cmd.OutOrStdout(), idle, busy, noColor)
+		printPoolTable(cmd.OutOrStdout(), idle, busy, parked, noColor)
 		return nil
 	},
 }
@@ -150,8 +163,8 @@ func instanceType(name string) string {
 	return name
 }
 
-func printPoolTable(w io.Writer, idle, busy []string, noColor bool) {
-	if len(idle) == 0 && len(busy) == 0 {
+func printPoolTable(w io.Writer, idle, busy []string, parked map[string]string, noColor bool) {
+	if len(idle) == 0 && len(busy) == 0 && len(parked) == 0 {
 		fmt.Fprintln(w, "(pool is empty — no .idle or .busy files found)")
 		return
 	}
@@ -166,8 +179,16 @@ func printPoolTable(w io.Writer, idle, busy []string, noColor bool) {
 	for _, n := range busy {
 		table.Append([]string{n, "busy"})
 	}
+	parkedNames := make([]string, 0, len(parked))
+	for n := range parked {
+		parkedNames = append(parkedNames, n)
+	}
+	sort.Strings(parkedNames)
+	for _, n := range parkedNames {
+		table.Append([]string{n, "parked for " + parked[n]})
+	}
 	table.Render()
-	fmt.Fprintf(w, "Idle: %d  Busy: %d  Total: %d\n", len(idle), len(busy), len(idle)+len(busy))
+	fmt.Fprintf(w, "Idle: %d  Busy: %d  Parked: %d  Total: %d\n", len(idle), len(busy), len(parked), len(idle)+len(busy)+len(parked))
 }
 
 func init() {

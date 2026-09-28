@@ -57,9 +57,10 @@ The CLI distinguishes each failure mode via its exit code (see the table above).
 When you finish work, call `agentStop` normally. The CLI automatically:
 
 1. POSTs completion to the API (advances the item)
-2. `mv`s your `.busy` → `.idle` (releases your slot)
-3. Atomically claims an idle instance of the next agent type
+2. `mv`s your `.busy` → `.idle` (releases your slot). **In a single-use pool** it parks your marker as `.parked-<itemId>` while the item is still in the pipeline (`data.parkedFor`), or deletes it and every marker parked for the item once the item reaches `staged`, `done`, or `blocked` (`data.retire`). The response's `data.poolMode` (`"single-use"` or `"reuse"`) tells you which mode applies; decide from it, not from assumption.
+3. Atomically claims the next agent type's instance: in a single-use pool, the one parked for this item first, else an idle one (a rejection claims the return stage's agent the same way)
 4. Returns `claimedNext` (the instance name) **and `claimedNextAgentId` (its harness agentId)** in the response
+5. **`poolMode: "single-use"` only:** returns `replenish` — `{agentType, count, ...}`, how many fresh instances of your type the remaining board still needs — plus `parkedFor` or `retire`. End your FYI/ALERT to the orchestrator with `replenish=<agentType>:<count>` (`replenish=unknown` if the field is absent in single-use mode) and `retire=<instances>` when `retire` is present; no suffix at all in reuse mode. See `teams-messaging` → "Single-Use Pools".
 
 ```bash
 # ATEAM_MISSION_ID must be set for pool management to work.
@@ -76,6 +77,11 @@ RESULT=$(ateam agents-stop agentStop \
 CLAIMED_NEXT=$(echo "$RESULT" | jq -r '.data.claimedNext // ""')
 CLAIMED_NEXT_AGENT_ID=$(echo "$RESULT" | jq -r '.data.claimedNextAgentId // ""')
 POOL_ALERT=$(echo "$RESULT" | jq -r '.data.poolAlert // ""')
+POOL_MODE=$(echo "$RESULT" | jq -r '.data.poolMode // "reuse"')
+# Single-use pool only: the fact to append to your orchestrator message (empty in reuse mode).
+REPLENISH=$(echo "$RESULT" | jq -r 'if .data.poolMode != "single-use" then "" elif .data.replenish then "replenish=\(.data.replenish.agentType):\(.data.replenish.count)" else "replenish=unknown" end')
+# Single-use pool only: set when the item left the pipeline; append it after $REPLENISH.
+RETIRE=$(echo "$RESULT" | jq -r 'if .data.retire then "retire=" + ([.data.retire[].instance] | join(",")) else "" end')
 ```
 
 **If `claimedNext` is set** — send START directly to that instance. **Address it by `claimedNextAgentId`, not the instance name.** A friendly instance name (e.g. `ba-2`) does not route between teammates in native teams / headless (`claude -p`) mode — the message is silently dropped — whereas the harness agentId always delivers (and wakes the idle instance to receive it). Fall back to the name only when `claimedNextAgentId` is empty (a pool marked idle without `--agent-id`):
