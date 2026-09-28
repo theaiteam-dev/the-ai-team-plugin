@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"ateam/internal/client"
@@ -38,6 +39,42 @@ const singleUseMarker = "single-use.mode"
 func poolIsSingleUse(poolDir string) bool {
 	_, err := os.Stat(filepath.Join(poolDir, singleUseMarker))
 	return err == nil
+}
+
+// lanesMarker is the file written by `ateam pool init --single-use --lanes N`
+// that records the configured lane count N — the memory- and dep-graph-bound
+// concurrency limit `ateam scaling compute` derives, independent of any
+// stage's WIP limit. computeReplenish reads it to cap replenish counts: a
+// stage's default WIP limit (3) can otherwise let replenish spawn more
+// instances than the mission's memory budget allows when N is smaller (e.g.
+// N=1). Absent or unparseable means "no lane cap."
+const lanesMarker = "single-use.lanes"
+
+// poolLanes reads the configured lane count from poolDir, or 0 when absent
+// or unparseable (no cap — the pre-existing behavior).
+func poolLanes(poolDir string) int {
+	content, err := os.ReadFile(filepath.Join(poolDir, lanesMarker))
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(content)))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+// writeLanes records the configured lane count N in poolDir. n<=0 removes any
+// existing marker, restoring "no cap."
+func writeLanes(poolDir string, n int) error {
+	path := filepath.Join(poolDir, lanesMarker)
+	if n <= 0 {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	return os.WriteFile(path, []byte(strconv.Itoa(n)+"\n"), 0644)
 }
 
 // Pool modes reported to agents as data.poolMode on every agentStop response,
@@ -120,6 +157,10 @@ type replenishInfo struct {
 	Parked int `json:"parked"`
 	// WipLimit is the stage's WIP limit; nil means the stage is unlimited.
 	WipLimit *int `json:"wipLimit"`
+	// Lanes is the configured lane count from `pool init --single-use --lanes`
+	// (0/omitted means no cap was configured). Present so the fact explains
+	// itself when it bounds Count below what Demand/WipLimit alone would allow.
+	Lanes int `json:"lanes,omitempty"`
 }
 
 type boardSnapshot struct {
@@ -156,6 +197,18 @@ type boardSnapshot struct {
 // WIP limit, and never negative. Busy instances do not satisfy demand: in
 // single-use mode each one retires when it finishes, and its own agentStop
 // recomputes the fact at that point.
+//
+// count is additionally bounded so idle+busy+count never exceeds the pool's
+// configured lane count N (from `pool init --single-use --lanes`), when N is
+// set. A stage's WIP limit alone is not enough: the default WIP limit (3) is
+// independent of N, so with N=1 a naive demand-minus-idle count could report
+// spawning far more instances than the mission's memory budget allows. The
+// lane cap is read fresh from poolDir on every call, so it also protects
+// against a second agentStop landing while an earlier count's replacement is
+// still starting — the earlier one's spawned-but-not-yet-.busy instance isn't
+// visible to scanPool, so recomputing (e.g. via `ateam pool replenish`)
+// immediately before each spawn is what keeps concurrent stops from both
+// reporting the same headroom.
 func computeReplenish(board []byte, poolDir, role string) (*replenishInfo, error) {
 	stage, ok := agentStage[role]
 	if !ok {
@@ -218,9 +271,19 @@ func computeReplenish(board []byte, poolDir, role string) (*replenishInfo, error
 		}
 	}
 
+	lanes := poolLanes(poolDir)
+	if lanes > 0 {
+		info.Lanes = lanes
+	}
+
 	count := info.Demand - info.Idle
 	if info.WipLimit != nil {
 		if room := *info.WipLimit - info.Idle - info.Busy; room < count {
+			count = room
+		}
+	}
+	if lanes > 0 {
+		if room := lanes - info.Idle - info.Busy; room < count {
 			count = room
 		}
 	}
@@ -389,7 +452,8 @@ func settleSingleUse(c *client.Client, agentName, itemID, nextStage string) *sin
 	}
 
 	res := &singleUseResult{}
-	if validItemID(itemID) && !leavesPipeline[nextStage] {
+	inPipeline := validItemID(itemID) && !leavesPipeline[nextStage]
+	if inPipeline {
 		if err := parkForItem(poolDir, agentName, itemID); err != nil {
 			fmt.Fprintf(os.Stderr, "POOL_WARN: failed to park %s for %s: %v\n", agentName, itemID, err)
 		} else {
@@ -402,7 +466,15 @@ func settleSingleUse(c *client.Client, agentName, itemID, nextStage string) *sin
 			self.AgentID = strings.TrimSpace(string(content))
 		}
 		poolSelfRelease(agentName)
-		res.retire = append([]retiredInstance{self}, retireParkedForItem(poolDir, itemID)...)
+		res.retire = []retiredInstance{self}
+		// Only retire the rest of the item's parked set when the item has
+		// actually left the pipeline. A transient parking failure (e.g. a
+		// permission error on rename) for an item that still needs rework
+		// must not retire instances parked for it by earlier stages — they
+		// still have the item's context and the item still needs them.
+		if !inPipeline {
+			res.retire = append(res.retire, retireParkedForItem(poolDir, itemID)...)
+		}
 	}
 
 	board, err := c.Do("GET", "/api/board", map[string]string{}, map[string]string{}, nil)

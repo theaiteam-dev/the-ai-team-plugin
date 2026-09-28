@@ -26,6 +26,7 @@ In --json mode the output shape is:
     "poolDir":       "/tmp/.ateam-pool/M-...",
     "poolDirExists": true,
     "singleUse":     false,
+    "lanes":         2,
     "idle":          ["ba-1", "lynch-2", ...],
     "busy":          ["murdock-1", ...],
     "parked":        { "ba-3": "WI-007", ... },
@@ -34,7 +35,8 @@ In --json mode the output shape is:
 
 When the pool dir does not exist, "poolDirExists" is false and the idle/busy/
 byType fields are empty — the schema stays stable so consumers can branch on
-the boolean rather than guessing.`,
+the boolean rather than guessing. "lanes" is present only when a lane count
+was configured via 'ateam pool init --single-use --lanes N'.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		missionID := os.Getenv("ATEAM_MISSION_ID")
@@ -58,8 +60,10 @@ the boolean rather than guessing.`,
 		noColor, _ := cmd.Root().PersistentFlags().GetBool("no-color")
 
 		var idle, busy []string
+		lanes := 0
 		parked := map[string]string{}
 		if poolDirExists {
+			lanes = poolLanes(poolDir)
 			parked = scanParked(poolDir)
 			var err error
 			idle, busy, err = scanPool(poolDir)
@@ -81,6 +85,9 @@ the boolean rather than guessing.`,
 				"busy":          busy,
 				"parked":        parked,
 				"byType":        summarizeByType(idle, busy),
+			}
+			if lanes > 0 {
+				out["lanes"] = lanes
 			}
 			b, err := json.MarshalIndent(out, "", "  ")
 			if err != nil {

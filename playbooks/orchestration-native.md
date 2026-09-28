@@ -184,7 +184,10 @@ POOL_DIR="/tmp/.ateam-pool/${MISSION_ID}"
 
 **Directory creation (Hannibal, before pre-warming):**
 ```bash
-ateam pool init --single-use
+# N must already be known here — see "Concurrency Detection" above, which runs
+# before this step. --lanes {N} persists the lane count so replenish (below)
+# can cap fresh spawns at N per agent type.
+ateam pool init --single-use --lanes {N}
 # Resolves /tmp/.ateam-pool/${ATEAM_MISSION_ID} from the env var, idempotent.
 # --single-use: each instance works one item, then parks until the item is staged (see "Single-Use Lanes").
 # .idle files are created per-lane after READY confirmation — see Agent Pre-Warming
@@ -207,7 +210,7 @@ Issue #74: reusing a lane agent across items grew its context to a 565k average 
 - **Park.** When the agent calls `agentStop` and the item is still in the pipeline, its marker becomes `<instance>.parked-<itemId>` (response: `parkedFor: <itemId>`). A parked instance is never claimed for another item. It stays alive, idle, with the item's files already in context.
 - **Rework returns to the parked instance.** Every `agentStop` claim (a forward handoff or a rejection's return stage) takes the instance of the needed type parked for that item first, then an idle one. A rejected item goes back to the Murdock or B.A. that already worked it, and on its way forward again it returns to the same Lynch and Amy.
 - **Retire.** When the item reaches `staged`, `done`, or `blocked`, `agentStop` deletes the completing agent's marker and every marker parked for that item, and lists those instances in `retire: [{instance, agentId}]`. The agent ends its message with `retire=<instance>,<instance>,...`.
-- **Replenish.** `agentStop` returns `replenish {agentType, count, demand, idle, busy, parked, wipLimit}`, where `count` is how many fresh instances of that type the remaining board still needs. `demand` counts items in stages before that agent's stage that can be worked now: a `briefings` item counts only once all its dependencies are `staged` or `done`, and an item that already has an instance of this type parked for it does not count. `count` is `demand` minus idle instances, capped by the stage's WIP limit. The agent ends its FYI / ALERT / MISSION_COMPLETE with `replenish=<agentType>:<count>`.
+- **Replenish.** `agentStop` returns `replenish {agentType, count, demand, idle, busy, parked, wipLimit, lanes}`, where `count` is how many fresh instances of that type the remaining board still needs. `demand` counts items in stages before that agent's stage that can be worked now: a `briefings` item counts only once all its dependencies are `staged` or `done`, and an item that already has an instance of this type parked for it does not count. `count` is `demand` minus idle instances, capped by the stage's WIP limit and by `lanes` (the `N` recorded by `pool init --lanes N`): idle + busy + count never exceeds `lanes` for that agent type. The agent ends its FYI / ALERT / MISSION_COMPLETE with `replenish=<agentType>:<count>`.
 
 `count` is the only trigger for replacement spawns. When it is 0, spawn nothing, even if that type has no instances left. The lanes empty out as the mission ends. `retire` is the only trigger for shutdowns: an instance that finished its item but is not named in a `retire=` list is parked, so leave it alive.
 
@@ -234,10 +237,13 @@ function retire_and_replenish(message, sender):
     for instance in parse "retire=<instance>,<instance>,..." from message (may be absent):
         SendMessage(to: agentId of instance, message: {type: "shutdown_request", reason: "Single-use: item out of the pipeline"}, summary: "shutdown {instance}")
     r = parse "replenish=<type>:<count>" from message
-    if r is missing or "unknown":
-        # agentStop could not read the board. Apply the same rule yourself from
-        # `ateam board getBoard --json` and `ateam pool status --json`.
-        r = computed count for sender's type
+    # The message's count is a snapshot from agentStop time. If Hannibal is still
+    # spawning for an earlier message when this one arrives, those in-flight
+    # spawns already count as idle by now, so blindly repeating the same count
+    # overspawns. Treat it only as a trigger: recompute the count fresh right
+    # before spawning.
+    if r is missing or r == "unknown" or r.count > 0:
+        r = Bash("ateam pool replenish {sender.agentType} --json")  # recomputes demand/idle/busy/lanes now, capped at N per pool init --lanes
     repeat r.count times: spawn_fresh(r.type)
 ```
 
@@ -545,15 +551,20 @@ LOOP CONTINUOUSLY:
     # instances named in retire=; every other finished instance is parked.
 
     on ALERT message from {instanceName}:
-        # e.g. "ALERT: No idle ba instance for WI-005 (murdock-1)"
+        # e.g. "ALERT: No idle ba instance for WI-005 (murdock-1)\n<full handoff contract>"
         # No idle instance available — Hannibal must queue and dispatch later
         item_id        = extract WI-XXX from message
         target_type    = extract target agent type from message
 
-        # Queue for dispatch when an instance frees up
+        # Queue for dispatch when an instance frees up. Store the full message
+        # text: it carries the ALERT/handoff contract (see "Required ALERT/
+        # handoff contract format" below), and the item may be redispatched by
+        # a different instance than the one that would have received it
+        # immediately, so the contract has to travel with the queue entry.
         pending_alerts.append({
             item_id:          item_id,
             target_agent_type: target_type,
+            content:          message,
             alerted_at:       now()
         })
 
@@ -615,7 +626,7 @@ LOOP CONTINUOUSLY:
         if claimed:
             pending_alerts.remove(alert)
             # NOTE: Do NOT call agentStart here — the dispatched agent owns agentStart as its first action
-            dispatch(claimed, alert.item_id)
+            dispatch(claimed, alert.item_id, alert.content)
             active_instances[alert.item_id] = claimed
 
     # ═══════════════════════════════════════════════════════════
@@ -669,6 +680,14 @@ LOOP CONTINUOUSLY:
                 if next_lane_to_spawn <= N:
                     spawn_lane(next_lane_to_spawn)     # may add to failed_lanes
                     claimed = claimInstance("ba")
+                if claimed is null AND pool is single-use:
+                    # All N lanes are spawned, but single-use instances never return
+                    # to idle, so lanes being exhausted doesn't mean demand is zero.
+                    # This item is in ready, upstream of implementing, so it counts
+                    # toward B.A. demand — check real demand before giving up.
+                    r = Bash("ateam pool replenish ba --json")
+                    if r.count > 0:
+                        claimed = spawn_fresh("ba")
                 if claimed is null:
                     ba_at_capacity = true
                     continue  # leave THIS item in ready (retry next cycle); later items may still route to Murdock
@@ -689,6 +708,13 @@ LOOP CONTINUOUSLY:
             if next_lane_to_spawn <= N:
                 spawn_lane(next_lane_to_spawn)        # may add to failed_lanes
                 claimed = claimInstance("murdock")
+            if claimed is null AND pool is single-use:
+                # Same reasoning as the ba route above: lanes 1..N being exhausted
+                # doesn't mean demand is zero in a single-use pool. Check real
+                # demand before declaring Murdock at capacity.
+                r = Bash("ateam pool replenish murdock --json")
+                if r.count > 0:
+                    claimed = spawn_fresh("murdock")
             if claimed is null:
                 murdock_at_capacity = true
                 continue  # leave in ready (retry next cycle); later items may be NO_TEST_NEEDED
@@ -744,13 +770,17 @@ LOOP CONTINUOUSLY:
 The `dispatch(instance, item_id)` function decides whether to send a `SendMessage` (if instance already alive) or spawn a fresh `Agent` (if never spawned or after shutdown):
 
 ```text
-function dispatch(instance, item_id):
+function dispatch(instance, item_id, handoff_context = null):
     item = Bash("ateam items renderItem --id {item_id}")
+    # handoff_context is set only when this dispatch drains a queued ALERT
+    # (Phase 1b) — it carries that ALERT's full handoff contract (rejection
+    # rationale, requested fix) so a rework agent doesn't lose it.
+    context_block = handoff_context ? "\n\nHandoff context from the ALERT: {handoff_context}" : ""
 
     if instance was already spawned and is alive:
         SendMessage(
             to:        instance.name,
-            message:   "New work: {item_id} - {title}\n{relevant file paths}\nFetch full details with `ateam items renderItem --id {item_id}`.\nUse '--agent \"{instance.name}\"' in agentStart/agentStop.",
+            message:   "New work: {item_id} - {title}\n{relevant file paths}\nFetch full details with `ateam items renderItem --id {item_id}`.\nUse '--agent \"{instance.name}\"' in agentStart/agentStop.{context_block}",
             summary:   "New {instance.agentType} work for {item_id}"
         )
     else:
@@ -762,7 +792,7 @@ function dispatch(instance, item_id):
             description:  "{instance.name}: {item title}",
             prompt:       "[agent prompt + work item context]
                            Use '--agent \"{instance.name}\"' in agentStart/agentStop.
-                           When done, include instance in message: 'DONE: {item_id} - summary ({instance.name})'"
+                           When done, include instance in message: 'DONE: {item_id} - summary ({instance.name})'{context_block}"
         )
 ```
 
@@ -1250,9 +1280,9 @@ ateam agents-start agentStart --itemId "WI-005" --agent "${MY_INSTANCE_NAME}"
 ### When All Instances of the Next Type Are Busy
 
 1. The completing agent sends an ALERT to the orchestrator (`team-lead` — see claiming flow above).
-2. `team-lead` adds the item to `pending_alerts` (with timestamp).
-3. On every Phase 1b cycle, `team-lead` checks whether an idle instance is now available via `claimInstance()` and dispatches queued items. In a single-use pool, it spawns a fresh instance when none is idle (see "Single-Use Lanes"). A parked instance is never a candidate: it is reserved for its own item.
-4. The item is **not dropped** — it stays in `pending_alerts` until dispatched.
+2. `team-lead` adds the item to `pending_alerts` (with timestamp and the ALERT's full message text, stored as `content` — see the required contract format below).
+3. On every Phase 1b cycle, `team-lead` checks whether an idle instance is now available via `claimInstance()` and dispatches queued items, passing the queued `content` through to `dispatch()` as its `handoff_context` argument. In a single-use pool, it spawns a fresh instance when none is idle (see "Single-Use Lanes"). A parked instance is never a candidate: it is reserved for its own item.
+4. The item is **not dropped** — it stays in `pending_alerts` until dispatched, contract intact.
 
 **Required ALERT/handoff contract format.** Queue latency (waiting in
 `pending_alerts` for an idle instance) is dead time unless the ALERT itself
@@ -1278,7 +1308,10 @@ the contract has to be self-contained. Required fields:
 
 This is the ALERT format for every pipeline agent (Murdock → B.A., B.A. →
 Lynch, Lynch → Amy), not just Murdock. Forward the contract verbatim into the
-eventual dispatch — don't summarize it away.
+eventual dispatch — don't summarize it away. Mechanically, this is the
+`content` stored on the `pending_alerts` entry, unchanged, appended by
+`dispatch()`'s `handoff_context` parameter to whichever of the SendMessage or
+the fresh `Agent` prompt actually reaches the receiver.
 
 ### Pool File Cleanup
 
@@ -1368,7 +1401,7 @@ Setup:
 
 ```text
 T=0s    HANNIBAL:
-        ateam pool init --single-use                 # creates /tmp/.ateam-pool/M1/
+        ateam pool init --single-use --lanes 2        # N=2 already known; creates /tmp/.ateam-pool/M1/
 
         Pre-warm lane 1: spawn murdock-1, ba-1, lynch-1, amy-1
         Wait for READY from all 4 → ateam pool mark-idle murdock-1 --agent-id <its agentId> (etc. for ba-1, lynch-1, amy-1)
@@ -1503,7 +1536,9 @@ Native teams are ephemeral — they don't survive session restarts. On resume:
 
 5. **Recreate pool directory shell only** (no `.idle` files yet):
    ```bash
-   ateam pool destroy && ateam pool init --single-use
+   # N was already re-determined in step 2 — pass it through so replenish
+   # keeps capping fresh spawns correctly after resume.
+   ateam pool destroy && ateam pool init --single-use --lanes {N}
    # Do NOT mass-create .idle files here. Marking instances idle before the
    # respawned agents have actually sent READY would reintroduce the
    # black-hole bug the lazy pre-warm flow exists to prevent — peers would

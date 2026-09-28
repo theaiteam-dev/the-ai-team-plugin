@@ -167,6 +167,62 @@ func TestPoolInitJSONOutput(t *testing.T) {
 	}
 }
 
+func TestPoolInitSingleUseLanesRecordsAndReportsInInitAndStatus(t *testing.T) {
+	_, poolDir := withTempPoolRoot(t, "init-lanes")
+	_ = os.RemoveAll(poolDir)
+
+	out, err := runPoolCmd(t, "pool", "init", "--single-use", "--lanes", "2", "--json")
+	if err != nil {
+		t.Fatalf("pool init --single-use --lanes 2: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, `"lanes": 2`) {
+		t.Errorf("expected lanes=2 in pool init output, got %s", out)
+	}
+	if got := poolLanes(poolDir); got != 2 {
+		t.Errorf("expected poolLanes=2, got %d", got)
+	}
+
+	statusOut, err := runPoolCmd(t, "pool", "status", "--json")
+	if err != nil {
+		t.Fatalf("pool status: %v (%s)", err, statusOut)
+	}
+	if !strings.Contains(statusOut, `"lanes": 2`) {
+		t.Errorf("expected lanes=2 in pool status output, got %s", statusOut)
+	}
+}
+
+func TestPoolInitLanesWithoutSingleUseErrors(t *testing.T) {
+	_, poolDir := withTempPoolRoot(t, "init-lanes-no-single-use")
+	_ = os.RemoveAll(poolDir)
+
+	out, err := runPoolCmd(t, "pool", "init", "--lanes", "2")
+	if err == nil {
+		t.Fatalf("expected --lanes without --single-use to error, got output: %s", out)
+	}
+	if !strings.Contains(err.Error(), "--single-use") {
+		t.Errorf("expected error to mention --single-use, got: %v", err)
+	}
+	if exists(filepath.Join(poolDir, lanesMarker)) {
+		t.Error("a rejected --lanes call must not write the lanes marker")
+	}
+}
+
+func TestPoolInitNoLanesOmitsLanesField(t *testing.T) {
+	_, poolDir := withTempPoolRoot(t, "init-no-lanes")
+	_ = os.RemoveAll(poolDir)
+
+	out, err := runPoolCmd(t, "pool", "init", "--single-use", "--json")
+	if err != nil {
+		t.Fatalf("pool init --single-use: %v (%s)", err, out)
+	}
+	if strings.Contains(out, `"lanes"`) {
+		t.Errorf("expected no lanes field when --lanes was not given, got %s", out)
+	}
+	if poolLanes(poolDir) != 0 {
+		t.Errorf("expected poolLanes=0 by default, got %d", poolLanes(poolDir))
+	}
+}
+
 // extractJSON returns the substring of s starting from the first '{' through
 // the last '}'. cobra's buffer may include trailing newlines or other noise
 // from logging; this keeps tests robust without changing production output.

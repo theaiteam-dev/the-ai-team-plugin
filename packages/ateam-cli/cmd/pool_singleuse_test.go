@@ -155,6 +155,7 @@ func TestComputeReplenish(t *testing.T) {
 		stages  []string
 		wip     map[string]int
 		markers []string
+		lanes   int
 		want    replenishInfo
 	}{
 		{
@@ -204,21 +205,46 @@ func TestComputeReplenish(t *testing.T) {
 			markers: []string{"murdock-1.idle", "lynch-1.idle", "ba-5.busy"},
 			want:    replenishInfo{Demand: 1, Busy: 1, Count: 1},
 		},
+		{
+			// N=1 (a single lane) is tighter than the stage's default WIP
+			// limit of 3, so the lane cap — not the WIP limit — must be what
+			// bounds count.
+			name:   "lane cap bounds count tighter than the stage WIP limit",
+			role:   "ba",
+			stages: []string{"ready", "ready", "ready", "ready", "ready"},
+			wip:    map[string]int{"implementing": 3},
+			lanes:  1,
+			want:   replenishInfo{Demand: 5, Count: 1, Lanes: 1},
+		},
+		{
+			name:    "lane cap already occupied by a busy instance: spawn none",
+			role:    "ba",
+			stages:  []string{"ready", "ready", "ready", "ready", "ready"},
+			wip:     map[string]int{"implementing": 3},
+			markers: []string{"ba-1.busy"},
+			lanes:   1,
+			want:    replenishInfo{Demand: 5, Busy: 1, Count: 0, Lanes: 1},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, poolDir := withTempPoolRoot(t, "replenish")
 			enableSingleUse(t, poolDir)
 			writeMarkers(t, poolDir, tc.markers...)
+			if tc.lanes > 0 {
+				if err := writeLanes(poolDir, tc.lanes); err != nil {
+					t.Fatalf("writeLanes: %v", err)
+				}
+			}
 
 			got, err := computeReplenish(boardJSON(t, tc.stages, tc.wip), poolDir, tc.role)
 			if err != nil {
 				t.Fatalf("computeReplenish: %v", err)
 			}
 			if got.AgentType != tc.role || got.Demand != tc.want.Demand || got.Idle != tc.want.Idle ||
-				got.Busy != tc.want.Busy || got.Count != tc.want.Count {
-				t.Errorf("got %+v, want demand=%d idle=%d busy=%d count=%d",
-					*got, tc.want.Demand, tc.want.Idle, tc.want.Busy, tc.want.Count)
+				got.Busy != tc.want.Busy || got.Count != tc.want.Count || got.Lanes != tc.want.Lanes {
+				t.Errorf("got %+v, want demand=%d idle=%d busy=%d count=%d lanes=%d",
+					*got, tc.want.Demand, tc.want.Idle, tc.want.Busy, tc.want.Count, tc.want.Lanes)
 			}
 		})
 	}
@@ -431,6 +457,60 @@ func TestAgentStopToStagedRetiresEveryInstanceParkedForTheItem(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "POOL_RETIRE:") {
 		t.Errorf("expected a POOL_RETIRE line on stderr, got: %s", stderr)
+	}
+}
+
+func TestAgentStopParkFailureRetiresOnlyTheCompletingAgent(t *testing.T) {
+	_, poolDir := withTempPoolRoot(t, "park-fail")
+	enableSingleUse(t, poolDir)
+	writeMarkers(t, poolDir, "lynch-2.busy", "murdock-1.parked-WI-001")
+
+	// Force parkForItem's os.Rename to fail with a non-NotExist error: make the
+	// destination path an existing, non-empty directory. Renaming a regular
+	// file onto that fails (EISDIR/ENOTEMPTY on Linux), which is what a
+	// transient permission error on rename would also produce — a failure
+	// distinct from the "target doesn't exist yet" case parkForItem already
+	// handles.
+	blocked := filepath.Join(poolDir, "lynch-2.parked-WI-001")
+	if err := os.MkdirAll(blocked, 0755); err != nil {
+		t.Fatalf("mkdir blocked parked path: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(blocked, "occupied"), nil, 0644); err != nil {
+		t.Fatalf("write occupant: %v", err)
+	}
+
+	// nextStage=testing: the item is still in the pipeline (a rejection back
+	// to testing), so lynch-2 would normally park rather than retire.
+	srv := routedServer(t, stopResponse("testing"), boardJSON(t, []string{"testing"}, nil))
+	defer srv.Close()
+
+	readStderr := captureStderr(t)
+	out, err := runAgentStopJSON(t, srv.URL, "--agent", "lynch-2")
+	stderr := readStderr()
+	if err != nil {
+		t.Fatalf("agentStop: %v (%s)", err, out)
+	}
+	if !strings.Contains(stderr, "POOL_WARN: failed to park") {
+		t.Errorf("expected a POOL_WARN about the failed park, got: %s", stderr)
+	}
+
+	var parsed struct {
+		Data struct {
+			ParkedFor string            `json:"parkedFor"`
+			Retire    []retiredInstance `json:"retire"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("parse output: %v\n%s", err, out)
+	}
+	if parsed.Data.ParkedFor != "" {
+		t.Errorf("expected parking to have failed (parkedFor empty), got %q", parsed.Data.ParkedFor)
+	}
+	if len(parsed.Data.Retire) != 1 || parsed.Data.Retire[0].Instance != "lynch-2" {
+		t.Errorf("expected only lynch-2 in retire, got %v", parsed.Data.Retire)
+	}
+	if !exists(filepath.Join(poolDir, "murdock-1.parked-WI-001")) {
+		t.Error("a transient park failure for an in-pipeline item must not retire other instances parked for the same item")
 	}
 }
 
