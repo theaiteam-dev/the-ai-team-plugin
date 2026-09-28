@@ -16,9 +16,11 @@ Reference for the native teams messaging protocol used by all pipeline agents wh
 Friendly instance names (`murdock`, `ba-2`) do NOT route between teammates in headless mode — a name-addressed peer message is silently dropped. Forward handoffs get the next agent's id from `claimedNextAgentId` (agentStop response). For **backward** peer messages (ACK, REJECTED, TEST BUG) there is no auto-claim, so resolve the target's agentId from its pool marker — the marker's *content* is the agentId the orchestrator registered at `mark-idle --agent-id`:
 
 ```bash
-# Resolve <instance>'s agentId (marker may be .idle or .busy depending on state):
+# Resolve <instance>'s agentId (marker may be .idle, .busy, or, in a single-use
+# pool, .parked-<itemId> depending on state):
 PEER_ID=$(cat /tmp/.ateam-pool/$ATEAM_MISSION_ID/<instance>.idle 2>/dev/null \
-       || cat /tmp/.ateam-pool/$ATEAM_MISSION_ID/<instance>.busy 2>/dev/null)
+       || cat /tmp/.ateam-pool/$ATEAM_MISSION_ID/<instance>.busy 2>/dev/null \
+       || cat /tmp/.ateam-pool/$ATEAM_MISSION_ID/<instance>.parked-* 2>/dev/null)
 # Address the message to $PEER_ID; fall back to the instance name ONLY if empty
 # (empty marker = pool was populated without --agent-id, i.e. interactive mode
 # where names route fine).
@@ -26,15 +28,22 @@ PEER_ID=$(cat /tmp/.ateam-pool/$ATEAM_MISSION_ID/<instance>.idle 2>/dev/null \
 
 This is a read-only `cat` — it does not violate the "never touch pool files directly" rule, which is about mutation (`mv`/`touch`/`rm`).
 
-## Single-Use Pools: One Item, Then Retire
+## Single-Use Pools: One Item, Parked Until It Is Staged
 
-Every `agentStop` response carries `data.poolMode`: `"single-use"` or `"reuse"`. **Read the mode from that field; never assume it** from this skill, your spawn prompt, or the CLI version. The rules in this section apply only when `poolMode` is `"single-use"` (issue #74). In that mode each instance works exactly one item: `agentStop` deletes your pool marker instead of returning it to idle, and adds `data.replenish` to the JSON response: `{agentType, count, demand, idle, busy, wipLimit}`, where `count` is how many fresh instances of your type the remaining board still needs. Three rules follow:
+Every `agentStop` response carries `data.poolMode`: `"single-use"` or `"reuse"`. **Read the mode from that field; never assume it** from this skill, your spawn prompt, or the CLI version. The rules in this section apply only when `poolMode` is `"single-use"` (issue #74). In that mode each instance works exactly one item. `agentStop` adds these fields to the JSON response:
 
-1. **Report the replenish fact.** End every orchestrator-bound message (FYI, ALERT, MISSION_COMPLETE) with `replenish=<agentType>:<count>`, e.g. `FYI: WI-005 → ba-3 (murdock-2) replenish=murdock:1`. If `poolMode` is `"single-use"` but `data.replenish` is absent (the CLI could not read the board), end it with `replenish=unknown`. The orchestrator spawns replacements from this value alone.
-2. **Rejections go to the instance `agentStop` claimed.** On `--outcome rejected`, the CLI claims a fresh instance of the return stage's agent and returns it in `claimedNext` / `claimedNextAgentId`. Send REJECTED to `claimedNextAgentId`. The agent that last worked the item has retired and its pool marker is gone, so resolving it from the pool finds nothing. If `poolAlert` is set instead, send the full REJECTED content to `team-lead` as an ALERT. If both are empty, the item escalated to `blocked`: FYI only.
-3. **You are done after that message.** Do not wait for another START. The orchestrator shuts you down.
+- `data.parkedFor`: the item you are now parked for. Set while the item is still in the pipeline. Your marker is `<you>.parked-<itemId>`, so no other item can claim you, and a rejection of this item comes back to you.
+- `data.retire`: `[{instance, agentId}]`, set when this `agentStop` took the item out of the pipeline (`staged`, `done`, or `blocked`). It lists you and every instance that was parked for the item.
+- `data.replenish`: `{agentType, count, demand, idle, busy, parked, wipLimit}`, where `count` is how many fresh instances of your type the remaining board still needs.
 
-When `poolMode` is `"reuse"`, none of this applies: your slot is back in idle, so stay alive and wait for the next START; add no `replenish=` suffix; rejections claim nothing, and backward messages resolve the target from its pool marker as above. If `poolMode` is missing (no pool for this mission), follow the reuse rules.
+Four rules follow:
+
+1. **Report the facts.** End every orchestrator-bound message (FYI, ALERT, MISSION_COMPLETE) with `replenish=<agentType>:<count>`, then `retire=<instance>,<instance>,...` when `data.retire` is present, e.g. `FYI: WI-005 → ba-3 (murdock-2) replenish=murdock:1` or `FYI: WI-005 staged (amy-4) replenish=amy:0 retire=amy-4,murdock-2,ba-3,lynch-1`. If `data.replenish` is absent (the CLI could not read the board), write `replenish=unknown`. The orchestrator spawns from `replenish` and shuts down only the instances in `retire`.
+2. **Rejections go to the instance `agentStop` claimed.** On `--outcome rejected`, the CLI claims the return stage's instance, preferring the one parked for this item, and returns it in `claimedNext` / `claimedNextAgentId`. Send REJECTED to `claimedNextAgentId`. If `poolAlert` is set instead, send the full REJECTED content to `team-lead` as an ALERT. If both are empty, the item escalated to `blocked`: FYI only.
+3. **Parked means stay alive.** When `data.parkedFor` is set, do not exit and do not ask to be shut down. The only work that can reach you is rework for that same item, as a START or a REJECTED message. Before you edit, test, or probe anything, run `ateam pool claim` (exit `2` is expected: the rejecting `agentStop` already claimed you) and then `agentStart` for the item. Only then act on the rejection. A rejection names the fix, which makes it tempting to start editing at once, but `agentStop` fails with `NOT_CLAIMED` on an item you never started, and the board shows nobody working it. You still have the item's files in context, so start from the rejection and re-read only what it names.
+4. **Retired means done.** When you are in `data.retire`, the orchestrator shuts you down after your message.
+
+When `poolMode` is `"reuse"`, none of this applies: your slot is back in idle, so stay alive and wait for the next START; add no `replenish=` or `retire=` suffix; rejections claim nothing, and backward messages resolve the target from its pool marker as above. If `poolMode` is missing (no pool for this mission), follow the reuse rules.
 
 ## Core Principle
 

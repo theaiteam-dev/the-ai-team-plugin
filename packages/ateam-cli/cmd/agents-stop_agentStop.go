@@ -15,14 +15,14 @@ import (
 )
 
 var (
-	agentsStopAgentStopCmdBody     string
-	agentsStopAgentStopCmdBodyFile string
-	agentsStopAgentStopCmd_agent   string
-	agentsStopAgentStopCmd_advance bool
-	agentsStopAgentStopCmd_itemId  string
-	agentsStopAgentStopCmd_outcome string
+	agentsStopAgentStopCmdBody      string
+	agentsStopAgentStopCmdBodyFile  string
+	agentsStopAgentStopCmd_agent    string
+	agentsStopAgentStopCmd_advance  bool
+	agentsStopAgentStopCmd_itemId   string
+	agentsStopAgentStopCmd_outcome  string
 	agentsStopAgentStopCmd_returnTo string
-	agentsStopAgentStopCmd_summary string
+	agentsStopAgentStopCmd_summary  string
 )
 
 // pipelineNext maps agent type → next agent type in the pipeline.
@@ -90,7 +90,8 @@ func claimIdleInstance(poolDir, agentType string) (instance, agentID string) {
 
 // poolSelfRelease releases the agent's .busy file back to .idle, or, in a
 // single-use pool, retires the slot by deleting the marker so the used session
-// is never claimed again.
+// is never claimed again. (A single-use agent whose item is still in the
+// pipeline is parked by settleSingleUse before this runs, so no .busy is left.)
 // This MUST run regardless of whether the API call succeeded — otherwise
 // an API error (e.g. NOT_CLAIMED) leaves orphaned .busy files that
 // permanently block the pool slot. It is safe to call more than once.
@@ -127,11 +128,12 @@ func poolSelfRelease(agentName string) {
 // instance was available.
 //
 // nextStage is the stage the API reports the item moved to. In a single-use
-// pool a rejection also claims a fresh instance of the return stage's agent,
-// because the agent that last worked the item has retired; a rejection that
-// escalated to blocked claims nothing.
+// pool every claim first tries the instance of the needed type parked for
+// itemID (it already worked this item), then an idle one. A rejection claims
+// the return stage's agent this way; a rejection that escalated to blocked
+// claims nothing.
 // NOTE: Self-release is handled separately by poolSelfRelease (called via defer).
-func handlePoolManagement(agentName, outcome string, advance bool, nextStage string) (claimedNext, claimedNextAgentID, poolAlert string) {
+func handlePoolManagement(agentName, itemID, outcome string, advance bool, nextStage string) (claimedNext, claimedNextAgentID, poolAlert string) {
 	missionID := os.Getenv("ATEAM_MISSION_ID")
 	if missionID == "" {
 		fmt.Fprintln(os.Stderr, "WARNING: ATEAM_MISSION_ID not set — pool management skipped (no claimedNext will be returned)")
@@ -139,13 +141,22 @@ func handlePoolManagement(agentName, outcome string, advance bool, nextStage str
 	}
 
 	poolDir := filepath.Join("/tmp/.ateam-pool", filepath.Base(missionID))
+	singleUse := poolIsSingleUse(poolDir)
+	claim := func(role string) (string, string) {
+		if singleUse {
+			if claimed, claimedID := claimParkedForItem(poolDir, role, itemID); claimed != "" {
+				return claimed, claimedID
+			}
+		}
+		return claimIdleInstance(poolDir, role)
+	}
 
-	if outcome == "rejected" && poolIsSingleUse(poolDir) {
+	if outcome == "rejected" && singleUse {
 		reworkType, ok := stageAgent[nextStage]
 		if !ok {
 			return "", "", "" // escalated to blocked, or not a pipeline stage
 		}
-		claimed, claimedID := claimIdleInstance(poolDir, reworkType)
+		claimed, claimedID := claim(reworkType)
 		if claimed == "" {
 			return "", "", fmt.Sprintf("no idle %s instance available for rework", reworkType)
 		}
@@ -160,7 +171,7 @@ func handlePoolManagement(agentName, outcome string, advance bool, nextStage str
 	if !ok {
 		return "", "", "" // amy or unknown — no successor
 	}
-	claimed, claimedID := claimIdleInstance(poolDir, nextType)
+	claimed, claimedID := claim(nextType)
 	if claimed == "" {
 		return "", "", fmt.Sprintf("no idle %s instance available", nextType)
 	}
@@ -222,8 +233,9 @@ var agentsStopAgentStopCmd = &cobra.Command{
 		var resp []byte
 		var apiErr error
 
-		// agentName/outcome/advance used for pool management — resolved from flags or --body
+		// agentName/itemID/outcome/advance used for pool management — resolved from flags or --body
 		agentName := agentsStopAgentStopCmd_agent
+		itemID := agentsStopAgentStopCmd_itemId
 		outcome := agentsStopAgentStopCmd_outcome
 		advance := agentsStopAgentStopCmd_advance
 
@@ -235,6 +247,9 @@ var agentsStopAgentStopCmd = &cobra.Command{
 			if err := json.Unmarshal([]byte(agentsStopAgentStopCmdBody), &bodyObj); err == nil {
 				if v, ok := bodyObj["agent"].(string); ok && agentName == "" {
 					agentName = v
+				}
+				if v, ok := bodyObj["itemId"].(string); ok && itemID == "" {
+					itemID = v
 				}
 				if v, ok := bodyObj["outcome"].(string); ok && outcome == "" {
 					outcome = v
@@ -295,9 +310,9 @@ var agentsStopAgentStopCmd = &cobra.Command{
 		}
 		wipExceeded := json.Unmarshal(resp, &parsed) == nil && parsed.Data.WipExceeded
 
-		// Single-use pool: retire this slot before claiming or counting, so the
-		// replenish fact sees the pool as it is after this agent is gone.
-		replenish := retireAndComputeReplenish(c, agentName)
+		// Single-use pool: park or retire this slot before claiming or counting,
+		// so the replenish fact sees the pool as it is after this agent is done.
+		singleUse := settleSingleUse(c, agentName, itemID, parsed.Data.NextStage)
 
 		// Pool management: next-agent claim only (self-release handled by defer)
 		// Skip next-agent claim when WIP exceeded — item didn't advance, no handoff needed
@@ -305,13 +320,14 @@ var agentsStopAgentStopCmd = &cobra.Command{
 		if !wipExceeded {
 			claimedNext, claimedNextAgentID, poolAlert = handlePoolManagement(
 				agentName,
+				itemID,
 				outcome,
 				advance,
 				parsed.Data.NextStage,
 			)
 			resp = injectPoolResult(resp, claimedNext, claimedNextAgentID, poolAlert)
 		}
-		resp = injectReplenish(resp, replenish)
+		resp = injectSingleUse(resp, singleUse)
 		resp = injectPoolMode(resp, currentPoolMode())
 
 		jsonMode, _ := cmd.Root().PersistentFlags().GetBool("json")
@@ -334,9 +350,17 @@ var agentsStopAgentStopCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "\nPOOL_ALERT: %s — send ALERT to Hannibal for manual dispatch.\n", poolAlert)
 		}
 
-		if replenish != nil && replenish.Count > 0 {
+		if singleUse != nil && singleUse.replenish != nil && singleUse.replenish.Count > 0 {
+			r := singleUse.replenish
 			fmt.Fprintf(os.Stderr, "\nPOOL_REPLENISH: spawn %d fresh %s instance(s) — %d item(s) still need this stage, %d idle.\n",
-				replenish.Count, replenish.AgentType, replenish.Demand, replenish.Idle)
+				r.Count, r.AgentType, r.Demand, r.Idle)
+		}
+		if singleUse != nil && len(singleUse.retire) > 0 {
+			names := make([]string, len(singleUse.retire))
+			for i, r := range singleUse.retire {
+				names[i] = r.Instance
+			}
+			fmt.Fprintf(os.Stderr, "\nPOOL_RETIRE: %s — the item is out of the pipeline; the orchestrator shuts these instances down.\n", strings.Join(names, ","))
 		}
 
 		return nil

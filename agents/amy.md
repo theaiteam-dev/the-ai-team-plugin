@@ -360,6 +360,8 @@ If the work item's PRD specifies non-functional requirements, verify them:
 
    This claims the item AND records `assigned_agent` on the work item so the kanban UI shows you're working on it.
 
+   Do this on every START, including rework of an item you already worked while parked for it: no edit, test run, or probe comes before `agentStart`.
+
 2. **Read the feature item and outputs**
    - Understand what was built
    - Note the test file and implementation paths
@@ -501,7 +503,7 @@ Follow the `ai-team:agent-lifecycle` skill for activity-log milestone messages a
 
 **Terminal-agent shutdown logic:** Amy has no downstream pool handoff. After `agentStop`:
 - **VERIFIED**: `--advance` already moved the item to `staged` — the per-item pipeline's real terminal stage (WI-786/787). If the `agentStop --json` response has `missionComplete: true` (every item has now reached `staged`), send `MISSION_COMPLETE` to Hannibal to trigger the mission tail (Frankie, then Stockwell). Otherwise, send `FYI` to Hannibal with verdict and one-line summary.
-- **FLAG**: `agentStop --outcome rejected --return-to <stage> --advance=false` per the FLAG routing table below. Send `REJECTED` to the matching peer (in a single-use pool, the fresh instance in `claimedNextAgentId`; otherwise `murdock-N` or `ba-N`), then `FYI` to Hannibal. Amy does not START anyone directly; the peer picks up the rejected item from the board.
+- **FLAG**: `agentStop --outcome rejected --return-to <stage> --advance=false` per the FLAG routing table below. Send `REJECTED` to the matching peer (in a single-use pool, the instance in `claimedNextAgentId`, usually the one that already worked this item; otherwise `murdock-N` or `ba-N`), then `FYI` to Hannibal. Amy does not START anyone directly; the peer picks up the rejected item from the board.
 
 ### FLAG routing — earliest flagged stage wins
 
