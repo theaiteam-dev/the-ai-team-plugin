@@ -22,6 +22,10 @@ Native-mode lane agents (Murdock, B.A., Lynch, Amy) now work one item each inste
 
 Validated on M-20260928-001 (React Todo Client, 12 items): in-pipeline rework went back to the parked session every time, rejection to re-verified took 1.2 to 6.6 minutes (9.6 to 16.1 on M-20260927-002 with fresh agents), and a rework pass cost $0.95 on average against $1.41.
 
+### Fixed — a failed `agentStop` no longer retires a live single-use slot
+
+`agentStop` releases the pool slot in a deferred call that runs even when the API call fails, so an error like `NOT_CLAIMED` cannot orphan a `.busy` marker. In a single-use pool that release deletes the marker, which retired a session that was still alive; its retry then parked it with no agentId, and rework for the item could not be routed back to it. A single-use pool now keeps the `.busy` marker when the API call fails (`packages/ateam-cli/cmd/agents-stop_agentStop.go`). Reuse mode is unchanged.
+
 ### Fixed — `/ai-team:run` and `/ai-team:resume` read the playbook from the loaded plugin
 
 Both commands told Hannibal to `echo $CLAUDE_PLUGIN_ROOT` and build the playbook path from it. That variable is not set in Bash, so the echo came back empty, and Hannibal searched the filesystem and read the playbook from `~/.claude/plugins/cache/`, which can be an older released version. A session started with `--plugin-dir` therefore ran the branch's agents and skills against the released playbook. The commands now use `${CLAUDE_PLUGIN_ROOT}`, which Claude Code fills in when the command loads, and tell Hannibal to stop if that Read fails rather than look for another copy.

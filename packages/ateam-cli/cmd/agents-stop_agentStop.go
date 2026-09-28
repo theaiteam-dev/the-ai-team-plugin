@@ -92,9 +92,10 @@ func claimIdleInstance(poolDir, agentType string) (instance, agentID string) {
 // single-use pool, retires the slot by deleting the marker so the used session
 // is never claimed again. (A single-use agent whose item is still in the
 // pipeline is parked by settleSingleUse before this runs, so no .busy is left.)
-// This MUST run regardless of whether the API call succeeded — otherwise
-// an API error (e.g. NOT_CLAIMED) leaves orphaned .busy files that
-// permanently block the pool slot. It is safe to call more than once.
+// In reuse mode this MUST run regardless of whether the API call succeeded —
+// otherwise an API error (e.g. NOT_CLAIMED) leaves orphaned .busy files that
+// permanently block the pool slot. A single-use pool skips it on an API error
+// (see the deferred call in agentStop). It is safe to call more than once.
 func poolSelfRelease(agentName string) {
 	// Guard against empty agent name: the --body code path can leave agentName
 	// unset if the body JSON has no "agent" field. Without this guard, we'd
@@ -286,7 +287,13 @@ var agentsStopAgentStopCmd = &cobra.Command{
 		// Always release pool slot on exit — even if the API call fails.
 		// Registered here (after both --body and flags paths have resolved agentName)
 		// so the closure captures the final value, not the empty pre-parse value.
+		// Exception: a single-use pool keeps the .busy marker when the API call
+		// failed. Deleting it retires a session that is still alive; its retry
+		// would then park with no agentId, and rework could not route back to it.
 		defer func() {
+			if apiErr != nil && currentPoolMode() == poolModeSingleUse {
+				return
+			}
 			poolSelfRelease(agentName)
 		}()
 

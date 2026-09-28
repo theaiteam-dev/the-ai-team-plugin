@@ -620,3 +620,49 @@ func TestAgentStopWithoutPoolReportsNoPoolMode(t *testing.T) {
 		t.Errorf("a mission with no pool must not report poolMode, got %s", out)
 	}
 }
+
+func TestAgentStopAPIErrorKeepsTheSingleUseSlotForTheRetry(t *testing.T) {
+	_, poolDir := withTempPoolRoot(t, "agentstop-api-error")
+	enableSingleUse(t, poolDir)
+	writeMarkers(t, poolDir, "murdock-1.busy")
+
+	// The first stop fails (the agent skipped agentStart); the retry, after
+	// the agent recovers its claim, succeeds.
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/api/agents/stop":
+			calls++
+			if calls == 1 {
+				w.WriteHeader(http.StatusConflict)
+				w.Write([]byte(`{"success":false,"error":{"code":"NOT_CLAIMED","message":"item is not claimed"}}`))
+				return
+			}
+			w.Write(stopResponse("implementing"))
+		case r.Method == "GET" && r.URL.Path == "/api/board":
+			w.Write(boardJSON(t, []string{"implementing"}, nil))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	if out, err := runAgentStopJSON(t, srv.URL, "--agent", "murdock-1"); err == nil {
+		t.Fatalf("expected the NOT_CLAIMED stop to fail, got %s", out)
+	}
+	if !exists(filepath.Join(poolDir, "murdock-1.busy")) {
+		t.Fatal("a failed agentStop must not retire the single-use slot: the agent is still alive and will retry")
+	}
+
+	if out, err := runAgentStopJSON(t, srv.URL, "--agent", "murdock-1"); err != nil {
+		t.Fatalf("retry agentStop: %v (%s)", err, out)
+	}
+	content, err := os.ReadFile(filepath.Join(poolDir, "murdock-1.parked-WI-001"))
+	if err != nil {
+		t.Fatalf("expected murdock-1 to be parked for WI-001 after the retry: %v", err)
+	}
+	if string(content) != "agentid-murdock-1.busy" {
+		t.Errorf("the parked marker must keep the agentId for rework routing, got %q", content)
+	}
+}
