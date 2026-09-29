@@ -7,6 +7,12 @@ import { NextRequest } from 'next/server';
  * A NO_TEST_NEEDED task item is created with an explicitly empty test path.
  * The create payload previously used `||`, which collapsed that empty string
  * to null and made the documented fast-track state unreachable through the API.
+ *
+ * Assertions target the HTTP response body, not the Prisma call arguments:
+ * the mocked `create` derives its returned row from the submitted data, so a
+ * passing test proves the API actually returns `outputs.test: ""` (and
+ * preserves sibling outputs), not just that the right value was handed to
+ * Prisma.
  */
 
 const mockPrisma = vi.hoisted(() => ({
@@ -71,6 +77,29 @@ const baseDbItem = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/**
+ * The fake `create`: builds the returned row from the data the route
+ * actually submitted, so response assertions prove the round trip rather
+ * than a fixed fixture.
+ */
+const fakeCreateFromData = async ({ data }: { data: Record<string, unknown> }) =>
+  baseDbItem({
+    id: (data.id as string) ?? 'WI-001',
+    title: data.title,
+    description: data.description,
+    type: data.type,
+    priority: data.priority,
+    objective: data.objective,
+    acceptance: data.acceptance,
+    context: data.context,
+    outputTest: (data.outputTest as string | null) ?? null,
+    outputImpl: (data.outputImpl as string | null) ?? null,
+    outputTypes: (data.outputTypes as string | null) ?? null,
+    severity: (data.severity as string | null) ?? null,
+    attributedAgent: (data.attributedAgent as string | null) ?? null,
+    fingerprint: (data.fingerprint as string | null) ?? null,
+  });
+
 const makePostRequest = (body: Record<string, unknown>) =>
   new NextRequest('http://localhost:3000/api/items', {
     method: 'POST',
@@ -90,57 +119,48 @@ const withExistingItems = (existing: Array<Record<string, unknown>>) => {
   });
 };
 
-const createdPayload = () => mockPrisma.item.create.mock.calls[0][0].data;
-
 describe('POST /api/items — empty-string outputs (issue #68)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
     withExistingItems([]);
+    mockPrisma.item.create.mockImplementation(fakeCreateFromData);
     mockPrisma.mission.findFirst.mockResolvedValue(null);
     mockPrisma.project.findUnique.mockResolvedValue({ id: 'test-project', name: 'test-project' });
   });
 
   it('persists an explicitly empty outputs.test as "" rather than collapsing it to null', async () => {
-    mockPrisma.item.create.mockResolvedValue(baseDbItem({ outputTest: '', outputImpl: 'README.md' }));
-
     const { POST } = await import('@/app/api/items/route');
     const response = await POST(
       makePostRequest({ ...BASE_VALID_ITEM_BODY, outputs: { test: '', impl: 'README.md' } })
     );
 
     expect(response.status).toBe(201);
-    const data = createdPayload();
-    expect(data.outputTest).toBe('');
-    expect(data.outputTest).not.toBeNull();
-    expect(data.outputImpl).toBe('README.md');
+    const { data } = await response.json();
+    expect(data.outputs.test).toBe('');
+    expect(data.outputs.impl).toBe('README.md');
   });
 
   it('still stores null for every output when outputs is omitted entirely', async () => {
-    mockPrisma.item.create.mockResolvedValue(baseDbItem());
-
     const { POST } = await import('@/app/api/items/route');
     const response = await POST(makePostRequest(BASE_VALID_ITEM_BODY));
 
     expect(response.status).toBe(201);
-    const data = createdPayload();
-    expect(data.outputTest).toBeNull();
-    expect(data.outputImpl).toBeNull();
-    expect(data.outputTypes).toBeNull();
+    const { data } = await response.json();
+    // buildOutputs omits null members entirely rather than serializing them.
+    expect(data.outputs).toEqual({});
   });
 
   it('stores null for an output explicitly passed as null', async () => {
-    mockPrisma.item.create.mockResolvedValue(baseDbItem({ outputImpl: 'README.md' }));
-
     const { POST } = await import('@/app/api/items/route');
     const response = await POST(
       makePostRequest({ ...BASE_VALID_ITEM_BODY, outputs: { test: null, impl: 'README.md' } })
     );
 
     expect(response.status).toBe(201);
-    const data = createdPayload();
-    expect(data.outputTest).toBeNull();
-    expect(data.outputImpl).toBe('README.md');
+    const { data } = await response.json();
+    expect(data.outputs.test).toBeUndefined();
+    expect(data.outputs.impl).toBe('README.md');
   });
 
   it('does not treat two items sharing an empty test path as an output collision', async () => {
@@ -155,7 +175,6 @@ describe('POST /api/items — empty-string outputs (issue #68)', () => {
         dependsOn: [],
       },
     ]);
-    mockPrisma.item.create.mockResolvedValue(baseDbItem({ id: 'WI-002', outputTest: '', outputImpl: 'README.md' }));
 
     const { POST } = await import('@/app/api/items/route');
     const response = await POST(
@@ -163,6 +182,17 @@ describe('POST /api/items — empty-string outputs (issue #68)', () => {
     );
 
     expect(response.status).toBe(201);
-    expect(createdPayload().outputTest).toBe('');
+    const { data } = await response.json();
+    expect(data.outputs.test).toBe('');
+  });
+
+  it('rejects a non-string, non-null outputs.test with a 400 validation error', async () => {
+    const { POST } = await import('@/app/api/items/route');
+    const response = await POST(
+      makePostRequest({ ...BASE_VALID_ITEM_BODY, outputs: { test: 0 } })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPrisma.item.create).not.toHaveBeenCalled();
   });
 });

@@ -169,6 +169,27 @@ export async function PATCH(
       return NextResponse.json(error.toResponse(), { status: 400 });
     }
 
+    // Validate outputs if provided. Unlike POST, `outputs: null` is not a
+    // shorthand for "no outputs" here — omit the key entirely for that.
+    if (body.outputs !== undefined) {
+      if (body.outputs === null || typeof body.outputs !== 'object' || Array.isArray(body.outputs)) {
+        const error = createValidationError('outputs must be an object');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+      if (!isValidOptionalString(body.outputs.test)) {
+        const error = createValidationError('outputs.test must be a string or null');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+      if (!isValidOptionalString(body.outputs.impl)) {
+        const error = createValidationError('outputs.impl must be a string or null');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+      if (!isValidOptionalString(body.outputs.types)) {
+        const error = createValidationError('outputs.types must be a string or null');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+    }
+
     // Validate dependencies if provided
     if (body.dependencies !== undefined) {
       // Check for self-reference

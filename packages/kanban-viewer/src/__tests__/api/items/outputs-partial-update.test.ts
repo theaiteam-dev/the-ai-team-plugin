@@ -13,9 +13,10 @@ import { NextRequest } from 'next/server';
  *     only one `outputs.*` key nulled the other two. That half is general to
  *     every value, not just the empty string.
  *
- * Assertions target the prisma update payload rather than the response body:
- * the response passes through the read-path outputs builder, which is fixed
- * separately.
+ * Assertions target the HTTP response body: the mocked `update` merges the
+ * submitted `data` into the row `findFirst` returned, so untouched columns
+ * keep their stored values and a passing assertion proves the API actually
+ * returns the right outputs, not just that Prisma was called correctly.
  */
 
 const mockPrisma = vi.hoisted(() => ({
@@ -53,7 +54,7 @@ const baseDbItem = (overrides: Record<string, unknown> = {}) => ({
   acceptance: '["criterion 1"]',
   context: 'Some context',
   outputTest: null,
-  outputImpl: 'README.md',
+  outputImpl: null,
   outputTypes: null,
   severity: null,
   attributedAgent: null,
@@ -76,8 +77,20 @@ const makePatchRequest = (id: string, body: Record<string, unknown>) =>
 
 const makeContext = (id: string) => ({ params: Promise.resolve({ id }) });
 
-/** The `data` payload the route handed to prisma.item.update. */
-const updatePayload = () => mockPrisma.item.update.mock.calls[0][0].data;
+/**
+ * Seeds `findFirst` with a stored row and makes `update` return that row
+ * merged with whatever `data` the route submitted, so an untouched column
+ * keeps its stored value the way a real update would.
+ */
+const setupExistingItem = (overrides: Record<string, unknown> = {}) => {
+  const stored = baseDbItem(overrides);
+  mockPrisma.item.findFirst.mockResolvedValue(stored);
+  mockPrisma.item.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+    ...stored,
+    ...data,
+  }));
+  return stored;
+};
 
 describe('PATCH /api/items/:id — outputs partial update (issue #68)', () => {
   beforeEach(() => {
@@ -92,8 +105,7 @@ describe('PATCH /api/items/:id — outputs partial update (issue #68)', () => {
   });
 
   it('persists an empty-string outputs.test instead of coercing it to null', async () => {
-    mockPrisma.item.findFirst.mockResolvedValue(baseDbItem());
-    mockPrisma.item.update.mockResolvedValue(baseDbItem({ outputTest: '' }));
+    setupExistingItem();
 
     const { PATCH } = await import('@/app/api/items/[id]/route');
     const response = await PATCH(
@@ -102,47 +114,41 @@ describe('PATCH /api/items/:id — outputs partial update (issue #68)', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(updatePayload().outputTest).toBe('');
+    const { data } = await response.json();
+    expect(data.outputs.test).toBe('');
   });
 
   it('leaves a sibling outputs field untouched when only outputs.test is sent', async () => {
     // The exact reproduction from issue #68: WI-963 already had
     // outputImpl "README.md", and setting test to "" erased it.
-    mockPrisma.item.findFirst.mockResolvedValue(baseDbItem({ outputImpl: 'README.md' }));
-    mockPrisma.item.update.mockResolvedValue(baseDbItem({ outputTest: '', outputImpl: 'README.md' }));
+    setupExistingItem({ outputImpl: 'README.md' });
 
     const { PATCH } = await import('@/app/api/items/[id]/route');
-    await PATCH(makePatchRequest('WI-963', { outputs: { test: '' } }), makeContext('WI-963'));
+    const response = await PATCH(makePatchRequest('WI-963', { outputs: { test: '' } }), makeContext('WI-963'));
 
-    const data = updatePayload();
-    expect(data.outputTest).toBe('');
-    // Absent from the payload entirely — prisma leaves the column alone.
-    expect(data).not.toHaveProperty('outputImpl');
-    expect(data).not.toHaveProperty('outputTypes');
+    const { data } = await response.json();
+    expect(data.outputs.test).toBe('');
+    expect(data.outputs.impl).toBe('README.md');
   });
 
   it('leaves test and types untouched when only outputs.impl is sent', async () => {
     // The sibling-wipe half is not specific to empty strings.
-    mockPrisma.item.findFirst.mockResolvedValue(
-      baseDbItem({ outputTest: 'src/__tests__/a.test.ts', outputTypes: 'src/types/a.ts' })
-    );
-    mockPrisma.item.update.mockResolvedValue(baseDbItem({ outputImpl: 'src/a.ts' }));
+    setupExistingItem({ outputTest: 'src/__tests__/a.test.ts', outputTypes: 'src/types/a.ts' });
 
     const { PATCH } = await import('@/app/api/items/[id]/route');
-    await PATCH(
+    const response = await PATCH(
       makePatchRequest('WI-963', { outputs: { impl: 'src/a.ts' } }),
       makeContext('WI-963')
     );
 
-    const data = updatePayload();
-    expect(data.outputImpl).toBe('src/a.ts');
-    expect(data).not.toHaveProperty('outputTest');
-    expect(data).not.toHaveProperty('outputTypes');
+    const { data } = await response.json();
+    expect(data.outputs.impl).toBe('src/a.ts');
+    expect(data.outputs.test).toBe('src/__tests__/a.test.ts');
+    expect(data.outputs.types).toBe('src/types/a.ts');
   });
 
   it('still clears a field when outputs.test is explicitly null', async () => {
-    mockPrisma.item.findFirst.mockResolvedValue(baseDbItem({ outputTest: 'src/__tests__/a.test.ts' }));
-    mockPrisma.item.update.mockResolvedValue(baseDbItem({ outputTest: null }));
+    setupExistingItem({ outputTest: 'src/__tests__/a.test.ts' });
 
     const { PATCH } = await import('@/app/api/items/[id]/route');
     const response = await PATCH(
@@ -151,25 +157,49 @@ describe('PATCH /api/items/:id — outputs partial update (issue #68)', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(updatePayload().outputTest).toBeNull();
+    const { data } = await response.json();
+    expect(data.outputs.test).toBeUndefined();
   });
 
   it('sets all three columns when all three keys are sent', async () => {
-    mockPrisma.item.findFirst.mockResolvedValue(baseDbItem());
-    mockPrisma.item.update.mockResolvedValue(baseDbItem());
+    setupExistingItem();
 
     const { PATCH } = await import('@/app/api/items/[id]/route');
-    await PATCH(
+    const response = await PATCH(
       makePatchRequest('WI-963', {
         outputs: { test: 'src/__tests__/a.test.ts', impl: 'src/a.ts', types: 'src/types/a.ts' },
       }),
       makeContext('WI-963')
     );
 
-    expect(updatePayload()).toMatchObject({
-      outputTest: 'src/__tests__/a.test.ts',
-      outputImpl: 'src/a.ts',
-      outputTypes: 'src/types/a.ts',
+    const { data } = await response.json();
+    expect(data.outputs).toMatchObject({
+      test: 'src/__tests__/a.test.ts',
+      impl: 'src/a.ts',
+      types: 'src/types/a.ts',
     });
+  });
+
+  it('rejects a non-string, non-null outputs.impl with a 400 validation error', async () => {
+    setupExistingItem();
+
+    const { PATCH } = await import('@/app/api/items/[id]/route');
+    const response = await PATCH(
+      makePatchRequest('WI-963', { outputs: { impl: false } }),
+      makeContext('WI-963')
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPrisma.item.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects outputs: null with a 400 validation error instead of throwing', async () => {
+    setupExistingItem();
+
+    const { PATCH } = await import('@/app/api/items/[id]/route');
+    const response = await PATCH(makePatchRequest('WI-963', { outputs: null }), makeContext('WI-963'));
+
+    expect(response.status).toBe(400);
+    expect(mockPrisma.item.update).not.toHaveBeenCalled();
   });
 });

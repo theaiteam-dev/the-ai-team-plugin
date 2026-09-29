@@ -246,6 +246,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json(error.toResponse(), { status: 400 });
     }
 
+    // Validate outputs if provided. `outputs: null` is accepted as "no
+    // outputs" (see `body.outputs ?? {}` below); anything else must be a
+    // plain object whose test/impl/types members are a string or null.
+    if (body.outputs !== undefined && body.outputs !== null) {
+      if (typeof body.outputs !== 'object' || Array.isArray(body.outputs)) {
+        const error = createValidationError('outputs must be an object');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+      if (!isValidOptionalString(body.outputs.test)) {
+        const error = createValidationError('outputs.test must be a string or null');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+      if (!isValidOptionalString(body.outputs.impl)) {
+        const error = createValidationError('outputs.impl must be a string or null');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+      if (!isValidOptionalString(body.outputs.types)) {
+        const error = createValidationError('outputs.types must be a string or null');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+    }
+
     const dependencies = body.dependencies ?? [];
 
     // Validate that all dependencies exist and belong to the same project

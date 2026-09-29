@@ -88,11 +88,12 @@ function renderItemAsMarkdown(
   markdown += `\n## Description\n\n${item.description}\n`;
 
   // Outputs section
-  const outputEntries = Object.entries(item.outputs).filter(([, v]) => v);
+  const outputEntries = Object.entries(item.outputs).filter(([, v]) => v != null);
   if (outputEntries.length > 0) {
     markdown += '\n## Outputs\n\n';
     for (const [key, value] of outputEntries) {
-      markdown += `- **${key}:** \`${value}\`\n`;
+      const display = value === '' ? '""' : value;
+      markdown += `- **${key}:** \`${display}\`\n`;
     }
   }
 
