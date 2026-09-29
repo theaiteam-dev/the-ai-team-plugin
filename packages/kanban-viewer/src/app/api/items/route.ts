@@ -27,15 +27,20 @@ const VALID_PRIORITIES: ItemPriority[] = ITEM_PRIORITIES as unknown as ItemPrior
 
 /**
  * Generate next item ID in WI-NNN format.
- * Uses MAX(id) instead of COUNT(*) to avoid collisions when items have been hard-deleted.
+ * Uses the max ID instead of COUNT(*) to avoid collisions when items have been hard-deleted.
+ * The max is taken over the numeric part: ids are strings, so ordering them in
+ * the database sorts "WI-999" above "WI-1000" and would reissue WI-1000.
  */
 async function generateItemId(): Promise<string> {
   const items = await prisma.item.findMany({
     select: { id: true },
-    orderBy: { id: 'desc' },
-    take: 1,
+    where: { id: { startsWith: 'WI-' } },
   });
-  const maxNum = items.length > 0 ? parseInt(items[0].id.replace('WI-', ''), 10) : 0;
+  let maxNum = 0;
+  for (const { id } of items) {
+    const num = parseInt(id.slice('WI-'.length), 10);
+    if (num > maxNum) maxNum = num;
+  }
   return `WI-${String(maxNum + 1).padStart(3, '0')}`;
 }
 
