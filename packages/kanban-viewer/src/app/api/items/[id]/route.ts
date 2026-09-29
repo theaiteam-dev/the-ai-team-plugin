@@ -169,6 +169,27 @@ export async function PATCH(
       return NextResponse.json(error.toResponse(), { status: 400 });
     }
 
+    // Validate outputs if provided. Unlike POST, `outputs: null` is not a
+    // shorthand for "no outputs" here — omit the key entirely for that.
+    if (body.outputs !== undefined) {
+      if (body.outputs === null || typeof body.outputs !== 'object' || Array.isArray(body.outputs)) {
+        const error = createValidationError('outputs must be an object');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+      if (!isValidOptionalString(body.outputs.test)) {
+        const error = createValidationError('outputs.test must be a string or null');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+      if (!isValidOptionalString(body.outputs.impl)) {
+        const error = createValidationError('outputs.impl must be a string or null');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+      if (!isValidOptionalString(body.outputs.types)) {
+        const error = createValidationError('outputs.types must be a string or null');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+    }
+
     // Validate dependencies if provided
     if (body.dependencies !== undefined) {
       // Check for self-reference
@@ -290,11 +311,11 @@ export async function PATCH(
       updateData.priority = body.priority;
     }
     if (body.outputs !== undefined) {
-      // Update outputs - normalize undefined/null/empty-string to null so the
-      // collision detector never sees a shared empty-string path.
-      updateData.outputTest = body.outputs.test || null;
-      updateData.outputImpl = body.outputs.impl || null;
-      updateData.outputTypes = body.outputs.types || null;
+      // Merge per key: a key absent from the request leaves its column untouched.
+      // `??` (not `||`) so an empty string persists as a real value.
+      if (body.outputs.test !== undefined) updateData.outputTest = body.outputs.test ?? null;
+      if (body.outputs.impl !== undefined) updateData.outputImpl = body.outputs.impl ?? null;
+      if (body.outputs.types !== undefined) updateData.outputTypes = body.outputs.types ?? null;
     }
     if (body.severity !== undefined) {
       updateData.severity = body.severity || null;

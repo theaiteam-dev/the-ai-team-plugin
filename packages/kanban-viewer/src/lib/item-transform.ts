@@ -52,13 +52,15 @@ export interface DbItemWithRelations extends DbItem {
 
 /**
  * Build outputs object from database fields.
- * Filters out null/undefined values.
+ *
+ * Omits null/undefined but preserves empty strings: `outputs.test: ""` is the
+ * documented NO_TEST_NEEDED marker, so it must survive the round trip.
  */
 function buildOutputs(item: DbItem): ItemOutputs {
   const outputs: ItemOutputs = {};
-  if (item.outputTest) outputs.test = item.outputTest;
-  if (item.outputImpl) outputs.impl = item.outputImpl;
-  if (item.outputTypes) outputs.types = item.outputTypes;
+  if (item.outputTest != null) outputs.test = item.outputTest;
+  if (item.outputImpl != null) outputs.impl = item.outputImpl;
+  if (item.outputTypes != null) outputs.types = item.outputTypes;
   return outputs;
 }
 
