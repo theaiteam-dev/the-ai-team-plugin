@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed: Work item `outputs` fields lost on write (#68)
+
+Fixes two defects in the work item `outputs` fields (`test`/`impl`/`types`), both caused by falsy coercion in the item create route, the item update route, and the three read-side output builders. Reported in GitHub issue #68 after a `/ai-team:plan` refinement could not flag doc-only items as `NO_TEST_NEEDED`.
+
+- **An empty string in `outputs.test` now persists and reads back as `""`** (`packages/kanban-viewer/src/app/api/items/route.ts`, `src/app/api/items/[id]/route.ts`): the create and update paths used `|| null`, which turned `""` into `null`; they now use `?? null`. `buildOutputs()` in `src/lib/item-transform.ts`, and the duplicate builders in `src/app/api/items/[id]/render/route.ts` and `src/app/api/board/events/route.ts`, now check `!= null` instead of truthiness, so a stored `""` is returned to the client. A doc-only item can now reach the `{description contains NO_TEST_NEEDED, outputs.test: ""}` state that the fast-track rule in `agents/hannibal.md` checks for, instead of being routed to Murdock for a test that does not apply. The output collision check still ignores `""` paths, so storing `""` does not create false collisions.
+- **A partial `outputs.*` update no longer wipes its siblings** (`packages/kanban-viewer/src/app/api/items/[id]/route.ts`): `PATCH /api/items/:id` assigned all three output columns from whatever subset the request sent, so updating only `outputs.test` set a stored `outputs.impl` or `outputs.types` to `null`. Each column is now written only when its key is present in the request.
+- **Regression coverage**: `src/__tests__/api/items/outputs-create-empty-string.test.ts` (4 tests) and `src/__tests__/api/items/outputs-partial-update.test.ts` (5 tests) cover the create and update paths; 5 new tests in `src/__tests__/item-transform.test.ts` cover the read-side round trip.
+- **Left unchanged**: the truthy filters in `src/lib/api-transform.ts` (Kanban card UI) and in the markdown Outputs section of `src/app/api/items/[id]/render/route.ts` only decide whether to display an output row, and skipping an empty one is correct there.
+
 ### Added — Single-use pipeline lanes (issue #74)
 
 Native-mode lane agents (Murdock, B.A., Lynch, Amy) now work one item each instead of taking every item their lane receives. On `autocut` mission 09-03 the reused agents averaged 565k context per turn and were 77% of mission cost; the grimoire mission of 2026-09-16 cut burn 40% by switching to per-item agents by hand. This makes that the default. It is an interim step toward moving dispatch to Conduit, kept small so it is cheap to remove.
