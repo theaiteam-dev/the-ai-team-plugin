@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,6 +24,16 @@ Also records the current git branch in <poolDir>/branch and the paths already
 dirty in <poolDir>/baseline-dirty. Both files are written once and never
 overwritten, so re-running init (resume recovery) keeps the original values.
 Init fails on a detached HEAD.
+
+If baseline-dirty is missing but the current branch already has a commit with
+a "Mission: $ATEAM_MISSION_ID" trailer, the mission is underway and the files
+dirty now include mission work. Init does not record them. It still creates
+the pool dir and markers, prints a WARNING on stderr, and exits 0 so the pool
+can resume. Item commits refuse to run until you restore the file by hand:
+write <poolDir>/baseline-dirty with one "<git-hash>\t<path>" line per file that
+was dirty before the mission started ("-" as the hash for a deleted file); an
+empty file means none were. Before the first item commit there is no mission
+commit to detect, so restore a wiped baseline by hand before re-running init.
 
 Idempotent — running twice is a no-op success. Use this at mission start
 (Hannibal) or during resume recovery to make sure the pool dir exists before
@@ -77,8 +88,14 @@ mode after the call. "lanes" is present only when a lane count is configured.`,
 		if err := itemcommit.RecordBranch(poolDir, cwd); err != nil {
 			return fmt.Errorf("record mission branch: %w", err)
 		}
-		if err := itemcommit.RecordBaselineDirty(poolDir, cwd); err != nil {
-			return fmt.Errorf("record baseline of dirty files: %w", err)
+		if err := itemcommit.RecordBaselineForMission(poolDir, cwd, missionID); err != nil {
+			var lost *itemcommit.BaselineLostError
+			if !errors.As(err, &lost) {
+				return fmt.Errorf("record baseline of dirty files: %w", err)
+			}
+			// Keep going so the pool can resume; item commits stay blocked until
+			// the operator restores the file.
+			fmt.Fprintf(cmd.ErrOrStderr(), "WARNING: %v\n", lost)
 		}
 		if poolInitSingleUse {
 			marker := filepath.Join(poolDir, singleUseMarker)

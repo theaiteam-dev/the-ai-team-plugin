@@ -107,14 +107,14 @@ SENDER_ID=$(cat /tmp/.ateam-pool/$ATEAM_MISSION_ID/<senderInstance>.idle 2>/dev/
 SendMessage({ type: "message", recipient: "team-lead", content: "ALERT: {itemId} - {poolAlert}. Manual dispatch needed.", summary: "ALERT {itemId}" })
 ```
 
-**If the commit failed (`ITEM_COMMIT_FAILED`)** — an `agentStop` that moves the item to `staged` also commits the item's changes. The move succeeds and the exit code stays 0 even when the commit fails, so check for it on every `agentStop` that advances to `staged`: `ITEM_COMMIT_FAILED: <itemId>: <error>` on stderr, or `data.itemCommit.committed` false (with `data.itemCommit.noChanges` not true) in the JSON. When either appears, send ALERT to the orchestrator with the item id and the error, and do not report the item as committed. A failed PATCH after a successful commit still reports `data.itemCommit.sha`; include it. The item stays in `staged`; Hannibal fixes the cause and runs `ateam items-commit commitItem --itemId <id>`. Do not retry the commit yourself and do not call `agentStop` again.
+**If the commit failed (`ITEM_COMMIT_FAILED`)** — an `agentStop` that moves the item to `staged` also commits the item's changes. The move succeeds and the exit code stays 0 even when the commit fails, so check for it on every `agentStop` that advances to `staged`: `ITEM_COMMIT_FAILED: <itemId>: <error>` on stderr, or `data.itemCommit.committed` false (with `data.itemCommit.noChanges` not true) in the JSON. When either appears, send ALERT to the orchestrator with the item id and the error, and do not report the item as committed. A failure after a successful commit still reports `data.itemCommit.sha`; include it, and include `data.itemCommit.recorded`. The item stays in `staged`. Hannibal fixes the cause: when `recorded` is false he runs `ateam items-commit commitItem --itemId <id>`; when it is true the commit and its SHA are both in place and only the index refresh failed, so the fix is the `git reset -q -- <paths>` named in the error. Do not retry the commit yourself and do not call `agentStop` again.
 ```bash
 COMMIT_FAILED=$(echo "$RESULT" | jq -r 'if (.data.itemCommit // null) != null and .data.itemCommit.committed != true and .data.itemCommit.noChanges != true then "yes" else "" end')
 COMMIT_ERROR=$(echo "$RESULT" | jq -r '.data.itemCommit.error // ""')
 COMMIT_SHA=$(echo "$RESULT" | jq -r '.data.itemCommit.sha // ""')
 ```
 ```javascript
-SendMessage({ type: "message", recipient: "team-lead", content: "ALERT: {itemId} - ITEM_COMMIT_FAILED: {COMMIT_ERROR} (commit sha: {COMMIT_SHA or none}). Item is staged but NOT committed. Needs 'ateam items-commit commitItem --itemId {itemId}' after the cause is fixed. ({MY_INSTANCE_NAME}) {REPLENISH} {RETIRE}", summary: "ALERT {itemId} commit failed" })
+SendMessage({ type: "message", recipient: "team-lead", content: "ALERT: {itemId} - ITEM_COMMIT_FAILED: {COMMIT_ERROR} (commit sha: {COMMIT_SHA or none}, recorded: {RECORDED}). Item is staged; see the error for the recovery step. ({MY_INSTANCE_NAME}) {REPLENISH} {RETIRE}", summary: "ALERT {itemId} commit failed" })
 ```
 
 **Amy (last in pipeline)** — `claimedNext` will always be empty. Just send FYI to the orchestrator (or the ITEM_COMMIT_FAILED ALERT above instead, when the commit failed):

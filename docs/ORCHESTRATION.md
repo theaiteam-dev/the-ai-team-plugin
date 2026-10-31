@@ -245,13 +245,17 @@ GitHub also appends `Co-authored-by` lines to a squash commit. Where they land d
 Recovery:
 
 - Branch mismatch: check out the recorded branch, or write the new branch name into the file by hand if the switch was deliberate.
-- Missing or empty branch file: re-run `ateam pool init`, or write the branch name into the file by hand.
+- Missing or empty branch file: write the branch name into the file by hand, or re-run `ateam pool init`. Re-running init records the branch only. It does not record a new baseline once the mission has commits (see "Pre-existing dirty files").
 
 ### Pre-existing dirty files
 
 `pool init` also writes `/tmp/.ateam-pool/<missionId>/baseline-dirty`: one `<git-hash>\t<path>` line for each file that was dirty before the mission started. Those paths are never committed by an item commit or by Tawnia. If the file is missing when an item commit runs, the CLI refuses to commit rather than guess.
 
-Both files are written only if absent, so a second `pool init` does not record mission work as pre-existing.
+Both files are written only if absent, so a second `pool init` does not record mission work as pre-existing. A rename or copy in the operator's pre-mission changes (for example `git mv a.txt b.txt`) puts both the new and the original path in the baseline.
+
+**A lost baseline is restored by hand, never by re-running `pool init` mid-mission.** If `/tmp` is cleaned while the mission is underway, the files dirty now include mission work, so recording them would leave that work out of item commits and out of Tawnia's final commit. When `baseline-dirty` is missing and the current branch already has a commit with this mission's `Mission:` trailer, `pool init` does not write the file. It still creates the pool dir and markers, prints a `WARNING` on stderr, and exits 0 so the pool can resume. Item commits keep refusing ("pre-mission baseline unavailable") until you write `/tmp/.ateam-pool/<missionId>/baseline-dirty` yourself: one `<git-hash>\t<path>` line for each file that was dirty before the mission started (`-` as the hash for a deleted file), taken from the `git status` you saw at mission start. An empty file means none were.
+
+Remaining gap: before the first item commit there is no mission commit for `pool init` to detect. If the pool dir is wiped in that window, `pool init` records the current dirty files, which may already include mission work. Restore `baseline-dirty` by hand from the mission-start `git status` before re-running `pool init`.
 
 At the end of the mission Tawnia compares each baseline path's current hash with the recorded one. She lists the ones the mission changed in her commit body and her report, under "pre-existing files changed by the mission, not committed". She also lists leftover modified paths that no item commit took and that are not in the baseline, and commits only those she names.
 
@@ -261,21 +265,21 @@ A failed commit does not change the exit code of `agentStop` or `board-move`, an
 
 - stderr, as a line starting `ITEM_COMMIT_FAILED: <itemId>: <reason>`.
 - The activity feed, as an error entry.
-- The JSON response, as `data.itemCommit`: `{ "committed": false, "error": "..." }`. On success it is `{ "committed": true, "sha": "..." }`, or `{ "committed": false, "noChanges": true }` when there was nothing to commit.
+- The JSON response, as `data.itemCommit`: `{ "committed": false, "error": "..." }`, plus `sha` when a commit was made and `"recorded": true` when its SHA reached the item. On success it is `{ "committed": true, "sha": "...", "recorded": true }`, or `{ "committed": false, "noChanges": true }` when there was nothing to commit.
 
 The agent that sees the marker sends an ALERT to Hannibal. To recover:
 
 1. Fix the cause named in the reason. The causes the code can produce are:
    - branch mismatch, detached HEAD, or a missing or empty `branch` file (see "Branch safety");
-   - a missing or unreadable `baseline-dirty` file;
+   - a missing or unreadable `baseline-dirty` file (restore it by hand, see "Pre-existing dirty files"; re-running `pool init` will not do it once the mission has commits);
    - the item or the current mission cannot be fetched from the API, or the mission id cannot be resolved;
    - an unknown item type, an invalid work-log timestamp, or a line break in the item title or mission id;
    - a git command failing while building the commit;
-   - the API rejecting the `commitSha` update after the commit was made. The error reads "committed <sha> but recording commitSha failed". The commit exists on the branch; step 3 records it;
-   - refreshing the real index after the commit failing, for example because `index.lock` stayed held for more than 10 seconds. The error reads "committed <sha> but refreshing the index failed". The commit exists and its SHA is recorded on the item. Once the lock is gone, run `git reset -q -- <the item's paths>` so the index matches HEAD for them.
+   - the API rejecting the `commitSha` update after the commit was made. The error reads "committed <sha> but recording commitSha failed". The commit exists on the branch and its SHA is not on the item; step 3 records it;
+   - refreshing the real index after the commit failing, for example because `index.lock` stayed held for more than 10 seconds. The error reads "committed <sha> but refreshing the index failed". The commit exists and its SHA is recorded on the item, so step 3 has nothing to do. Once the lock is gone, run `git reset -q -- <the item's paths>` so the index matches HEAD for them. The failure message names the commit and gives the `git reset` command.
 
    The branch is checked twice, before and under the commit lock. Commits are built with `commit-tree` and `update-ref`, so commit hooks do not run and cannot block them. A held `index.lock` is retried for up to 10 seconds before the index refresh fails.
-2. Re-run `ateam items-commit commitItem --itemId <id>`. It only accepts items in `staged`.
+2. Re-run `ateam items-commit commitItem --itemId <id>`. It only accepts items in `staged`. Skip this when the failure was the index refresh: the commit and its recorded SHA are already correct, and `git reset` is the fix.
 3. If the commit already exists but its SHA never reached the board, the same command finds the newest commit on HEAD with `Item: <id>` as a trailer and records that SHA. If the board already has it, it reports that there is nothing to commit.
 
 ### Draft pull request
@@ -295,7 +299,7 @@ ateam missions-pr openDraft    # pushes the branch and opens a draft PR
 { "pullRequest": { "open": false } }
 ```
 
-`pullRequest.open` defaults to on when the key or the file is absent. Set it to `false` to stop `openDraft` from pushing or opening anything. `openDraft` also stops without opening a PR when the repo has no remote, `gh` is not installed, or `gh auth status` fails. In each case it prints the description file path, the exact `gh pr create --draft ...` command, and the reason, then exits 0. If a PR already exists for the branch, it reports that PR's URL.
+`pullRequest.open` defaults to on when the key or the file is absent. Set it to `false` to stop `openDraft` from pushing or opening anything. `openDraft` also stops without opening a PR when the repo has no remote, `gh` is not installed, or `gh auth status` fails. In each case it prints the description file path, the exact `gh pr create --draft ...` command, and the reason, then exits 0. If an open PR already exists for the branch, it reports that PR's URL. A closed or merged PR for the branch does not count, and a new draft is opened.
 
 ### Pool teardown
 

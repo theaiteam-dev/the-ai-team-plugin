@@ -26,6 +26,9 @@ import (
 //   auth_fail    -> `gh auth status` exits 1
 //   existing_url -> `gh pr view` / `gh pr list` report an open PR with that URL
 //                   (plain URL when called with -q/--jq, JSON otherwise)
+//   closed_url   -> a closed or merged PR with that URL exists for the branch.
+//                   `gh pr view` still finds it (as real gh does); `gh pr list`
+//                   shows it only for --state closed, merged or all.
 //   create_fail  -> `gh pr create` exits 1
 // When no PR exists `gh pr view` exits 1 and `gh pr list` prints nothing/[].
 
@@ -33,7 +36,13 @@ const stubGhScript = `#!/bin/sh
 D="$(dirname "$0")"
 { for a in "$@"; do printf '%s\0' "$a"; done; printf '\001'; } >> "$D/gh.log"
 jq=0
-for a in "$@"; do case "$a" in -q|--jq) jq=1;; esac; done
+state=open
+prev=""
+for a in "$@"; do
+  case "$a" in -q|--jq) jq=1;; esac
+  if [ "$prev" = "--state" ] || [ "$prev" = "-s" ]; then state="$a"; fi
+  prev="$a"
+done
 case "$1 $2" in
 "auth status")
   if [ -e "$D/auth_fail" ]; then echo "You are not logged into any GitHub hosts" >&2; exit 1; fi
@@ -44,10 +53,20 @@ case "$1 $2" in
     if [ $jq = 1 ]; then echo "$url"; else echo "{\"url\":\"$url\"}"; fi
     exit 0
   fi
+  if [ -e "$D/closed_url" ]; then
+    url=$(cat "$D/closed_url")
+    if [ $jq = 1 ]; then echo "$url"; else echo "{\"url\":\"$url\"}"; fi
+    exit 0
+  fi
   echo "no pull requests found for branch" >&2; exit 1;;
 "pr list")
-  if [ -e "$D/existing_url" ]; then
-    url=$(cat "$D/existing_url")
+  url=""
+  case "$state" in
+    open) [ -e "$D/existing_url" ] && url=$(cat "$D/existing_url");;
+    closed|merged) [ -e "$D/closed_url" ] && url=$(cat "$D/closed_url");;
+    all) if [ -e "$D/existing_url" ]; then url=$(cat "$D/existing_url"); elif [ -e "$D/closed_url" ]; then url=$(cat "$D/closed_url"); fi;;
+  esac
+  if [ -n "$url" ]; then
     if [ $jq = 1 ]; then echo "$url"; else echo "[{\"url\":\"$url\"}]"; fi
     exit 0
   fi
@@ -512,6 +531,42 @@ func TestOpenDraftExistingPRPrintsURLAndCreatesNoSecond(t *testing.T) {
 	}
 	if !strings.Contains(out, odExistURL) {
 		t.Errorf("output must print the existing PR URL %s:\n%s", odExistURL, out)
+	}
+}
+
+// `gh pr view <branch>` also returns closed and merged PRs. A branch whose only
+// PR is closed still needs a new draft PR.
+func TestOpenDraftClosedOrMergedPRDoesNotSuppressCreate(t *testing.T) {
+	e := odSetup(t, odOpts{})
+	e.marker(t, "closed_url", odExistURL)
+	out := e.runOK(t)
+
+	if n := len(e.createCalls(t)); n != 1 {
+		t.Fatalf("a closed PR must not block creating a draft, got %d create calls\n%s", n, out)
+	}
+	if !strings.Contains(out, odCreatedURL) {
+		t.Errorf("output must print the new PR URL %s:\n%s", odCreatedURL, out)
+	}
+	if strings.Contains(out, "already exists") {
+		t.Errorf("must not claim a PR already exists:\n%s", out)
+	}
+}
+
+func TestOpenDraftExistingPRLookupAsksOnlyForOpenPRsOnTheBranch(t *testing.T) {
+	e := odSetup(t, odOpts{})
+	e.runOK(t)
+	var found bool
+	for _, call := range e.ghCalls(t) {
+		if len(call) >= 2 && call[0] == "pr" && call[1] == "list" {
+			found = true
+			joined := strings.Join(call, " ")
+			if !strings.Contains(joined, "--head "+odBranch) || !strings.Contains(joined, "--state open") {
+				t.Errorf("lookup must use --head %s --state open, got %q", odBranch, joined)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected a gh pr list lookup")
 	}
 }
 

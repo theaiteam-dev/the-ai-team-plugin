@@ -41,14 +41,15 @@ type stubItem struct {
 }
 
 type apiStub struct {
-	t       *testing.T
-	srv     *httptest.Server
-	mu      sync.Mutex
-	items   map[string]stubItem
-	prdPath string
-	patches map[string][]map[string]any
-	missing map[string]bool // item ids whose GET returns 404
-	gets    []string
+	t          *testing.T
+	srv        *httptest.Server
+	mu         sync.Mutex
+	items      map[string]stubItem
+	prdPath    string
+	patches    map[string][]map[string]any
+	missing    map[string]bool // item ids whose GET returns 404
+	patchFails bool            // PATCH /api/items/{id} returns 500
+	gets       []string
 }
 
 func defaultLog() []map[string]string {
@@ -117,6 +118,10 @@ func (s *apiStub) handle(w http.ResponseWriter, r *http.Request) {
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			s.patches[id] = append(s.patches[id], body)
+			if s.patchFails {
+				s.json(w, 500, map[string]any{"success": false, "error": map[string]any{"code": "INTERNAL", "message": "db down"}})
+				return
+			}
 			s.json(w, 200, map[string]any{"success": true, "data": it.wire()})
 			return
 		}
@@ -350,6 +355,95 @@ func TestRun_NeverCommitsBaselineDirtyPaths(t *testing.T) {
 	status := git(t, e.root, "status", "--porcelain")
 	if !strings.Contains(status, "M d.txt") || !strings.Contains(status, "?? e-pre.txt") {
 		t.Errorf("baseline-dirty files must stay dirty:\n%s", status)
+	}
+}
+
+// ADR 0012: an operator's pre-mission `git mv` puts both the new and the original
+// path in the baseline, so neither half of the rename lands in an item commit.
+func TestRun_NeverCommitsEitherHalfOfPreMissionRename(t *testing.T) {
+	self := item("WI-1", "Add widget", "c.txt")
+	e := setup(t, self)
+	git(t, e.root, "mv", "a.txt", "b-renamed.txt")
+	fresh := t.TempDir()
+	e.poolRoot = fresh
+	e.poolDir = filepath.Join(fresh, testMission)
+	if err := RecordBranch(e.poolDir, e.root); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordBaselineDirty(e.poolDir, e.root); err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := ReadBaselineDirty(e.poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := baseline["a.txt"]; !ok {
+		t.Errorf("baseline lacks the rename's original path a.txt: %v", baseline)
+	}
+	if baseline["a.txt"] != "-" {
+		t.Errorf("original path hash = %q, want the deleted marker '-'", baseline["a.txt"])
+	}
+	if _, ok := baseline["b-renamed.txt"]; !ok {
+		t.Errorf("baseline lacks the rename's new path: %v", baseline)
+	}
+	write(t, filepath.Join(e.root, "c.txt"), "mine\n")
+
+	if _, err := Run(e.opts("WI-1")); err != nil {
+		t.Fatal(err)
+	}
+	if got := filesInHead(t, e.root); !sameSet(got, []string{"c.txt"}) {
+		t.Errorf("commit holds %v, want only c.txt", got)
+	}
+}
+
+// Recorded tells the caller whether the commitSha reached the board. A commit
+// whose PATCH failed is not recorded; one whose PATCH worked is recorded even
+// when the later index refresh fails.
+func TestRun_RecordedIsTrueWhenCommitShaPatchSucceeds(t *testing.T) {
+	e := setup(t, item("WI-1", "Add widget", "a.txt"))
+	write(t, filepath.Join(e.root, "a.txt"), "mine\n")
+	res, err := Run(e.opts("WI-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.SHA == "" || !res.Recorded {
+		t.Errorf("want SHA set and Recorded true, got %+v", res)
+	}
+}
+
+func TestRun_RecordedIsFalseWhenCommitShaPatchFails(t *testing.T) {
+	e := setup(t, item("WI-1", "Add widget", "a.txt"))
+	e.stub.patchFails = true
+	write(t, filepath.Join(e.root, "a.txt"), "mine\n")
+	res, err := Run(e.opts("WI-1"))
+	if err == nil || !strings.Contains(err.Error(), "recording commitSha failed") {
+		t.Fatalf("want a recording failure, got %v", err)
+	}
+	if res.SHA == "" || res.Recorded {
+		t.Errorf("want SHA set and Recorded false, got %+v", res)
+	}
+}
+
+func TestRun_RecordedIsTrueWhenOnlyIndexRefreshFails(t *testing.T) {
+	prev := indexLockWait
+	indexLockWait = 150 * time.Millisecond
+	t.Cleanup(func() { indexLockWait = prev })
+	e := setup(t, item("WI-1", "Add widget", "a.txt"))
+	write(t, filepath.Join(e.root, "a.txt"), "mine\n")
+	// The commit is built on a throwaway index, so a held real index.lock only
+	// breaks the refresh step.
+	if err := os.WriteFile(filepath.Join(e.root, ".git", "index.lock"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Run(e.opts("WI-1"))
+	if err == nil || !strings.Contains(err.Error(), "refreshing the index failed") {
+		t.Fatalf("want an index refresh failure, got %v", err)
+	}
+	if res.SHA == "" || !res.Recorded {
+		t.Errorf("the PATCH succeeded, so want Recorded true, got %+v", res)
+	}
+	if n := len(e.stub.patchesFor("WI-1")); n != 1 {
+		t.Errorf("want one commitSha PATCH, got %d", n)
 	}
 }
 

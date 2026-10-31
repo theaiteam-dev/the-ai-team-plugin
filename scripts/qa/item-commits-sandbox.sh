@@ -10,8 +10,17 @@
 # Requires the QA API (the kanban-viewer dev:qa script, port 5567) to be running.
 # Usage: eval "$(scripts/qa/item-commits-sandbox.sh)"   # progress goes to stderr
 #
-# Env: ATEAM_API_URL (default http://localhost:5567; the live :5566 API is refused), SANDBOX (default under TMPDIR),
+# Env: ATEAM_API_URL (default http://localhost:5567). The live :5566 API is always refused.
+#        Any other URL is refused unless SANDBOX_ALLOW_API_URL is set to that exact URL
+#        (trailing slash ignored), because the script seeds a project, a --force mission
+#        and items there. A stale value or SANDBOX_ALLOW_API_URL=1 does not approve a
+#        different target.
+#      SANDBOX (default under TMPDIR),
 #      GH_STUB_AUTH=fail makes the stub's `gh auth status` fail.
+#
+# Baseline fixtures: before `ateam pool init`, the sandbox repo gets one modified tracked
+# file (README.md) and one untracked file (notes/preexisting.txt), so the pool records them
+# as baseline-dirty and Frankie can exercise baseline exclusion without re-initialising.
 set -euo pipefail
 
 # Never inherit a live mission/project: the pool dir (/tmp/.ateam-pool/<mission>)
@@ -19,7 +28,9 @@ set -euo pipefail
 unset ATEAM_MISSION_ID ATEAM_PROJECT_ID
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-API_URL="${ATEAM_API_URL:-http://localhost:5567}"
+DEFAULT_API_URL="http://localhost:5567"
+API_URL="${ATEAM_API_URL:-$DEFAULT_API_URL}"
+API_URL="${API_URL%/}"
 SANDBOX="${SANDBOX:-${TMPDIR:-/tmp}/ateam-item-commits-sandbox}"
 PROJECT_ID="item-commits-sandbox"
 SANDBOX_REPO="$SANDBOX/repo"
@@ -32,16 +43,23 @@ log() { echo "[item-commits-sandbox] $*" >&2; }
 die() { echo "[item-commits-sandbox] ERROR: $*" >&2; exit 1; }
 
 # --- Preconditions: fail before touching anything -------------------------
+# Target checks run first, before any network call. The live :5566 API is refused
+# regardless of opt-in. Any other non-default URL needs SANDBOX_ALLOW_API_URL set to
+# that exact URL, so an inherited ATEAM_API_URL (for example the hosted API) is never
+# seeded by accident.
+case "$API_URL" in
+  *:5566|*:5566/*) die "refusing live API at ATEAM_API_URL=$API_URL (the sandbox uses the QA API on :5567)" ;;
+esac
+ALLOWED_API_URL="${SANDBOX_ALLOW_API_URL:-}"
+ALLOWED_API_URL="${ALLOWED_API_URL%/}"
+if [ "$API_URL" != "$DEFAULT_API_URL" ] && [ "$ALLOWED_API_URL" != "$API_URL" ]; then
+  die "refusing ATEAM_API_URL=$API_URL: it is not the default $DEFAULT_API_URL. This script seeds a project, a --force mission and items there. To use it, set SANDBOX_ALLOW_API_URL=$API_URL"
+fi
 for tool in curl git go jq; do
   command -v "$tool" >/dev/null 2>&1 || die "required tool not found: $tool"
 done
 curl -fsS --max-time 5 "$API_URL/api/projects" >/dev/null 2>&1 \
   || die "QA API unreachable at ATEAM_API_URL=$API_URL (start the kanban-viewer dev:qa script)"
-
-# Never seed the live API (the default :5566 instance).
-case "$API_URL" in
-  *:5566|*:5566/*) die "refusing live API at ATEAM_API_URL=$API_URL (the sandbox uses the QA API on :5567)" ;;
-esac
 
 # Only delete a directory this script created: an existing SANDBOX must hold our marker.
 # A nonexistent path is fine. This also covers trailing slashes, parents, relative
@@ -134,6 +152,15 @@ create_item "Sandbox counter" counter
 create_item "Sandbox parser" parser
 create_item "Sandbox formatter" formatter
 
+# Baseline-dirty fixtures: the pool snapshots the working tree at init, so make one
+# tracked file modified and one file untracked first. Neither collides with item
+# outputs (src/...), so item commits never include them.
+BASELINE_FIXTURES=(README.md notes/preexisting.txt)
+echo "# item-commits sandbox (locally modified before pool init)" >> "$SANDBOX_REPO/README.md"
+mkdir -p "$SANDBOX_REPO/notes"
+echo "untracked before pool init" > "$SANDBOX_REPO/notes/preexisting.txt"
+log "baseline-dirty fixtures (modified: README.md, untracked: notes/preexisting.txt)"
+
 (cd "$SANDBOX_REPO" && ateam pool init --single-use >/dev/null) || die "pool init failed"
 
 # Agents only start items in ready/testing, so move the fixture off briefings.
@@ -162,8 +189,10 @@ for i in "${!ITEM_IDS[@]}"; do
   log "${ITEM_IDS[$i]} ${FINAL_STAGES[$i]}"
 done
 
+log "baseline-dirty paths: ${BASELINE_FIXTURES[*]}"
 log "ready. gh calls are logged to $SANDBOX/gh-calls.log"
 cat <<OUT
+# baseline-dirty fixtures: ${BASELINE_FIXTURES[*]}
 export ATEAM_API_URL='$ATEAM_API_URL'
 export ATEAM_PROJECT_ID='$ATEAM_PROJECT_ID'
 export ATEAM_MISSION_ID='$ATEAM_MISSION_ID'

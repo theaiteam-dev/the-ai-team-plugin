@@ -208,3 +208,33 @@ func TestPoolDestroyWithoutAllStillSucceedsWhenDirMissing(t *testing.T) {
 		t.Fatalf("destroy on missing dir should be idempotent: %v\n%s", err, out)
 	}
 }
+
+// A lost baseline mid-mission: init keeps the pool usable but does not record
+// the current dirty files as a new baseline, and says how to restore it.
+func TestPoolInitLostBaselineWarnsAndDoesNotRecord(t *testing.T) {
+	missionID, poolDir := withTempPoolRoot(t, "lost-baseline")
+	root := chdirToRepo(t, "feat/x")
+	poolGit(t, root, "commit", "--allow-empty", "-m", "feat: item\n\nItem: WI-1\nMission: "+missionID)
+	if err := os.WriteFile(filepath.Join(root, "pending.txt"), []byte("p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runPoolCmd(t, "pool", "init", "--single-use")
+	if err != nil {
+		t.Fatalf("init must still exit 0 so the pool can resume: %v\n%s", err, out)
+	}
+	if _, statErr := os.Stat(filepath.Join(poolDir, "baseline-dirty")); !os.IsNotExist(statErr) {
+		t.Fatalf("baseline-dirty must not be recorded (stat err=%v)", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(poolDir, singleUseMarker)); statErr != nil {
+		t.Errorf("single-use marker should still be written: %v", statErr)
+	}
+	if b, _ := os.ReadFile(filepath.Join(poolDir, "branch")); strings.TrimSpace(string(b)) != "feat/x" {
+		t.Errorf("branch file = %q", b)
+	}
+	for _, want := range []string{"WARNING", filepath.Join(poolDir, "baseline-dirty"), "<git-hash>"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+}

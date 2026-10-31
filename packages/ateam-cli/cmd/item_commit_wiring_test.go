@@ -695,3 +695,46 @@ func TestWI335_ActivityPostFailureStillExitsZero(t *testing.T) {
 		t.Error("stderr marker must still print")
 	}
 }
+
+// The note appended to ITEM_COMMIT_FAILED depends on whether the commitSha
+// reached the board. Re-running commitItem fixes only the unrecorded case.
+func TestItemCommitNote_UnrecordedCommitSaysShaWasNotRecorded(t *testing.T) {
+	note := itemCommitNote(itemCommitReport{SHA: "abc123", Recorded: false, Paths: []string{"a.txt"}})
+	if !strings.Contains(note, "commit abc123 exists") || !strings.Contains(note, "commitSha was not recorded") {
+		t.Errorf("note = %q", note)
+	}
+	if strings.Contains(note, "git reset") {
+		t.Errorf("an unrecorded commit needs commitItem, not git reset: %q", note)
+	}
+}
+
+func TestItemCommitNote_RecordedCommitPointsAtGitReset(t *testing.T) {
+	note := itemCommitNote(itemCommitReport{SHA: "abc123", Recorded: true, Paths: []string{"a.txt", "dir/b c.txt"}})
+	if strings.Contains(note, "was not recorded") {
+		t.Errorf("the sha was recorded, note must not say otherwise: %q", note)
+	}
+	for _, want := range []string{"commit abc123 exists", "commitSha was recorded", "index refresh failed", "git reset -q -- a.txt 'dir/b c.txt'"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("note lacks %q: %q", want, note)
+		}
+	}
+}
+
+func TestItemCommitNote_NoShaMeansNoNote(t *testing.T) {
+	if note := itemCommitNote(itemCommitReport{Error: "branch mismatch"}); note != "" {
+		t.Errorf("note = %q, want empty", note)
+	}
+}
+
+func TestWI335_PatchFailureReportsRecordedFalse(t *testing.T) {
+	e := icSetup(t)
+	e.srv.patchFails = true
+	res := icAgentStop(t, e)
+	ic := res.itemCommit(t)
+	if rec, _ := ic["recorded"].(bool); rec {
+		t.Errorf("recorded must be false when the PATCH failed: %v", ic)
+	}
+	if !strings.Contains(res.stderr, "commitSha was not recorded") {
+		t.Errorf("stderr = %q", res.stderr)
+	}
+}

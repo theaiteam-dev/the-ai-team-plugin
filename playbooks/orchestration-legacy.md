@@ -452,11 +452,11 @@ ateam board getBoard --json
 
 ## Handling ITEM_COMMIT_FAILED
 
-Moving an item to `staged` commits its changes. Your own `ateam board-move moveItem --toStage staged` prints `ITEM_COMMIT_FAILED: <itemId>: <error>` on stderr and returns `data.itemCommit` = `{committed, sha, noChanges, error}` in the JSON. The move itself still succeeded and the exit code is unchanged, so check the output on every move to `staged`: `itemCommit.committed` false with `noChanges` false means the commit failed. A pipeline agent's ALERT carrying `ITEM_COMMIT_FAILED` means the same for a move the CLI made on its behalf.
+Moving an item to `staged` commits its changes. Your own `ateam board-move moveItem --toStage staged` prints `ITEM_COMMIT_FAILED: <itemId>: <error>` on stderr and returns `data.itemCommit` = `{committed, sha, recorded, noChanges, error}` in the JSON. The move itself still succeeded and the exit code is unchanged, so check the output on every move to `staged`: `itemCommit.committed` false with `noChanges` false means the commit failed. A pipeline agent's ALERT carrying `ITEM_COMMIT_FAILED` means the same for a move the CLI made on its behalf.
 
 Recovery:
 1. Leave the item in `staged`. Do not move it again.
-2. Fix the cause named in the error. A `branch mismatch` means `git checkout` the recorded branch (`cat /tmp/.ateam-pool/${ATEAM_MISSION_ID}/branch`). `no recorded mission branch` means re-run `ateam pool init`. If `itemCommit.sha` is set, the commit exists and only recording it failed, so step 3 recovers it.
+2. Fix the cause named in the error. A `branch mismatch` means `git checkout` the recorded branch (`cat /tmp/.ateam-pool/${ATEAM_MISSION_ID}/branch`). `no recorded mission branch` means re-run `ateam pool init`. `pre-mission baseline unavailable` means `baseline-dirty` is gone: do NOT fix it by re-running `pool init` (it will not record a new baseline once the mission has commits); restore `/tmp/.ateam-pool/${ATEAM_MISSION_ID}/baseline-dirty` by hand and stop for the operator if you cannot. If `itemCommit.sha` is set, the commit exists. With `itemCommit.recorded` false its SHA was not recorded, so step 3 recovers it. With `recorded` true the SHA is already on the item and the failure was refreshing the index: skip step 3 and run the `git reset -q -- <paths>` command the error gives.
 3. Run `ateam items-commit commitItem --itemId <id>`. It re-runs the commit, or finds the existing commit by its `Item: <id>` trailer and records that SHA.
 
 **Gate:** no item may be carried past the mission tail with a failed commit outstanding. Before dispatching Frankie, check every `staged` item (`ateam items listItems --json`): each must have a `commitSha`, or a work-log note saying no changes were committed (`no changes to commit`). Resolve any that has neither with the steps above first.
@@ -583,7 +583,7 @@ Plain `ateam pool destroy` keeps `branch` and `baseline-dirty` so a crash-recove
 
 When resuming an interrupted mission with `/ai-team:resume`:
 
-1. Run `ateam board getBoard --json` to read board state. Run `ateam pool init` with `ATEAM_MISSION_ID` exported; it is idempotent and keeps an existing `branch` and `baseline-dirty`, and records them if they are missing.
+1. Run `ateam board getBoard --json` to read board state. Run `ateam pool init` with `ATEAM_MISSION_ID` exported; it is idempotent and keeps an existing `branch` and `baseline-dirty`, and records `branch` if it is missing. If `baseline-dirty` is missing and the mission already has commits, init warns on stderr and does not record it. Restore that file by hand before any item commits (see `docs/ORCHESTRATION.md`, "Pre-existing dirty files").
 2. Initialize `active_tasks = {}` (fresh start - old task IDs are invalid)
 3. For each item in an active stage, clear stale assignment and re-dispatch:
 

@@ -51,7 +51,7 @@ describe('WI-343 item-commits QA sandbox', () => {
         cwd: REPO_ROOT,
         encoding: 'utf8',
         timeout: 240_000,
-        env: { ...process.env, HOME: home, TMPDIR: home, ATEAM_API_URL: deadUrl },
+        env: { ...process.env, HOME: home, TMPDIR: home, ATEAM_API_URL: deadUrl, SANDBOX_ALLOW_API_URL: deadUrl },
       });
       expect(res.status).not.toBe(0);
       expect(`${res.stdout}${res.stderr}`).toContain(deadUrl);
@@ -76,6 +76,9 @@ arg() { local want="$1"; shift; while [ $# -gt 0 ]; do [ "$1" = "$want" ] && { e
 item_json() { printf '{"id":"%s","title":"%s","stageId":"%s","stage":"%s"}' "$1" "$(cat "$STATE/$1.title")" "$(cat "$STATE/$1.stage")" "$(cat "$STATE/$1.stage")"; }
 case " $* " in
   *" getProject "*) exit 1 ;;
+  *" pool init "*)
+    git -C "$PWD" status --porcelain=v1 --untracked-files=all > "$ROOT/pool-init-status.log" 2>/dev/null
+    exit 0 ;;
   *" createMission "*)
     case "$*" in *--prdPath*) ;; *) echo 'required flag(s) "prdPath" not set' >&2; exit 1 ;; esac
     rm -rf "$STATE"; mkdir -p "$STATE"
@@ -156,6 +159,7 @@ exit 0
     const env = { ...process.env, ...extraEnv };
     delete env.ATEAM_MISSION_ID;
     delete env.ATEAM_PROJECT_ID;
+    if (!('SANDBOX_ALLOW_API_URL' in extraEnv)) delete env.SANDBOX_ALLOW_API_URL;
     if (!('ATEAM_API_URL' in extraEnv)) delete env.ATEAM_API_URL;
     env.PATH = `${bin}:${process.env.PATH}`;
     const res = spawnSync('bash', [SCRIPT], {
@@ -199,6 +203,61 @@ exit 0
           expect(calls.every((c) => c.startsWith('http://localhost:5567|'))).toBe(true);
           expect(res.stdout).toContain("ATEAM_API_URL='http://localhost:5567'");
         } else {
+          expect(calls).toEqual([]);
+        }
+      } finally { cleanup(); }
+    });
+
+    // ---- Non-default API URL needs an exact opt-in ----
+    const OTHER_URL = 'http://qa.example.invalid:8080';
+    const seedingCalls = (calls) => calls.filter((c) => /createProject|createMission|createItem|moveItem|pool/.test(c));
+
+    it('refuses a reachable non-default API URL without opt-in, names the URL and the opt-in, and seeds nothing', () => {
+      const r = fresh();
+      try {
+        for (const url of [OTHER_URL, `${OTHER_URL}/`]) {
+          const { res, calls } = runSandbox(r, { SANDBOX: join(r, 'sbx'), ATEAM_API_URL: url });
+          expect(res.status).not.toBe(0);
+          expect(res.stderr).toContain(OTHER_URL);
+          expect(res.stderr).toContain('SANDBOX_ALLOW_API_URL');
+          expect(seedingCalls(calls)).toEqual([]);
+          expect(calls).toEqual([]);
+        }
+        expect(existsSync(join(r, 'sbx'))).toBe(false);
+        // The refusal comes before the reachability probe.
+        expect(existsSync(join(r, 'curl.log'))).toBe(false);
+      } finally { cleanup(); }
+    });
+
+    it('does not accept a stale or mismatched opt-in for a different URL', () => {
+      const r = fresh();
+      try {
+        for (const allow of ['1', 'http://other.example.invalid:9']) {
+          const { res, calls } = runSandbox(r, { SANDBOX: join(r, 'sbx'), ATEAM_API_URL: OTHER_URL, SANDBOX_ALLOW_API_URL: allow });
+          expect(res.status, `allow=${allow}`).not.toBe(0);
+          expect(calls).toEqual([]);
+        }
+      } finally { cleanup(); }
+    });
+
+    it('proceeds against a non-default API URL when SANDBOX_ALLOW_API_URL matches it exactly', () => {
+      const r = fresh();
+      try {
+        const { res, calls } = runSandbox(r, { SANDBOX: join(r, 'sbx'), ATEAM_API_URL: OTHER_URL, SANDBOX_ALLOW_API_URL: OTHER_URL });
+        expect(res.status, res.stderr).toBe(0);
+        expect(calls.length).toBeGreaterThan(0);
+        expect(calls.every((c) => c.startsWith(`${OTHER_URL}|`))).toBe(true);
+        expect(res.stdout).toContain(`ATEAM_API_URL='${OTHER_URL}'`);
+      } finally { cleanup(); }
+    });
+
+    it('refuses the live :5566 API even when the opt-in names it', () => {
+      const r = fresh();
+      try {
+        for (const live of ['http://localhost:5566', 'http://localhost:5566/']) {
+          const { res, calls } = runSandbox(r, { SANDBOX: join(r, 'sbx'), ATEAM_API_URL: live, SANDBOX_ALLOW_API_URL: live });
+          expect(res.status).not.toBe(0);
+          expect(res.stderr).toContain('5566');
           expect(calls).toEqual([]);
         }
       } finally { cleanup(); }
@@ -367,6 +426,28 @@ exit 0
       spawnSync('git', ['-C', repo, 'status', '--porcelain=v1', '--untracked-files=all'], { encoding: 'utf8' })
         .stdout.split('\n').filter(Boolean).map((l) => l.slice(3));
 
+    const BASELINE_FIXTURES = ['README.md', 'notes/preexisting.txt'];
+
+    it('makes one tracked file modified and one untracked file present when pool init runs, and keeps them out of item outputs', () => {
+      const r = fresh();
+      try {
+        const sbx = join(r, 'sbx');
+        const { res } = runSandbox(r, { SANDBOX: sbx });
+        expect(res.status, res.stderr).toBe(0);
+        const atInit = lines(r, 'pool-init-status.log');
+        expect(atInit).toContain(' M README.md');
+        expect(atInit).toContain('?? notes/preexisting.txt');
+        // Nothing else is dirty at init, and the fixtures stay uncommitted afterwards.
+        expect(atInit.map((l) => l.slice(3)).filter((p) => !BASELINE_FIXTURES.includes(p) && p !== '.item-commits-sandbox')).toEqual([]);
+        const dirtyNow = statusPaths(join(sbx, 'repo'));
+        for (const p of BASELINE_FIXTURES) expect(dirtyNow).toContain(p);
+        const outputs = Object.values(readOutputs(r)).flatMap((o) => [o.test, o.impl]);
+        for (const p of BASELINE_FIXTURES) expect(outputs).not.toContain(p);
+        expect(res.stderr).toContain('README.md');
+        expect(res.stderr).toContain('notes/preexisting.txt');
+      } finally { cleanup(); }
+    });
+
     it('declares every item outputs.test and outputs.impl as repo-relative paths, unique across items', () => {
       const r = fresh();
       try {
@@ -410,7 +491,10 @@ exit 0
         expect(readFileSync(written, 'utf8').length).toBeGreaterThan(0);
         // The declared path is the one git reports as changed, so it is not left as a stray file.
         expect(statusPaths(join(sbx, 'repo'))).toContain(impl);
-        expect(statusPaths(join(sbx, 'repo')).filter((p) => p !== impl && p !== '.item-commits-sandbox')).toEqual([]);
+        // Besides the staged output and the marker, only the two baseline-dirty fixtures may be dirty.
+        expect(statusPaths(join(sbx, 'repo')).filter(
+          (p) => p !== impl && p !== '.item-commits-sandbox' && !BASELINE_FIXTURES.includes(p),
+        )).toEqual([]);
       } finally { cleanup(); }
     });
 

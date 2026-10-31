@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -136,27 +137,15 @@ func CheckBranch(poolDir, dir string) error {
 	return nil
 }
 
-// dirtyPaths lists repo-relative paths reported by git status, one per entry.
+// dirtyPaths lists repo-relative paths reported by git status. A rename or
+// copy yields both its new and original path, the same set Run builds for an
+// item's changed paths, so the baseline and the changed set always agree.
 func dirtyPaths(root string) ([]string, error) {
 	out, err := runGit(root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
 		return nil, err
 	}
-	entries := strings.Split(string(out), "\x00")
-	var paths []string
-	for i := 0; i < len(entries); i++ {
-		entry := entries[i]
-		if len(entry) < 4 {
-			continue
-		}
-		status, path := entry[:2], entry[3:]
-		paths = append(paths, path)
-		// Renames and copies are followed by the original path as its own entry.
-		if status[0] == 'R' || status[0] == 'C' || status[1] == 'R' || status[1] == 'C' {
-			i++
-		}
-	}
-	return paths, nil
+	return ParsePorcelain(out), nil
 }
 
 // gitOutputWithStdin runs git in dir feeding stdin and returns trimmed stdout.
@@ -271,6 +260,70 @@ func RecordBaselineDirty(poolDir, dir string) error {
 		return fmt.Errorf("mkdir %s: %w", poolDir, err)
 	}
 	return writeIfAbsent(path, []byte(b.String()))
+}
+
+// BaselineLostError reports that baseline-dirty is missing although the
+// mission already has commits on the current branch. The files dirty now
+// include mission work, so recording them would exclude that work from item
+// commits and from Tawnia's final commit.
+type BaselineLostError struct {
+	MissionID string
+	Path      string
+}
+
+func (e *BaselineLostError) Error() string {
+	return fmt.Sprintf("baseline-dirty is missing but mission %s already has commits on this branch, so the current dirty files are not the pre-mission set and were not recorded. "+
+		"Restore it by hand: write %s with one \"<git-hash>\\t<path>\" line per file that was dirty before the mission started "+
+		"(use '-' as the hash for a file that was deleted); an empty file means none were. Item commits refuse to run until it exists",
+		e.MissionID, e.Path)
+}
+
+// hasMissionCommit reports whether HEAD's history holds a commit with a
+// "Mission: <missionID>" trailer. A repo with no commits has none.
+func hasMissionCommit(root, missionID string) (bool, error) {
+	if _, err := runGit(root, "rev-parse", "--verify", "--quiet", "HEAD"); err != nil {
+		return false, nil
+	}
+	out, err := runGit(root, "log", "-E", "--grep=^Mission: "+regexp.QuoteMeta(missionID)+"$",
+		"--format=%(trailers:key=Mission,valueonly,separator=%x1f)%x1e", "HEAD")
+	if err != nil {
+		return false, err
+	}
+	for _, record := range strings.Split(string(out), "\x1e") {
+		for _, value := range strings.Split(record, "\x1f") {
+			if strings.TrimSpace(value) == missionID {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// RecordBaselineForMission is RecordBaselineDirty with a guard for a lost
+// baseline. When the file is missing and the current branch already carries a
+// commit for missionID, nothing is written and a *BaselineLostError comes
+// back. With no mission id the guard is skipped.
+func RecordBaselineForMission(poolDir, dir, missionID string) error {
+	path := filepath.Join(poolDir, baselineDirtyFileName)
+	if found, err := exists(path); err != nil {
+		return fmt.Errorf("stat %s: %w", path, err)
+	} else if found {
+		return nil
+	}
+	if missionID != "" {
+		root, err := RepoRoot(dir)
+		if err != nil {
+			return err
+		}
+		started, err := hasMissionCommit(root, missionID)
+		if err != nil {
+			return err
+		}
+		if started {
+			return &BaselineLostError{MissionID: missionID, Path: path}
+		}
+	}
+	return RecordBaselineDirty(poolDir, dir)
 }
 
 // ReadBaselineDirty returns path -> hash from <poolDir>/baseline-dirty. A

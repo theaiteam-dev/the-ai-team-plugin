@@ -615,3 +615,93 @@ func TestRecordBaselineDirtyNestedRepoIsNotMarkedDeleted(t *testing.T) {
 		}
 	}
 }
+
+// commitWithTrailer adds an empty commit whose message ends in a Mission trailer.
+func commitWithTrailer(t *testing.T, root, mission string) {
+	t.Helper()
+	git(t, root, "commit", "--allow-empty", "-m", "feat: item work\n\nItem: WI-1\nMission: "+mission)
+}
+
+// A wiped pool dir mid-mission must not turn the current dirty files, which
+// include mission work, into a fresh baseline.
+func TestRecordBaselineForMissionRefusesWhenMissionCommitExists(t *testing.T) {
+	root := newRepo(t, "feat/x")
+	commitWithTrailer(t, root, "M-X")
+	write(t, filepath.Join(root, "pending-mission-work.txt"), "w\n")
+	pool := t.TempDir()
+
+	err := RecordBaselineForMission(pool, root, "M-X")
+
+	var lost *BaselineLostError
+	if !errors.As(err, &lost) {
+		t.Fatalf("want *BaselineLostError, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(pool, "baseline-dirty")); !os.IsNotExist(statErr) {
+		t.Fatalf("baseline-dirty must not be created (stat err=%v)", statErr)
+	}
+	for _, want := range []string{filepath.Join(pool, "baseline-dirty"), "<git-hash>", "M-X"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("message lacks %q: %v", want, err)
+		}
+	}
+}
+
+func TestRecordBaselineForMissionRecordsOnFreshStart(t *testing.T) {
+	root := newRepo(t, "feat/x")
+	commitWithTrailer(t, root, "M-OTHER")
+	write(t, filepath.Join(root, "pre.txt"), "p\n")
+	pool := t.TempDir()
+
+	if err := RecordBaselineForMission(pool, root, "M-X"); err != nil {
+		t.Fatalf("a different mission's trailer must not block recording: %v", err)
+	}
+	if got := parseBaseline(t, readFile(t, filepath.Join(pool, "baseline-dirty"))); len(got) != 1 || got["pre.txt"] == "" {
+		t.Fatalf("baseline = %v, want pre.txt", got)
+	}
+}
+
+// Only a real trailer counts: a body line that looks like one does not.
+func TestRecordBaselineForMissionIgnoresBodyLineThatIsNotATrailer(t *testing.T) {
+	root := newRepo(t, "feat/x")
+	git(t, root, "commit", "--allow-empty", "-m", "docs: note\n\nMission: M-X\n\nThis paragraph follows, so the line above is prose.")
+	pool := t.TempDir()
+
+	if err := RecordBaselineForMission(pool, root, "M-X"); err != nil {
+		t.Fatalf("prose must not block recording: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(pool, "baseline-dirty")); err != nil {
+		t.Fatalf("baseline-dirty should exist: %v", err)
+	}
+}
+
+// The mission id is matched exactly, not as a prefix or a regex.
+func TestRecordBaselineForMissionMatchesIdExactly(t *testing.T) {
+	root := newRepo(t, "feat/x")
+	commitWithTrailer(t, root, "M-X10")
+	pool := t.TempDir()
+	if err := RecordBaselineForMission(pool, root, "M-X1"); err != nil {
+		t.Fatalf("M-X10 must not count as M-X1: %v", err)
+	}
+}
+
+func TestRecordBaselineForMissionKeepsExistingFileEvenWithMissionCommits(t *testing.T) {
+	root := newRepo(t, "feat/x")
+	pool := t.TempDir()
+	write(t, filepath.Join(pool, "baseline-dirty"), "")
+	commitWithTrailer(t, root, "M-X")
+	if err := RecordBaselineForMission(pool, root, "M-X"); err != nil {
+		t.Fatalf("an existing baseline is fine: %v", err)
+	}
+}
+
+func TestRecordBaselineForMissionOnRepoWithNoCommitsRecords(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "init", "-b", "main")
+	pool := t.TempDir()
+	if err := RecordBaselineForMission(pool, root, "M-X"); err != nil {
+		t.Fatalf("no commits means nothing to detect: %v", err)
+	}
+}

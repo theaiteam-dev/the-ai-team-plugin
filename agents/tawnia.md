@@ -128,10 +128,12 @@ At this point, all the code is complete, reviewed, and verified. Your job is to 
    - if Frankie ran, his evidence bundle at `.qa-evidence/<missionId>/` and any NEW files he created under `specs/<prd-slug>/` (only files he actually created, never a file you can't confirm is his);
    - leftover unattributed paths: modified files that no item commit took and that are NOT in the mission's `baseline-dirty` record (`/tmp/.ateam-pool/<missionId>/baseline-dirty`, one `<git-hash>\t<path>` line per file dirty before the mission started). List each such leftover path by name in the commit body.
    - **Never sweep pre-existing dirty state into the commit.** `git add -A`, `git add .`, or any "bundle everything" staging also catches files that were dirty before the mission started (an operator's local edits, a stray `.gitignore` tweak, an in-progress PRD draft). Stage by explicit path only.
+   - **Preserve the operator's index.** An explicit `git add <paths>` does not unstage entries the operator staged before the mission, and a plain `git commit` would commit them. Before committing, run `git diff --cached --name-only`. It lists everything already staged. Do not include any of those paths unless it is your own doc edit, Frankie's evidence or a leftover. Stage new (untracked) files by name with `git add -- <paths>`, then commit with `git commit -m ... -- <the same path list>`. A commit with explicit paths (git's `--only` behaviour) commits exactly those paths and leaves other staged entries staged and uncommitted.
    - Every path in `baseline-dirty` is excluded from staging, no exceptions, even if it falls under Frankie's evidence or specs paths. If Hannibal's dispatch prompt included a mission-start `git status` snapshot, exclude those paths too.
    - If you find a file you can't attribute to your docs, Frankie's declared output, or the leftover rule above, leave it unstaged and call it out in your report to Hannibal.
    - **Report changed baseline files.** Before running `ateam pool destroy --all`, compare each `baseline-dirty` path's current hash (`git hash-object -- <path>`; a missing file counts as changed) with the recorded one. List every path whose hash differs, in both the commit body and your DONE message, under the heading "pre-existing files changed by the mission, not committed". Do not stage them.
    - If Frankie ran: link `.qa-evidence/<missionId>/report.md` from the commit message body and reproduce his pass/fail checklist inline.
+   - **Check the branch before committing.** Compare `git symbolic-ref --short HEAD` with `cat /tmp/.ateam-pool/<missionId>/branch`. `ateam missions-pr openDraft` pushes the recorded mission branch, so a commit on any other branch never reaches the PR. If they differ, do not commit. Report the mismatch to Hannibal and stop. Do not check out branches yourself, since that could disturb the operator's tree.
    - Create the commit with the format below, ending with the `Mission:` and `PRD:` trailers. The `PRD:` value is the PRD slug: the basename of the mission `prdPath` without its extension (`prd/ready/item-commits.md` gives `PRD: item-commits`), the same value the item commits and the PR description carry.
 
 7. **Open the draft pull request**
@@ -140,7 +142,7 @@ At this point, all the code is complete, reviewed, and verified. Your job is to 
    ateam missions-pr describe     # writes .qa-evidence/<missionId>/pr-description.md, prints its path
    ateam missions-pr openDraft    # pushes the mission branch and opens a DRAFT PR
    ```
-   `openDraft` prints the PR URL on success. When it cannot open the PR (`pullRequest.open` is false, no remote, `gh` missing or unauthenticated) it prints the description file path, the exact `gh pr create` command and the reason, then exits 0. Relay whichever it printed (the PR URL, or the file path plus the gh command) in your DONE message. If a PR already exists for the branch, relay its URL. Never mark the PR ready for review and never merge it: the operator does both.
+   `openDraft` prints the PR URL on success. When it cannot open the PR (`pullRequest.open` is false, no remote, `gh` missing or unauthenticated) it prints the description file path, the exact `gh pr create` command and the reason, then exits 0. Relay whichever it printed (the PR URL, or the file path plus the gh command) in your DONE message. If an open PR already exists for the branch, relay its URL. Never mark the PR ready for review and never merge it: the operator does both.
 
 8. **Clean up the instance pool**
    Remove the mission's pool directory via the CLI. It resolves the path from `ATEAM_MISSION_ID` and refuses to run if unset. Run it last, after the baseline comparison in Step 6 and after Step 7, because `--all` also deletes the recorded branch and baseline:
@@ -284,11 +286,20 @@ PRD: <prd-slug>
 
 **To create the commit:**
 
-Stage each path by name (docs you edited, Frankie's evidence and new specs, listed leftovers), never `-A` or `.`:
+First confirm the checkout is the mission branch. If the two values differ, do not commit and report the mismatch to Hannibal:
 
 ```bash
-git add CHANGELOG.md README.md docs/<new-or-updated-doc>.md \
-        .qa-evidence/<missionId>/ specs/<prd-slug>/<new-file>
+[ "$(git symbolic-ref --short HEAD)" = "$(cat /tmp/.ateam-pool/<missionId>/branch)" ] || echo "BRANCH MISMATCH"
+git diff --cached --name-only   # entries the operator already staged: never include these unless they are yours
+```
+
+Build the path list by name (docs you edited, Frankie's evidence and new specs, listed leftovers), never `-A`, `.`, or a directory. Expand the evidence directory into individual files and drop every `baseline-dirty` path:
+
+```bash
+mapfile -t EVIDENCE < <(git ls-files --others --modified --exclude-standard -- .qa-evidence/<missionId>/ \
+  | grep -vxF -f <(cut -f2 /tmp/.ateam-pool/<missionId>/baseline-dirty))
+PATHS=(CHANGELOG.md README.md docs/<new-or-updated-doc>.md "${EVIDENCE[@]}" specs/<prd-slug>/<new-file>)
+git add -- "${PATHS[@]}"
 ```
 
 Then commit, using the real item titles pulled from `ateam items getItem`/`listItems` — not paraphrased or remembered ones:
@@ -317,8 +328,10 @@ Co-authored-by: Tawnia <ai@team.local>
 Mission: <missionId>
 PRD: <prd-slug>
 EOF
-)"
+)" -- "${PATHS[@]}"
 ```
+
+The trailing `-- "${PATHS[@]}"` is required. It limits the commit to your paths and leaves anything the operator staged still staged.
 
 **Capture the commit hash** for reporting:
 ```bash
@@ -335,7 +348,7 @@ git rev-parse --short HEAD
 - Do NOT modify work item files (mission is complete)
 - Do NOT re-stage item outputs (already committed per item)
 - Do NOT mark the draft PR ready or merge it
-- Do NOT `git add -A` or otherwise blanket-stage the working tree — stage by explicit path only: your docs, Frankie's evidence bundle and new specs, and the listed leftovers
+- Do NOT `git add -A`, `git add <directory>`, or otherwise blanket-stage the working tree, and do NOT run `git commit` without `-- <paths>` — stage by explicit file path only: your docs, Frankie's evidence bundle and new specs, and the listed leftovers
 - Do NOT commit any path in `baseline-dirty`, or a modified file that is neither your doc edit, Frankie's evidence/new specs, nor a leftover no item commit took. Leave those unstaged and report them instead
 - Do NOT write commit messages, CHANGELOG entries, or item titles from memory or inference — pull them from `ateam items getItem`/`listItems` first
 

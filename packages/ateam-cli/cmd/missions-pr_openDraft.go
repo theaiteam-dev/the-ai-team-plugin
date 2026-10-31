@@ -47,7 +47,8 @@ draft pull request whose body is .qa-evidence/<missionId>/pr-description.md
 When pullRequest.open is false in ateam.config.json, the repo has no remote, or
 gh is missing or not authenticated, nothing is pushed or opened. The command
 prints the description file path, the exact gh pr create command, and the
-reason, then exits 0. An existing PR for the branch is reported, not duplicated.
+reason, then exits 0. An open PR for the branch is reported, not duplicated.
+A closed or merged PR is ignored and a new draft is opened.
 The command never marks a PR ready and never merges one.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -196,13 +197,18 @@ func pickRemote(root string) (string, error) {
 	return "", nil
 }
 
-// existingPRURL returns the URL of an open PR for branch, or "".
+// existingPRURL returns the URL of an open PR for branch, or "". It lists with
+// --state open because `gh pr view <branch>` also returns closed and merged PRs.
 func existingPRURL(root, branch string) string {
-	raw, err := openDraftRun(root, "gh", "pr", "view", branch, "--json", "url", "-q", ".url")
+	raw, err := openDraftRun(root, "gh", "pr", "list", "--head", branch, "--state", "open", "--json", "url", "-q", ".[0].url // empty")
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(raw))
+	url := strings.TrimSpace(string(raw))
+	if url == "null" {
+		return ""
+	}
+	return url
 }
 
 func printManualPRCommand(out io.Writer, descPath, title, branch, reason string) error {

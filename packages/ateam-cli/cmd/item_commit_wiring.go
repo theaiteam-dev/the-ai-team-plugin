@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"ateam/internal/client"
 	"ateam/internal/itemcommit"
@@ -16,7 +17,11 @@ type itemCommitReport struct {
 	Committed bool   `json:"committed"`
 	SHA       string `json:"sha,omitempty"`
 	NoChanges bool   `json:"noChanges,omitempty"`
-	Error     string `json:"error,omitempty"`
+	// Recorded is true when the commitSha reached the board. A report with a
+	// sha and Recorded false means the commit exists but was not recorded.
+	Recorded bool     `json:"recorded,omitempty"`
+	Error    string   `json:"error,omitempty"`
+	Paths    []string `json:"-"` // committed paths, used only for the recovery note
 }
 
 // commitStagedItem runs itemcommit.Run exactly once for an item the API has
@@ -30,17 +35,40 @@ func commitStagedItem(c *client.Client, itemID, agent string) itemCommitReport {
 	}
 	res, err := itemcommit.Run(itemcommit.Options{Client: c, ItemID: itemID, Agent: agent, Dir: dir})
 	if err != nil {
-		return reportItemCommitFailure(c, itemID, agent, itemCommitReport{SHA: res.SHA, Error: err.Error()})
+		return reportItemCommitFailure(c, itemID, agent, itemCommitReport{SHA: res.SHA, Recorded: res.Recorded, Paths: res.Paths, Error: err.Error()})
 	}
-	return itemCommitReport{Committed: res.SHA != "", SHA: res.SHA, NoChanges: res.NoChanges}
+	return itemCommitReport{Committed: res.SHA != "", SHA: res.SHA, Recorded: res.Recorded, NoChanges: res.NoChanges}
+}
+
+// itemCommitNote says what state a failed commit left behind. It is empty when
+// no commit was made. When the commitSha was recorded, the failure was the index
+// refresh, which only `git reset` fixes; otherwise commitItem records the sha.
+func itemCommitNote(report itemCommitReport) string {
+	if report.SHA == "" {
+		return ""
+	}
+	if report.Recorded {
+		return fmt.Sprintf(" (commit %s exists and its commitSha was recorded; the index refresh failed, run `git reset -q -- %s`)", report.SHA, shellJoin(report.Paths))
+	}
+	return fmt.Sprintf(" (commit %s exists; its commitSha was not recorded)", report.SHA)
+}
+
+// shellJoin joins args for display, single-quoting any that a shell would split or expand.
+func shellJoin(args []string) string {
+	parts := make([]string, len(args))
+	for i, a := range args {
+		if a != "" && strings.Trim(a, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._/-+=,:@%") == "" {
+			parts[i] = a
+		} else {
+			parts[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func reportItemCommitFailure(c *client.Client, itemID, agent string, report itemCommitReport) itemCommitReport {
 	report.Committed = false
-	shaNote := ""
-	if report.SHA != "" {
-		shaNote = fmt.Sprintf(" (commit %s exists; its commitSha was not recorded)", report.SHA)
-	}
+	shaNote := itemCommitNote(report)
 	fmt.Fprintf(os.Stderr, "\nITEM_COMMIT_FAILED: %s: %s%s — send ALERT to Hannibal; the item stays in staged.\n", itemID, report.Error, shaNote)
 
 	if agent == "" {

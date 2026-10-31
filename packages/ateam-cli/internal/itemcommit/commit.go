@@ -18,10 +18,13 @@ import (
 const (
 	defaultPoolRoot = "/tmp/.ateam-pool"
 	lockFileName    = "commit.lock"
-	indexLockWait   = 10 * time.Second
 	indexLockPoll   = 50 * time.Millisecond
 	noChangesNote   = "no changes to commit: no attributed paths for this item"
 )
+
+// indexLockWait is how long resetIndexPaths retries a held index.lock. It is a
+// variable so tests can shorten it.
+var indexLockWait = 10 * time.Second
 
 // Options configures one item commit.
 type Options struct {
@@ -38,6 +41,7 @@ type CommitResult struct {
 	SHA       string   // new HEAD SHA; empty when nothing was committed
 	NoChanges bool     // attributed path set was empty
 	Paths     []string // committed paths
+	Recorded  bool     // the commitSha PATCH succeeded; false when SHA is set means it did not
 }
 
 type apiItem struct {
@@ -136,6 +140,7 @@ func Run(opts Options) (CommitResult, error) {
 	if _, err := opts.Client.Do("PATCH", "/api/items/{id}", map[string]string{"id": opts.ItemID}, nil, map[string]any{"commitSha": sha}); err != nil {
 		return res, fmt.Errorf("committed %s but recording commitSha failed: %w", sha, err)
 	}
+	res.Recorded = true
 	if resetErr != nil {
 		return res, fmt.Errorf("committed %s but refreshing the index failed: %w", sha, resetErr)
 	}
