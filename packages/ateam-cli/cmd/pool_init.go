@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+
+	"ateam/internal/itemcommit"
 )
 
 var poolInitSingleUse bool
@@ -16,6 +18,11 @@ var poolInitCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Create the local pool directory for the current mission",
 	Long: `Creates /tmp/.ateam-pool/$ATEAM_MISSION_ID/ if it doesn't exist.
+
+Also records the current git branch in <poolDir>/branch and the paths already
+dirty in <poolDir>/baseline-dirty. Both files are written once and never
+overwritten, so re-running init (resume recovery) keeps the original values.
+Init fails on a detached HEAD.
 
 Idempotent — running twice is a no-op success. Use this at mission start
 (Hannibal) or during resume recovery to make sure the pool dir exists before
@@ -61,8 +68,17 @@ mode after the call. "lanes" is present only when a lane count is configured.`,
 			return fmt.Errorf("stat pool dir %s: %w", poolDir, err)
 		}
 
-		if err := os.MkdirAll(poolDir, 0755); err != nil {
-			return fmt.Errorf("mkdir pool dir %s: %w", poolDir, err)
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("get working directory: %w", err)
+		}
+		// Resolve the branch before creating anything so a detached HEAD
+		// fails init without side effects.
+		if err := itemcommit.RecordBranch(poolDir, cwd); err != nil {
+			return fmt.Errorf("record mission branch: %w", err)
+		}
+		if err := itemcommit.RecordBaselineDirty(poolDir, cwd); err != nil {
+			return fmt.Errorf("record baseline of dirty files: %w", err)
 		}
 		if poolInitSingleUse {
 			marker := filepath.Join(poolDir, singleUseMarker)

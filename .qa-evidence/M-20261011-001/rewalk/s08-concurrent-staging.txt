@@ -1,0 +1,39 @@
+# DoD 8: amy-4 (WI-004) and amy-5 (WI-005) agentStop launched together with & and wait; both started 19:52:36.06, both done by 19:52:36.54
+--- WI-004 agentStop output:
+{"data":{"agent":"amy-4","itemCommit":{"committed":true,"sha":"3e877bded8d4698186030b0662b941f04d2cbe66"},"itemId":"WI-004","nextStage":"staged","poolMode":"single-use","replenish":{"agentType":"amy","busy":0,"count":0,"demand":0,"idle":0,"parked":0,"wipLimit":3},"retire":[{"instance":"amy-4"},{"instance":"ba-4"},{"instance":"lynch-4"},{"instance":"murdock-4"}],"workLogEntry":{"action":"completed","agent":"amy-4","id":30,"summary":"VERIFIED - parser","timestamp":"2026-10-31T19:52:36.095Z"}},"success":true}
+POOL_RETIRE: amy-4,ba-4,lynch-4,murdock-4 — the item is out of the pipeline; the orchestrator shuts these instances down.
+--- WI-005 agentStop output:
+{"data":{"agent":"amy-5","itemCommit":{"committed":true,"sha":"9c807c050b7de5b6d7794f0b100e1ed748746b3c"},"itemId":"WI-005","missionComplete":true,"nextStage":"staged","poolMode":"single-use","replenish":{"agentType":"amy","busy":0,"count":0,"demand":0,"idle":0,"parked":0,"wipLimit":3},"retire":[{"instance":"amy-5"},{"instance":"ba-5"},{"instance":"lynch-5"},{"instance":"murdock-5"}],"workLogEntry":{"action":"completed","agent":"amy-5","id":31,"summary":"VERIFIED - formatter","timestamp":"2026-10-31T19:52:36.158Z"}},"success":true}
+POOL_RETIRE: amy-5,ba-5,lynch-5,murdock-5 — the item is out of the pipeline; the orchestrator shuts these instances down.
+$ git log --format="--- %h %s%n%b" -2 --stat
+--- 9c807c0 feat: Sandbox formatter
+Item: WI-005
+Mission: M-20261031-001
+PRD: item-commits
+Lanes: murdock-5 ba-5 lynch-5 amy-5
+
+
+ src/__tests__/formatter.test.js | 1 +
+ src/formatter.js                | 1 +
+ 2 files changed, 2 insertions(+)
+--- 3e877bd feat: Sandbox parser
+Item: WI-004
+Mission: M-20261031-001
+PRD: item-commits
+Lanes: murdock-4 ba-4 lynch-4 amy-4
+
+
+ src/__tests__/parser.test.js | 1 +
+ src/parser.js                | 1 +
+ 2 files changed, 2 insertions(+)
+$ ls .git/index.lock
+ls: cannot access '.git/index.lock': No such file or directory
+$ git status --short
+ M README.md
+?? notes/
+$ board SHAs
+WI-001 staged ad8742952d5d21491110d3fdb36cb737eb8bf417
+WI-002 staged 4fad943f797e7821df7a62573f81220865318147
+WI-003 staged 0430a2372889f44917d63ff14bb394e4bbebc441
+WI-004 staged 3e877bded8d4698186030b0662b941f04d2cbe66
+WI-005 staged 9c807c050b7de5b6d7794f0b100e1ed748746b3c

@@ -34,6 +34,7 @@ export interface DbItem {
   severity?: string | null;
   attributedAgent?: string | null;
   fingerprint?: string | null;
+  commitSha?: string | null;
 }
 
 /**
@@ -100,6 +101,7 @@ export function transformItemToResponse(item: DbItem): Item {
     ...(item.severity && { severity: item.severity }),
     ...(item.attributedAgent && { attributedAgent: item.attributedAgent }),
     ...(item.fingerprint && { fingerprint: item.fingerprint }),
+    commitSha: item.commitSha ?? null,
   };
 }
 
@@ -130,6 +132,7 @@ export function transformItemWithRelationsToResponse(
     ...(item.severity && { severity: item.severity }),
     ...(item.attributedAgent && { attributedAgent: item.attributedAgent }),
     ...(item.fingerprint && { fingerprint: item.fingerprint }),
+    commitSha: item.commitSha ?? null,
     dependencies: (item.dependsOn ?? []).map((d) => d.dependsOnId),
     workLogs: (item.workLogs ?? []).map((log): WorkLogEntry => ({
       id: log.id,

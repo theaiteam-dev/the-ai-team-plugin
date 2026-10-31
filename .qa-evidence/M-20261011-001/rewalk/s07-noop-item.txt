@@ -1,0 +1,46 @@
+$ ateam agents-start agentStart --itemId WI-002 --agent amy-1
+|         | test:src/__tests__/farewell.test.js] priority:medium rejectionCount:0 stageId:probing title:Sandbox farewell            |
+|         | type:feature updatedAt:2026-10-31T19:44:15.213Z workLogs:[]] itemId:WI-002]                                             |
+| success | true                                                                                                                    |
++---------+-------------------------------------------------------------------------------------------------------------------------+
+$ ateam --json agents-stop agentStop --itemId WI-002 --agent amy-1 --outcome completed --summary "VERIFIED - sandbox item"
+{"data":{"agent":"amy-1","itemCommit":{"committed":false,"noChanges":true},"itemId":"WI-002","nextStage":"staged","poolMode":"single-use","replenish":{"agentType":"amy","busy":0,"count":3,"demand":3,"idle":0,"parked":0,"wipLimit":3},"retire":[{"instance":"amy-1"}],"workLogEntry":{"action":"completed","agent":"amy-1","id":2,"summary":"VERIFIED - sandbox item","timestamp":"2026-10-31T19:44:15.250Z"}},"success":true}
+
+POOL_REPLENISH: spawn 3 fresh amy instance(s) — 3 item(s) still need this stage, 0 idle.
+
+POOL_RETIRE: amy-1 — the item is out of the pipeline; the orchestrator shuts these instances down.
+exit=0
+$ git log --oneline
+f5c1c97 feat: Sandbox greeter
+a712d64 chore: initial sandbox commit
+$ git status --short
+$ ateam --json items getItem WI-002 | jq ".data | {id,stageId,commitSha,workLogs}"
+{
+  "id": "WI-002",
+  "stageId": "staged",
+  "commitSha": null,
+  "workLogs": [
+    {
+      "id": 1,
+      "agent": "amy-1",
+      "action": "started",
+      "summary": "Started work on item",
+      "timestamp": "2026-10-31T19:44:15.216Z"
+    },
+    {
+      "id": 2,
+      "agent": "amy-1",
+      "action": "completed",
+      "summary": "VERIFIED - sandbox item",
+      "timestamp": "2026-10-31T19:44:15.250Z"
+    },
+    {
+      "id": 3,
+      "agent": "amy-1",
+      "action": "note",
+      "summary": "no changes to commit: no attributed paths for this item",
+      "timestamp": "2026-10-31T19:44:15.377Z"
+    }
+  ]
+}
+$ activity (last 5)

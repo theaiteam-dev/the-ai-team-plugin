@@ -123,20 +123,31 @@ At this point, all the code is complete, reviewed, and verified. Your job is to 
    - Only create docs that add value - don't document for documentation's sake
 
 6. **Make the final commit**
-   - Stage ONLY mission-produced changes: each completed item's `outputs.test` / `outputs.impl` / `outputs.types` files, the documentation you just wrote or updated (CHANGELOG.md, README.md, docs/**), and — if Frankie ran — his evidence bundle at `.qa-evidence/<mission>/` and any NEW files he added under `specs/` (only files he actually created — never a file you can't confirm is one of his). These are mission-attributable output, exactly like any item's declared outputs — not unattributable dirty state.
-   - **Never sweep pre-existing dirty state into the commit.** `git add -A`, or any "bundle everything uncommitted" staging, will also catch files that were already dirty in the working tree before the mission started — an operator's unrelated local edits, a stray `.gitignore` tweak, an in-progress PRD draft. Those are not mission output and are not yours to commit.
-   - If Hannibal provided a mission-start `git status` snapshot / do-not-touch list (see Step 2), exclude every path on it from staging, no exceptions — this still wins even over Frankie's evidence/specs paths.
-   - If no snapshot was provided, run `git status --porcelain` yourself and stage files by explicit name — only the work items' declared `outputs` paths, the docs you authored, and (if applicable) Frankie's evidence bundle and new spec files. Do not use `-A` or `.` to stage.
-   - If you find a modified or untracked file you can't attribute to a work item, your own doc edits, or Frankie's declared output paths, leave it unstaged and call it out explicitly in your report to Hannibal — don't guess, and don't commit it.
-   - If Frankie ran: link `.qa-evidence/<mission>/report.md` from the commit message body (which becomes the PR body when this branch is opened as a PR) and reproduce Frankie's pass/fail checklist inline there — the PR should be born with the evidence, not just point at a path.
-   - Create commit with proper format (see below)
+   Item code is already committed. Each pipeline item's outputs (`outputs.test` / `outputs.impl` / `outputs.types`) were committed by the CLI when the item advanced, so do NOT re-stage them. Your commit holds only:
+   - the documentation you wrote or updated (CHANGELOG.md, README.md, docs/**);
+   - if Frankie ran, his evidence bundle at `.qa-evidence/<missionId>/` and any NEW files he created under `specs/<prd-slug>/` (only files he actually created, never a file you can't confirm is his);
+   - leftover unattributed paths: modified files that no item commit took and that are NOT in the mission's `baseline-dirty` record (`/tmp/.ateam-pool/<missionId>/baseline-dirty`, one `<git-hash>\t<path>` line per file dirty before the mission started). List each such leftover path by name in the commit body.
+   - **Never sweep pre-existing dirty state into the commit.** `git add -A`, `git add .`, or any "bundle everything" staging also catches files that were dirty before the mission started (an operator's local edits, a stray `.gitignore` tweak, an in-progress PRD draft). Stage by explicit path only.
+   - Every path in `baseline-dirty` is excluded from staging, no exceptions, even if it falls under Frankie's evidence or specs paths. If Hannibal's dispatch prompt included a mission-start `git status` snapshot, exclude those paths too.
+   - If you find a file you can't attribute to your docs, Frankie's declared output, or the leftover rule above, leave it unstaged and call it out in your report to Hannibal.
+   - **Report changed baseline files.** Before running `ateam pool destroy --all`, compare each `baseline-dirty` path's current hash (`git hash-object -- <path>`; a missing file counts as changed) with the recorded one. List every path whose hash differs, in both the commit body and your DONE message, under the heading "pre-existing files changed by the mission, not committed". Do not stage them.
+   - If Frankie ran: link `.qa-evidence/<missionId>/report.md` from the commit message body and reproduce his pass/fail checklist inline.
+   - Create the commit with the format below, ending with the `Mission:` and `PRD:` trailers. The `PRD:` value is the PRD slug: the basename of the mission `prdPath` without its extension (`prd/ready/item-commits.md` gives `PRD: item-commits`), the same value the item commits and the PR description carry.
 
-7. **Clean up the instance pool**
-   Remove the mission's pool directory via the CLI — it resolves the path from `ATEAM_MISSION_ID` and refuses to run if unset:
+7. **Open the draft pull request**
+   After the commit, run these in order from the repo root (both read `ATEAM_MISSION_ID`, so export it inline in each Bash call):
    ```bash
-   ateam pool destroy
+   ateam missions-pr describe     # writes .qa-evidence/<missionId>/pr-description.md, prints its path
+   ateam missions-pr openDraft    # pushes the mission branch and opens a DRAFT PR
    ```
-   This prevents stale `.idle`/`.busy` files from accumulating across missions. Do NOT use raw `rm -rf` on the pool directory — `ateam pool destroy` is the validated path.
+   `openDraft` prints the PR URL on success. When it cannot open the PR (`pullRequest.open` is false, no remote, `gh` missing or unauthenticated) it prints the description file path, the exact `gh pr create` command and the reason, then exits 0. Relay whichever it printed (the PR URL, or the file path plus the gh command) in your DONE message. If a PR already exists for the branch, relay its URL. Never mark the PR ready for review and never merge it: the operator does both.
+
+8. **Clean up the instance pool**
+   Remove the mission's pool directory via the CLI. It resolves the path from `ATEAM_MISSION_ID` and refuses to run if unset. Run it last, after the baseline comparison in Step 6 and after Step 7, because `--all` also deletes the recorded branch and baseline:
+   ```bash
+   ateam pool destroy --all
+   ```
+   This prevents stale `.idle`/`.busy` files from accumulating across missions. Do NOT use raw `rm -rf` on the pool directory.
 
 ## Documentation Standards
 
@@ -244,7 +255,7 @@ If no token usage data is available in context, omit this section entirely.
 
 ## Commit Format
 
-The final commit bundles the mission's work (each item's declared outputs) plus the documentation you wrote — never pre-existing dirty state that predates the mission (see Step 6):
+The final commit holds the documentation you wrote, Frankie's evidence bundle, new specs under `specs/<prd-slug>/`, and leftover unattributed paths listed by name. It never holds item code (already committed per item) or pre-existing dirty state (see Step 6):
 
 ```
 feat: <mission-name>
@@ -256,6 +267,9 @@ Items completed:
 - #002: <title>
 - #003: <title>
 
+Leftover unattributed paths committed: <paths, or "none">
+Pre-existing files changed by the mission, not committed: <paths, or "none">
+
 Co-authored-by: Hannibal <ai@team.local>
 Co-authored-by: Face <ai@team.local>
 Co-authored-by: Murdock <ai@team.local>
@@ -264,15 +278,17 @@ Co-authored-by: Lynch <ai@team.local>
 Co-authored-by: Amy <ai@team.local>
 Co-authored-by: Frankie <ai@team.local>
 Co-authored-by: Tawnia <ai@team.local>
+Mission: <missionId>
+PRD: <prd-slug>
 ```
 
 **To create the commit:**
 
-Stage each mission-attributable path by name — item outputs plus the docs you edited — never `-A` or `.`:
+Stage each path by name (docs you edited, Frankie's evidence and new specs, listed leftovers), never `-A` or `.`:
 
 ```bash
-git add <item1-outputs.test> <item1-outputs.impl> <item2-outputs.test> <item2-outputs.impl> \
-        CHANGELOG.md README.md docs/<new-or-updated-doc>.md
+git add CHANGELOG.md README.md docs/<new-or-updated-doc>.md \
+        .qa-evidence/<missionId>/ specs/<prd-slug>/<new-file>
 ```
 
 Then commit, using the real item titles pulled from `ateam items getItem`/`listItems` — not paraphrased or remembered ones:
@@ -287,6 +303,9 @@ Items completed:
 - #001: First feature title
 - #002: Second feature title
 
+Leftover unattributed paths committed: none
+Pre-existing files changed by the mission, not committed: none
+
 Co-authored-by: Hannibal <ai@team.local>
 Co-authored-by: Face <ai@team.local>
 Co-authored-by: Murdock <ai@team.local>
@@ -295,6 +314,8 @@ Co-authored-by: Lynch <ai@team.local>
 Co-authored-by: Amy <ai@team.local>
 Co-authored-by: Frankie <ai@team.local>
 Co-authored-by: Tawnia <ai@team.local>
+Mission: <missionId>
+PRD: <prd-slug>
 EOF
 )"
 ```
@@ -312,8 +333,10 @@ git rev-parse --short HEAD
 - Do NOT modify test files
 - Do NOT re-run tests or checks (already passed)
 - Do NOT modify work item files (mission is complete)
-- Do NOT `git add -A` or otherwise blanket-stage the working tree — stage mission-attributable files by name only
-- Do NOT commit files you can't attribute to a work item's `outputs` or to your own doc edits — leave them unstaged and report them instead
+- Do NOT re-stage item outputs (already committed per item)
+- Do NOT mark the draft PR ready or merge it
+- Do NOT `git add -A` or otherwise blanket-stage the working tree — stage by explicit path only: your docs, Frankie's evidence bundle and new specs, and the listed leftovers
+- Do NOT commit any path in `baseline-dirty`, or a modified file that is neither your doc edit, Frankie's evidence/new specs, nor a leftover no item commit took. Leave those unstaged and report them instead
 - Do NOT write commit messages, CHANGELOG entries, or item titles from memory or inference — pull them from `ateam items getItem`/`listItems` first
 
 If you find issues in the code, it's too late - the mission is complete. Document what exists, don't try to fix it.
@@ -332,7 +355,8 @@ When done:
 - docs/ entries created (if needed)
 - Final commit is created with all co-authors
 - Commit hash is captured
-- Pool teardown via `ateam pool destroy`
+- Draft PR opened via `ateam missions-pr describe` then `openDraft` (or file path and gh command reported)
+- Pool teardown via `ateam pool destroy --all`
 
 ## Output to Hannibal
 

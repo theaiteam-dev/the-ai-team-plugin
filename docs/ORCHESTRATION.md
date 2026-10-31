@@ -185,6 +185,123 @@ Stockwell writes the review as its last step before post-checks run; Tawnia read
 
 **Frankie's evidence, by contrast, is filesystem-based** — his walk runs BEFORE Stockwell (once all items reach `staged`, the per-item pipeline's real terminal stage — WI-786/787, not `done`), and his evidence bundle (`.qa-evidence/<mission>/report.md`) and any graduated `specs/` files land in the repo itself rather than the database, so Stockwell's diff review already includes them and Tawnia commits them alongside the feature work.
 
+## Item Commits and the Mission Pull Request
+
+Each item's code is committed by the `ateam` CLI as the item reaches `staged`. Tawnia's final commit no longer carries item code.
+
+### When the item commit happens
+
+The commit runs once, right after the API confirms an item moved into `staged`. That covers `ateam agents-stop agentStop` (Amy's VERIFIED handoff) and `ateam board-move moveItem --toStage staged`. It lands on the branch that is checked out, and it is never amended.
+
+An item that is rejected out of `staged` and later returns gets a new commit. The earlier commit stays in history. The latest SHA is recorded on the item (`commitSha`).
+
+### What the commit includes
+
+The CLI reads `git status` and commits these paths:
+
+- The item's own declared outputs (`outputs.test`, `outputs.impl`, `outputs.types`).
+- Changed paths that no unfinished item declares. These are listed in the commit body under "Undeclared paths included".
+
+It leaves out:
+
+- Paths declared by any sibling item that is not yet `done` or `archived`. This includes siblings in `staged`, because a staged sibling's own commit may not have run yet, so its files still belong to it. Only `done` and `archived` siblings release their declared files.
+- `.qa-evidence/` and `specs/`, unless the item declares them. Tawnia commits those.
+- Every path in the pre-mission baseline (see below).
+
+If nothing is left to commit, no commit is made and a note goes in the item's work log.
+
+### Commit message
+
+The subject follows Conventional Commits with a prefix taken from the item type: `feat` for `feature` and `enhancement`, `fix` for `bug`, `chore` for `task`. The last paragraph holds trailers:
+
+```
+feat: <item title>
+
+Item: WI-123
+Mission: M-20261011-001
+PRD: item-commits
+Lanes: murdock-1 ba-3 lynch-2 amy-1
+```
+
+- `Item`: the work item id.
+- `Mission`: the mission id.
+- `PRD`: the PRD file name without its extension. Omitted when the mission has no PRD path.
+- `Lanes`: the agent instances that completed or rejected the item, in time order. Omitted when the work log has none. A reworked item lists the lanes of each pass.
+
+Item commits carry no `Co-authored-by` lines. Tawnia's final commit still does.
+
+### Squash merges and the GitHub setting
+
+The draft PR is meant to be squash-merged. GitHub builds the squash commit message from the setting "Default commit message" under Settings, General, Pull Requests. Set it to **Pull request title and description**. With that setting the body of the PR description is the commit message. That description is the file `ateam missions-pr describe` writes (`.qa-evidence/<missionId>/pr-description.md`), and it carries the `Mission:` and `PRD:` trailers. With the other choices (default message, or the commit messages list) the trailers can be dropped or mangled on `main`.
+
+The repo setting is outside what the CLI can check. A real squash merge of a mission PR, followed by reading the resulting commit on `main`, is an operator step. Do it once per repo after enabling the setting.
+
+GitHub also appends `Co-authored-by` lines to a squash commit. Where they land decides whether `Mission:` and `PRD:` stay readable as trailers. In a sandbox (not confirmed against GitHub), `git interpret-trailers --parse` kept `Mission:` and `PRD:` when the co-author lines sat directly under them. It dropped both when the co-author lines formed a separate paragraph or came after a `---------` separator line. Verify the first real squash merge by running `git interpret-trailers --parse` on the resulting commit on `main` and confirming `Mission:` and `PRD:` appear in the output.
+
+### Branch safety
+
+`ateam pool init` records the checked-out branch in `/tmp/.ateam-pool/<missionId>/branch`. Before every item commit the CLI compares the current branch with that file and refuses to commit on a mismatch. A detached HEAD at `pool init` is an error.
+
+Recovery:
+
+- Branch mismatch: check out the recorded branch, or write the new branch name into the file by hand if the switch was deliberate.
+- Missing or empty branch file: re-run `ateam pool init`, or write the branch name into the file by hand.
+
+### Pre-existing dirty files
+
+`pool init` also writes `/tmp/.ateam-pool/<missionId>/baseline-dirty`: one `<git-hash>\t<path>` line for each file that was dirty before the mission started. Those paths are never committed by an item commit or by Tawnia. If the file is missing when an item commit runs, the CLI refuses to commit rather than guess.
+
+Both files are written only if absent, so a second `pool init` does not record mission work as pre-existing.
+
+At the end of the mission Tawnia compares each baseline path's current hash with the recorded one. She lists the ones the mission changed in her commit body and her report, under "pre-existing files changed by the mission, not committed". She also lists leftover modified paths that no item commit took and that are not in the baseline, and commits only those she names.
+
+### When the item commit fails
+
+A failed commit does not change the exit code of `agentStop` or `board-move`, and the item stays in `staged`. The failure shows up in three places:
+
+- stderr, as a line starting `ITEM_COMMIT_FAILED: <itemId>: <reason>`.
+- The activity feed, as an error entry.
+- The JSON response, as `data.itemCommit`: `{ "committed": false, "error": "..." }`. On success it is `{ "committed": true, "sha": "..." }`, or `{ "committed": false, "noChanges": true }` when there was nothing to commit.
+
+The agent that sees the marker sends an ALERT to Hannibal. To recover:
+
+1. Fix the cause named in the reason. The causes the code can produce are:
+   - branch mismatch, detached HEAD, or a missing or empty `branch` file (see "Branch safety");
+   - a missing or unreadable `baseline-dirty` file;
+   - the item or the current mission cannot be fetched from the API, or the mission id cannot be resolved;
+   - an unknown item type, an invalid work-log timestamp, or a line break in the item title or mission id;
+   - a git command failing while building the commit;
+   - the API rejecting the `commitSha` update after the commit was made. The error reads "committed <sha> but recording commitSha failed". The commit exists on the branch; step 3 records it;
+   - refreshing the real index after the commit failing, for example because `index.lock` stayed held for more than 10 seconds. The error reads "committed <sha> but refreshing the index failed". The commit exists and its SHA is recorded on the item. Once the lock is gone, run `git reset -q -- <the item's paths>` so the index matches HEAD for them.
+
+   The branch is checked twice, before and under the commit lock. Commits are built with `commit-tree` and `update-ref`, so commit hooks do not run and cannot block them. A held `index.lock` is retried for up to 10 seconds before the index refresh fails.
+2. Re-run `ateam items-commit commitItem --itemId <id>`. It only accepts items in `staged`.
+3. If the commit already exists but its SHA never reached the board, the same command finds the newest commit on HEAD with `Item: <id>` as a trailer and records that SHA. If the board already has it, it reports that there is nothing to commit.
+
+### Draft pull request
+
+After Tawnia's commit she runs, with `ATEAM_MISSION_ID` set:
+
+```bash
+ateam missions-pr describe     # writes .qa-evidence/<missionId>/pr-description.md
+ateam missions-pr openDraft    # pushes the branch and opens a draft PR
+```
+
+`openDraft` only opens a draft. It never marks the PR ready and never merges. The operator does both.
+
+`ateam.config.json` has one switch:
+
+```json
+{ "pullRequest": { "open": false } }
+```
+
+`pullRequest.open` defaults to on when the key or the file is absent. Set it to `false` to stop `openDraft` from pushing or opening anything. `openDraft` also stops without opening a PR when the repo has no remote, `gh` is not installed, or `gh auth status` fails. In each case it prints the description file path, the exact `gh pr create --draft ...` command, and the reason, then exits 0. If a PR already exists for the branch, it reports that PR's URL.
+
+### Pool teardown
+
+- `ateam pool destroy` removes the pool markers but keeps `branch` and `baseline-dirty`. Use it with `pool init` to rebuild a pool mid-mission, since the kept files stop in-flight work from being recorded as pre-existing.
+- `ateam pool destroy --all` removes the whole `/tmp/.ateam-pool/<missionId>/` directory, including both files. Tawnia runs it last, after the baseline comparison and the draft PR step.
+
 ## Plugin Commands
 
 ### Mission Commands

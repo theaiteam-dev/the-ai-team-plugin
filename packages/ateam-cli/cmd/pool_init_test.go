@@ -80,6 +80,7 @@ func withTempPoolRoot(t *testing.T, prefix string) (missionID, poolDir string) {
 
 func TestPoolInitCreatesDirectory(t *testing.T) {
 	_, poolDir := withTempPoolRoot(t, "init-create")
+	chdirToRepo(t, "main") // pool init records the cwd repo; never depend on the real checkout
 	// Ensure clean slate
 	_ = os.RemoveAll(poolDir)
 
@@ -99,6 +100,7 @@ func TestPoolInitCreatesDirectory(t *testing.T) {
 
 func TestPoolInitIdempotent(t *testing.T) {
 	_, poolDir := withTempPoolRoot(t, "init-idempotent")
+	chdirToRepo(t, "main") // pool init records the cwd repo; never depend on the real checkout
 	if err := os.MkdirAll(poolDir, 0755); err != nil {
 		t.Fatalf("pre-creating pool dir: %v", err)
 	}
@@ -132,6 +134,7 @@ func TestPoolInitMissingMissionID(t *testing.T) {
 
 func TestPoolInitJSONOutput(t *testing.T) {
 	missionID, poolDir := withTempPoolRoot(t, "init-json-create")
+	chdirToRepo(t, "main") // pool init records the cwd repo; never depend on the real checkout
 	_ = os.RemoveAll(poolDir)
 
 	out, err := runPoolCmd(t, "pool", "init", "--json")
@@ -169,6 +172,7 @@ func TestPoolInitJSONOutput(t *testing.T) {
 
 func TestPoolInitSingleUseLanesRecordsAndReportsInInitAndStatus(t *testing.T) {
 	_, poolDir := withTempPoolRoot(t, "init-lanes")
+	chdirToRepo(t, "main") // pool init records the cwd repo; never depend on the real checkout
 	_ = os.RemoveAll(poolDir)
 
 	out, err := runPoolCmd(t, "pool", "init", "--single-use", "--lanes", "2", "--json")
@@ -193,6 +197,7 @@ func TestPoolInitSingleUseLanesRecordsAndReportsInInitAndStatus(t *testing.T) {
 
 func TestPoolInitLanesWithoutSingleUseErrors(t *testing.T) {
 	_, poolDir := withTempPoolRoot(t, "init-lanes-no-single-use")
+	chdirToRepo(t, "main") // pool init records the cwd repo; never depend on the real checkout
 	_ = os.RemoveAll(poolDir)
 
 	out, err := runPoolCmd(t, "pool", "init", "--lanes", "2")
@@ -209,6 +214,7 @@ func TestPoolInitLanesWithoutSingleUseErrors(t *testing.T) {
 
 func TestPoolInitNoLanesOmitsLanesField(t *testing.T) {
 	_, poolDir := withTempPoolRoot(t, "init-no-lanes")
+	chdirToRepo(t, "main") // pool init records the cwd repo; never depend on the real checkout
 	_ = os.RemoveAll(poolDir)
 
 	out, err := runPoolCmd(t, "pool", "init", "--single-use", "--json")

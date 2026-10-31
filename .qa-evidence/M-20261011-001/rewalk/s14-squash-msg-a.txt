@@ -1,0 +1,20 @@
+item-commits sandbox
+
+Delivers item-commits sandbox in 5 work items.
+
+## Items
+
+- WI-001 Sandbox greeter (ad8742952d5d21491110d3fdb36cb737eb8bf417)
+- WI-002 Sandbox farewell (4fad943f797e7821df7a62573f81220865318147)
+- WI-003 Sandbox counter (0430a2372889f44917d63ff14bb394e4bbebc441)
+- WI-004 Sandbox parser (3e877bded8d4698186030b0662b941f04d2cbe66)
+- WI-005 Sandbox formatter (9c807c050b7de5b6d7794f0b100e1ed748746b3c)
+
+## Frankie
+
+Frankie did not run for this mission.
+
+Mission: M-20261031-001
+PRD: item-commits
+Co-authored-by: Alice Example <alice@example.invalid>
+Co-authored-by: Bob Example <bob@example.invalid>

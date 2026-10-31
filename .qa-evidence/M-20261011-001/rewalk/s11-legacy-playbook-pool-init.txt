@@ -1,0 +1,16 @@
+$ sed -n 70,84p playbooks/orchestration-legacy.md
+## Mission Start: Record the Branch
+
+Every item that reaches `staged` is committed by the CLI, and that commit checks the current branch against the branch recorded at mission start. Legacy mode has no agent pool, but the record lives in the pool directory, so Hannibal initializes it once after the precheck passes and before the first dispatch:
+
+```bash
+export ATEAM_MISSION_ID='{missionId}'
+ateam pool init
+# Writes /tmp/.ateam-pool/${ATEAM_MISSION_ID}/branch (the current git branch) and
+# baseline-dirty (paths already dirty before the mission). Idempotent: both files
+# are written once and never overwritten.
+```
+
+Without it, every item commit fails the branch check with `no recorded mission branch`. If `pool init` errors (for example on a detached HEAD), STOP and report it to the operator. Use plain `ateam pool init`: legacy mode has no pre-warmed instances, so `--single-use` and `--lanes` do not apply.
+
+Export `ATEAM_MISSION_ID` inline in every Bash call that runs `ateam board-move`, since shell state does not persist across calls.

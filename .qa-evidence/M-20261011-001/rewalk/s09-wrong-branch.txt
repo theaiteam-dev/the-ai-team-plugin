@@ -1,0 +1,27 @@
+# DoD 9: WI-002 (probing, with its declared files written) staged on the wrong branch
+$ git status --short
+ M README.md
+?? notes/
+?? src/__tests__/
+?? src/farewell.js
+$ git switch -c other
+Switched to a new branch 'other'
+$ ateam agents-start agentStart --itemId WI-002 --agent amy-1
+started
+$ ateam --json agents-stop agentStop --itemId WI-002 --agent amy-1 --outcome completed --summary "VERIFIED - farewell probed"
+--- stdout+stderr:
+
+ITEM_COMMIT_FAILED: WI-002: branch mismatch: mission started on "mission/sandbox" but the current branch is "other"; check out "mission/sandbox", or update /tmp/.ateam-pool/M-20261031-001/branch by hand — send ALERT to Hannibal; the item stays in staged.
+{"data":{"agent":"amy-1","itemCommit":{"committed":false,"error":"branch mismatch: mission started on \"mission/sandbox\" but the current branch is \"other\"; check out \"mission/sandbox\", or update /tmp/.ateam-pool/M-20261031-001/branch by hand"},"itemId":"WI-002","nextStage":"staged","poolMode":"single-use","replenish":{"agentType":"amy","busy":0,"count":3,"demand":3,"idle":0,"parked":0,"wipLimit":3},"retire":[{"instance":"amy-1"}],"workLogEntry":{"action":"completed","agent":"amy-1","id":2,"summary":"VERIFIED - farewell probed","timestamp":"2026-10-31T19:51:51.352Z"}},"success":true}
+
+POOL_REPLENISH: spawn 3 fresh amy instance(s) — 3 item(s) still need this stage, 0 idle.
+
+POOL_RETIRE: amy-1 — the item is out of the pipeline; the orchestrator shuts these instances down.
+exit=0
+$ git log --all --oneline
+ad87429 feat: Sandbox greeter
+f33f591 chore: initial sandbox commit
+$ item WI-002
+{"stageId":"staged","commitSha":null}
+$ activity feed (:5567)
+{"agent":"amy-1","level":"error","message":"ITEM_COMMIT_FAILED for WI-002: branch mismatch: mission started on \"mission/sandbox\" but the current branch is \"other\"; check out \"mission/sandbox\", or update /tmp/.ateam-pool/M-20261031-001/branch by hand"}

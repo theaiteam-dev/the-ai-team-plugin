@@ -48,6 +48,11 @@ var boardMoveMoveItemCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
+			if fields, ok := bodyObj.(map[string]interface{}); ok {
+				toStage, _ := fields["toStage"].(string)
+				itemID, _ := fields["itemId"].(string)
+				resp = commitIfStaged(c, resp, toStage, itemID)
+			}
 			jsonMode, _ := cmd.Root().PersistentFlags().GetBool("json")
 			noColor, _ := cmd.Root().PersistentFlags().GetBool("no-color")
 			if jsonMode {
@@ -71,6 +76,7 @@ var boardMoveMoveItemCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		resp = commitIfStaged(c, resp, boardMoveMoveItemCmd_toStage, boardMoveMoveItemCmd_itemId)
 		jsonMode, _ := cmd.Root().PersistentFlags().GetBool("json")
 		noColor, _ := cmd.Root().PersistentFlags().GetBool("no-color")
 		if jsonMode {

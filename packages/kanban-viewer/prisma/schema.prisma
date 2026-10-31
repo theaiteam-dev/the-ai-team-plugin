@@ -69,6 +69,7 @@ model Item {
   severity        String?                 // 'low' | 'medium' | 'high' | 'critical'
   attributedAgent String?                 // agent whose behavior the finding is about
   fingerprint     String?                 // dedup slug the finding was derived from — no FK
+  commitSha       String?                 // SHA of the item's latest commit; overwritten on rework
 
   // Relations
   workLogs       WorkLog[]

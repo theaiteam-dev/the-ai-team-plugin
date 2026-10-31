@@ -76,14 +76,20 @@ func TestBoardMoveToStage_AcceptsStaged(t *testing.T) {
 	called := false
 	var gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
-		buf := new(bytes.Buffer)
-		_, _ = buf.ReadFrom(r.Body)
-		gotBody = buf.String()
+		// Moving to staged triggers a follow-on item commit (reads plus a
+		// POST /api/activity on failure). Capture only the move request.
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/board/move" {
+			called = true
+			buf := new(bytes.Buffer)
+			_, _ = buf.ReadFrom(r.Body)
+			gotBody = buf.String()
+		}
 		_, _ = w.Write([]byte(`{"success":true,"data":{}}`))
 	}))
 	defer srv.Close()
+	// Never let the post-move item commit find a real mission pool or repo.
+	t.Setenv("ATEAM_MISSION_ID", "M-STAGE-ENUM-NO-POOL")
 
 	out, err := runStageEnumCLI(t, srv.URL, "board-move", "moveItem", "--itemId", "WI-001", "--toStage", "staged")
 	if err != nil {
@@ -206,14 +212,17 @@ func TestToStageEnum_AllNineStagesPassCLIValidation(t *testing.T) {
 			called := false
 			var gotBody string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				called = true
-				buf := new(bytes.Buffer)
-				_, _ = buf.ReadFrom(r.Body)
-				gotBody = buf.String()
 				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/board/move" {
+					called = true
+					buf := new(bytes.Buffer)
+					_, _ = buf.ReadFrom(r.Body)
+					gotBody = buf.String()
+				}
 				_, _ = w.Write([]byte(`{"success":true,"data":{}}`))
 			}))
 			defer srv.Close()
+			t.Setenv("ATEAM_MISSION_ID", "M-STAGE-ENUM-NO-POOL")
 
 			out, err := runStageEnumCLI(t, srv.URL, "board-move", "moveItem", "--itemId", "WI-001", "--toStage", tc.stage)
 

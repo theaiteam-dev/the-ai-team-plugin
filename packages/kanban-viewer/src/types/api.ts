@@ -143,6 +143,10 @@ export interface UpdateItemRequest {
   attributedAgent?: string | null;
   /** Finding provenance (WI-936): dedup slug the finding was derived from — free-form, no FK. */
   fingerprint?: string | null;
+  /** SHA of the item's latest commit (7-40 lowercase hex). Replaces any prior value. */
+  commitSha?: string;
+  /** Appends a work-log entry with action 'note'. */
+  workLogNote?: { agent: string; summary: string };
 }
 
 /**

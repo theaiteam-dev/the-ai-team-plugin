@@ -1,0 +1,15 @@
+# Step 0: pre-mission dirty files, then the mission's pool init records them
+$ git status --short
+ M README.md
+?? notes/
+$ cat /tmp/.ateam-pool/$ATEAM_MISSION_ID/baseline-dirty   # as left by the script
+(empty)
+$ ateam pool destroy --all && ateam pool init --single-use
+Removed pool dir: /tmp/.ateam-pool/M-20261031-001
+Created pool dir: /tmp/.ateam-pool/M-20261031-001
+Mode: single-use (finished agents retire; agentStop reports replenish)
+$ cat /tmp/.ateam-pool/$ATEAM_MISSION_ID/branch /tmp/.ateam-pool/$ATEAM_MISSION_ID/baseline-dirty
+mission/sandbox
+
+973f2f51e2c76c90eb7aa28e6d55cf492ac78022	README.md
+a589b5f459a635aa812a70fe23aaf333661ed5e2	notes/preexisting.txt

@@ -1,0 +1,85 @@
+package cmd
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+
+	"ateam/internal/client"
+	"ateam/internal/itemcommit"
+)
+
+const stagedStage = "staged"
+
+// itemCommitReport is the data.itemCommit object added to the move response.
+type itemCommitReport struct {
+	Committed bool   `json:"committed"`
+	SHA       string `json:"sha,omitempty"`
+	NoChanges bool   `json:"noChanges,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+// commitStagedItem runs itemcommit.Run exactly once for an item the API has
+// just confirmed in "staged". It never returns an error: a failed commit is
+// reported in the result, on stderr (ITEM_COMMIT_FAILED) and in the activity
+// feed, and must not change the caller's exit code (ADR 0011).
+func commitStagedItem(c *client.Client, itemID, agent string) itemCommitReport {
+	dir, err := os.Getwd()
+	if err != nil {
+		return reportItemCommitFailure(c, itemID, agent, itemCommitReport{Error: fmt.Sprintf("resolve working directory: %v", err)})
+	}
+	res, err := itemcommit.Run(itemcommit.Options{Client: c, ItemID: itemID, Agent: agent, Dir: dir})
+	if err != nil {
+		return reportItemCommitFailure(c, itemID, agent, itemCommitReport{SHA: res.SHA, Error: err.Error()})
+	}
+	return itemCommitReport{Committed: res.SHA != "", SHA: res.SHA, NoChanges: res.NoChanges}
+}
+
+func reportItemCommitFailure(c *client.Client, itemID, agent string, report itemCommitReport) itemCommitReport {
+	report.Committed = false
+	shaNote := ""
+	if report.SHA != "" {
+		shaNote = fmt.Sprintf(" (commit %s exists; its commitSha was not recorded)", report.SHA)
+	}
+	fmt.Fprintf(os.Stderr, "\nITEM_COMMIT_FAILED: %s: %s%s — send ALERT to Hannibal; the item stays in staged.\n", itemID, report.Error, shaNote)
+
+	if agent == "" {
+		agent = "ateam"
+	}
+	message := fmt.Sprintf("ITEM_COMMIT_FAILED for %s: %s%s", itemID, report.Error, shaNote)
+	body := map[string]interface{}{"agent": agent, "level": "error", "message": message}
+	if _, err := c.Do("POST", "/api/activity", nil, nil, body); err != nil {
+		fmt.Fprintf(os.Stderr, "ACTIVITY_WARN: could not record item commit failure for %s: %v\n", itemID, err)
+	}
+	return report
+}
+
+// injectItemCommit merges the report into resp's data object.
+func injectItemCommit(resp []byte, report itemCommitReport) []byte {
+	var obj map[string]interface{}
+	if err := json.Unmarshal(resp, &obj); err != nil {
+		return resp
+	}
+	data, _ := obj["data"].(map[string]interface{})
+	if data == nil {
+		data = map[string]interface{}{}
+		obj["data"] = data
+	}
+	data["itemCommit"] = report
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return resp
+	}
+	return out
+}
+
+// commitIfStaged commits the item and adds data.itemCommit to resp when the
+// move the API just confirmed targeted staged; any other target leaves resp
+// untouched. The agent recorded on a failure is the caller, which for a direct
+// move is the orchestrator.
+func commitIfStaged(c *client.Client, resp []byte, toStage, itemID string) []byte {
+	if toStage != stagedStage || itemID == "" {
+		return resp
+	}
+	return injectItemCommit(resp, commitStagedItem(c, itemID, "Hannibal"))
+}

@@ -334,6 +334,9 @@ var agentsStopAgentStopCmd = &cobra.Command{
 			)
 			resp = injectPoolResult(resp, claimedNext, claimedNextAgentID, poolAlert)
 		}
+		if !wipExceeded && parsed.Data.NextStage == stagedStage {
+			resp = injectItemCommit(resp, commitStagedItem(c, itemID, agentName))
+		}
 		resp = injectSingleUse(resp, singleUse)
 		resp = injectPoolMode(resp, currentPoolMode())
 

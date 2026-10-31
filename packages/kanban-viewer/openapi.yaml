@@ -182,6 +182,10 @@ components:
           type: string
           nullable: true
           description: Finding provenance (WI-936) — dedup slug the finding was derived from. Free-form, no FK (an item is stamped before any Fingerprint row necessarily exists).
+        commitSha:
+          type: string
+          nullable: true
+          description: SHA of the item's latest commit. Null until the item has been committed; overwritten on rework.
 
     Severity:
       type: string
@@ -1028,6 +1032,21 @@ paths:
                   type: string
                   nullable: true
                   description: Finding provenance (WI-936) — free-form, no FK.
+                commitSha:
+                  type: string
+                  pattern: '^[0-9a-f]{7,40}$'
+                  description: SHA of the item's latest commit (7 to 40 lowercase hex characters). Replaces any previous value.
+                workLogNote:
+                  type: object
+                  required: [agent, summary]
+                  description: Appends a work-log entry with action 'note'. Existing entries are never replaced.
+                  properties:
+                    agent:
+                      type: string
+                      minLength: 1
+                    summary:
+                      type: string
+                      minLength: 1
       responses:
         '200':
           description: Updated item

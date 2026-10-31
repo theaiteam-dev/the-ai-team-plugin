@@ -1,0 +1,21 @@
+# DoD 11 legacy half: the sandbox script moved WI-001 probing -> staged with the legacy moveItem command, using the branch CLI
+$ sed -n 151,156p scripts/qa/item-commits-sandbox.sh
+# First item reaches staged with its declared output written but uncommitted,
+# so the legacy move produces an item commit.
+mkdir -p "$SANDBOX_REPO/src"
+echo "module.exports = () => 'hello from the sandbox';" > "$SANDBOX_REPO/src/greeter.js"
+move_item "${ITEM_IDS[0]}" probing
+move_item "${ITEM_IDS[0]}" staged
+$ item WI-001
+{"title":"Sandbox greeter","type":"feature","stageId":"staged","commitSha":"ad8742952d5d21491110d3fdb36cb737eb8bf417","workLogs":0}
+$ git show --stat --format="%H%n%s%n%n%b" ad87429
+ad8742952d5d21491110d3fdb36cb737eb8bf417
+feat: Sandbox greeter
+
+Item: WI-001
+Mission: M-20261031-001
+PRD: item-commits
+
+
+ src/greeter.js | 1 +
+ 1 file changed, 1 insertion(+)

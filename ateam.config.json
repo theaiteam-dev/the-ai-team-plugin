@@ -14,7 +14,8 @@
     "restart": "cd packages/kanban-viewer && npm run dev:qa",
     "managed": true
   },
-  "surfaces": ["web"],
+  "surfaces": ["cli", "web"],
+  "pullRequest": { "open": true },
   "qa": {
     "seed": null,
     "account": { "credential_env": null },

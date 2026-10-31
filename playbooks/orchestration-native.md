@@ -1315,9 +1315,9 @@ the fresh `Agent` prompt actually reaches the receiver.
 
 ### Pool File Cleanup
 
-**Mission end:** Hannibal removes the entire pool directory during team shutdown:
+**Mission end:** Hannibal removes the entire pool directory during team shutdown. Use `--all`: plain `ateam pool destroy` keeps the recorded `branch` and `baseline-dirty` files so a crash-recovery `destroy && init` does not lose them, and only `--all` removes everything:
 ```bash
-ateam pool destroy
+ateam pool destroy --all
 ```
 
 **Crash recovery:** On resume, Hannibal recreates the pool directory from scratch (see Resume Recovery). Stale pool directories from crashed missions are harmless — they contain only empty marker files in `/tmp/`.
@@ -1325,6 +1325,17 @@ ateam pool destroy
 ### Single-Instance Mode (N=1) — Simplified
 
 When `N=1`, instance names have no suffix (`murdock`, `ba`, `lynch`, `amy`). The pool directory still has `.idle` files (`murdock.idle`, `ba.idle`, etc.) and the claiming flow is identical — it just finds at most one file per type. The same code path handles both N=1 and N>1.
+
+## Handling ITEM_COMMIT_FAILED
+
+Moving an item to `staged` commits its changes, whether the move is a pipeline agent's `agentStop` (Amy's, normally) or Hannibal's own `ateam board-move moveItem --toStage staged`. A failed commit prints `ITEM_COMMIT_FAILED: <itemId>: <error>` on stderr and returns `data.itemCommit` = `{committed, sha, noChanges, error}` in the JSON. The move itself still succeeded and the exit code is unchanged, so the signal is easy to miss. Agents send an ALERT to Hannibal carrying the item id and the error (see the `pool-handoff` skill). When Hannibal makes the move himself, he checks the output of every move to `staged` for the same marker or `itemCommit.committed` false with `noChanges` false.
+
+Recovery:
+1. Leave the item in `staged`. Do not move it again.
+2. Fix the cause named in the error. A `branch mismatch` means `git checkout` the recorded branch (`cat /tmp/.ateam-pool/${ATEAM_MISSION_ID}/branch`). `no recorded mission branch` means re-run `ateam pool init --single-use --lanes {N}` (idempotent). If `itemCommit.sha` is set, the commit exists and only recording it failed, so step 3 recovers it.
+3. Run `ateam items-commit commitItem --itemId <id>`. It re-runs the commit, or finds the existing commit by its `Item: <id>` trailer and records that SHA.
+
+**Gate:** no item may be carried past the mission tail with a failed commit outstanding. Before dispatching Frankie, check every `staged` item (`ateam items listItems --json`): each must have a `commitSha`, or a work-log note saying no changes were committed (`no changes to commit`). Resolve any that has neither with the steps above first. Items that Frankie or Stockwell send back return to `staged` and commit again, so repeat the check on each restart of the tail.
 
 ## Frankie Mission-Tail Dispatch
 
@@ -1510,9 +1521,9 @@ for instance in instance_pool:
 
 3. **Wait for shutdown approvals** (teammates auto-approve unless busy)
 
-4. **Clean up pool directory:**
+4. **Clean up pool directory** (`--all` also removes the recorded branch and baseline files; plain `destroy` keeps them):
 ```bash
-ateam pool destroy
+ateam pool destroy --all
 ```
 
 5. **Team teardown is automatic.** There is no `TeamDelete` (removed in 2.1.178) — the implicit team is cleaned up when the session exits. Nothing to call.
@@ -1538,6 +1549,8 @@ Native teams are ephemeral — they don't survive session restarts. On resume:
    ```bash
    # N was already re-determined in step 2 — pass it through so replenish
    # keeps capping fresh spawns correctly after resume.
+   # Plain destroy keeps the recorded mission branch and baseline-dirty files, so
+   # in-flight mission changes are not recorded as pre-existing after resume.
    ateam pool destroy && ateam pool init --single-use --lanes {N}
    # Do NOT mass-create .idle files here. Marking instances idle before the
    # respawned agents have actually sent READY would reintroduce the

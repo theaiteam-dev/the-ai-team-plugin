@@ -1,0 +1,10 @@
+$ git commit --allow-empty -m "chore: operator note (walk probe: move HEAD past the remote)"
+local HEAD: a8279e3  remote: 9c807c0
+$ GH_STUB_AUTH=fail ateam missions-pr openDraft
+Not opening a pull request: gh is not authenticated (gh auth status failed).
+Description file: /home/josh/Code/TheAITeam/the-ai-team-plugin/.qa-evidence/M-20261011-001/sandbox/repo/.qa-evidence/M-20261031-001/pr-description.md
+Open it yourself with:
+  gh pr create --draft --title 'item-commits sandbox' --head 'mission/sandbox' --body-file '/home/josh/Code/TheAITeam/the-ai-team-plugin/.qa-evidence/M-20261011-001/sandbox/repo/.qa-evidence/M-20261031-001/pr-description.md'
+exit=0
+gh calls this run: [auth status;]
+remote after: 9c807c0

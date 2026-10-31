@@ -1,0 +1,9 @@
+[item-commits-sandbox] recreating sandbox at /home/josh/Code/TheAITeam/the-ai-team-plugin/.qa-evidence/M-20261011-001/sandbox
+[item-commits-sandbox] building packages/ateam-cli into /home/josh/Code/TheAITeam/the-ai-team-plugin/.qa-evidence/M-20261011-001/sandbox/bin
+[item-commits-sandbox] fixture items, one per line with its final stage:
+[item-commits-sandbox] WI-001 staged
+[item-commits-sandbox] WI-002 probing
+[item-commits-sandbox] WI-003 ready
+[item-commits-sandbox] WI-004 ready
+[item-commits-sandbox] WI-005 ready
+[item-commits-sandbox] ready. gh calls are logged to /home/josh/Code/TheAITeam/the-ai-team-plugin/.qa-evidence/M-20261011-001/sandbox/gh-calls.log

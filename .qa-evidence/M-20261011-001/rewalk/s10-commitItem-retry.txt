@@ -1,0 +1,27 @@
+# DoD 10: fix the cause, then retry with one command
+$ git switch mission/sandbox
+Switched to branch 'mission/sandbox'
+$ ateam --json items-commit commitItem --itemId WI-002
+{"committed":true,"sha":"4fad943f797e7821df7a62573f81220865318147"}
+exit=0
+$ item WI-002 after retry
+{"stageId":"staged","commitSha":"4fad943f797e7821df7a62573f81220865318147"}
+$ git log -1 --format="%H %s%n%b" --stat
+4fad943f797e7821df7a62573f81220865318147 feat: Sandbox farewell
+Item: WI-002
+Mission: M-20261031-001
+PRD: item-commits
+Lanes: amy-1
+
+
+ src/__tests__/farewell.test.js | 1 +
+ src/farewell.js                | 1 +
+ 2 files changed, 2 insertions(+)
+$ git status --short   # README.md and notes/ are baseline, left alone
+ M README.md
+?? notes/
+$ ateam --json items-commit commitItem --itemId WI-002   # second run: nothing left
+{"committed":false,"noChanges":true}
+$ ateam --json items-commit commitItem --itemId WI-003   # ready item
+Error: item WI-003 is in stage "ready"; only items in "staged" can be committed
+exit=1

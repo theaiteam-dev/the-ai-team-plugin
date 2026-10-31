@@ -199,14 +199,19 @@ invent a QA recipe or describe app behavior from memory:
    - Screenshots compressed/reasonably sized. Whole bundle target
      ~5-10MB.
 5. **Graduate passing critical-path statements into FlowSpec files**
-   (`specs/<name>.flow.yaml`, FlowSpec YAML: `name`, `description`,
+   (`specs/<prd-slug>/<name>.flow.yaml`, FlowSpec YAML: `name`, `description`,
    `steps` [visit/click/fill/select/wait_for], `expect`
    [url/visible/matches/not_visible] — label-driven, user-visible
    language). If the repo has no FlowSpec setup, run `flowspec init`
    first (it installs the spec-protection hook). Validate with
-   `flowspec run specs/<name>.flow.yaml` where the server allows.
+   `flowspec run specs/<prd-slug>/<name>.flow.yaml` where the server allows.
+   `<prd-slug>` is the basename of the mission's `prdPath` without its extension
+   (e.g. `prd/ready/item-commits.md` -> `item-commits`); it must
+   match `PRDSlug` in `packages/ateam-cli/internal/itemcommit/message.go`.
+   Create the directory by writing a new file; never edit existing specs.
 6. **Report back**: the checklist summary (✅/❌ counts), the failures
-   with repro, the path to `report.md`, and which specs you graduated.
+   with repro, the path to `report.md`, and the graduated spec paths
+   (`specs/<prd-slug>/<name>.flow.yaml`).
 7. **Stop the server, if you started it.** When `devServer.managed` is
    `true`, stop the process you launched in Process step 1 now that the
    walk and evidence bundle are done — a `managed: true` server left
@@ -374,7 +379,7 @@ no instance suffix, no forward handoff to another worker.
    walk is not incomplete because this errored — your completion gate is
    the evidence bundle on disk (`.qa-evidence/<mission>/report.md`), and
    your report to Hannibal is step 4.
-4. **Report to Hannibal:** send a `DONE` message (per the `teams-messaging` skill) carrying the checklist summary, the evidence bundle path, every failing item ID (per Failure Path above) with a one-line reason each, any dev-env gaps flagged (per Environment Failures above), and which specs graduated. This is your only outbound message — you do not START another agent.
+4. **Report to Hannibal:** send a `DONE` message (per the `teams-messaging` skill) carrying the checklist summary, the evidence bundle path, every failing item ID (per Failure Path above) with a one-line reason each, any dev-env gaps flagged (per Environment Failures above), and the graduated spec paths (each `specs/<prd-slug>/<name>.flow.yaml` you wrote). This is your only outbound message — you do not START another agent.
 
 ## Boundaries
 

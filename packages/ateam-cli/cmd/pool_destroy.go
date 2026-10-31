@@ -9,10 +9,38 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var poolDestroyAll bool
+
+// poolKeepFiles survive a plain 'pool destroy' so resume recovery
+// ('pool destroy && pool init') keeps the mission's branch and baseline.
+var poolKeepFiles = map[string]bool{"branch": true, "baseline-dirty": true}
+
+// removePoolContents deletes everything in poolDir except the kept files.
+func removePoolContents(poolDir string) error {
+	entries, err := os.ReadDir(poolDir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if poolKeepFiles[e.Name()] {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(poolDir, e.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 var poolDestroyCmd = &cobra.Command{
 	Use:   "destroy",
 	Short: "Remove the local pool directory for the current mission",
-	Long: `Removes /tmp/.ateam-pool/$ATEAM_MISSION_ID/ and everything inside it.
+	Long: `Removes the pool markers in /tmp/.ateam-pool/$ATEAM_MISSION_ID/.
+
+The recorded mission branch ("branch") and the pre-mission dirty-file baseline
+("baseline-dirty") are kept, so 'pool destroy && pool init' recovery does not
+record in-flight mission changes as pre-existing. --all removes the whole
+directory, including both.
 
 Idempotent — succeeds whether or not the directory exists. Refuses to run
 when ATEAM_MISSION_ID is unset (won't nuke unscoped paths).
@@ -43,8 +71,12 @@ or was already gone (false). Either case exits 0.`,
 		}
 
 		if removed {
-			if err := os.RemoveAll(poolDir); err != nil {
-				return fmt.Errorf("remove pool dir %s: %w", poolDir, err)
+			if poolDestroyAll {
+				if err := os.RemoveAll(poolDir); err != nil {
+					return fmt.Errorf("remove pool dir %s: %w", poolDir, err)
+				}
+			} else if err := removePoolContents(poolDir); err != nil {
+				return fmt.Errorf("remove pool markers in %s: %w", poolDir, err)
 			}
 		}
 
@@ -74,4 +106,5 @@ or was already gone (false). Either case exits 0.`,
 
 func init() {
 	poolCmd.AddCommand(poolDestroyCmd)
+	poolDestroyCmd.Flags().BoolVar(&poolDestroyAll, "all", false, "Remove the whole pool directory, including the recorded branch and baseline-dirty")
 }

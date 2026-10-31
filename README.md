@@ -388,6 +388,10 @@ A mission's testing depth and review tier can travel with the mission itself ins
 
 Every consumer — Frankie, Tawnia, both orchestration playbooks, and the mission-completion hooks — resolves the running mission's own contract first, falling back to the repo config only when the mission has none, so a `deep` mission tests and reviews more rigorously than a `quick` one from the moment it's created.
 
+### Item Commits
+
+Each item's code is committed by the `ateam` CLI when the item reaches `staged`, with `Item:`, `Mission:`, `PRD:` and `Lanes:` trailers, so the mission branch has one commit per item. Tawnia's final commit holds documentation and QA evidence, then she opens a draft PR with `ateam missions-pr openDraft` (disable with `"pullRequest": {"open": false}` in `ateam.config.json`). `ateam pool init` records the branch and must run in a git repo on a branch, not a detached HEAD. A failed commit prints `ITEM_COMMIT_FAILED`; retry with `ateam items-commit commitItem --itemId <id>`. Set the repo's squash-merge default message to "Pull request title and description". Details: `docs/ORCHESTRATION.md`, "Item Commits and the Mission Pull Request".
+
 ### Final Mission Review
 
 When ALL features reach `staged` — the per-item pipeline's real terminal stage (WI-786/787), not `done` — Frankie walks the mission's full Definition of Done against the running app first (a fresh, non-pre-warmed agent) and produces an evidence bundle. A failure halts the tail: Hannibal moves each named item out of `staged` to `testing` or `implementing` using the earliest-flagged-stage rule, via a real, rejection-cap-counted `board-move` (WI-794) — not a manual reopen. Once Frankie's walk is clean, Stockwell performs a holistic review of the entire codebase, including Frankie's evidence bundle and graduated specs:

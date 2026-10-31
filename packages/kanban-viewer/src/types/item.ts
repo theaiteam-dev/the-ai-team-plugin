@@ -47,6 +47,8 @@ export interface Item {
   attributedAgent?: string;
   /** Finding provenance (WI-936): dedup slug the finding was derived from — free-form, no FK. */
   fingerprint?: string;
+  /** SHA of the item's latest commit; null until the item has been committed. */
+  commitSha?: string | null;
 }
 
 /**

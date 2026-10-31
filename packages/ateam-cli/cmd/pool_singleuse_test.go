@@ -73,6 +73,7 @@ func exists(path string) bool {
 
 func TestPoolInitSingleUseRecordsModeAndPersists(t *testing.T) {
 	_, poolDir := withTempPoolRoot(t, "init-single-use")
+	chdirToRepo(t, "main") // pool init records the cwd repo; never depend on the real checkout
 	_ = os.RemoveAll(poolDir)
 
 	out, err := runPoolCmd(t, "pool", "init", "--single-use", "--json")
@@ -112,6 +113,7 @@ func TestPoolStatusReportsSingleUse(t *testing.T) {
 
 func TestPoolInitDefaultIsReuseMode(t *testing.T) {
 	_, poolDir := withTempPoolRoot(t, "init-reuse")
+	chdirToRepo(t, "main") // pool init records the cwd repo; never depend on the real checkout
 	_ = os.RemoveAll(poolDir)
 
 	out, err := runPoolCmd(t, "pool", "init", "--json")

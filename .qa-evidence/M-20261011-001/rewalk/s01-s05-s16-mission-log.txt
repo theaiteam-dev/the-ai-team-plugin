@@ -1,0 +1,75 @@
+# DoD 1/5/16: whole mission branch after all five items reached staged
+$ git log --format="--- %h %s%n%b" --stat mission/sandbox
+--- 9c807c0 feat: Sandbox formatter
+Item: WI-005
+Mission: M-20261031-001
+PRD: item-commits
+Lanes: murdock-5 ba-5 lynch-5 amy-5
+
+
+ src/__tests__/formatter.test.js | 1 +
+ src/formatter.js                | 1 +
+ 2 files changed, 2 insertions(+)
+--- 3e877bd feat: Sandbox parser
+Item: WI-004
+Mission: M-20261031-001
+PRD: item-commits
+Lanes: murdock-4 ba-4 lynch-4 amy-4
+
+
+ src/__tests__/parser.test.js | 1 +
+ src/parser.js                | 1 +
+ 2 files changed, 2 insertions(+)
+--- 0430a23 feat: Sandbox counter
+Undeclared paths included:
+- src/index.js
+
+Item: WI-003
+Mission: M-20261031-001
+PRD: item-commits
+Lanes: murdock-1 ba-1 lynch-1 ba-1 lynch-2 amy-2
+
+
+ src/__tests__/counter.test.js | 1 +
+ src/counter.js                | 1 +
+ src/index.js                  | 1 +
+ 3 files changed, 3 insertions(+)
+--- 4fad943 feat: Sandbox farewell
+Item: WI-002
+Mission: M-20261031-001
+PRD: item-commits
+Lanes: amy-1
+
+
+ src/__tests__/farewell.test.js | 1 +
+ src/farewell.js                | 1 +
+ 2 files changed, 2 insertions(+)
+--- ad87429 feat: Sandbox greeter
+Item: WI-001
+Mission: M-20261031-001
+PRD: item-commits
+
+
+ src/greeter.js | 1 +
+ 1 file changed, 1 insertion(+)
+--- f33f591 chore: initial sandbox commit
+
+
+ README.md | 1 +
+ 1 file changed, 1 insertion(+)
+$ git log --all --format="%h %s" -- README.md notes/preexisting.txt   # baseline files: only the initial commit touches README.md
+f33f591 chore: initial sandbox commit
+$ git log --all --format="%h" | while read c; do git log -1 --format=%B $c | grep -c "^Co-authored-by"; done | sort | uniq -c   # Co-authored-by lines per commit
+      6 0
+$ git status --short
+ M README.md
+?? notes/
+$ git diff README.md
+diff --git a/README.md b/README.md
+index 7d201e4..7c46a23 100644
+--- a/README.md
++++ b/README.md
+@@ -1 +1,3 @@
+ # item-commits sandbox
++local operator note, dirty before the mission
++mission edit to a file that was dirty before the mission

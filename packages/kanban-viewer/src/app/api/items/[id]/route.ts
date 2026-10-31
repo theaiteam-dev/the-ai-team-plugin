@@ -25,6 +25,8 @@ import { ITEM_TYPES, ITEM_PRIORITIES, SEVERITY_VALUES } from '@ai-team/shared';
 const VALID_TYPES: ItemType[] = ITEM_TYPES as unknown as ItemType[];
 const VALID_PRIORITIES: ItemPriority[] = ITEM_PRIORITIES as unknown as ItemPriority[];
 
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/;
+
 interface RouteContext {
   params: Promise<{ id: string }>;
 }
@@ -169,6 +171,26 @@ export async function PATCH(
       return NextResponse.json(error.toResponse(), { status: 400 });
     }
 
+    if (body.commitSha !== undefined && (typeof body.commitSha !== 'string' || !COMMIT_SHA_PATTERN.test(body.commitSha))) {
+      const error = createValidationError('commitSha must be 7 to 40 lowercase hex characters');
+      return NextResponse.json(error.toResponse(), { status: 400 });
+    }
+
+    if (body.workLogNote !== undefined) {
+      const note = body.workLogNote as unknown;
+      const isValidNote =
+        typeof note === 'object' &&
+        note !== null &&
+        typeof (note as { agent?: unknown }).agent === 'string' &&
+        (note as { agent: string }).agent.trim() !== '' &&
+        typeof (note as { summary?: unknown }).summary === 'string' &&
+        (note as { summary: string }).summary.trim() !== '';
+      if (!isValidNote) {
+        const error = createValidationError('workLogNote must be an object with non-empty agent and summary strings');
+        return NextResponse.json(error.toResponse(), { status: 400 });
+      }
+    }
+
     // Validate dependencies if provided
     if (body.dependencies !== undefined) {
       // Check for self-reference
@@ -263,6 +285,7 @@ export async function PATCH(
       severity?: string | null;
       attributedAgent?: string | null;
       fingerprint?: string | null;
+      commitSha?: string;
       updatedAt: Date;
     } = {
       updatedAt: new Date(),
@@ -306,6 +329,10 @@ export async function PATCH(
       updateData.fingerprint = body.fingerprint || null;
     }
 
+    if (body.commitSha !== undefined) {
+      updateData.commitSha = body.commitSha;
+    }
+
     // Handle dependency updates in a transaction
     const updatedItem = await prisma.$transaction(async (tx) => {
       // Update dependencies if provided
@@ -324,6 +351,17 @@ export async function PATCH(
             })),
           });
         }
+      }
+
+      if (body.workLogNote !== undefined) {
+        await tx.workLog.create({
+          data: {
+            itemId,
+            agent: body.workLogNote.agent,
+            action: 'note',
+            summary: body.workLogNote.summary,
+          },
+        });
       }
 
       // Update item
